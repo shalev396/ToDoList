@@ -42,13 +42,15 @@ Do this, in order:
 
 **Where a provider cannot offer a general app:** none of the five blocks it outright. What can block a user is not the app but their side: a Jira site admin, GitHub org owner or Linear workspace admin who refuses the app (section 8). The fallback the product already supports is the **user's own API token**, a secondary option on the Integrations page:
 
-| Provider        | Fallback in the UI                              |
-| --------------- | ----------------------------------------------- |
-| Jira            | Atlassian email + API token (`api_token_basic`) |
-| ClickUp         | Personal API token (`personal_token`)           |
-| Linear          | Personal API key (`personal_api_key`)           |
-| GitHub          | Personal token                                  |
-| Google Calendar | None (OAuth only)                               |
+| Provider        | Fallback in the UI                                                                                        | What works with just the API key                                                                                                                                                                                |
+| --------------- | --------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Jira            | Atlassian email + API token (`api_token_basic`)                                                           | Read sync (projects, issues) from **one** site: the URL is typed in, there is no site picker. "Also create in" Jira issues on that site. No multi-site, no revoke from the app (delete the token at Atlassian). |
+| ClickUp         | Personal API token (`personal_token`)                                                                     | Read sync of lists and the tasks assigned to you, in all your workspaces (no workspace picker). Create tasks.                                                                                                   |
+| Linear          | Personal API key (`personal_api_key`)                                                                     | Read sync of projects and the issues assigned to you. Create issues (team, project, status). No revoke from the app.                                                                                            |
+| GitHub          | Personal access token (`fine_grained_pat`), plus an optional classic token with `read:project` for boards | Read sync of repos, issues and PRs, plus Projects boards with the second token. Create issues (existing labels only).                                                                                           |
+| Google Calendar | None (OAuth only)                                                                                         | Nothing: Google offers no personal API key for private calendars.                                                                                                                                               |
+
+With any method, the app never edits, closes or comments on anything at the provider. It reads, and creates new items only when a user asks ("Also create in"), and only when the integration is set to read & write.
 
 ## Conventions (all providers)
 
