@@ -497,6 +497,26 @@ describe('the routes', () => {
     }
   });
 
+  it('a secret that cannot be used marks only that provider as not configured', async () => {
+    // A typo while storing one of the fifteen app secrets must not break every card.
+    setAppSecretsForTests({ ...secrets, 'oauth-linear': { clientId: '', clientSecret: '' } });
+    try {
+      const list = await api.call(
+        'GET',
+        `/api/private/workspaces/${wid}/integrations/oauth/providers`,
+        { token },
+      );
+      assert.equal(list.status, 200, list.text);
+      const data = list.body?.['data'] as {
+        providers: { provider: string; configured: boolean }[];
+      };
+      assert.equal(data.providers.find((entry) => entry.provider === 'linear')?.configured, false);
+      assert.equal(data.providers.find((entry) => entry.provider === 'github')?.configured, true);
+    } finally {
+      setAppSecretsForTests({ ...secrets });
+    }
+  });
+
   it('the setup listing is for any member (no secret in it); a non-member gets 404', async () => {
     const listing = `/api/private/workspaces/${wid}/integrations/oauth/providers`;
     const viewer = await api.call('GET', listing, { token: viewerToken });

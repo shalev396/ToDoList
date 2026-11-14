@@ -229,7 +229,9 @@ export async function completeProviderOAuth(
 // ─── setup information and the grant's resources ────────────────────────────
 
 async function providerInfo(def: OAuthProviderDef): Promise<OAuthProviderInfo> {
-  const credentials = await oauthAppCredentials(def.id);
+  // A secret that can't be read or has the wrong shape marks only this provider as not
+  // configured (appSecrets.ts logged the kind of failure); the rest of the list still answers.
+  const credentials = await oauthAppCredentials(def.id).catch(() => null);
   const slug = credentials?.appSlug;
   return {
     provider: def.id,
@@ -250,7 +252,7 @@ async function providerInfo(def: OAuthProviderDef): Promise<OAuthProviderInfo> {
 export async function listOAuthProviders(ctx: WorkspaceContext): Promise<OAuthProvidersResponse> {
   assertRole(ctx, 'viewer');
   const providers = await Promise.all(Object.values(OAUTH_PROVIDER_DEFS).map(providerInfo));
-  const google = (await googleOAuthCredentials()) !== null;
+  const google = (await googleOAuthCredentials().catch(() => null)) !== null;
   return {
     stage: environment.env,
     providers: [
