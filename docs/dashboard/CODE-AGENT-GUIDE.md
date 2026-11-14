@@ -34,7 +34,7 @@ Base repo: [shalev396/Elytra](https://github.com/shalev396/Elytra) (React 19 + V
 
 ## 2. Environment variables (`server/.env.<stage>`, git-ignored)
 
-Only these exist: `AWS_ACCOUNT_ID`, `CERTIFICATE_ARN`, `WAF_WEB_ACL_ARN`, `AWS_ROLE_NAME`, `AWS_REGION`, `DATABASE_URL`, `BASIC_AUTH_PASSWORD` (dev and qa) and `DOMAIN_NAME`. `server/.env.example` is the committed reference. Nothing else is controlled by an environment variable, and app secrets live in AWS Secrets Manager (`todolist/<stage>/<name>`). The client needs no env file: in development it calls `http://localhost:3000/api`, deployed it calls `/api` on its own origin.
+Only these exist: `AWS_ACCOUNT_ID`, `CERTIFICATE_ARN`, `WAF_WEB_ACL_ARN`, `AWS_ROLE_NAME`, `AWS_REGION`, `DATABASE_URL`, `BASIC_AUTH_PASSWORD` (dev and qa) and `DOMAIN_NAME`. `server/.env.example` is the committed reference. Nothing else is controlled by an environment variable, and app secrets live in AWS Secrets Manager (one secret per stage, `todolist-<stage>-app-secrets`). The client needs no env file: in development it calls `http://localhost:3000/api`, deployed it calls `/api` on its own origin.
 
 ---
 

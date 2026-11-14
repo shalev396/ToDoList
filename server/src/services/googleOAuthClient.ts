@@ -2,8 +2,8 @@
  * The Google Calendar OAuth client (a Google app separate from sign-in, INTEGRATIONS-SETUP.md §1):
  * its id and secret, and the token client that trades codes and refresh tokens at Google.
  *
- * The id and secret are the app secret `google-calendar-oauth` (services/appSecrets.ts): the
- * Secrets Manager JSON `{clientId, clientSecret}` named `todolist/<stage>/google-calendar-oauth`,
+ * The id and secret are the app secret `google-calendar-oauth` (services/appSecrets.ts): the keys
+ * GOOGLE_CALENDAR_CLIENT_ID and GOOGLE_CALENDAR_CLIENT_SECRET of `todolist-<stage>-app-secrets`,
  * kept in memory for an hour at most. The secret is never logged, returned or put in an error.
  */
 import {

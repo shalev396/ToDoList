@@ -1,7 +1,6 @@
 import { Validations, type CfnElement, type Stack } from 'aws-cdk-lib';
 import type { IConstruct } from 'constructs';
 import type { StageConfig } from './config.js';
-import { appSecretsPrefix } from './constants.js';
 
 /**
  * cdk-nag (AwsSolutions) acknowledgements. Each one is scoped to the exact construct it applies to
@@ -108,10 +107,5 @@ export function applyNagSuppressions(stack: Stack, config: StageConfig): void {
     'Compute/FunctionRole/DefaultPolicy',
     `AwsSolutions-IAM5[Resource::arn:aws:ses:${stack.region}:${stack.account}:identity/*]`,
     'SES authorizes SendEmail against sender and (in sandbox) recipient identities; the statement is pinned to ses:FromAddress = noreply@DOMAIN_NAME.',
-  );
-  ack(
-    'Compute/FunctionRole/DefaultPolicy',
-    `AwsSolutions-IAM5[Resource::arn:aws:secretsmanager:${stack.region}:${stack.account}:secret:${appSecretsPrefix(config.stage)}*]`,
-    "App secrets (server/src/services/appSecrets.ts): GetSecretValue only, on this stage's own todolist/<stage>/ names. Each secret is made by hand, so its ARN suffix is unknown at synth time, and the app reads allow-listed names only.",
   );
 }

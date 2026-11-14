@@ -59,7 +59,7 @@ Invites ──> SES directly from the request
 - **ApiFn**: one Lambda (one role, two layers, one log group), 5 minute timeout. Provider secrets are decrypted here only for `test connection`, the sync jobs and the calendar push, via `decryptForSync` (see §6).
 - **Background jobs**: there is no queue or worker function. A failed job is retried by Lambda's asynchronous invoke (two retries) and then dropped; the run shows `failed`. Maintenance actions (`sync-dispatch`, `gcal-dispatch`, `purge`) run only on a direct invoke.
 - **No schedules for now**: no EventBridge rule exists. Bringing back one schedule (sync dispatch and purge) before prod is a TODO.md item.
-- **Secrets**: `DATABASE_URL` is an environment variable of the stage. One **KMS CMK per stage** for credential envelope encryption. **All per-user secrets live encrypted in the `Credentials` collection (DATA.md §3.5)**; app-level secrets (OAuth client secrets) live in AWS Secrets Manager under `todolist/<stage>/<name>`.
+- **Secrets**: `DATABASE_URL` is an environment variable of the stage. One **KMS CMK per stage** for credential envelope encryption. **All per-user secrets live encrypted in the `Credentials` collection (DATA.md §3.5)**; app-level secrets (OAuth client secrets) live in AWS Secrets Manager, in one secret per stage, `todolist-<stage>-app-secrets`.
 - **MongoDB**:
 
 | Option | Pros | Cons |

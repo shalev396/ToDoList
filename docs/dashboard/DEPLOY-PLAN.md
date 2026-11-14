@@ -13,7 +13,7 @@ Per stage `todolist-<stage>`:
 - ONE Lambda function, `todolist-<stage>-api`, with its two layers, one log group and ONE role (`todolist-<stage>-api`, the ARN Atlas maps). It serves the HTTP API (public routes, private routes, and `ANY /api/mcp` without a Cognito authorizer: agents use hashed agent keys), the direct-invoke actions, and the background syncs: a sync is an async invocation of the function by itself (`{"action":"sync-run",…}` or `{"action":"gcal-run",…}`), so the role may invoke that one function;
 - the frontend hosting (CloudFront, the two buckets) and the SES identity with its DKIM records (no verification function: the user pool waits for the distribution, which waits for the DKIM records);
 - one KMS CMK, alias `alias/todolist-<stage>-credentials`, rotation on; RETAIN on qa/prod, DESTROY with a 7-day window on dev;
-- read access for the role to the stage's app secrets: `secretsmanager:GetSecretValue` on `todolist/<stage>/*` only. The secrets themselves are made by hand (step 12); the stack holds no value.
+- read access for the role to the stage's app secret: `secretsmanager:GetSecretValue` on `todolist-<stage>-app-secrets` only. The secret lives outside the stack (the backend deploy creates it as `{}`, its keys are filled by hand, step 12); the stack holds no value.
 
 No queue, no worker function, no alarm and no schedule (C0-ARCH, like Elytra). `sync-dispatch`, `gcal-dispatch` and `purge` run only when the function is invoked with them directly, until a schedule is added back. The infra is stage-generic. `npm run test:infra` synthesizes all three stages offline.
 
@@ -86,7 +86,7 @@ There is no queue, DLQ or alarm (C0-ARCH), so there is nothing to route to SNS. 
 ### Step 9. Google Calendar sync (OAuth)
 
 1. The two-way Google Calendar sync uses the user's own Google sign-in (OAuth) and is always available on every stage; there is no switch. A calendar write happens only when a user configures a push and confirms it. No schedule runs it for now: the `gcal-dispatch` action starts one push + pull per eligible calendar when the function is invoked with it directly. A schedule comes back later.
-2. The Google OAuth client lives in Secrets Manager as `todolist/<stage>/google-calendar-oauth` (step 12). See `INTEGRATIONS-SETUP.md`.
+2. The Google OAuth client is the keys `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` of `todolist-<stage>-app-secrets` (step 12). See `INTEGRATIONS-SETUP.md`.
 3. The Apps Script bridge is gone: no script, no hook route, no shared secret.
 4. With H5 (D19) a user may also create one item at their own provider (Step 8b). Both are audit-logged.
 
@@ -120,52 +120,50 @@ Atlas limits per tier: M0/Flex 500, M10 1500. A cluster shared by all three stag
 
 **Email.** Invite emails are sent straight through SES by the request that creates the invite (no queue, like Elytra). A failed send is logged and does not fail the invite; the inviter still has the link. It is not retried.
 
-**Local server against dev AWS.** `server/src/local.ts` reads the stack outputs (Cognito ids, assets bucket, KMS key id) and derives the app-secret prefix `todolist/<stage>/` from the stage, so the local server reads the stage's app secrets (step 12) from Secrets Manager with the developer's own AWS credentials. They need `secretsmanager:GetSecretValue` on `todolist/<stage>/*`. A background sync ("Sync now") runs inline in the local process, and emails go through SES with the same credentials.
+**Local server against dev AWS.** `server/src/local.ts` reads the stack outputs (Cognito ids, assets bucket, KMS key id) and derives the app-secret name `todolist-<stage>-app-secrets` from the stage, so the local server reads the stage's app secrets (step 12) from Secrets Manager with the developer's own AWS credentials. They need `secretsmanager:GetSecretValue` on that secret. A background sync ("Sync now") runs inline in the local process, and emails go through SES with the same credentials.
 
 ### Step 12. App secrets in Secrets Manager (NEEDS SHALEV, per stage)
 
 App secrets are this app's own credentials: a provider's OAuth client, an API key. Users' provider tokens are not app secrets; they stay sealed in the credential vault in the database.
 
-**Naming.** Each secret is one JSON secret named `todolist/<stage>/<name>`, in the stack's region, encrypted with the default `aws/secretsmanager` key. A customer-managed key would also need `kms:Decrypt` on the API role. The names are an allow-list, `APP_SECRETS` in `server/src/services/appSecrets.ts`, which also lists the fields each JSON must carry:
+**Naming.** ONE secret per stage, `todolist-<stage>-app-secrets` (`appSecretName` in `server/infra/lib/constants.ts`; the auto-content-creation pattern): a flat JSON object of UPPER_SNAKE keys, in the stack's region, encrypted with the default `aws/secretsmanager` key. A customer-managed key would also need `kms:Decrypt` on the API role. The code asks by logical name and gets that name's fields only; `APP_SECRETS` in `server/src/services/appSecrets.ts` maps each name to its keys:
 
-| Name | JSON fields | Used by |
+| Name | Keys (field) | Used by |
 | --- | --- | --- |
-| `google-calendar-oauth` | `clientId`, `clientSecret` | Google Calendar OAuth (`INTEGRATIONS-SETUP.md` §1) |
-| `openrouter` | `apiKey` | OpenRouter (not used by any code yet) |
-| `oauth-github` | `clientId`, `clientSecret` (plus `appId`, `privateKey` for the GitHub App) | GitHub OAuth (§3) |
-| `oauth-jira` | `clientId`, `clientSecret` | Jira OAuth (§4) |
-| `oauth-clickup` | `clientId`, `clientSecret` | ClickUp OAuth (§5) |
-| `oauth-linear` | `clientId`, `clientSecret` | Linear OAuth (§6) |
+| `google-calendar-oauth` | `GOOGLE_CALENDAR_CLIENT_ID` (`clientId`), `GOOGLE_CALENDAR_CLIENT_SECRET` (`clientSecret`) | Google Calendar OAuth (`INTEGRATIONS-SETUP.md` §1) |
+| `openrouter` | `OPENROUTER_API_KEY` (`apiKey`) | OpenRouter (not used by any code yet) |
+| `oauth-github` | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, optional `GITHUB_APP_SLUG` (`appSlug`) | GitHub OAuth (§3) |
+| `oauth-jira` | `JIRA_CLIENT_ID`, `JIRA_CLIENT_SECRET` | Jira OAuth (§4) |
+| `oauth-clickup` | `CLICKUP_CLIENT_ID`, `CLICKUP_CLIENT_SECRET` | ClickUp OAuth (§5) |
+| `oauth-linear` | `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET` | Linear OAuth (§6) |
 
-For example, dev's Google Calendar client is `todolist/dev/google-calendar-oauth`, holding `{"clientId":"…","clientSecret":"…"}`.
+For example, dev's secret is `todolist-dev-app-secrets`, holding `{"GOOGLE_CALENDAR_CLIENT_ID":"…","GOOGLE_CALENDAR_CLIENT_SECRET":"…"}`.
 
-**How the server reads them.**
+**Who creates it.** `npm run deploy:backend -- <stage>` (step 2 of the script, `server/scripts/app-secret.ts`): created as `{}` when missing, restored when scheduled for deletion, otherwise left alone. It never reads, writes over or prints the value. The stack does not own the secret, so `cdk destroy` and a recreated stack keep every key.
 
-- The app derives the prefix `todolist/<stage>/` from `ENV` (`appSecretsPrefix` in `server/infra/lib/constants.ts`); CDK passes nothing and never holds a value.
-- The function's role (the stack's only one) gets `secretsmanager:GetSecretValue` on `arn:aws:secretsmanager:<region>:<account>:secret:todolist/<stage>/*`, and on no other secret.
-- The server reads a secret by name on first use and keeps it in memory for an hour. A new value is picked up within the hour, or at the next cold start.
-- A missing secret only switches its feature off. For example, Google Calendar answers 409 `oauth_unavailable`. It never fails a deploy.
+**How the server reads it.**
+
+- The app derives the name from `ENV`; CDK passes nothing and never holds a value.
+- The function's role (the stack's only one) gets `secretsmanager:GetSecretValue` on `arn:aws:secretsmanager:<region>:<account>:secret:todolist-<stage>-app-secrets-??????` (the six `?` are the random ARN suffix), and on no other secret.
+- The server reads the secret on first use and keeps it in memory for an hour. A new value is picked up within the hour, or at the next cold start.
+- A name none of whose keys is set only switches its feature off. For example, Google Calendar answers 409 `oauth_unavailable`. Some keys set, or a key that is not a non-empty string, also switches off that feature only (logged as an error). It never fails a deploy.
 - A value is never written to CloudFormation, Lambda environment variables, logs or errors.
 
-**Create or rotate a secret.**
+**Add or rotate keys.**
 
-1. In the console, open Secrets Manager → **Store a new secret** → **Other type of secret** → **Plaintext**, and paste the JSON.
-2. Keep the encryption key `aws/secretsmanager`. Name the secret exactly `todolist/<stage>/<name>`, and leave rotation off.
-3. Repeat for each stage, with that stage's own values.
-4. To rotate, open the secret → **Retrieve secret value** → **Edit**, and save. Running Lambdas use the new value within the hour.
+1. In the console, open Secrets Manager → `todolist-<stage>-app-secrets` → **Retrieve secret value** → **Edit**, add or change the rows, and save.
+2. Repeat for each stage, with that stage's own values. Running Lambdas use the new value within the hour.
 
-With the CLI, write the JSON to a file, run `aws secretsmanager create-secret --name todolist/<stage>/<name> --secret-string file://secret.json`, then delete the file. Never put the JSON on the command line, where shell history keeps it.
+With the CLI, `put-secret-value` replaces the whole JSON: read it, merge the keys, write it back through a file (the command is in `INTEGRATIONS-SETUP.md`, Conventions), then delete the file. Never put the JSON on the command line, where shell history keeps it.
 
-**Ask by name, never by partial ARN.** `oauth-github` and `oauth-linear` end in a hyphen and six letters, which Secrets Manager's partial-ARN lookup can mistake for the random suffix it adds to every ARN. The server always asks by name; scripts should too.
-
-**Moving from the old name.** Earlier versions of these docs named the Google Calendar client `todolist/<stage>/oauth/google-calendar`. The server no longer reads that name. If you created it, store the same JSON as `todolist/<stage>/google-calendar-oauth` (Secrets Manager cannot rename a secret), check that connecting Google Calendar works, then delete the old secret. Until the new one exists, connecting answers 409 `oauth_unavailable`, and existing Google Calendar connections cannot refresh their tokens.
+**Moving from the old names.** Until 2026-11-15 each app secret was its own secret, `todolist/<stage>/<name>` (e.g. `todolist/dev/google-calendar-oauth` with `{"clientId","clientSecret"}`). The server no longer reads those. Their values were moved into `todolist-<stage>-app-secrets` and the old secrets deleted.
 
 **Add a new secret (code).**
 
-1. Add its name and the fields the code reads to `APP_SECRETS` in `server/src/services/appSecrets.ts`. Use lowercase words joined by hyphens.
+1. Add its logical name, its fields and their UPPER_SNAKE keys to `APP_SECRETS` in `server/src/services/appSecrets.ts`.
 2. Read it with `getAppSecret<{ … }>('<name>')`. If the feature should simply be off without it, catch `AppSecretError` with reason `missing`. Never log the value or return it.
 3. Add the name to the allow-list test in `server/src/services/appSecrets.test.ts`.
-4. Leave CDK alone: the `todolist/<stage>/*` grant already covers the new name. Create the secret on each stage (above).
+4. Leave CDK alone: the grant already covers the whole secret. Add the keys on each stage (above).
 
 **Local API.** `npm run dev` runs against a deployed stage and reads the same Secrets Manager secrets with your AWS credentials. There is no environment-variable fallback: `APP_SECRET_*` and `GOOGLE_OAUTH_CLIENT_*` variables are not read.
 
@@ -182,7 +180,7 @@ qa and prod stay as the template configured them until Shalev asks. Before eithe
 - [ ] A schedule for `sync-dispatch`, `gcal-dispatch` and `purge` decided and added (none exists for now).
 - [ ] SES sender verified for invites.
 - [ ] Account Lambda concurrency quota raised if needed (step 11).
-- [ ] App secrets created under `todolist/<stage>/`, with that stage's own values (step 12). NEEDS SHALEV.
+- [ ] App secret keys added to `todolist-<stage>-app-secrets`, with that stage's own values (step 12). NEEDS SHALEV.
 - [ ] Open questions in REPORT.md answered (Moodle tokens, cadence, retention).
 - [ ] The full local and E2E suites pass on the commit to be deployed (REPORT.md, "Test suites").
 - [ ] `secrets:scan` clean and `git remote -v` reviewed before the first push.

@@ -147,8 +147,8 @@ All work lives on the `dev` branch. Nothing is deployed yet. The architecture is
 - [ ] H6. **Templates:** Light student and Two jobs + studies + side project (the main two), plus Student + job.
 - [x] H7. **Pricing feature list from variables** (limits from one source): supported integrations, MCP access, unlimited to-dos, N workspaces, N blocks, N views, template views and blocks. Wording: "no feature limits", with a workspace limit. Done: one Individual plan. Every number comes from `PLAN_LIMITS` (`server/src/types/limits.ts`), shared by the server, the builder caps and the pricing page.
 - [x] H8. **App secrets in AWS Secrets Manager.** A generic service: Google Calendar OAuth now; OpenRouter, Linear and others later. Done: `services/appSecrets.ts`.
-  - Reads `todolist/<stage>/<name>`, allow-listed (google-calendar-oauth, openrouter, oauth-github/jira/clickup/linear), cached 1 h. Secrets Manager only, never env vars.
-  - IAM grants GetSecretValue on `todolist/<stage>/*` only.
+  - Reads ONE secret per stage, `todolist-<stage>-app-secrets` (flat UPPER_SNAKE keys), allow-listed by logical name (google-calendar-oauth, openrouter, oauth-github/jira/clickup/linear), cached 1 h. Secrets Manager only, never env vars. The backend deploy creates it as `{}`; the stack does not own it.
+  - IAM grants GetSecretValue on `todolist-<stage>-app-secrets` only.
   - The how-to-add steps are in DEPLOY-PLAN and INTEGRATIONS-SETUP.
 - [x] H9. Done and merged (`1375561`), reviewed, all gates green. **OAuth for the other providers** in code (GitHub, Jira, ClickUp, Linear), with mocks, plus in-app setup instructions on the Integrations page.
 - [x] H10. **Apply the Saffron & Sand palette** (E5 decided). Done: tokens and `DESIGN.md` updated, light and dark, AA checked, solid focus rings.
@@ -166,7 +166,7 @@ All work lives on the `dev` branch. Nothing is deployed yet. The architecture is
 
 - The first deploy of each stage (fill `server/.env.<stage>`; see `docs/deployment.md`).
 - Google Cloud project(s) + the Secrets Manager secret for Calendar OAuth on dev (`INTEGRATIONS-SETUP.md` §1).
-- OAuth apps, once H9 merges. The callback is `https://<stage-domain>/api/public/oauth/<provider>/callback`. Store `{clientId, clientSecret}` in `todolist/<stage>/oauth-<provider>`. Full steps are in `INTEGRATIONS-SETUP.md` and in the in-app setup guide.
+- OAuth apps, once H9 merges. The callback is `https://<stage-domain>/api/public/oauth/<provider>/callback`. Add `<PROVIDER>_CLIENT_ID` and `<PROVIDER>_CLIENT_SECRET` to `todolist-<stage>-app-secrets`. Full steps are in `INTEGRATIONS-SETUP.md` and in the in-app setup guide.
   - **GitHub:** a GitHub App. Turn on user authorization during install, keep expiring user tokens on, and grant read-only Metadata, Issues, Pull requests and Organization Projects. H5 will also need Issues: Read & write.
   - **Jira:** an Atlassian 3LO app with `read:jira-work`, `read:jira-user` and `read:me` (H5 adds `write:jira-work`).
   - **ClickUp:** an app with the redirect URL.

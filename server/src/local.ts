@@ -54,8 +54,8 @@ process.env.COGNITO_USER_POOL_ID = outputs.userPoolId;
 process.env.COGNITO_CLIENT_ID = outputs.userPoolClientId;
 process.env.S3_ASSETS_BUCKET_NAME = outputs.assetsBucketName;
 process.env.KMS_KEY_ID = outputs.kmsKeyId;
-// The stage's app secrets are read from Secrets Manager (services/appSecrets.ts, prefix derived
-// from ENV) with the developer's AWS credentials: secretsmanager:GetSecretValue on todolist/<stage>/*.
+// The stage's app secrets are read from Secrets Manager (services/appSecrets.ts, name derived from
+// ENV) with the developer's AWS credentials: GetSecretValue on todolist-<stage>-app-secrets.
 
 // Imported only after the environment is populated: config/environment.ts reads it at load time.
 const { createApp } = await import('./app.js');

@@ -33,14 +33,16 @@ export function stackName(stage: Stage): string {
 }
 
 /**
- * App-level secrets (an app's OAuth client, an API key; never a user's token) live in Secrets
- * Manager as JSON named `todolist/<stage>/<name>`, created and filled by hand. The name is one of
- * the registry in server/src/services/appSecrets.ts. The API role may read this prefix and nothing
- * else; the app derives it from ENV and CDK never holds a value. The trailing slash keeps
- * `todolist/dev/*` from matching a `todolist/dev-…` secret.
+ * App-level secrets (the app's OAuth clients, an API key; never a user's token) live in ONE Secrets
+ * Manager secret per stage: a flat JSON object named `todolist-<stage>-app-secrets`, the same
+ * pattern as auto-content-creation. `npm run deploy:backend` creates it as `{}` when it is missing
+ * and never writes it after (scripts/app-secret.ts); its keys are filled by hand and listed in
+ * server/src/services/appSecrets.ts. The stack does not own it, so destroying a stack keeps the
+ * keys. The API role may read this one secret and nothing else; the app derives the name from ENV
+ * and CDK never holds a value.
  */
-export function appSecretsPrefix(stage: Stage): string {
-  return `${APP_NAME}/${stage}/`;
+export function appSecretName(stage: Stage): string {
+  return `${stackName(stage)}-app-secrets`;
 }
 
 /** CDK context keys (`-c key=value`) read by config.ts and passed by scripts/stage.ts. */

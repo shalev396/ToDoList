@@ -21,11 +21,11 @@ You need these accounts. All are free; none needs a paid plan for the setup itse
 
 Do this, in order:
 
-1. Decide the app naming: "TodoList (dev)", "TodoList (qa)", "TodoList (prod)" in every console.
+1. App naming in every console: "ToDoList-Dev", "ToDoList-QA", "ToDoList-Prod".
 2. For each provider, create **three** apps (dev, qa, prod). One per stage keeps data apart. Sections 1 and 3 to 6 give a table per stage.
-3. For each app, store `{"clientId": ..., "clientSecret": ...}` in Secrets Manager under `todolist/<stage>/<secret name>` (the CLI command is in each section).
+3. For each app, add its keys (e.g. `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`) to that stage's one secret, `todolist-<stage>-app-secrets` (Conventions).
 4. Verify per stage (section 7).
-5. Before real users on prod: get **Google** verification (privacy policy, domain; section 1) and submit the **Atlassian** sharing details (section 4). Both take time. Start them early.
+5. Before real users on prod: get **Google** verification (section 1, "Prod verification: TO DO") and submit the **Atlassian** sharing details (section 4). Both take time. Start them early.
 6. Test accounts: you need a Jira site (a free one is enough), a ClickUp workspace, a Linear workspace and a GitHub repo of your own to try the flow end to end.
 
 ### Your questions, answered
@@ -58,35 +58,37 @@ With any method, the app never edits, closes or comments on anything at the prov
 
   | Stage | Domain                               | Name in every console |
   | ----- | ------------------------------------ | --------------------- |
-  | dev   | `https://dev.todolist.shalev396.com` | TodoList (dev)        |
-  | qa    | `https://qa.todolist.shalev396.com`  | TodoList (qa)         |
-  | prod  | `https://todolist.shalev396.com`     | TodoList (prod)       |
+  | dev   | `https://dev.todolist.shalev396.com` | ToDoList-Dev          |
+  | qa    | `https://qa.todolist.shalev396.com`  | ToDoList-QA           |
+  | prod  | `https://todolist.shalev396.com`     | ToDoList-Prod         |
 
 - **Callback URL** (from the server code: `server/src/services/oauth/service.ts` `providerCallbackPath`, `googleCalendarOAuth.ts` `OAUTH_CALLBACK_PATH`, `routes/public/oauth.ts`): `https://<stage domain>/api/public/oauth/<provider>/callback`, where `<provider>` is `google-calendar`, `github`, `jira`, `clickup`, `linear`. The host is the stage's own `DOMAIN_NAME`. Local development uses the **dev** apps and the dev callback.
-- **Secret name:** `todolist/<stage>/<name>` (prefix `todolist/<stage>/` from `appSecretsPrefix`). The name must be in the allow-list `APP_SECRETS` in `server/src/services/appSecrets.ts`:
+- **Secret:** ONE Secrets Manager secret per stage, `todolist-<stage>-app-secrets` (same pattern as auto-content-creation), holding a flat JSON object. `npm run deploy:backend -- <stage>` creates it as `{}` when it is missing and never writes it after (`server/scripts/app-secret.ts`); the stack does not own it, so destroying a stack keeps the keys. The keys the code reads (`APP_SECRETS` in `server/src/services/appSecrets.ts`):
 
-  | Provider        | Secret name             | JSON fields read by the code                   |
-  | --------------- | ----------------------- | ---------------------------------------------- |
-  | Google Calendar | `google-calendar-oauth` | `clientId`, `clientSecret`                     |
-  | GitHub          | `oauth-github`          | `clientId`, `clientSecret`, optional `appSlug` |
-  | Jira            | `oauth-jira`            | `clientId`, `clientSecret`                     |
-  | ClickUp         | `oauth-clickup`         | `clientId`, `clientSecret`                     |
-  | Linear          | `oauth-linear`          | `clientId`, `clientSecret`                     |
+  | Provider        | Keys                                                                   |
+  | --------------- | ---------------------------------------------------------------------- |
+  | Google Calendar | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`           |
+  | GitHub          | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, optional `GITHUB_APP_SLUG` |
+  | Jira            | `JIRA_CLIENT_ID`, `JIRA_CLIENT_SECRET`                                 |
+  | ClickUp         | `CLICKUP_CLIENT_ID`, `CLICKUP_CLIENT_SECRET`                           |
+  | Linear          | `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`                             |
+  | OpenRouter      | `OPENROUTER_API_KEY`                                                   |
 
-  Both fields must be non-empty strings. Extra fields are ignored (except `appSlug`, GitHub only, letters/digits/hyphen). `appId` and `privateKey` are **not** read.
+  A provider with none of its keys shows as not configured. Its keys must all be non-empty strings, or that provider (only) shows as not configured. Other keys are ignored. `GITHUB_APP_SLUG` is letters/digits/hyphen.
 
-- **Create/update the secret.** Placeholders only. In Git Bash:
+- **Add or change keys.** `put-secret-value` **replaces the whole JSON**, so merge: read it, add the keys, write it back. In Git Bash, placeholders only:
 
   ```bash
-  aws secretsmanager create-secret \
-    --name todolist/<STAGE>/<SECRET_NAME> \
-    --secret-string '{"clientId":"<CLIENT_ID>","clientSecret":"<CLIENT_SECRET>"}' \
-    --region il-central-1
+  S=todolist-<STAGE>-app-secrets; F=$(mktemp)
+  aws secretsmanager get-secret-value --secret-id $S --region il-central-1 --query SecretString --output text \
+    | python -c "import sys,json; d=json.load(sys.stdin); d.update({'<KEY>':'<VALUE>','<KEY2>':'<VALUE2>'}); print(json.dumps(d))" > "$F"
+  aws secretsmanager put-secret-value --secret-id $S --secret-string "file://$(cygpath -w "$F")" --region il-central-1
+  rm -f "$F"
   ```
 
-  To replace a value later: `aws secretsmanager put-secret-value --secret-id todolist/<STAGE>/<SECRET_NAME> --secret-string '...' --region il-central-1`. PowerShell mangles inner quotes: write the JSON to a temp file and pass `--secret-string file://<PATH>`, then delete the file.
+  Or in the console: Secrets Manager, the secret, Retrieve secret value, Edit, add the rows, Save.
 
-- **Tokens of users** are sealed in the credential vault, never in these secrets. The stage Lambda can read only `todolist/<stage>/*`.
+- **Tokens of users** are sealed in the credential vault, never in this secret. The stage Lambda can read only `todolist-<stage>-app-secrets`.
 - **Adding a new secret name** (code change first): `docs/dashboard/DEPLOY-PLAN.md`, "App secrets in Secrets Manager".
 - **Fallback.** If you skip a provider on a stage, its "Connect with" button shows as not configured and the user can still paste their own token.
 
@@ -96,16 +98,26 @@ With any method, the app never edits, closes or comments on anything at the prov
 
 Scopes the code requests (`GOOGLE_CALENDAR_OAUTH_SCOPES` in `server/src/services/googleOAuthClient.ts`): `openid`, `email`, `https://www.googleapis.com/auth/calendar.events`, `https://www.googleapis.com/auth/calendar.calendarlist.readonly`. The last two are required: if the user unticks one, the connection fails with `oauth_scope_missing`. Also sent: `access_type=offline`, `prompt=consent`, PKCE S256.
 
-**Setup.** Google Cloud Console: <https://console.cloud.google.com/>. App type: **Web application** OAuth client. Recommended: **three Google Cloud projects** named "TodoList (dev)", "TodoList (qa)", "TodoList (prod)", because the consent screen (name, publishing status) belongs to the project. dev and qa stay in **Testing**; prod is published and verified.
+**Setup.** Google Cloud Console: <https://console.cloud.google.com/>. App type: **Web application** OAuth client. **Three Google Cloud projects**, because the consent screen (name, publishing status) belongs to the project. dev and qa stay in **Testing**; prod is published and verified.
+
+**Done (2026-11-14).** All three projects are set up as below, and each stage's keys are in its `todolist-<stage>-app-secrets`.
+
+| Stage | Project name  | Project ID             | Name on the consent screen | Status                                 |
+| ----- | ------------- | ---------------------- | -------------------------- | -------------------------------------- |
+| dev   | ToDoList-Dev  | `todolist-dev-514720`  | ToDoList-Dev               | Testing, test user: the owner's Gmail  |
+| qa    | ToDoList-QA   | `todolist-qa`          | ToDoList-QA                | Testing, test user: the owner's Gmail  |
+| prod  | ToDoList-Prod | `todolist-prod-514721` | ToDoList                   | Testing until verified (no test users) |
+
+Project IDs are unique across all of Google Cloud and can never be renamed: `todolist-dev` and `todolist-prod` were taken, so the console added numbers. Users never see an ID. In the console, always open pages with `?project=<id>`: the console otherwise opens another project of the account.
 
 Per stage:
 
-1. Create the project "TodoList (<stage>)". Enable **Google Calendar API** (APIs & Services, Library).
+1. Create the project ("ToDoList-Dev" and so on). Enable **Google Calendar API** (APIs & Services, Library).
 2. **Google Auth Platform** (<https://console.cloud.google.com/auth/overview>), then:
-   - **Branding**: app name "TodoList (<stage>)" (for prod: "TodoList"), support email, app logo, homepage, privacy policy and terms links, and the authorized domain `shalev396.com`.
-   - **Audience**: **External**. dev/qa: leave **Testing** and add your test users. prod: **Publish app** (In production).
-   - **Data access**: add the four scopes above.
-3. **Clients, Create client, Web application**, name "TodoList (<stage>)". Authorized redirect URI (exactly one):
+   - **Branding**: app name ("ToDoList-Dev", "ToDoList-QA"; prod: "ToDoList"), support email, privacy policy `https://<stage domain>/en/legal/privacy`, terms `https://<stage domain>/en/legal/terms`, prod also the homepage `https://todolist.shalev396.com`. The authorized domain `shalev396.com` is added by itself when you add the redirect URI (step 3). No logo on dev/qa: a logo makes Google ask for verification.
+   - **Audience**: **External**. dev/qa: leave **Testing** and add your test users. prod: **Publish app** only as part of verification (below).
+   - **Data access**: add the four scopes above. Google labels `calendar.events` sensitive; the other three are non-sensitive.
+3. **Clients, Create client, Web application**, name as the project. Authorized redirect URI (exactly one):
 
    | Stage | Authorized redirect URI                                                        |
    | ----- | ------------------------------------------------------------------------------ |
@@ -115,8 +127,46 @@ Per stage:
 
    No JavaScript origins needed (the browser never calls Google with the client).
 
-4. Copy the client id and secret into Secrets Manager: `todolist/<stage>/google-calendar-oauth` (command in Conventions).
-5. **Prod only: verify.** Submit for verification (Auth Platform, Verification center). Needs: public homepage; privacy policy on the **same domain** as the homepage and linked on the consent screen; the domain verified in [Search Console](https://search.google.com/search-console) by an Owner/Editor of the project; a scope justification for `calendar.events`; an unlisted YouTube demo video of the whole consent flow (shows app name, client id in the URL bar, and what each sensitive scope does). Sensitive-scope review can take up to about 10 days. Source: [Sensitive scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification).
+4. Google shows the client secret **once**, in the "OAuth client created" dialog. Add `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` to `todolist-<stage>-app-secrets` (Conventions). Lost it? Add a new secret on the client and replace the key.
+5. **Prod only: verify.** See "Prod verification: TO DO" below.
+
+### Prod verification: TO DO
+
+Not started. Until it passes, prod stays in **Testing**: only listed test users can connect Google Calendar on prod. Sources: [Sensitive scope verification](https://developers.google.com/identity/protocols/oauth2/production-readiness/sensitive-scope-verification), [Brand verification](https://support.google.com/cloud/answer/13463073), [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy).
+
+**Console setup**
+
+- [ ] Search Console: `shalev396.com` verified as a Domain property (TXT record at the apex in Route 53) by the project owner's account.
+- [ ] Branding on prod: homepage, privacy and terms links.
+- [x] Branding on prod: app name "ToDoList", support and developer email, authorized domain `shalev396.com`.
+- [x] Data access on prod: the four scopes.
+
+**Before submitting (code and content)**
+
+1. **Prod is live and public**: `https://todolist.shalev396.com` opens without a login or a basic-auth prompt, and so do `/en/legal/privacy` and `/en/legal/terms`.
+2. **Homepage** says what the app does and why it asks for Google Calendar, and links to the privacy policy. Google checks it on its own; a page that only shows a sign-in form fails.
+3. **Same name everywhere.** The consent screen says "ToDoList"; the site says "TodoList" (`APP_DISPLAY_NAME`). Pick one spelling and use it on both, or brand verification can bounce.
+4. **Privacy policy** (`client/src/i18n/translations/en/legal.ts`): it already says what is read from Google Calendar and when the app writes. Add Google's Limited Use statement, word for word: "TodoList's use and transfer to any other app of information received from Google APIs will adhere to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements." Also say how long Google data is kept and how a user deletes it (disconnect, delete account).
+5. Optional: a 120x120 PNG logo for the consent screen (on prod only; it is part of the review).
+
+**Submit (Google Cloud console, project `todolist-prod-514721`)**
+
+1. **Demo video.** Record the whole flow in English and upload it to YouTube as **Unlisted**:
+   - sign in to TodoList on prod and click Connect with Google Calendar;
+   - Google's consent screen, with the **client ID visible in the address bar** (zoom on the URL) and the app name;
+   - tick the scopes and come back to the app;
+   - show each scope in use: the calendar list (pick a calendar: `calendar.calendarlist.readonly`), events read into the app, and an event the app creates when you set up a push (`calendar.events`).
+2. **Audience**: Publish app (Testing to In production). Confirm the dialog.
+3. **Verification Center**: Prepare for verification. Fill in:
+   - scope justification for `calendar.events`, e.g.: "ToDoList shows a user's calendar events next to their to-dos, and, only when the user sets up a push, creates and updates the calendar events for the to-dos they choose. A read-only scope is not enough because the app writes those events.";
+   - scope justification for `calendar.calendarlist.readonly` if asked: "To let the user choose which of their calendars to sync.";
+   - the YouTube link;
+   - contact email.
+4. Submit, then watch the developer contact inbox: Google's Trust & Safety team replies on that email thread and often asks for changes. Answer on the same thread.
+
+**Timing.** Brand verification: a few business days. Sensitive scopes: up to about 10 business days, longer with back-and-forth. While it is in review, the app works for test users; anyone else sees the "unverified app" screen and the 100-user cap applies.
+
+**After approval.** No warning screen and no user cap. Changing the scopes, the app name or the logo later starts a new review.
 
 **Making it available to any user.** Only published (In production) apps accept any Google account. A published but **unverified** app shows a warning screen and is capped at 100 users (Google's support pages; verify the current cap in the console). Verified apps have no cap.
 
@@ -140,7 +190,7 @@ The code uses a **GitHub App**, not an OAuth App: `server/src/services/oauth/pro
 
 Per stage:
 
-1. **GitHub App name**: "TodoList (<stage>)". Names are unique across all of GitHub: if taken, use "TodoList dev - <yourname>". Homepage URL: the stage domain.
+1. **GitHub App name**: "ToDoList-Dev" / "ToDoList-QA" / "ToDoList-Prod". Names are unique across all of GitHub: if taken, add a suffix ("ToDoList-Dev-<yourname>"). Homepage URL: the stage domain.
 2. **Callback URL** (one is enough; GitHub allows up to 10):
 
    | Stage | Callback URL                                                          |
@@ -153,7 +203,7 @@ Per stage:
 4. **Permissions** (from the previous runbook, unchanged by the code): Repository: Metadata (read), Issues (**read and write**; the write is used only when a user creates a to-do in GitHub), Pull requests (read). Organization: Projects (read).
 5. **Where can this GitHub App be installed?**: **Any account**.
 6. Create the app. Copy the **Client ID**, then **Generate a new client secret**.
-7. Store `todolist/<stage>/oauth-github` with `{"clientId":"<CLIENT_ID>","clientSecret":"<CLIENT_SECRET>","appSlug":"<APP_SLUG>"}`. `appSlug` is the last part of the app's public URL `github.com/apps/<slug>`; it is optional and only makes the "install" link open your app.
+7. Add `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` and `GITHUB_APP_SLUG` to `todolist-<stage>-app-secrets` (Conventions). `GITHUB_APP_SLUG` is the last part of the app's public URL `github.com/apps/<slug>`; it is optional and only makes the "install" link open your app.
 
 **Making it available to any user.** "Any account" is the setting. A user connects, then installs the app on the repos/orgs they want (the card shows the install link). The user token reaches only repos where the app is installed and that the user can access.
 
@@ -174,7 +224,7 @@ Scopes the code requests (`providers.ts`): `read:jira-work`, `read:jira-user`, `
 
 Per stage:
 
-1. **Create, OAuth 2.0 integration**. Name "TodoList (<stage>)". Accept the terms.
+1. **Create, OAuth 2.0 integration**. Name "ToDoList-Dev" / "ToDoList-QA" / "ToDoList-Prod". Accept the terms.
 2. **Permissions**: add **Jira API** (configure) and enable `read:jira-work`, `read:jira-user` and `write:jira-work` (the last one so the later consent works); add **User identity API** (configure) with `read:me`. `offline_access` is requested in the URL, not enabled here.
 3. **Authorization**: add the callback URL (one field; it must equal the `redirect_uri` the server sends):
 
@@ -186,7 +236,7 @@ Per stage:
 
 4. **Distribution**: Edit, set status **Sharing**, enter the vendor name and the privacy policy URL (reported as required; the docs page says only "enable sharing"), and save. Without this the app is private and nobody but you can connect.
 5. **Settings**: copy the **Client ID** and **Secret**.
-6. Store `todolist/<stage>/oauth-jira` with `{"clientId":"<CLIENT_ID>","clientSecret":"<CLIENT_SECRET>"}`.
+6. Add `JIRA_CLIENT_ID` and `JIRA_CLIENT_SECRET` to `todolist-<stage>-app-secrets` (Conventions).
 
 **Making it available to any user.** After sharing is on, any Atlassian user can authorize it and picks the site(s) at consent. The app lists the sites of the grant; the owner chooses which to read.
 
@@ -207,7 +257,7 @@ No scopes (ClickUp has none; the app can do what the user can in the chosen Work
 
 Per stage:
 
-1. **Create new app**, name "TodoList (<stage>)".
+1. **Create new app**, name "ToDoList-Dev" / "ToDoList-QA" / "ToDoList-Prod".
 2. **Redirect URL(s)**:
 
    | Stage | Redirect URL                                                           |
@@ -217,7 +267,7 @@ Per stage:
    | prod  | `https://todolist.shalev396.com/api/public/oauth/clickup/callback`     |
 
 3. Copy the **client id** and **secret**.
-4. Store `todolist/<stage>/oauth-clickup` with `{"clientId":"<CLIENT_ID>","clientSecret":"<CLIENT_SECRET>"}`.
+4. Add `CLICKUP_CLIENT_ID` and `CLICKUP_CLIENT_SECRET` to `todolist-<stage>-app-secrets` (Conventions).
 
 **Making it available to any user.** There is no publish or sharing step in the docs: the user picks the Workspaces to authorize on ClickUp's page. The docs do not say whether users outside your Workspace can authorize: **test with a second account** before relying on it. If a user cannot, they use the personal API token fallback.
 
@@ -236,7 +286,7 @@ Scopes the code requests: `read` (comma separated in the URL). Later consent add
 
 Per stage:
 
-1. **New OAuth application**: name "TodoList (<stage>)", developer name, developer URL, description, logo.
+1. **New OAuth application**: name "ToDoList-Dev" / "ToDoList-QA" / "ToDoList-Prod", developer name, developer URL, description, logo.
 2. **Callback URLs**:
 
    | Stage | Callback URL                                                          |
@@ -248,7 +298,7 @@ Per stage:
 3. Turn **Public** on, so other workspaces can install it. Default is private. Not stated in Linear's own docs beyond the manifest `private`/`public` field: confirm in the form.
 4. If the form has a **refresh tokens** switch, turn it on (a third-party guide says apps created before March 2026 needed it; verify).
 5. Copy the **Client ID** and **Client secret**.
-6. Store `todolist/<stage>/oauth-linear` with `{"clientId":"<CLIENT_ID>","clientSecret":"<CLIENT_SECRET>"}`.
+6. Add `LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` to `todolist-<stage>-app-secrets` (Conventions).
 
 **Making it available to any user.** Public on. A workspace admin may need to approve the app for their workspace (not stated in the docs: verify).
 
@@ -284,7 +334,7 @@ Nothing blocks three apps per provider. What you handle yourself:
 | Verification before real users  | Google (prod)                                                | Privacy policy, homepage, verified domain `shalev396.com`, demo video, justification. Allow 10+ days.        |
 | Testing mode                    | Google (dev, qa)                                             | Add test users; refresh tokens last 7 days; reconnect weekly.                                                |
 | Distribution details            | Jira                                                         | Vendor name + privacy policy on Distribution for each of the 3 apps. Optional review for the warning screen. |
-| Unique app name                 | GitHub                                                       | Names are global: add a suffix if "TodoList (dev)" is taken.                                                 |
+| Unique app name                 | GitHub                                                       | Names are global: add a suffix if "ToDoList-Dev" is taken.                                                   |
 | Admin approval on the user side | Jira site admins, GitHub org owners, Linear workspace admins | Not yours to fix. The user falls back to their own API token.                                                |
 | Cross-workspace test            | ClickUp, Linear                                              | Test once with an account outside your workspace.                                                            |
 | Pooled quota                    | Jira                                                         | 65,000 points/hour shared by all users; watch it as usage grows.                                             |

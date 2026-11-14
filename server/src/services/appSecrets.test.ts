@@ -1,15 +1,15 @@
 /**
- * App secrets (services/appSecrets.ts): the allow-list; the Secrets Manager read, by name under the
- * stage's prefix, kept for an hour and read again after; that the environment is never read; and
- * the test seam (setAppSecretsForTests). Secrets Manager is a stub on the SDK client, so no AWS
- * call is made. Every value is FAKE.
+ * App secrets (services/appSecrets.ts): the allow-list and its keys; the one Secrets Manager read
+ * of `todolist-<stage>-app-secrets`, kept for an hour and read again after; each name getting its
+ * own fields only; that the environment is never read; and the test seam (setAppSecretsForTests).
+ * Secrets Manager is a stub on the SDK client, so no AWS call is made. Every value is FAKE.
  */
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 
-import { appSecretsPrefix, STAGES } from '../../infra/lib/constants.js';
+import { appSecretName, STAGES } from '../../infra/lib/constants.js';
 import {
   APP_SECRET_TTL_MS,
   APP_SECRETS,
@@ -20,6 +20,7 @@ import {
   setAppSecretsForTests,
   type AppSecretFailure,
   type AppSecretName,
+  type AppSecretSpec,
 } from './appSecrets.js';
 import { googleOAuthCredentials } from './googleOAuthClient.js';
 
@@ -97,20 +98,38 @@ async function reasonOf(promise: Promise<unknown>): Promise<AppSecretFailure> {
   return (await failure(promise)).reason;
 }
 
-const openrouterJson = (apiKey: string): string => JSON.stringify({ apiKey });
+/** The stage secret's text: a flat JSON object of UPPER_SNAKE keys. */
+const stageJson = (keys: Record<string, unknown>): string => JSON.stringify(keys);
+const openrouterJson = (apiKey: string): string => stageJson({ OPENROUTER_API_KEY: apiKey });
+const GOOGLE_KEYS = {
+  GOOGLE_CALENDAR_CLIENT_ID: FAKE_GOOGLE.clientId,
+  GOOGLE_CALENDAR_CLIENT_SECRET: FAKE_GOOGLE.clientSecret,
+};
 
 describe('the allow-list', () => {
-  it('holds exactly the six app secrets, each a plain Secrets Manager name', () => {
+  it('holds exactly the six app secrets, each with its own UPPER_SNAKE keys', () => {
     assert.deepEqual(Object.keys(APP_SECRETS).sort(), NAMES);
+    const keys: string[] = [];
     for (const name of NAMES) {
       assert.match(name, /^[a-z0-9]+(?:-[a-z0-9]+)*$/);
-      assert.ok(APP_SECRETS[name].length > 0, `${name} names no field`);
-      for (const stage of STAGES) {
-        assert.equal(`${appSecretsPrefix(stage)}${name}`, `todolist/${stage}/${name}`);
+      const spec: AppSecretSpec = APP_SECRETS[name];
+      assert.ok(Object.keys(spec.required).length > 0, `${name} names no field`);
+      for (const key of [...Object.values(spec.required), ...Object.values(spec.optional ?? {})]) {
+        assert.match(key, /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/, key);
+        keys.push(key);
       }
     }
-    assert.deepEqual(APP_SECRETS['google-calendar-oauth'], ['clientId', 'clientSecret']);
-    assert.deepEqual(APP_SECRETS.openrouter, ['apiKey']);
+    assert.equal(new Set(keys).size, keys.length, 'a key is shared by two names');
+    assert.deepEqual(APP_SECRETS['google-calendar-oauth'].required, {
+      clientId: 'GOOGLE_CALENDAR_CLIENT_ID',
+      clientSecret: 'GOOGLE_CALENDAR_CLIENT_SECRET',
+    });
+    assert.deepEqual(APP_SECRETS.openrouter.required, { apiKey: 'OPENROUTER_API_KEY' });
+    assert.deepEqual(APP_SECRETS['oauth-github'].optional, { appSlug: 'GITHUB_APP_SLUG' });
+  });
+
+  it('names one secret per stage, todolist-<stage>-app-secrets', () => {
+    for (const stage of STAGES) assert.equal(appSecretName(stage), `todolist-${stage}-app-secrets`);
   });
 
   it('knows its own names and nothing inherited', () => {
@@ -135,27 +154,51 @@ describe('the allow-list', () => {
 
 describe('Secrets Manager (deployed stages)', () => {
   for (const stage of STAGES) {
-    it(`ENV=${stage} reads todolist/${stage}/<name> by name, with GetSecretValue`, async () => {
+    it(`ENV=${stage} reads todolist-${stage}-app-secrets by name, with GetSecretValue`, async () => {
       onStage(stage);
       const asked = stubSecretsManager(answers(openrouterJson(FAKE_KEY)));
       const secret = await getAppSecret<{ apiKey: string }>('openrouter');
-      assert.equal(secret.apiKey, FAKE_KEY);
+      assert.deepEqual(secret, { apiKey: FAKE_KEY });
       assert.ok(Object.isFrozen(secret));
-      assert.deepEqual(asked, [`todolist/${stage}/openrouter`]);
+      assert.deepEqual(asked, [`todolist-${stage}-app-secrets`]);
     });
   }
 
-  it('reads each secret once for the hour, however many calls, concurrent ones included', async () => {
+  it("hands each name its own fields only, never another name's keys", async () => {
+    onStage('dev');
+    stubSecretsManager(
+      answers(
+        stageJson({
+          ...GOOGLE_KEYS,
+          OPENROUTER_API_KEY: FAKE_KEY,
+          JIRA_CLIENT_ID: 'FAKE-jira-id',
+          JIRA_CLIENT_SECRET: 'FAKE-jira-secret',
+          SOMETHING_ELSE: 'FAKE-other',
+        }),
+      ),
+    );
+    assert.deepEqual(await getAppSecret('google-calendar-oauth'), FAKE_GOOGLE);
+    assert.deepEqual(await getAppSecret('oauth-jira'), {
+      clientId: 'FAKE-jira-id',
+      clientSecret: 'FAKE-jira-secret',
+    });
+    assert.deepEqual(await getAppSecret('openrouter'), { apiKey: FAKE_KEY });
+  });
+
+  it('reads the secret once for the hour, for every name, concurrent calls included', async () => {
     mock.timers.enable({ apis: ['Date'], now: START });
     onStage('dev');
-    const asked = stubSecretsManager(answers(openrouterJson(FAKE_KEY)));
+    const asked = stubSecretsManager(
+      answers(stageJson({ ...GOOGLE_KEYS, OPENROUTER_API_KEY: FAKE_KEY })),
+    );
     const concurrent = await Promise.all(
       Array.from({ length: 5 }, () => getAppSecret<{ apiKey: string }>('openrouter')),
     );
     assert.ok(concurrent.every((secret) => secret.apiKey === FAKE_KEY));
     mock.timers.tick(APP_SECRET_TTL_MS / 2);
     await getAppSecret('openrouter');
-    assert.deepEqual(asked, ['todolist/dev/openrouter']);
+    await getAppSecret('google-calendar-oauth');
+    assert.deepEqual(asked, ['todolist-dev-app-secrets']);
   });
 
   it('reads it again once the hour is up, and serves the new value (rotation)', async () => {
@@ -172,29 +215,26 @@ describe('Secrets Manager (deployed stages)', () => {
     mock.timers.tick(1);
     assert.equal((await getAppSecret<{ apiKey: string }>('openrouter')).apiKey, 'FAKE-new');
     assert.equal((await getAppSecret<{ apiKey: string }>('openrouter')).apiKey, 'FAKE-new');
-    assert.deepEqual(asked, ['todolist/qa/openrouter', 'todolist/qa/openrouter']);
+    assert.deepEqual(asked, ['todolist-qa-app-secrets', 'todolist-qa-app-secrets']);
   });
 
-  it('keeps each secret, and each stage prefix, on its own', async () => {
-    onStage('dev');
+  it('keeps each stage on its own', async () => {
     const asked = stubSecretsManager((secretId) =>
-      Promise.resolve({
-        SecretString: secretId.endsWith('openrouter')
-          ? openrouterJson(FAKE_KEY)
-          : JSON.stringify({ clientId: 'FAKE-jira-id', clientSecret: 'FAKE-jira-secret' }),
-      }),
+      Promise.resolve({ SecretString: openrouterJson(`FAKE-${secretId}`) }),
     );
-    await getAppSecret('openrouter');
-    await getAppSecret('oauth-jira');
-    await getAppSecret('openrouter');
-    await getAppSecret('oauth-jira');
+    onStage('dev');
+    assert.equal(
+      (await getAppSecret<{ apiKey: string }>('openrouter')).apiKey,
+      'FAKE-todolist-dev-app-secrets',
+    );
     onStage('prod');
+    assert.equal(
+      (await getAppSecret<{ apiKey: string }>('openrouter')).apiKey,
+      'FAKE-todolist-prod-app-secrets',
+    );
+    onStage('dev');
     await getAppSecret('openrouter');
-    assert.deepEqual(asked, [
-      'todolist/dev/openrouter',
-      'todolist/dev/oauth-jira',
-      'todolist/prod/openrouter',
-    ]);
+    assert.deepEqual(asked, ['todolist-dev-app-secrets', 'todolist-prod-app-secrets']);
   });
 
   it('never keeps a failed read: the next call reads again', async () => {
@@ -211,7 +251,7 @@ describe('Secrets Manager (deployed stages)', () => {
     assert.equal(asked.length, 2);
   });
 
-  it('names each failure: missing, unavailable, invalid', async () => {
+  it('names each failure of the read: missing, unavailable', async () => {
     onStage('prod');
     for (const [name, reason] of [
       ['ResourceNotFoundException', 'missing'],
@@ -228,35 +268,64 @@ describe('Secrets Manager (deployed stages)', () => {
     }
   });
 
-  it('refuses a value that is not a JSON object with the registry fields, and passes others through', async () => {
+  it('refuses a secret that is not a JSON object, for every name', async () => {
     onStage('dev');
-    const bad: (string | undefined)[] = [
-      undefined, // a binary secret: no SecretString
-      '',
-      'FAKE-not-json',
-      '[]',
-      '"FAKE-a-string"',
-      'null',
-      '{}',
-      '{"clientId":"FAKE-id"}',
-      '{"clientId":"FAKE-id","clientSecret":""}',
-      '{"clientId":"FAKE-id","clientSecret":7}',
-      '{"clientId":["FAKE-id"],"clientSecret":"FAKE-secret"}',
-    ];
-    for (const text of bad) {
+    for (const text of [undefined, '', 'FAKE-not-json', '[]', '"FAKE-a-string"', 'null', '7']) {
       mock.restoreAll();
       resetAppSecretsForTests();
       stubSecretsManager(answers(text));
       assert.equal(await reasonOf(getAppSecret('oauth-github')), 'invalid', String(text));
+      assert.equal(await reasonOf(getAppSecret('openrouter')), 'invalid', String(text));
     }
+  });
+
+  it("is missing when none of a name's keys is set: {} configures nothing", async () => {
+    onStage('dev');
+    stubSecretsManager(answers('{}'));
+    for (const name of NAMES) assert.equal(await reasonOf(getAppSecret(name)), 'missing', name);
+  });
+
+  it('is invalid when only some keys are set or one is not a non-empty string, for that name only', async () => {
+    onStage('dev');
+    const bad: Record<string, unknown>[] = [
+      { GITHUB_CLIENT_ID: 'FAKE-id' },
+      { GITHUB_CLIENT_SECRET: 'FAKE-secret' },
+      { GITHUB_CLIENT_ID: 'FAKE-id', GITHUB_CLIENT_SECRET: '' },
+      { GITHUB_CLIENT_ID: 'FAKE-id', GITHUB_CLIENT_SECRET: 7 },
+      { GITHUB_CLIENT_ID: ['FAKE-id'], GITHUB_CLIENT_SECRET: 'FAKE-secret' },
+      { GITHUB_CLIENT_ID: null, GITHUB_CLIENT_SECRET: 'FAKE-secret' },
+    ];
+    for (const keys of bad) {
+      mock.restoreAll();
+      resetAppSecretsForTests();
+      stubSecretsManager(answers(stageJson({ ...keys, OPENROUTER_API_KEY: FAKE_KEY })));
+      assert.equal(await reasonOf(getAppSecret('oauth-github')), 'invalid', JSON.stringify(keys));
+      assert.equal((await getAppSecret<{ apiKey: string }>('openrouter')).apiKey, FAKE_KEY);
+    }
+  });
+
+  it('passes an optional field on only when it is a string', async () => {
+    onStage('dev');
+    const keys = { GITHUB_CLIENT_ID: 'FAKE-id', GITHUB_CLIENT_SECRET: 'FAKE-secret' };
+    stubSecretsManager(answers(stageJson({ ...keys, GITHUB_APP_SLUG: 'todolist-dev' })));
+    assert.deepEqual(await getAppSecret('oauth-github'), {
+      clientId: 'FAKE-id',
+      clientSecret: 'FAKE-secret',
+      appSlug: 'todolist-dev',
+    });
     mock.restoreAll();
     resetAppSecretsForTests();
-    stubSecretsManager(
-      answers('{"clientId":"FAKE-id","clientSecret":"FAKE-secret","appId":"12345","n":{"a":1}}'),
-    );
-    const secret = await getAppSecret<{ clientId: string; appId: string }>('oauth-github');
-    assert.equal(secret.clientId, 'FAKE-id');
-    assert.equal(secret.appId, '12345');
+    stubSecretsManager(answers(stageJson({ ...keys, GITHUB_APP_SLUG: 7 })));
+    assert.deepEqual(await getAppSecret('oauth-github'), {
+      clientId: 'FAKE-id',
+      clientSecret: 'FAKE-secret',
+    });
+  });
+
+  it('reads no inherited key', async () => {
+    onStage('dev');
+    stubSecretsManager(answers('{"__proto__":{"OPENROUTER_API_KEY":"FAKE-inherited"}}'));
+    assert.equal(await reasonOf(getAppSecret('openrouter')), 'missing');
   });
 
   it('is not configured for a stage it does not know: no read at all', async () => {
@@ -271,29 +340,27 @@ describe('Secrets Manager (deployed stages)', () => {
 
 describe('the environment is never read', () => {
   for (const stage of STAGES) {
-    it(`ENV=${stage}: an APP_SECRET_* or the older Google pair stands in for nothing`, async () => {
+    it(`ENV=${stage}: an APP_SECRET_*, a key of the secret or the older Google pair stands in for nothing`, async () => {
       onStage(stage);
       Object.assign(process.env, {
-        APP_SECRET_OPENROUTER: openrouterJson('FAKE-from-env'),
+        APP_SECRET_OPENROUTER: JSON.stringify({ apiKey: 'FAKE-from-env' }),
         APP_SECRET_GOOGLE_CALENDAR_OAUTH: JSON.stringify(FAKE_GOOGLE),
+        GOOGLE_CALENDAR_CLIENT_ID: FAKE_GOOGLE.clientId,
+        GOOGLE_CALENDAR_CLIENT_SECRET: FAKE_GOOGLE.clientSecret,
         GOOGLE_OAUTH_CLIENT_ID: FAKE_GOOGLE.clientId,
         GOOGLE_OAUTH_CLIENT_SECRET: FAKE_GOOGLE.clientSecret,
       });
-      const asked = stubSecretsManager((secretId) =>
-        secretId.endsWith('openrouter')
-          ? Promise.resolve({ SecretString: openrouterJson('FAKE-from-aws') })
-          : Promise.reject(sdkError('ResourceNotFoundException')),
-      );
+      const asked = stubSecretsManager(answers(openrouterJson('FAKE-from-aws')));
       assert.equal((await getAppSecret<{ apiKey: string }>('openrouter')).apiKey, 'FAKE-from-aws');
       assert.equal(await reasonOf(getAppSecret('google-calendar-oauth')), 'missing');
       assert.equal(await googleOAuthCredentials(), null);
-      assert.ok(asked.every((secretId) => secretId.startsWith(`todolist/${stage}/`)));
+      assert.deepEqual(asked, [`todolist-${stage}-app-secrets`]);
     });
   }
 });
 
 describe('setAppSecretsForTests', () => {
-  it("answers a test's values, checked like a read, and never Secrets Manager", async () => {
+  it("answers a test's values, by field, checked like a read, and never Secrets Manager", async () => {
     onStage('dev');
     const asked = stubSecretsManager(answers(openrouterJson('FAKE-from-aws')));
     setAppSecretsForTests({ openrouter: { apiKey: FAKE_KEY }, 'oauth-jira': { clientId: 'x' } });
@@ -311,23 +378,29 @@ describe('setAppSecretsForTests', () => {
 describe('googleOAuthCredentials, the call site', () => {
   it('returns the id and secret of google-calendar-oauth (deployed), and nothing more', async () => {
     onStage('dev');
-    const asked = stubSecretsManager(answers(JSON.stringify({ ...FAKE_GOOGLE, extra: 'FAKE-x' })));
+    const asked = stubSecretsManager(answers(stageJson({ ...GOOGLE_KEYS, EXTRA: 'FAKE-x' })));
     assert.deepEqual(await googleOAuthCredentials(), FAKE_GOOGLE);
     assert.deepEqual(await googleOAuthCredentials(), FAKE_GOOGLE);
-    assert.deepEqual(asked, ['todolist/dev/google-calendar-oauth']);
+    assert.deepEqual(asked, ['todolist-dev-app-secrets']);
   });
 
-  it('is null when the secret does not exist, and a generic error when it cannot be read', async () => {
+  it('is null when not set, and a generic error when it cannot be read', async () => {
     onStage('qa');
     stubSecretsManager(() => Promise.reject(sdkError('ResourceNotFoundException')));
     assert.equal(await googleOAuthCredentials(), null);
     mock.restoreAll();
+    resetAppSecretsForTests();
+    stubSecretsManager(answers('{}'));
+    assert.equal(await googleOAuthCredentials(), null);
+    mock.restoreAll();
+    resetAppSecretsForTests();
     stubSecretsManager(() => Promise.reject(sdkError('AccessDeniedException')));
     await assert.rejects(googleOAuthCredentials(), {
       message: 'The Google Calendar OAuth secret could not be read',
     });
     mock.restoreAll();
-    stubSecretsManager(answers('{"clientId":"FAKE-id"}'));
+    resetAppSecretsForTests();
+    stubSecretsManager(answers(stageJson({ GOOGLE_CALENDAR_CLIENT_ID: 'FAKE-id' })));
     await assert.rejects(googleOAuthCredentials(), {
       message: 'The Google Calendar OAuth secret could not be read',
     });

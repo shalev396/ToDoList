@@ -1,16 +1,24 @@
 /**
- * App-level secrets: this app's own OAuth clients and API keys, one JSON secret each. Users'
- * provider tokens are not here: they stay sealed in the credential vault (services/crypto/).
+ * App-level secrets: this app's own OAuth clients and API keys. Users' provider tokens are not
+ * here: they stay sealed in the credential vault (services/crypto/).
  *
- * They live in Secrets Manager only, by name `todolist/<stage>/<name>`, the prefix derived from ENV
- * (appSecretsPrefix in infra/lib/constants.ts); CDK grants GetSecretValue under it only. A value
- * read is kept in memory for an hour at most (per secret, per cold start), then read again; a
+ * They live in ONE Secrets Manager secret per stage, `todolist-<stage>-app-secrets` (appSecretName
+ * in infra/lib/constants.ts; the auto-content-creation pattern): a flat JSON object of UPPER_SNAKE
+ * keys, e.g. `{"GOOGLE_CALENDAR_CLIENT_ID":"…","GOOGLE_CALENDAR_CLIENT_SECRET":"…"}`. The backend
+ * deploy creates it as `{}` when missing and never writes it after (scripts/app-secret.ts); the keys
+ * are filled by hand. CDK grants GetSecretValue on that one secret only.
+ *
+ * Callers ask by logical name (APP_SECRETS) and get that name's fields only, never the rest of the
+ * secret: `getAppSecret('oauth-github')` is `{ clientId, clientSecret, appSlug? }`. A name none of
+ * whose required keys is in the secret is `missing` (its provider shows as not configured); a name
+ * with only some of them, or one that is not a non-empty string, is `invalid`.
+ *
+ * The secret read is kept in memory for an hour at most (per cold start), then read again; a
  * failed read is never kept, so the next call tries again. A value is never taken from the
- * environment. Tests hand in their own values (setAppSecretsForTests).
+ * environment. Tests hand in their own values, by logical name (setAppSecretsForTests).
  *
- * Only the names in APP_SECRETS can be read. A value is never logged, put in an error or attached
- * as a cause: logs and errors carry the name and the kind of failure only, because an SDK message
- * or a JSON parse error can quote what it read.
+ * A value is never logged, put in an error or attached as a cause: logs and errors carry names and
+ * the kind of failure only, because an SDK message or a JSON parse error can quote what it read.
  *
  * The stage is read from the process environment when called, not through the `environment`
  * singleton (which reads it once, at import).
@@ -19,43 +27,60 @@
  */
 import type { SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 
-import { appSecretsPrefix, isStage } from '../../infra/lib/constants.js';
+import { appSecretName, isStage } from '../../infra/lib/constants.js';
 import { assertUnderTest } from '../config/testSwitches.js';
 import { logger } from './logger.js';
 
+/** One logical secret: each field the caller gets, and the key it is read from in the stage secret. */
+export interface AppSecretSpec {
+  /** Each must be a non-empty string. */
+  readonly required: Readonly<Record<string, string>>;
+  /** Passed on when a string, left out otherwise; the caller checks it. */
+  readonly optional?: Readonly<Record<string, string>>;
+}
+
 /**
- * The allow-list: each app secret's name and the fields its JSON must carry as non-empty strings
- * (any other field passes through unchecked). Its Secrets Manager name is `todolist/<stage>/<name>`.
+ * The allow-list: each logical app secret, its fields and their keys in
+ * `todolist-<stage>-app-secrets`. A key not listed here is never handed to anyone.
  */
 export const APP_SECRETS = {
   /** The Google Calendar OAuth client (INTEGRATIONS-SETUP.md §1). */
-  'google-calendar-oauth': ['clientId', 'clientSecret'],
+  'google-calendar-oauth': {
+    required: {
+      clientId: 'GOOGLE_CALENDAR_CLIENT_ID',
+      clientSecret: 'GOOGLE_CALENDAR_CLIENT_SECRET',
+    },
+  },
   /** The OpenRouter API key. */
-  openrouter: ['apiKey'],
+  openrouter: { required: { apiKey: 'OPENROUTER_API_KEY' } },
   /** Provider OAuth clients (INTEGRATIONS-SETUP.md §3 to §6). */
-  'oauth-github': ['clientId', 'clientSecret'],
-  'oauth-jira': ['clientId', 'clientSecret'],
-  'oauth-clickup': ['clientId', 'clientSecret'],
-  'oauth-linear': ['clientId', 'clientSecret'],
-} as const satisfies Readonly<Record<string, readonly string[]>>;
+  'oauth-github': {
+    required: { clientId: 'GITHUB_CLIENT_ID', clientSecret: 'GITHUB_CLIENT_SECRET' },
+    optional: { appSlug: 'GITHUB_APP_SLUG' },
+  },
+  'oauth-jira': { required: { clientId: 'JIRA_CLIENT_ID', clientSecret: 'JIRA_CLIENT_SECRET' } },
+  'oauth-clickup': {
+    required: { clientId: 'CLICKUP_CLIENT_ID', clientSecret: 'CLICKUP_CLIENT_SECRET' },
+  },
+  'oauth-linear': {
+    required: { clientId: 'LINEAR_CLIENT_ID', clientSecret: 'LINEAR_CLIENT_SECRET' },
+  },
+} as const satisfies Readonly<Record<string, AppSecretSpec>>;
 
 export type AppSecretName = keyof typeof APP_SECRETS;
 
-/** A secret's JSON as read: an object whose registry fields are non-empty strings. */
+/** A logical secret as handed out: its fields, frozen. */
 export type AppSecretJson = Readonly<Record<string, unknown>>;
 
-/** How long a value read from Secrets Manager is used before the next call reads it again. */
+/** How long the secret read from Secrets Manager is used before the next call reads it again. */
 export const APP_SECRET_TTL_MS = 60 * 60 * 1000;
-
-/** A Secrets Manager name prefix ending in `/`, e.g. `todolist/dev/`. */
-const PREFIX_SHAPE = /^[A-Za-z0-9/_+=.@-]+\/$/;
 
 /**
  * Why a read failed:
  * - `unknown`: not a name in APP_SECRETS (a bug in the caller);
- * - `missing`: there is no such secret (or no prefix: not a stage);
+ * - `missing`: the stage secret does not exist, none of the name's keys is in it, or no stage;
  * - `unavailable`: Secrets Manager did not hand it over (access, throttling, network, KMS);
- * - `invalid`: not a JSON object with the registry fields as non-empty strings.
+ * - `invalid`: the secret is not a JSON object, or the name's keys are not all non-empty strings.
  */
 export type AppSecretFailure = 'unknown' | 'missing' | 'unavailable' | 'invalid';
 
@@ -74,38 +99,61 @@ export function isAppSecretName(value: unknown): value is AppSecretName {
   return typeof value === 'string' && Object.hasOwn(APP_SECRETS, value);
 }
 
-function invalid(name: AppSecretName): AppSecretError {
-  return new AppSecretError(
-    'invalid',
-    `App secret "${name}" is not a JSON object with ${APP_SECRETS[name].join(', ')}`,
-  );
+/**
+ * The fields of `name`, each read through `read(field, key)`: `missing` when no required one is
+ * set, `invalid` when any is not a non-empty string. The object is frozen.
+ */
+function project(
+  name: AppSecretName,
+  read: (field: string, key: string) => unknown,
+): AppSecretJson {
+  const spec: AppSecretSpec = APP_SECRETS[name];
+  const required = Object.entries(spec.required);
+  if (required.every(([field, key]) => read(field, key) === undefined)) {
+    throw new AppSecretError('missing', `App secret "${name}" is not set`);
+  }
+  const out: Record<string, string> = {};
+  for (const [field, key] of required) {
+    const value = read(field, key);
+    if (typeof value !== 'string' || value === '') {
+      throw new AppSecretError(
+        'invalid',
+        `App secret "${name}" needs ${Object.values(spec.required).join(', ')} as non-empty strings`,
+      );
+    }
+    out[field] = value;
+  }
+  for (const [field, key] of Object.entries(spec.optional ?? {})) {
+    const value = read(field, key);
+    if (typeof value === 'string') out[field] = value;
+  }
+  return Object.freeze(out);
 }
 
-/** The secret's JSON, checked against the registry and frozen; any failure is generic. */
-function parseSecret(name: AppSecretName, text: string | undefined): AppSecretJson {
+/** A JSON object, or a generic `invalid` (a parse error quotes its input). */
+function parseObject(text: string | undefined): Readonly<Record<string, unknown>> {
   let parsed: unknown = null;
   try {
     parsed = JSON.parse(text ?? '');
   } catch {
-    // Falls through to the generic error: a parse error quotes its input.
+    // Falls through to the generic error.
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) throw invalid(name);
-  const json = parsed as Record<string, unknown>;
-  for (const field of APP_SECRETS[name]) {
-    const value = json[field];
-    if (typeof value !== 'string' || value === '') throw invalid(name);
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new AppSecretError('invalid', 'The app secrets are not a JSON object');
   }
-  return Object.freeze(json);
+  return Object.freeze(parsed as Record<string, unknown>);
 }
 
 // ─── Secrets Manager ────────────────────────────────────────────────────────
 
+type StageSecret = Readonly<Record<string, unknown>>;
+
 interface CacheEntry {
-  readonly value: Promise<AppSecretJson>;
+  readonly value: Promise<StageSecret>;
   readonly expiresAt: number;
 }
 
-/** Keyed by the full secret name, so a different prefix never sees another's value. */
+/** Keyed by the secret's name, so one stage never sees another's value. */
 const cache = new Map<string, CacheEntry>();
 let client: SecretsManagerClient | null = null;
 
@@ -118,7 +166,7 @@ async function readSecretString(secretId: string): Promise<string | undefined> {
   return SecretString;
 }
 
-async function fetchSecret(name: AppSecretName, secretId: string): Promise<AppSecretJson> {
+async function fetchStageSecret(secretId: string): Promise<StageSecret> {
   let text: string | undefined;
   try {
     text = await readSecretString(secretId);
@@ -126,32 +174,33 @@ async function fetchSecret(name: AppSecretName, secretId: string): Promise<AppSe
     // The error's name only: its message can carry ARNs, and its cause the response.
     const errorName = error instanceof Error ? error.name : typeof error;
     if (errorName === 'ResourceNotFoundException') {
-      logger.warn('App secret not found in Secrets Manager', { name, errorName });
-      throw new AppSecretError('missing', `App secret "${name}" does not exist in Secrets Manager`);
+      logger.warn('App secrets not found in Secrets Manager', { secretId, errorName });
+      throw new AppSecretError('missing', 'The app secrets do not exist in Secrets Manager');
     }
-    logger.error('App secret could not be read', { name, errorName });
-    throw new AppSecretError('unavailable', `App secret "${name}" could not be read`);
+    logger.error('App secrets could not be read', { secretId, errorName });
+    throw new AppSecretError('unavailable', 'The app secrets could not be read');
   }
   try {
-    return parseSecret(name, text);
+    return parseObject(text);
   } catch (error) {
-    logger.error('App secret is not in its expected JSON shape', { name });
+    logger.error('App secrets are not a JSON object', { secretId });
     throw error;
   }
 }
 
-function readDeployed(name: AppSecretName, prefix: string): Promise<AppSecretJson> {
-  if (!PREFIX_SHAPE.test(prefix)) {
+function readDeployed(): Promise<StageSecret> {
+  const env = process.env.ENV;
+  if (!isStage(env)) {
     return Promise.reject(
       new AppSecretError('missing', 'App secrets are not configured on this server'),
     );
   }
-  const secretId = `${prefix}${name}`;
+  const secretId = appSecretName(env);
   const now = Date.now();
   const hit = cache.get(secretId);
   if (hit !== undefined && now < hit.expiresAt) return hit.value;
   // Concurrent callers share this one read until it settles.
-  const value = fetchSecret(name, secretId);
+  const value = fetchStageSecret(secretId);
   const entry: CacheEntry = { value, expiresAt: now + APP_SECRET_TTL_MS };
   cache.set(secretId, entry);
   void value.catch(() => {
@@ -160,7 +209,7 @@ function readDeployed(name: AppSecretName, prefix: string): Promise<AppSecretJso
   return value;
 }
 
-/** What a test hands in instead of Secrets Manager: each secret's JSON, by name. */
+/** What a test hands in instead of Secrets Manager: each logical secret's fields, by name. */
 export type AppSecretsForTests = Partial<Record<AppSecretName, object>>;
 
 let valuesForTests: AppSecretsForTests | null = null;
@@ -171,24 +220,32 @@ function readForTests(name: AppSecretName, values: AppSecretsForTests): AppSecre
   if (value === undefined) {
     throw new AppSecretError('missing', `App secret "${name}" is not set`);
   }
-  return parseSecret(name, JSON.stringify(value));
+  const fields = value as Record<string, unknown>;
+  return project(name, (field) => (Object.hasOwn(fields, field) ? fields[field] : undefined));
 }
 
 /**
- * The JSON of app secret `name`, as `T`: the registry's fields are checked to be non-empty
- * strings; anything else in `T` is the caller's to check. The object is frozen and shared: read
- * it, never change or log it. Throws AppSecretError (see AppSecretFailure).
+ * The fields of app secret `name`, as `T`: the required ones are checked to be non-empty strings,
+ * an optional one is there only when a string. The object is frozen and shared: read it, never
+ * change or log it. Throws AppSecretError (see AppSecretFailure).
  */
 export async function getAppSecret<T extends object = AppSecretJson>(
   name: AppSecretName,
 ): Promise<T> {
   // A name from a computed string is not echoed: it could be anything.
   if (!isAppSecretName(name)) throw new AppSecretError('unknown', 'Unknown app secret name');
-  const json =
-    valuesForTests !== null
-      ? readForTests(name, valuesForTests)
-      : await readDeployed(name, isStage(process.env.ENV) ? appSecretsPrefix(process.env.ENV) : '');
-  return json as T;
+  if (valuesForTests !== null) return readForTests(name, valuesForTests) as T;
+  const secret = await readDeployed();
+  try {
+    return project(name, (_field, key) =>
+      Object.hasOwn(secret, key) ? secret[key] : undefined,
+    ) as T;
+  } catch (error) {
+    if (error instanceof AppSecretError && error.reason === 'invalid') {
+      logger.error('App secret is not in its expected shape', { name });
+    }
+    throw error;
+  }
 }
 
 /**

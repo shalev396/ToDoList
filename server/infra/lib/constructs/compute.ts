@@ -17,7 +17,7 @@ import {
   type LayerManifest,
 } from '../../../scripts/paths.js';
 import type { StageConfig } from '../config.js';
-import { APP_DISPLAY_NAME, appSecretsPrefix, S3_PREFIXES } from '../constants.js';
+import { APP_DISPLAY_NAME, appSecretName, S3_PREFIXES } from '../constants.js';
 import { resourceName } from '../naming.js';
 
 export interface ComputeProps {
@@ -96,7 +96,6 @@ export class Compute extends Construct {
       ],
     });
 
-    const secretsPrefix = appSecretsPrefix(config.stage);
     // Plumbing only (the stage and resource ids): no variable switches the app's behaviour. The
     // function finds its own name in AWS_LAMBDA_FUNCTION_NAME, which Lambda sets itself.
     const environment = {
@@ -177,9 +176,9 @@ export class Compute extends Construct {
       }),
     );
 
-    // App secrets: GetSecretValue on this stage's own `todolist/<stage>/` names, and no other secret.
-    // The `*` also covers the random `-xxxxxx` suffix Secrets Manager adds to every secret's ARN;
-    // the trailing slash keeps other stages out.
+    // App secrets: GetSecretValue on this stage's one `todolist-<stage>-app-secrets`, and no other
+    // secret. The six `?` match the random `-xxxxxx` suffix Secrets Manager adds to the secret's
+    // ARN, exactly: no `*`, so no longer name sharing the prefix is reached.
     this.function.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['secretsmanager:GetSecretValue'],
@@ -187,7 +186,7 @@ export class Compute extends Construct {
           Stack.of(this).formatArn({
             service: 'secretsmanager',
             resource: 'secret',
-            resourceName: `${secretsPrefix}*`,
+            resourceName: `${appSecretName(config.stage)}-??????`,
             arnFormat: ArnFormat.COLON_RESOURCE_NAME,
           }),
         ],

@@ -1217,7 +1217,7 @@
 						{
 							"Action": "secretsmanager:GetSecretValue",
 							"Effect": "Allow",
-							"Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:todolist/dev/*"
+							"Resource": "arn:aws:secretsmanager:us-east-1:123456789012:secret:todolist-dev-app-secrets-??????"
 						},
 						{
 							"Action": "ses:SendEmail",

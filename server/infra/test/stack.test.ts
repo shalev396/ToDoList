@@ -15,7 +15,7 @@ import {
 } from '../lib/config.js';
 import {
   APP_NAME,
-  appSecretsPrefix,
+  appSecretName,
   DEFAULT_REGION,
   OUTPUTS,
   S3_PREFIXES,
@@ -336,9 +336,8 @@ for (const stage of STAGES) {
       });
     });
 
-    it('derives the app-secret prefix in code: no variable, no value, no ARN', () => {
-      const prefix = `todolist/${stage}/`;
-      assert.equal(appSecretsPrefix(stage), prefix);
+    it('derives the app-secret name in code: no variable, no value, no ARN', () => {
+      assert.equal(appSecretName(stage), `todolist-${stage}-app-secrets`);
       // The one function: HTTP, maintenance actions and sync jobs share this environment.
       const layered = Object.values(resources).filter(
         (r) => r.Type === 'AWS::Lambda::Function' && r.Properties?.['Layers'] !== undefined,
@@ -353,13 +352,14 @@ for (const stage of STAGES) {
           [],
         );
       }
-      // The secrets themselves are made by hand: CDK holds no value, and no output names one.
+      // The secret lives outside the stack (the deploy script creates it, its keys are filled by
+      // hand): CDK holds no value, and no output names it.
       template.resourceCountIs('AWS::SecretsManager::Secret', 0);
       assert.doesNotMatch(JSON.stringify(template.toJSON()['Outputs']), /secretsmanager|Secret/);
     });
 
-    it("grants GetSecretValue on this stage's todolist/<stage>/ secrets and nothing else", () => {
-      const prefix = `todolist/${stage}/`;
+    it("grants GetSecretValue on this stage's todolist-<stage>-app-secrets and nothing else", () => {
+      const name = `todolist-${stage}-app-secrets`;
       const statements = Object.values(resources).flatMap((r) => {
         if (r.Type === 'AWS::IAM::Policy' || r.Type === 'AWS::IAM::ManagedPolicy') {
           return (r.Properties?.['PolicyDocument'] as { Statement: Statement[] }).Statement;
@@ -386,7 +386,7 @@ for (const stage of STAGES) {
       assert.equal(grant['Action'], 'secretsmanager:GetSecretValue');
       assert.equal(grant['Condition'], undefined);
       const arnPrefix = `arn:aws:secretsmanager:${DEFAULT_REGION}:${FIXTURE_ACCOUNT}:secret:`;
-      assert.equal(grant['Resource'], `${arnPrefix}${prefix}*`);
+      assert.equal(grant['Resource'], `${arnPrefix}${name}-??????`);
 
       // IAM's matching (`*` any run of characters, `?` one): which secret ARNs the grant reaches.
       // Secrets Manager appends `-` and six random characters to every secret's name.
@@ -394,30 +394,24 @@ for (const stage of STAGES) {
       const reaches = new RegExp(
         `^${literal(grant['Resource']).replace(/\*/g, '.*').replace(/\?/g, '.')}$`,
       );
-      const arn = (name: string): string => `${arnPrefix}${name}-AbC123`;
-      for (const name of [
-        'google-calendar-oauth',
-        'openrouter',
-        'oauth-github',
-        'oauth-jira',
-        'oauth-clickup',
-        'oauth-linear',
-      ]) {
-        assert.match(arn(`${prefix}${name}`), reaches, name);
-      }
+      const arn = (secret: string): string => `${arnPrefix}${secret}-AbC123`;
+      assert.match(arn(name), reaches, name);
       for (const outside of [
-        ...STAGES.filter((other) => other !== stage).map((other) => `todolist/${other}/openrouter`),
-        `todolist/${stage}-old/openrouter`,
-        `todolist/${stage}`,
-        `todolist-${stage}/openrouter`,
-        `todolist/openrouter`,
-        `${stage}/openrouter`,
-        `elytra/${stage}/openrouter`,
+        ...STAGES.filter((other) => other !== stage).map(
+          (other) => `todolist-${other}-app-secrets`,
+        ),
+        `${name}-old`,
+        `${name}2`,
+        `todolist-${stage}-app`,
+        `todolist/${stage}/openrouter`,
+        `todolist/${stage}/google-calendar-oauth`,
+        `elytra-${stage}-app-secrets`,
+        `auto-content-creation-${stage}-app-secrets`,
       ]) {
         assert.doesNotMatch(arn(outside), reaches, outside);
       }
       assert.doesNotMatch(
-        `arn:aws:secretsmanager:${DEFAULT_REGION}:210987654321:secret:${prefix}openrouter-AbC123`,
+        `arn:aws:secretsmanager:${DEFAULT_REGION}:210987654321:secret:${name}-AbC123`,
         reaches,
         'another account',
       );

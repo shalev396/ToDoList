@@ -122,7 +122,11 @@ const savedEnv: Record<string, string | undefined> = { ...process.env };
 
 function setStage(env: Record<string, string>): void {
   for (const key of Object.keys(process.env)) {
-    if (key.startsWith('APP_SECRET') || key.startsWith('GOOGLE_OAUTH_')) {
+    if (
+      key.startsWith('APP_SECRET') ||
+      key.startsWith('GOOGLE_OAUTH_') ||
+      key === 'OPENROUTER_API_KEY'
+    ) {
       Reflect.deleteProperty(process.env, key);
     }
   }
@@ -175,13 +179,13 @@ describe('app secrets: no value in an error', () => {
   it('the payload is not JSON, and the parse error would quote it', async () => {
     setStage(DEV);
     for (const [scenario, text] of [
-      ['an unquoted value', `{"clientId": ${VALUES.clientId}, "clientSecret": "x"}`],
+      ['an unquoted value', `{"JIRA_CLIENT_ID": ${VALUES.clientId}, "JIRA_CLIENT_SECRET": "x"}`],
       ['a bare value', VALUES.clientSecret],
       [
         'a cut-off object',
-        `{"clientId":"${VALUES.clientId}","clientSecret":"${VALUES.clientSecret}`,
+        `{"JIRA_CLIENT_ID":"${VALUES.clientId}","JIRA_CLIENT_SECRET":"${VALUES.clientSecret}`,
       ],
-      ['a trailing comma', `{"clientId":"${VALUES.clientId}",}`],
+      ['a trailing comma', `{"JIRA_CLIENT_ID":"${VALUES.clientId}",}`],
     ] as const) {
       mock.restoreAll();
       stubSecretsManager(() => Promise.resolve({ SecretString: text }));
@@ -192,9 +196,16 @@ describe('app secrets: no value in an error', () => {
   it('the payload is JSON of the wrong shape around a real-looking value', async () => {
     setStage(DEV);
     for (const [scenario, value] of [
-      ['secret missing', { clientId: VALUES.clientId }],
-      ['secret not a string', { clientId: VALUES.clientId, clientSecret: [VALUES.clientSecret] }],
-      ['secret empty', { clientId: VALUES.clientId, clientSecret: '' }],
+      ['secret missing', { CLICKUP_CLIENT_ID: VALUES.clientId }],
+      [
+        'secret not a string',
+        { CLICKUP_CLIENT_ID: VALUES.clientId, CLICKUP_CLIENT_SECRET: [VALUES.clientSecret] },
+      ],
+      ['secret empty', { CLICKUP_CLIENT_ID: VALUES.clientId, CLICKUP_CLIENT_SECRET: '' }],
+      [
+        'id not a string',
+        { CLICKUP_CLIENT_ID: { v: VALUES.clientId }, CLICKUP_CLIENT_SECRET: 'x' },
+      ],
       ['an array of values', [VALUES.clientId, VALUES.clientSecret]],
       ['a JSON string', VALUES.clientSecret],
     ] as const) {
@@ -217,6 +228,7 @@ describe('app secrets: no value in an error', () => {
         APP_SECRET_OPENROUTER: JSON.stringify({ apiKey: VALUES.envSecret }),
         GOOGLE_OAUTH_CLIENT_ID: VALUES.clientId,
         GOOGLE_OAUTH_CLIENT_SECRET: VALUES.envSecret,
+        OPENROUTER_API_KEY: VALUES.envSecret,
       });
       mock.restoreAll();
       stubSecretsManager(() => Promise.reject(echoingSdkError('AccessDeniedException')));
@@ -233,7 +245,9 @@ describe('app secrets: no value in an error', () => {
     assertLeakFree('googleOAuthCredentials: unreadable', await thrown(googleOAuthCredentials()));
     mock.restoreAll();
     stubSecretsManager(() =>
-      Promise.resolve({ SecretString: `{"clientId":"${VALUES.clientId}","clientSecret":` }),
+      Promise.resolve({
+        SecretString: `{"GOOGLE_CALENDAR_CLIENT_ID":"${VALUES.clientId}","GOOGLE_CALENDAR_CLIENT_SECRET":`,
+      }),
     );
     assertLeakFree('googleOAuthCredentials: malformed', await thrown(googleOAuthCredentials()));
   });
@@ -245,8 +259,9 @@ describe('app secrets: no value in a log line', () => {
     stubSecretsManager(() =>
       Promise.resolve({
         SecretString: JSON.stringify({
-          clientId: VALUES.clientId,
-          clientSecret: VALUES.clientSecret,
+          GOOGLE_CALENDAR_CLIENT_ID: VALUES.clientId,
+          GOOGLE_CALENDAR_CLIENT_SECRET: VALUES.clientSecret,
+          OPENROUTER_API_KEY: VALUES.apiKey,
         }),
       }),
     );
