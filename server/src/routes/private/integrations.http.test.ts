@@ -256,16 +256,13 @@ describe('GET /workspaces/:wid/integrations', () => {
   it('lists the caller’s own integrations only, oldest first, with exactly the status keys', async () => {
     const wid = await newWorkspace();
     const jira = await connect(wid, JIRA_BODY);
-    const moodle = await connect(wid, {
-      provider: 'moodle',
-      config: { siteUrl: 'https://moodle.example.ac.il' },
-    });
+    const clickup = await connect(wid, { provider: 'clickup', config: {} });
     const mine = await call('GET', path(wid));
     assert.equal(mine.status, 200, mine.text);
     const list = statusList(mine);
     assert.deepEqual(
       list.map((view) => view.id),
-      [jira.id, moodle.id],
+      [jira.id, clickup.id],
     );
     for (const view of list) assert.deepEqual(Object.keys(view).sort(), STATUS_KEYS);
     // On no block yet: private to its owner.
@@ -340,22 +337,43 @@ describe('POST /workspaces/:wid/integrations', () => {
     ]);
   });
 
-  it('takes a label and a topic, and Google Calendar’s auth method', async () => {
+  it('takes a label and a topic', async () => {
     const wid = await newWorkspace();
     const college = await topicOf(wid, 'college');
     const view = await connect(wid, {
-      provider: 'google_calendar',
-      label: 'My calendar',
+      provider: 'clickup',
+      label: 'My ClickUp',
       topicId: college,
-      authMethod: 'service_account',
-      config: { calendars: [{ id: 'primary', mode: 'read' }] },
+      config: {},
     });
     const stored = await integrationDoc(wid, view.id);
     assert.deepEqual(
       [view.accountLabel, stored?.topicId, stored?.authMethod, stored?.mode],
-      ['My calendar', college, 'service_account', 'read'],
+      ['My ClickUp', college, 'personal_token', 'read'],
     );
     assert.match(stored?.accountId ?? '', /^pending:/);
+  });
+
+  it('refuses Moodle as coming soon (400 provider_coming_soon) and creates nothing', async () => {
+    const wid = await newWorkspace();
+    const res = await call('POST', path(wid), {
+      provider: 'moodle',
+      config: { siteUrl: 'https://moodle.example.ac.il' },
+    });
+    assert.equal(res.status, 400, res.text);
+    assert.equal(res.body?.['code'], 'provider_coming_soon');
+    assert.deepEqual(statusList(await call('GET', path(wid))), []);
+  });
+
+  it('refuses Google Calendar here (it connects with Google sign-in) and creates nothing', async () => {
+    const wid = await newWorkspace();
+    const res = await call('POST', path(wid), {
+      provider: 'google_calendar',
+      authMethod: 'service_account',
+      config: { calendars: [{ id: 'primary', mode: 'read' }] },
+    });
+    assert.equal(res.status, 400, res.text);
+    assert.deepEqual(statusList(await call('GET', path(wid))), []);
   });
 
   const refused: [string, Record<string, unknown>, RegExp][] = [
@@ -379,14 +397,14 @@ describe('POST /workspaces/:wid/integrations', () => {
       /^config\.baseUrl: Must be a public host$/,
     ],
     [
-      'a Moodle site on an IPv4-mapped loopback address',
-      { provider: 'moodle', config: { siteUrl: 'https://[::ffff:127.0.0.1]' } },
-      /^config\.siteUrl: Must be a public host$/,
+      'a Jira site on an IPv4-mapped loopback address',
+      { provider: 'jira', config: { baseUrl: 'https://[::ffff:127.0.0.1]' } },
+      /^config\.baseUrl: Must be a public host$/,
     ],
     [
-      'an internal Moodle name',
-      { provider: 'moodle', config: { siteUrl: 'https://moodle.corp.internal' } },
-      /^config\.siteUrl: Must be a public host$/,
+      'an internal Jira name',
+      { provider: 'jira', config: { baseUrl: 'https://jira.corp.internal' } },
+      /^config\.baseUrl: Must be a public host$/,
     ],
     ['a ClickUp setting', { provider: 'clickup', config: { teamId: '1' } }, /^config: /],
     [
@@ -730,16 +748,7 @@ describe('PUT /workspaces/:wid/integrations/:iid/credential (write-only)', () =>
       [JIRA_BODY, JIRA],
       [LINEAR_BODY, LINEAR],
       [{ provider: 'clickup', config: {} }, { token: 'pk_12345678_FAKE0123456789ABCDEFGHIJ' }],
-      [
-        { provider: 'moodle', config: { siteUrl: 'https://m.example.ac.il' } },
-        { token: 'FAKEmoodle0123456789' },
-      ],
       [{ provider: 'github', config: { owner: 'octo', ownerType: 'org' } }, GITHUB],
-      [
-        { provider: 'google_drive', config: { rootFolderId: 'FAKEfolder0123456789' } },
-        SERVICE_ACCOUNT,
-      ],
-      [{ provider: 'google_calendar', config: { calendars: [] } }, SERVICE_ACCOUNT],
     ];
     for (const [body, secret] of cases) {
       const { id } = await connect(wid, body);
@@ -1021,30 +1030,12 @@ describe('GET /workspaces/:wid/integrations/:iid/config (R2)', () => {
       [LINEAR_BODY, LINEAR, {}],
       [{ provider: 'clickup', config: {} }, { token: 'pk_12345678_FAKE0123456789ABCDEFGHIJ' }, {}],
       [
-        { provider: 'moodle', config: { siteUrl: 'https://m.example.ac.il' } },
-        { token: 'FAKEmoodle0123456789' },
-        { siteUrl: 'https://m.example.ac.il' },
-      ],
-      [
         {
           provider: 'github',
           config: { owner: 'octo', ownerType: 'org', boards: { include: [3] } },
         },
         GITHUB,
         { owner: 'octo', ownerType: 'org', boards: { include: [3] } },
-      ],
-      [
-        { provider: 'google_drive', config: { rootFolderId: 'FAKEfolder0123456789' } },
-        SERVICE_ACCOUNT,
-        { rootFolderId: 'FAKEfolder0123456789' },
-      ],
-      [
-        {
-          provider: 'google_calendar',
-          config: { calendars: [{ id: 'primary', mode: 'two_way' }], horizonDays: 60 },
-        },
-        SERVICE_ACCOUNT,
-        { calendars: [{ id: 'primary', mode: 'two_way' }], horizonDays: 60 },
       ],
     ];
     for (const [body, secret, expected] of cases) {
@@ -1171,17 +1162,14 @@ describe('DELETE /workspaces/:wid/integrations/:iid (disconnect)', () => {
   it('hard-deletes the credential, soft-deletes the integration, its items and containers; audited', async () => {
     const wid = await newWorkspace();
     const gone = await connect(wid, JIRA_BODY);
-    const kept = await connect(wid, {
-      provider: 'moodle',
-      config: { siteUrl: 'https://m.example.ac.il' },
-    });
+    const kept = await connect(wid, { provider: 'clickup', config: {} });
     for (const { id } of [gone, kept]) {
       assert.equal(
         (
           await call(
             'PUT',
             path(wid, `/${id}/credential`),
-            id === gone.id ? JIRA : { token: 'FAKEmoodle0123456789' },
+            id === gone.id ? JIRA : { token: 'pk_12345678_FAKE0123456789ABCDEFGHIJ' },
           )
         ).status,
         204,

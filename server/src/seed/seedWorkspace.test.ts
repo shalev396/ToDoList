@@ -77,7 +77,6 @@ const EXPECTED: Record<string, { items: number; containers: number; failed: numb
   clickup: { items: 10, containers: 6, failed: 1 },
   linear: { items: 8, containers: 2, failed: 1 },
   moodle: { items: 10, containers: 3, failed: 2 },
-  'google-drive': { items: 8, containers: 5, failed: 1 },
   'google-calendar': { items: 12, containers: 2, failed: 1 },
   'github-user': { items: 12, containers: 3, failed: 1 },
   'github-org': { items: 1, containers: 1, failed: 0 },
@@ -138,7 +137,6 @@ describe('seedWorkspace', () => {
         ['clickup', 'clickup', 'work'],
         ['linear', 'linear', 'personal'],
         ['moodle', 'moodle', 'college'],
-        ['google-drive', 'google_drive', 'college'],
         ['google-calendar', 'google_calendar', 'personal'],
         ['github-user', 'github', 'personal'],
         ['github-org', 'github', 'work'],
@@ -178,7 +176,6 @@ describe('seedWorkspace', () => {
       integrations.find((integration) => integration.provider === provider)?.config;
     assert.deepEqual(config('jira'), { baseUrl: 'https://example.invalid/jira' });
     assert.deepEqual(config('moodle'), { siteUrl: 'https://example.invalid/moodle' });
-    assert.deepEqual(config('google_drive'), { rootFolderId: 'fld-notability' });
     assert.deepEqual(config('google_calendar'), {
       calendars: [
         { id: 'personal@example.invalid', mode: 'read' },
@@ -213,7 +210,7 @@ describe('seedWorkspace', () => {
     for (const failure of failures) assert.equal(stored.has(failure.externalId), false);
   });
 
-  it('puts AutoDS at work, shalev396/* in personal, acme-labs at work, Moodle and Drive in college', async () => {
+  it('puts AutoDS at work, shalev396/* in personal, acme-labs at work, Moodle in college', async () => {
     const integrations = await (await models.getIntegrationRepository()).list(workspaceId);
     const idOf = (provider: string, accountId?: string): string => {
       const found = integrations.find(
@@ -253,7 +250,6 @@ describe('seedWorkspace', () => {
       [['pr', ids.work]],
     );
     assert.deepEqual(await areasOf(idOf('moodle')), [ids.college]);
-    assert.deepEqual(await areasOf(idOf('google_drive')), [ids.college]);
     assert.equal(container('Braude Classes')['topicId'], ids.college);
     assert.ok((await itemsIn('Braude Classes')).every((item) => item['topicId'] === ids.college));
     assert.equal(container('Shalev (demo)')['topicId'], ids.personal);

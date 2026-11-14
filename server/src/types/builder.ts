@@ -30,7 +30,6 @@ export const BLOCK_TYPES = [
   'clock',
   'counter',
   'deadlines',
-  'fileTree',
   'note',
   'filter',
   'action',
@@ -505,7 +504,6 @@ export const VIZ_SCHEMAS = {
     kind: z.literal('deadlines'),
     overdueOnTop: z.boolean().optional(),
   }),
-  fileTree: z.strictObject({ kind: z.literal('fileTree') }),
   note: z.strictObject({ kind: z.literal('note') }),
   filter: z.strictObject({
     kind: z.enum(FILTER_KINDS),

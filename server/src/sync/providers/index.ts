@@ -12,6 +12,5 @@ import './jira.js';
 import './clickup.js';
 import './linear.js';
 import './google_calendar.js';
-import './google_drive.js';
 import './github.js';
 import './moodle.js';

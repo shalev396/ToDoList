@@ -17,7 +17,7 @@ import { EXEMPT_MOUNTS, MANIFEST, type Actor, type Ctx, type Entry } from './man
 import { walkRoutes } from './routeWalk.js';
 import {
   CLICKUP_CREDENTIAL,
-  DRIVE_CREDENTIAL,
+  SERVICE_ACCOUNT_CREDENTIAL,
   GITHUB_CREDENTIAL,
   ITEM_NOTE,
   ITEM_TITLE,
@@ -227,6 +227,35 @@ async function seed(): Promise<void> {
     assert.equal(put.text, '', 'the credential PUT answers with no body');
     return iid;
   };
+  const ownerId = await idOf('secrets-owner@example.test');
+  const connectDirect = async (
+    integration: {
+      provider: 'moodle' | 'google_calendar';
+      authMethod: 'moodle_ws_token' | 'service_account';
+      accountId: string;
+      config: Record<string, unknown>;
+    },
+    credential: Record<string, string>,
+  ): Promise<string> => {
+    const row = await (
+      await models.getIntegrationRepository()
+    ).create(wid, {
+      ...integration,
+      connectedBy: ownerId,
+      ownerUserId: ownerId,
+      label: integration.provider,
+      topicId: null,
+    });
+    const put = await send(
+      'owner',
+      'PUT',
+      `${base}/integrations/${row.id}/credential`,
+      `seed: credential ${integration.provider}`,
+      credential,
+    );
+    assert.equal(put.status, 204, put.text);
+    return row.id;
+  };
   const integrations: Ctx['integrations'] = {
     jira: await connect(
       { provider: 'jira', config: { baseUrl: 'https://secrets.atlassian.net' } },
@@ -234,21 +263,29 @@ async function seed(): Promise<void> {
     ),
     clickup: await connect({ provider: 'clickup', config: {} }, CLICKUP_CREDENTIAL),
     linear: await connect({ provider: 'linear', config: {} }, LINEAR_CREDENTIAL),
-    moodle: await connect(
-      { provider: 'moodle', config: { siteUrl: 'https://moodle.example.ac.il' } },
+    // Moodle and Google Calendar (a service account, the demo's method) can't be connected over
+    // REST, so these two are stored directly; their credential still goes through the route.
+    moodle: await connectDirect(
+      {
+        provider: 'moodle',
+        authMethod: 'moodle_ws_token',
+        accountId: 'moodle.example.ac.il',
+        config: { siteUrl: 'https://moodle.example.ac.il' },
+      },
       MOODLE_CREDENTIAL,
     ),
     github: await connect(
       { provider: 'github', config: { owner: 'octo', ownerType: 'org' } },
       GITHUB_CREDENTIAL,
     ),
-    drive: await connect(
-      { provider: 'google_drive', config: { rootFolderId: 'FAKEfolder0123456789' } },
-      DRIVE_CREDENTIAL,
-    ),
-    gcal: await connect(
-      { provider: 'google_calendar', config: { calendars: [] } },
-      DRIVE_CREDENTIAL,
+    gcal: await connectDirect(
+      {
+        provider: 'google_calendar',
+        authMethod: 'service_account',
+        accountId: 'gcal-service-account',
+        config: { calendars: [] },
+      },
+      SERVICE_ACCOUNT_CREDENTIAL,
     ),
   };
 
@@ -360,10 +397,14 @@ describe('credential route', () => {
     const bad: unknown[] = [
       { token: GITHUB_CREDENTIAL.token, unknown: GITHUB_CREDENTIAL.projectsToken },
       { [JIRA_CREDENTIAL.token]: LINEAR_CREDENTIAL.apiKey },
-      { apiKey: { nested: DRIVE_CREDENTIAL.privateKey } },
+      { apiKey: { nested: SERVICE_ACCOUNT_CREDENTIAL.privateKey } },
       [JIRA_CREDENTIAL.token],
       JIRA_CREDENTIAL.token,
-      { clientEmail: DRIVE_CREDENTIAL.clientEmail, privateKey: 7, kid: [CLICKUP_CREDENTIAL.token] },
+      {
+        clientEmail: SERVICE_ACCOUNT_CREDENTIAL.clientEmail,
+        privateKey: 7,
+        kid: [CLICKUP_CREDENTIAL.token],
+      },
     ];
     for (const [provider, iid] of Object.entries(ctx.integrations)) {
       for (const body of bad) {
@@ -396,7 +437,7 @@ describe('credential route', () => {
       'GET /api/private/workspaces/:wid/integrations',
     );
     const list = sent.json?.['data'] as Record<string, unknown>[];
-    check(list.length === 7, `seven integrations listed, got ${String(list.length)}`);
+    check(list.length === 6, `six integrations listed, got ${String(list.length)}`);
     for (const status of list) {
       assert.deepEqual(Object.keys(status).sort(), [
         'accountLabel',
@@ -588,7 +629,7 @@ describe('what was seen', () => {
     const { CredentialMongoModel } = await import('../../models/mongoose/Credential.js');
     const documents = await CredentialMongoModel.find({}).select('+enc');
     check(
-      documents.length >= 6,
+      documents.length >= 5,
       `expected the sealed credentials, found ${String(documents.length)}`,
     );
     for (const document of documents) {

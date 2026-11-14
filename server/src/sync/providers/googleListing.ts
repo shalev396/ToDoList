@@ -1,6 +1,6 @@
 /**
  * Bounds on the Google listings. A listing that would not end (a page token given twice) or that
- * is larger than any real calendar or Notability backup fails its resource instead of running on.
+ * is larger than any real calendar fails its resource instead of running on.
  * A resource that throws is neither swept nor has its state saved (runSync), so the records it
  * never reached are kept.
  *
@@ -11,7 +11,7 @@ import { logger } from '../../services/logger.js';
 import type { Provider } from '../../types/domain.js';
 import { ListingTooLargeError } from '../types.js';
 
-export type ListingBound = 'pages' | 'repeated_page_token' | 'folders' | 'depth';
+export type ListingBound = 'pages' | 'repeated_page_token';
 
 /** The error for a listing past `bound`, logged with its limit (fixed text and numbers only). */
 export function listingOutOfBounds(

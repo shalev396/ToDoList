@@ -1,6 +1,7 @@
 /**
- * Google service-account auth, shared by the google_calendar and google_drive adapters (DATA.md §8:
- * secret `{clientEmail, privateKey}`, the calendar or folder shared with the account).
+ * Google service-account auth, for the google_calendar adapter's fixture-mode
+ * (demo) calendar (secret `{clientEmail, privateKey}`, the calendar shared with the account). Users
+ * connect Google Calendar with Google sign-in (OAuth), never this.
  *
  * Each resource of a run signs an RS256 JWT (RFC 7523: issuer = the account, audience = the token
  * endpoint, one hour) with node:crypto and trades it for an access token through the client's one
@@ -15,7 +16,6 @@ import { GOOGLE_TOKEN_URL, ProviderHttpError } from '../http.js';
 import type { AdapterContext } from '../types.js';
 
 export const CALENDAR_READONLY_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
-export const DRIVE_READONLY_SCOPE = 'https://www.googleapis.com/auth/drive.readonly';
 export const JWT_BEARER_GRANT = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
 
 /** Google's maximum assertion lifetime: `exp − iat` never exceeds it. */

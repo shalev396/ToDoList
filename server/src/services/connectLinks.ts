@@ -18,6 +18,7 @@ import { AppError } from '../errors/AppError.js';
 import { getAuditLogRepository, getReplayNonceRepository } from '../models/index.js';
 import { CONNECTABLE_PROVIDERS, type ConnectableProvider } from '../types/integrations.js';
 import type { WorkspaceContext } from './accessFilter.js';
+import { assertProviderOpen } from './integrationConfig.js';
 import { assertRole, type IntegrationActor } from './integrations.js';
 
 export const CONNECT_LINK_TTL_MS = 10 * 60 * 1000;
@@ -57,6 +58,7 @@ export async function createConnectLink(
   now: Date,
 ): Promise<ConnectLink> {
   assertRole(ctx, 'editor');
+  assertProviderOpen(provider);
   const rawLink = randomBytes(32).toString('base64url');
   const expiresAt = new Date(now.getTime() + CONNECT_LINK_TTL_MS);
   await (

@@ -22,6 +22,7 @@ import type { WorkspaceContext } from '../accessFilter.js';
 import { connectOAuthIntegration } from '../integrationConnect.js';
 import { findOwnIntegration } from '../integrationOwnership.js';
 import { assertRole, type IntegrationActor } from '../integrations.js';
+import { googleOAuthCredentials } from '../googleOAuthClient.js';
 import { logger } from '../logger.js';
 import { getWorkspaceContext } from '../workspaceContext.js';
 import { oauthAppCredentials, oauthClient } from './client.js';
@@ -233,11 +234,6 @@ async function providerInfo(def: OAuthProviderDef): Promise<OAuthProviderInfo> {
   return {
     provider: def.id,
     configured: credentials !== null,
-    callbackUrl: providerRedirectUri(def.id),
-    scopes: def.scopes,
-    writeScopes: def.writeScopes,
-    consoleUrl: def.consoleUrl,
-    secretName: `todolist/${environment.env}/${def.secretName}`,
     installUrl:
       def.id === 'github'
         ? slug === undefined
@@ -248,26 +244,19 @@ async function providerInfo(def: OAuthProviderDef): Promise<OAuthProviderInfo> {
 }
 
 /**
- * Any member: every provider's sign-in setup, for the cards and the setup guides (editors and
- * owners connect their own; a viewer may reconnect their own). No secret: names and URLs only.
+ * Any member: whether each provider (Google Calendar too) can sign in on this stage, for the
+ * cards (editors and owners connect their own; a viewer may reconnect their own). No secret.
  */
 export async function listOAuthProviders(ctx: WorkspaceContext): Promise<OAuthProvidersResponse> {
   assertRole(ctx, 'viewer');
   const providers = await Promise.all(Object.values(OAUTH_PROVIDER_DEFS).map(providerInfo));
-  // Prod shows no setup guide (the page says sign-in isn't available yet): no secret names there.
+  const google = (await googleOAuthCredentials()) !== null;
   return {
     stage: environment.env,
-    providers:
-      environment.env === 'prod'
-        ? providers.map((info) => ({
-            ...info,
-            callbackUrl: '',
-            consoleUrl: '',
-            secretName: '',
-            scopes: [],
-            writeScopes: [],
-          }))
-        : providers,
+    providers: [
+      ...providers,
+      { provider: 'google_calendar', configured: google, installUrl: null },
+    ],
   };
 }
 

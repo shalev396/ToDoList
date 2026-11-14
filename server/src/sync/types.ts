@@ -20,8 +20,7 @@
  * `source.externalId` must be unique per integration: among its items whatever their `kind`, and
  * among its containers whatever their `type`. The natural key (workspaceId, provider, accountId,
  * externalId) ignores kind and type, so two kinds of record that share an id space would
- * overwrite each other on every run. Prefix them: Moodle `assign:<id>` and `event:<id>`, Drive
- * `file:<id>` and `folder:<id>`; `containerExternalId` then names the prefixed id.
+ * overwrite each other on every run. Prefix them: Moodle `assign:<id>` and `event:<id>`; `containerExternalId` then names the prefixed id.
  */
 import type { ContainerUpsert } from '../models/definitions/Container.js';
 import type { ErrorInfo } from '../models/definitions/common.js';

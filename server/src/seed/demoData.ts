@@ -2,7 +2,7 @@
  * What the demo workspace holds (DECISIONS D17: the demo's specifics live only in the seed). The
  * integrations' config must name exactly what the adapters' fixtures were recorded against
  * (task-T3.3 reports): fixtures mode matches requests by origin and path, so any other Jira base
- * URL, Moodle site, Drive folder, calendar or GitHub owner ends the sync as `fixtures_missing`.
+ * URL, Moodle site, calendar or GitHub owner ends the sync as `fixtures_missing`.
  *
  * Data only, with no environment read.
  */
@@ -51,19 +51,13 @@ export const DEMO_INTEGRATIONS: readonly DemoIntegration[] = [
     fixtureSet: 'v1',
   },
   {
+    // Moodle is "coming soon" for users (createIntegration refuses it); the demo keeps its sample
+    // items, which the seed creates directly (DECISIONS: Moodle is coming soon).
     key: 'moodle',
     provider: 'moodle',
     label: 'Braude Moodle',
     authMethod: 'moodle_ws_token',
     config: { siteUrl: 'https://example.invalid/moodle' },
-    fixtureSet: 'v1',
-  },
-  {
-    key: 'google-drive',
-    provider: 'google_drive',
-    label: 'Notability backup',
-    authMethod: 'service_account',
-    config: { rootFolderId: 'fld-notability' },
     fixtureSet: 'v1',
   },
   {

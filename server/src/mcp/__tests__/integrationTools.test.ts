@@ -168,6 +168,12 @@ describe('integrations_start_connect', () => {
     assert.ok(ttl > 9.9 * 60_000 && ttl <= 10 * 60_000 + 5_000, String(ttl));
   });
 
+  it('refuses Moodle: it is coming soon, so there is nothing to connect yet', async () => {
+    const result = await call(ownerKey, 'integrations_start_connect', { provider: 'moodle' });
+    assert.equal(result.isError, true);
+    assert.match(errorText(result), /coming soon/);
+  });
+
   it('stores the link only as its hash, in the audit log', async () => {
     const link = await startConnect('jira');
     const { AuditLogMongoModel } = await import('../../models/mongoose/AuditLog.js');

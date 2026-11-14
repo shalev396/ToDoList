@@ -15,7 +15,6 @@ describe('domain enums (shared with the client)', () => {
       'slack',
       'github',
       'notion',
-      'google_drive',
       'local',
     ]);
     assert.deepEqual(domain.ITEM_KINDS, [
@@ -25,7 +24,6 @@ describe('domain enums (shared with the client)', () => {
       'event',
       'assignment',
       'deadline',
-      'file',
       'message',
       'pr',
     ]);

@@ -32,6 +32,8 @@ export const ERROR_CODES = [
   'password_policy',
   // Integrations
   'account_already_connected',
+  /** A provider that is listed but cannot be connected yet (Moodle). */
+  'provider_coming_soon',
   // Creating a to-do in a provider too (H5)
   'provider_writes_off',
   'create_rate_limited',

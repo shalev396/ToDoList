@@ -61,7 +61,7 @@ function integration(
 const where = (...rules: unknown[]): unknown => ({ combinator: 'and', rules });
 
 describe('in the migrations list', () => {
-  it('owners, then former members’ integrations, then block connectors, after importance', async () => {
+  it('owners, then former members’ integrations, then block connectors, after importance; the Drive clean-up last', async () => {
     const { MIGRATIONS } = await import('./index.js');
     assert.deepEqual(
       MIGRATIONS.map(({ id }) => id),
@@ -72,6 +72,7 @@ describe('in the migrations list', () => {
         '2026-11-14-integration-owners',
         '2026-11-14-orphaned-integrations',
         '2026-11-14-block-connectors',
+        '2026-11-15-remove-google-drive',
       ],
     );
   });
@@ -136,13 +137,13 @@ describe('block connectors', () => {
     },
     // A provider the creator has none of: no field (reads what each viewer may see).
     {
-      id: 'blk_drive',
-      type: 'fileTree',
-      title: 'Files',
-      viz: { kind: 'fileTree' },
+      id: 'blk_notion',
+      type: 'list',
+      title: 'Notes',
+      viz: { kind: 'list' },
       query: {
         source: 'items',
-        where: where({ field: 'source.provider', operator: '=', value: 'google_drive' }),
+        where: where({ field: 'source.provider', operator: '=', value: 'notion' }),
       },
     },
     // A saved view: its query's provider filter.
@@ -227,7 +228,7 @@ describe('block connectors', () => {
       assert.deepEqual(byId.get('blk_rule')?.['query'], { source: 'items' });
       assert.deepEqual(byId.get('blk_jira')?.['connectors'], ['jira-a', 'jira-a2']);
       assert.deepEqual(byId.get('blk_all')?.['connectors'], ['jira-a', 'gh-a', 'jira-a2', 'local']);
-      assert.equal('connectors' in (byId.get('blk_drive') ?? {}), false, 'absent, never []');
+      assert.equal('connectors' in (byId.get('blk_notion') ?? {}), false, 'absent, never []');
       assert.deepEqual(byId.get('blk_view')?.['connectors'], ['gh-a']);
       assert.equal('connectors' in (byId.get('blk_note') ?? {}), false);
       assert.deepEqual(byId.get('blk_done')?.['connectors'], ['local']);
@@ -248,7 +249,7 @@ describe('block connectors', () => {
   it('changes nothing the second time, even after the creator connects more', async () => {
     await raw
       .collection('Integrations')
-      .insertOne(integration('drive-a', 'u-creator', 'google_drive', { ownerUserId: 'u-creator' }));
+      .insertOne(integration('drive-a', 'u-creator', 'notion', { ownerUserId: 'u-creator' }));
     const before = await raw.collection('Dashboards').findOne({ _id: 'd-1' as never });
     assert.deepEqual(await blockConnectors.run(raw, NOW), { dashboards: 0, blocks: 0 });
     const after = await raw.collection('Dashboards').findOne({ _id: 'd-1' as never });

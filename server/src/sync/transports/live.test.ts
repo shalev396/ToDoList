@@ -531,7 +531,7 @@ describe('liveTransport: no redirect for anything but a GET', () => {
       },
     };
     const client = createReadOnlyClient({
-      provider: 'google_drive',
+      provider: 'google_calendar',
       transport: toServerA,
       clock: instantClock,
       tokenExchangeUrl: GOOGLE_TOKEN_URL,

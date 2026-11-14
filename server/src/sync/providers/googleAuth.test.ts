@@ -20,7 +20,6 @@ import { fixtureTransport } from '../transports/fixtures.js';
 import {
   bearerHeaders,
   CALENDAR_READONLY_SCOPE,
-  DRIVE_READONLY_SCOPE,
   JWT_BEARER_GRANT,
   serviceAccountToken,
   signServiceAccountAssertion,
@@ -66,9 +65,9 @@ function formOf(request: HttpRequest | undefined): Record<string, string> {
 describe('signServiceAccountAssertion', () => {
   it('signs an RS256 JWT for the token endpoint: issuer, scope, one hour', () => {
     const account = fakeServiceAccount();
-    const jwt = signServiceAccountAssertion('google_drive', account.secret.privateKey, {
+    const jwt = signServiceAccountAssertion('google_calendar', account.secret.privateKey, {
       clientEmail: FAKE_CLIENT_EMAIL,
-      scope: DRIVE_READONLY_SCOPE,
+      scope: CALENDAR_READONLY_SCOPE,
       issuedAt: NOW_S,
     });
     const decoded = decodeJwt(jwt, account.publicKey);
@@ -76,7 +75,7 @@ describe('signServiceAccountAssertion', () => {
     assert.deepEqual(decoded.header, { alg: 'RS256', typ: 'JWT' });
     assert.deepEqual(decoded.claims, {
       iss: FAKE_CLIENT_EMAIL,
-      scope: 'https://www.googleapis.com/auth/drive.readonly',
+      scope: 'https://www.googleapis.com/auth/calendar.readonly',
       aud: 'https://oauth2.googleapis.com/token',
       iat: NOW_S,
       exp: NOW_S + 3600,
@@ -88,9 +87,9 @@ describe('signServiceAccountAssertion', () => {
     const account = fakeServiceAccount();
     const escaped = account.secret.privateKey.replace(/\n/g, '\\n');
     assert.ok(!escaped.includes('\n'));
-    const jwt = signServiceAccountAssertion('google_drive', escaped, {
+    const jwt = signServiceAccountAssertion('google_calendar', escaped, {
       clientEmail: FAKE_CLIENT_EMAIL,
-      scope: DRIVE_READONLY_SCOPE,
+      scope: CALENDAR_READONLY_SCOPE,
       issuedAt: NOW_S,
     });
     assert.equal(decodeJwt(jwt, account.publicKey).verified, true);
@@ -152,8 +151,8 @@ describe('serviceAccountToken', () => {
     const transport = tokenEndpoint();
     await serviceAccountToken(
       { client: client(transport), secret: account.secret, now: NOW },
-      'google_drive',
-      DRIVE_READONLY_SCOPE,
+      'google_calendar',
+      CALENDAR_READONLY_SCOPE,
     );
     const { claims } = decodeJwt(formOf(transport.seen[0])['assertion'] ?? '', account.publicKey);
     assert.deepEqual([claims['iat'], claims['exp']], [NOW_S - 60, NOW_S - 60 + 3600]);
@@ -170,8 +169,8 @@ describe('serviceAccountToken', () => {
     ]);
     const token = await serviceAccountToken(
       { client: client(transport), secret: {}, now: NOW },
-      'google_drive',
-      DRIVE_READONLY_SCOPE,
+      'google_calendar',
+      CALENDAR_READONLY_SCOPE,
     );
     assert.equal(token, ACCESS_TOKEN);
     assert.deepEqual(formOf(transport.calls[0]), {
@@ -189,8 +188,8 @@ describe('serviceAccountToken', () => {
           secret: { clientEmail: FAKE_CLIENT_EMAIL, privateKey: FAKE_UNUSABLE_PEM },
           now: NOW,
         },
-        'google_drive',
-        DRIVE_READONLY_SCOPE,
+        'google_calendar',
+        CALENDAR_READONLY_SCOPE,
       ),
       (error: unknown) => error instanceof ProviderHttpError && error.code === 'auth_failed',
     );

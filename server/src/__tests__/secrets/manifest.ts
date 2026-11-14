@@ -26,10 +26,7 @@ export interface Ctx {
   agentKeyId: string;
   /** Members of the main workspace, for the member routes. */
   memberIds: { patched: string; removed: string };
-  integrations: Record<
-    'jira' | 'clickup' | 'linear' | 'moodle' | 'github' | 'drive' | 'gcal',
-    string
-  >;
+  integrations: Record<'jira' | 'clickup' | 'linear' | 'moodle' | 'github' | 'gcal', string>;
 }
 
 export type Actor = 'owner' | 'member' | 'throwaway' | 'anon';

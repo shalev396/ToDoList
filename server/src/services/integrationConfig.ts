@@ -20,7 +20,11 @@ import { AppError } from '../errors/AppError.js';
 import { PENDING_ACCOUNT_PREFIX, type IntegrationData } from '../models/definitions/Integration.js';
 import { AUTH_METHODS, type AuthMethod, type IntegrationMode } from '../types/domain.js';
 import type { DefaultTopicSlug } from '../types/topics.js';
-import { CONNECTABLE_PROVIDERS, type ConnectableProvider } from '../types/integrations.js';
+import {
+  COMING_SOON_PROVIDERS,
+  CONNECTABLE_PROVIDERS,
+  type ConnectableProvider,
+} from '../types/integrations.js';
 import { assertPublicHttpsUrl, UnsafeUrlError } from './netGuard.js';
 import { issueText, safeSegment } from '../utils/validation.js';
 import { findSecrets } from './secretPatterns.js';
@@ -168,12 +172,6 @@ const providerConfigSchemas = (allowLocal: boolean): ConfigSchemas => ({
   }),
   linear: z.strictObject({}),
   moodle: z.strictObject({ siteUrl: httpsUrl(allowLocal) }),
-  google_drive: z.strictObject({
-    rootFolderId: z
-      .string()
-      .trim()
-      .regex(/^[A-Za-z0-9_-]{10,200}$/, 'Must be a Drive folder id'),
-  }),
   google_calendar: z.strictObject({
     calendars: z
       .array(z.strictObject({ id: CalendarId, mode: z.enum(['two_way', 'read']) }))
@@ -329,12 +327,6 @@ const RULES: Readonly<Record<ConnectableProvider, ProviderRule>> = {
     accountId: (config) => hostOf(config['siteUrl']),
     label: (config) => hostOf(config['siteUrl']),
   },
-  google_drive: {
-    authMethods: ['service_account'],
-    topic: () => 'college',
-    accountId: () => null,
-    label: () => null,
-  },
   google_calendar: {
     authMethods: ['service_account'],
     topic: () => 'personal',
@@ -360,6 +352,26 @@ export function defaultLabel(
 /** A provider the API connects (integrations made otherwise, e.g. by a seed, may be others). */
 export function isConnectableProvider(provider: string): provider is ConnectableProvider {
   return (CONNECTABLE_PROVIDERS as readonly string[]).includes(provider);
+}
+
+/** A provider that is listed but not open yet (Moodle): 400 `provider_coming_soon`. */
+export function assertProviderOpen(provider: ConnectableProvider): void {
+  if ((COMING_SOON_PROVIDERS as readonly string[]).includes(provider)) {
+    throw new AppError(400, `${provider} is coming soon and can't be connected yet`, {
+      code: 'provider_coming_soon',
+    });
+  }
+}
+
+/**
+ * Google Calendar connects with Google sign-in only (its own OAuth routes). Its service-account
+ * method stays in RULES because the demo's fixture-mode calendar reads through it.
+ */
+export function assertUserConnectable(provider: ConnectableProvider): void {
+  assertProviderOpen(provider);
+  if (provider === 'google_calendar') {
+    throw new AppError(400, 'google_calendar connects with Google sign-in');
+  }
 }
 
 export function isPlaceholderAccountId(accountId: string): boolean {
@@ -390,7 +402,7 @@ export interface ConnectionPlan {
 
 /**
  * A new integration from the owner's input: the config validated, then the provider's defaults
- * for what was not given. Default topics: jira/clickup → work, moodle/google_drive → college, linear and
+ * for what was not given. Default topics: jira/clickup → work, moodle → college, linear and
  * google_calendar → personal, github → personal for a user, work for an organization.
  */
 export function planConnection(input: ConnectionInput, options: NetOptions = {}): ConnectionPlan {

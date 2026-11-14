@@ -14,7 +14,6 @@ export const PROVIDERS = [
   'slack',
   'github',
   'notion',
-  'google_drive',
   'local',
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
@@ -26,7 +25,6 @@ export const ITEM_KINDS = [
   'event',
   'assignment',
   'deadline',
-  'file',
   'message',
   'pr',
 ] as const;

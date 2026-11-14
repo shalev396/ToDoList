@@ -13,7 +13,7 @@ export const REDACTED = '[REDACTED]';
  * Fields of a secret JSON that name the account instead of proving access to it: Jira's `email`,
  * a Google service account's `clientEmail`, and the key ids `kid` and `kidNext`.
  * They are labels, not secrets (controller ruling, T1.3 fix round 2). "Test connection" returns
- * the account email legitimately (Drive's `about.user.emailAddress` is the service account's
+ * the account email legitimately (a Google service account's
  * `clientEmail`), so the vault must neither refuse a result that carries one nor redact it.
  */
 export const IDENTITY_FIELDS: ReadonlySet<string> = new Set([

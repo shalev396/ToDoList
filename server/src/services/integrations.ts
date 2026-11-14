@@ -37,6 +37,7 @@ import {
   assertSameAccount,
   isConnectableProvider,
   parseProviderConfig,
+  assertUserConnectable,
   planConnection,
   type ConnectionInput,
 } from './integrationConfig.js';
@@ -207,6 +208,7 @@ export async function createIntegration(
   options: { demo?: boolean } = {},
 ): Promise<IntegrationData> {
   assertRole(ctx, 'editor');
+  if (options.demo !== true) assertUserConnectable(input.provider);
   const plan = planConnection(input);
   if (plan.topicId !== undefined && plan.topicId !== null)
     await assertTopicOf(ctx.id, plan.topicId);

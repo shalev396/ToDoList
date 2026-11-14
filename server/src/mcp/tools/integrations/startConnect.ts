@@ -8,7 +8,7 @@ export const integrationsStartConnect = defineTool({
   name: 'integrations_start_connect',
   title: 'Start connecting a provider',
   description:
-    'Gives a link for the user to open, signed in: the Integrations page, on the provider’s connect form, where the user connects it. The link works once, for 10 minutes, and only for the user this agent acts for. There is no tool to set, read, test or rotate what a provider needs to connect, by design: show the link to the user.',
+    'Gives a link for the user to open, signed in: the Integrations page, on the provider’s connect form, where the user connects it (Moodle is coming soon and is refused). The link works once, for 10 minutes, and only for the user this agent acts for. There is no tool to set, read, test or rotate what a provider needs to connect, by design: show the link to the user.',
   toolset: 'integrations',
   inputSchema: z.strictObject({ provider: z.enum(CONNECTABLE_PROVIDERS) }),
   outputSchema: z.strictObject({

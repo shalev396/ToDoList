@@ -19,7 +19,7 @@ import { startApiHarness, type ApiHarness, type ApiResponse } from '../../testin
 import { MANIFEST, type Ctx, type Entry } from './manifest.js';
 import {
   CLICKUP_CREDENTIAL,
-  DRIVE_CREDENTIAL,
+  SERVICE_ACCOUNT_CREDENTIAL,
   GITHUB_CREDENTIAL,
   LINEAR_CREDENTIAL,
   MOODLE_CREDENTIAL,
@@ -102,6 +102,28 @@ before(async () => {
     assert.equal(put.status, 204, put.text);
     return iid;
   };
+  const connectDirect = async (
+    integration: {
+      provider: 'moodle' | 'google_calendar';
+      authMethod: 'moodle_ws_token' | 'service_account';
+      accountId: string;
+      config: Record<string, unknown>;
+    },
+    credential: Record<string, string>,
+  ): Promise<string> => {
+    const row = await (
+      await models.getIntegrationRepository()
+    ).create(wid, {
+      ...integration,
+      connectedBy: userA,
+      ownerUserId: userA,
+      label: integration.provider,
+      topicId: null,
+    });
+    const put = await asA('PUT', `${base}/integrations/${row.id}/credential`, credential);
+    assert.equal(put.status, 204, put.text);
+    return row.id;
+  };
   const jiraHost = mark('jira site (account and label)', `amark${MARK}.atlassian.net`);
   const integrations: Ctx['integrations'] = {
     jira: await connect(
@@ -113,9 +135,12 @@ before(async () => {
     ),
     clickup: await connect({ provider: 'clickup', config: {} }, CLICKUP_CREDENTIAL),
     linear: await connect({ provider: 'linear', config: {} }, LINEAR_CREDENTIAL),
-    moodle: await connect(
+    // Moodle and a service-account Google Calendar can't be connected over REST: stored directly.
+    moodle: await connectDirect(
       {
         provider: 'moodle',
+        authMethod: 'moodle_ws_token',
+        accountId: mark('moodle site', `moodle-${MARK}.example.ac.il`),
         config: { siteUrl: `https://${mark('moodle site', `moodle-${MARK}.example.ac.il`)}` },
       },
       MOODLE_CREDENTIAL,
@@ -127,23 +152,18 @@ before(async () => {
       },
       GITHUB_CREDENTIAL,
     ),
-    drive: await connect(
-      {
-        provider: 'google_drive',
-        config: { rootFolderId: mark('drive folder', `afolder${MARK}`) },
-      },
-      DRIVE_CREDENTIAL,
-    ),
-    gcal: await connect(
+    gcal: await connectDirect(
       {
         provider: 'google_calendar',
+        authMethod: 'service_account',
+        accountId: `gcal-sa-${MARK}`,
         config: {
           calendars: [
             { id: mark('calendar id', `a-cal-${MARK}@group.calendar.google.com`), mode: 'two_way' },
           ],
         },
       },
-      DRIVE_CREDENTIAL,
+      SERVICE_ACCOUNT_CREDENTIAL,
     ),
   };
   // Labels A chose, and the account email of a Google Calendar connected with Google.
@@ -446,7 +466,6 @@ describe('two users: B never receives A’s integration details or unshared data
       'clickup',
       'github',
       'google_calendar',
-      'google_drive',
       'jira',
       'linear',
       'moodle',

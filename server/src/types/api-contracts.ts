@@ -175,7 +175,6 @@ export type {
   JiraConfig,
   EmptyConfig,
   MoodleConfig,
-  GoogleDriveConfig,
   GoogleCalendarConfig,
   GitHubConfig,
   IntegrationConfigs,

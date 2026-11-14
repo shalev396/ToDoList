@@ -29,7 +29,7 @@ export const GITHUB_CREDENTIAL = {
   token: ['github', '_pat_', tail(30), '_KLMNOP'].join(''),
   projectsToken: ['gh', 'p_', tail(34)].join(''),
 };
-export const DRIVE_CREDENTIAL = {
+export const SERVICE_ACCOUNT_CREDENTIAL = {
   clientEmail: 'sync@fake-project.iam.example.invalid',
   privateKey: [
     '-----BEGIN FAKE',
@@ -64,7 +64,7 @@ export const STATIC_SECRETS: readonly SeededValue[] = [
   { kind: 'moodle_token', value: MOODLE_CREDENTIAL.token },
   { kind: 'github_token', value: GITHUB_CREDENTIAL.token },
   { kind: 'github_projects_token', value: GITHUB_CREDENTIAL.projectsToken },
-  { kind: 'service_account_pem', value: DRIVE_CREDENTIAL.privateKey },
+  { kind: 'service_account_pem', value: SERVICE_ACCOUNT_CREDENTIAL.privateKey },
   { kind: 'mongo_uri_password', value: MONGO_PASSWORD },
   { kind: 'mongo_uri', value: MONGO_URI },
 ];

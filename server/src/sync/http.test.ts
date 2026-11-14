@@ -589,7 +589,7 @@ describe('token exchange: the one POST that is not GraphQL', () => {
 
   function tokenClient(transport: Transport): ReadOnlyClient {
     return createReadOnlyClient({
-      provider: 'google_drive',
+      provider: 'google_calendar',
       transport,
       clock: fakeClock(),
       tokenExchangeUrl: GOOGLE_TOKEN_URL,
@@ -664,7 +664,7 @@ describe('token exchange: the one POST that is not GraphQL', () => {
       assert.throws(
         () =>
           createReadOnlyClient({
-            provider: 'google_drive',
+            provider: 'google_calendar',
             transport: scripted([]),
             tokenExchangeUrl: url,
           }),
@@ -713,10 +713,10 @@ describe('token exchange: the one POST that is not GraphQL', () => {
     // Look-alikes on other hosts are not the token host.
     for (const url of [
       'https://oauth2.googleapis.com.example.invalid/token',
-      'https://www.googleapis.com/drive/v3/about',
+      'https://www.googleapis.com/calendar/v3/users/me',
     ]) {
       const ok = createReadOnlyClient({
-        provider: 'google_drive',
+        provider: 'google_calendar',
         transport: scripted([{ status: 200, headers: {}, body: '{}' }]),
         clock: fakeClock(),
       });
@@ -749,7 +749,7 @@ describe('token exchange: the one POST that is not GraphQL', () => {
       await assert.rejects(tokenClient(transport).exchangeToken(FORM), (error: unknown) => {
         assert.ok(error instanceof ProviderHttpError);
         assert.deepEqual(sanitizeProviderError(error), {
-          provider: 'google_drive',
+          provider: 'google_calendar',
           status,
           code: 'auth_failed',
         });
@@ -872,7 +872,7 @@ describe('token exchange: the one POST that is not GraphQL', () => {
     await assert.rejects(tokenClient(transport).exchangeToken(FORM), (error: unknown) => {
       assert.ok(error instanceof ProviderHttpError);
       assert.deepEqual(sanitizeProviderError(error), {
-        provider: 'google_drive',
+        provider: 'google_calendar',
         status: null,
         code: 'bad_response',
       });

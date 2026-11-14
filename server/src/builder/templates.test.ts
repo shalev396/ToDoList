@@ -298,7 +298,7 @@ describe('templates: content (BUILDER.md §7, FRONTEND.md §1)', () => {
     }
   });
 
-  it('college-course@1: one course page: its deadlines, file tree and calendar', () => {
+  it('college-course@1: one course page: its deadlines and calendar', () => {
     const draft = template('college-course@1');
     // The course page's route (/t/college/:group) sets $page.course.
     assert.deepEqual(draft.scope, {
@@ -309,11 +309,6 @@ describe('templates: content (BUILDER.md §7, FRONTEND.md §1)', () => {
     });
     assert.ok(hasRule(only(draft, 'deadlines').query, 'containerId', '=', '$page.course'));
     assert.ok(hasRule(only(draft, 'calendar').query, 'containerId', '=', '$page.course'));
-    // The file tree reads file items (Drive / Notability); scoping it to the course is parked.
-    const files = only(draft, 'fileTree');
-    assert.equal(files.query?.source, 'items');
-    assert.ok(hasRule(files.query, 'kind', '=', 'file'));
-    assert.ok(hasRule(files.query, 'source.provider', '=', 'google_drive'));
   });
 
   it('project@1: one project page: deadlines, kanban by status and calendar, all for the project', () => {

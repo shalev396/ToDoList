@@ -160,8 +160,8 @@ describe('builder operators against the seeded workspace', () => {
     ],
     [
       'notIn',
-      { field: 'kind', operator: 'notIn', value: ['event', 'file'] },
-      (row): boolean => row['kind'] !== 'event' && row['kind'] !== 'file',
+      { field: 'kind', operator: 'notIn', value: ['event', 'deadline'] },
+      (row): boolean => row['kind'] !== 'event' && row['kind'] !== 'deadline',
     ],
     [
       'contains',
@@ -416,7 +416,6 @@ describe('a second full fixture sync of every seeded integration', () => {
       'clickup',
       'github',
       'google_calendar',
-      'google_drive',
       'jira',
       'linear',
       'moodle',

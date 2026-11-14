@@ -215,8 +215,8 @@ describe('lintDashboard: source_link_hidden', () => {
     }
   });
 
-  it('covers every row-rendering type: list, table, kanban, deadlines, calendar, fileTree', () => {
-    for (const type of ['list', 'table', 'kanban', 'deadlines', 'calendar', 'fileTree'] as const) {
+  it('covers every row-rendering type: list, table, kanban, deadlines, calendar', () => {
+    for (const type of ['list', 'table', 'kanban', 'deadlines', 'calendar'] as const) {
       const block = blockOf(type);
       const draft = draftOf({ ...block, viz: { ...block.viz, showSource: false } });
       assert.equal(lintDashboard(draft, 'ui')[0]?.code, 'source_link_hidden', type);

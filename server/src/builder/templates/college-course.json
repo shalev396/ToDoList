@@ -33,24 +33,6 @@
       "listen": ["$page.course"]
     },
     {
-      "id": "blk_files",
-      "type": "fileTree",
-      "titles": { "en": "Files", "he": "קבצים" },
-      "query": {
-        "source": "items",
-        "where": {
-          "combinator": "and",
-          "rules": [
-            { "field": "kind", "operator": "=", "value": "file" },
-            { "field": "source.provider", "operator": "=", "value": "google_drive" }
-          ]
-        },
-        "sort": [{ "field": "title", "dir": "asc" }],
-        "limit": 200
-      },
-      "viz": { "kind": "fileTree" }
-    },
-    {
       "id": "blk_calendar",
       "type": "calendar",
       "titles": { "en": "Calendar", "he": "יומן" },
@@ -79,19 +61,16 @@
   ],
   "layouts": {
     "lg": [
-      { "i": "blk_deadlines", "x": 0, "y": 0, "w": 6, "h": 10 },
-      { "i": "blk_files", "x": 6, "y": 0, "w": 6, "h": 10 },
+      { "i": "blk_deadlines", "x": 0, "y": 0, "w": 12, "h": 10 },
       { "i": "blk_calendar", "x": 0, "y": 10, "w": 12, "h": 10 }
     ],
     "md": [
-      { "i": "blk_deadlines", "x": 0, "y": 0, "w": 4, "h": 10 },
-      { "i": "blk_files", "x": 4, "y": 0, "w": 4, "h": 10 },
+      { "i": "blk_deadlines", "x": 0, "y": 0, "w": 8, "h": 10 },
       { "i": "blk_calendar", "x": 0, "y": 10, "w": 8, "h": 10 }
     ],
     "sm": [
       { "i": "blk_deadlines", "x": 0, "y": 0, "w": 1, "h": 10 },
-      { "i": "blk_files", "x": 0, "y": 10, "w": 1, "h": 10 },
-      { "i": "blk_calendar", "x": 0, "y": 20, "w": 1, "h": 10 }
+      { "i": "blk_calendar", "x": 0, "y": 10, "w": 1, "h": 10 }
     ]
   }
 }

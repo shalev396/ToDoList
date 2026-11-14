@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { AppError } from '../errors/AppError.js';
 import type { ConnectableProvider } from '../types/integrations.js';
 import {
+  assertProviderOpen,
+  assertUserConnectable,
   assertSameAccount,
   CreateIntegrationBody,
   defaultLabel,
@@ -68,18 +70,6 @@ describe('planConnection: defaults per provider (topic, auth method, account, la
       [plan.authMethod, plan.defaultTopic, plan.accountId, plan.label],
       ['moodle_ws_token', 'college', 'moodle.braude.ac.il', 'moodle.braude.ac.il'],
     );
-  });
-
-  it('google_drive: college, a service account, a placeholder account', () => {
-    const plan = planConnection({
-      provider: 'google_drive',
-      config: { rootFolderId: '1AbCdEfGhIjKlMnOpQrStUvWxYz0123' },
-    });
-    assert.deepEqual(
-      [plan.authMethod, plan.defaultTopic, plan.label],
-      ['service_account', 'college', 'google_drive'],
-    );
-    assert.match(plan.accountId, PLACEHOLDER);
   });
 
   it('google_calendar: personal, a read-only service account', () => {
@@ -148,11 +138,46 @@ describe('planConnection: defaults per provider (topic, auth method, account, la
     );
   });
 
+  it('moodle is coming soon: refused with provider_coming_soon; the other providers are open', () => {
+    assert.throws(
+      () => {
+        assertProviderOpen('moodle');
+      },
+      (error: unknown) =>
+        error instanceof AppError &&
+        error.statusCode === 400 &&
+        error.code === 'provider_coming_soon',
+    );
+    for (const provider of ['jira', 'clickup', 'linear', 'google_calendar', 'github'] as const) {
+      assert.doesNotThrow(() => {
+        assertProviderOpen(provider);
+      }, provider);
+    }
+  });
+
+  it('google_calendar connects with Google sign-in only; the others take a token', () => {
+    assert.throws(
+      () => {
+        assertUserConnectable('google_calendar');
+      },
+      badRequest(/sign-in/),
+    );
+    assert.throws(
+      () => {
+        assertUserConnectable('moodle');
+      },
+      badRequest(/coming soon/),
+    );
+    assert.doesNotThrow(() => {
+      assertUserConnectable('github');
+    });
+  });
+
   it('defaultLabel: the site host, the owner, else the provider key', () => {
     assert.equal(defaultLabel('jira', { baseUrl: 'https://a.atlassian.net' }), 'a.atlassian.net');
     assert.equal(defaultLabel('moodle', { siteUrl: 'https://m.example.ac.il' }), 'm.example.ac.il');
     assert.equal(defaultLabel('github', { owner: 'Shalev396', ownerType: 'user' }), 'Shalev396');
-    for (const provider of ['clickup', 'linear', 'google_drive', 'google_calendar'] as const) {
+    for (const provider of ['clickup', 'linear', 'google_calendar'] as const) {
       assert.equal(defaultLabel(provider, {}), provider);
     }
   });
@@ -197,8 +222,6 @@ describe('parseProviderConfig: one strict schema per provider (400 names the fie
     ['clickup', { teamId: '123' }, /^config: /],
     ['linear', { workspaceId: 'x' }, /^config: /],
     ['moodle', { siteUrl: 'ftp://moodle.example.ac.il' }, /^config\.siteUrl: /],
-    ['google_drive', { rootFolderId: 'short' }, /^config\.rootFolderId: /],
-    ['google_drive', { rootFolderId: '../../etc/passwd/xx' }, /^config\.rootFolderId: /],
     ['google_calendar', {}, /^config\.calendars: /],
     [
       'google_calendar',

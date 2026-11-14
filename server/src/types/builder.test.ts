@@ -92,13 +92,6 @@ describe('block catalog defaults', () => {
     assert.equal(deadlines?.dateRange, 'upcoming_14d');
     assert.deepEqual(deadlines.sort, [{ field: 'dueAt', dir: 'asc' }]);
     assert.deepEqual(BLOCK_CATALOG.kanban.defaults.query?.groupBy, ['status']);
-    // A file tree reads file items; the client builds the folders from props.path.
-    const files = BLOCK_CATALOG.fileTree.defaults.query;
-    assert.equal(files?.source, 'items');
-    assert.deepEqual(files.where?.rules, [
-      { field: 'kind', operator: '=', value: 'file' },
-      { field: 'source.provider', operator: '=', value: 'google_drive' },
-    ]);
     assert.equal(BLOCK_CATALOG.note.defaults.query, undefined);
   });
 
@@ -120,16 +113,6 @@ describe('block catalog defaults', () => {
   it('a list may link its rows to their group page (a course list opens the course)', () => {
     assert.ok(VIZ_SCHEMAS.list.safeParse({ kind: 'list', linkTo: 'group' }).success);
     assert.equal(VIZ_SCHEMAS.list.safeParse({ kind: 'list', linkTo: 'elsewhere' }).success, false);
-  });
-
-  it('checkBlock keeps a file tree on items: it reads files, never containers', () => {
-    const tree = defaultBlock('fileTree');
-    assert.deepEqual(checkBlock(tree), []);
-    const onContainers: Block = { ...tree, query: { source: 'containers' } };
-    assert.deepEqual(
-      checkBlock(onContainers).map((issue) => issue.pointer),
-      ['/query/source'],
-    );
   });
 
   it('checkBlock reports a missing query, a wrong viz kind and a filter without sets', () => {

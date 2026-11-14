@@ -15,11 +15,16 @@ export const CONNECTABLE_PROVIDERS = [
   'clickup',
   'linear',
   'moodle',
-  'google_drive',
   'google_calendar',
   'github',
 ] as const;
 export type ConnectableProvider = (typeof CONNECTABLE_PROVIDERS)[number];
+
+/**
+ * Providers shown on the Integrations page that cannot be connected yet: a connect through REST or
+ * MCP answers `provider_coming_soon` (the adapter and fixtures stay; the demo seed may use it).
+ */
+export const COMING_SOON_PROVIDERS = ['moodle'] as const satisfies readonly ConnectableProvider[];
 
 // ─── Non-secret config, per provider ────────────────────────────────────────
 
@@ -42,10 +47,6 @@ export interface ClickUpConfig {
 export interface MoodleConfig {
   /** e.g. `https://moodle.example.ac.il`. Its host is the integration's account. */
   siteUrl: string;
-}
-
-export interface GoogleDriveConfig {
-  rootFolderId: string;
 }
 
 export interface GoogleCalendarConfig {
@@ -78,7 +79,6 @@ export interface IntegrationConfigs {
   clickup: ClickUpConfig;
   linear: EmptyConfig;
   moodle: MoodleConfig;
-  google_drive: GoogleDriveConfig;
   google_calendar: GoogleCalendarConfig;
   github: GitHubConfig;
 }
@@ -101,7 +101,7 @@ export interface LinearCredential {
   apiKey: string;
 }
 
-/** Google Drive, or Google Calendar connected with a service account (`service_account`). */
+/** Google Calendar read through a service account (`service_account`): the demo's fixtures only. */
 export interface ServiceAccountCredential {
   clientEmail: string;
   privateKey: string;
@@ -169,21 +169,15 @@ export interface SyncRunView {
 export const OAUTH_SIGN_IN_PROVIDERS = ['github', 'jira', 'clickup', 'linear'] as const;
 export type OAuthSignInProvider = (typeof OAUTH_SIGN_IN_PROVIDERS)[number];
 
-/** What the Integrations page shows about one provider's sign-in (no secret). */
+/**
+ * What the Integrations page shows about one provider's sign-in. Only whether it works on this
+ * stage: how the operator sets an OAuth app up is INTEGRATIONS-SETUP.md's, never the product's.
+ */
 export interface OAuthProviderInfo {
-  provider: OAuthSignInProvider;
-  /** This server has the OAuth app's id and secret. */
+  /** Google Calendar signs in with its own routes; the others share the provider routes. */
+  provider: OAuthSignInProvider | 'google_calendar';
+  /** This stage has the OAuth app's id and secret. */
   configured: boolean;
-  /** The exact callback URL to register at the provider. */
-  callbackUrl: string;
-  /** Requested on every connection: read-only. */
-  scopes: readonly string[];
-  /** Asked for later, by re-consent, when writing is enabled. */
-  writeScopes: readonly string[];
-  /** Where the operator registers the OAuth app. */
-  consoleUrl: string;
-  /** The app secret to create on a deployed stage: `todolist/<stage>/oauth-<provider>`. */
-  secretName: string;
   /** GitHub: where the user installs the app on the repositories and organizations to read. */
   installUrl: string | null;
 }

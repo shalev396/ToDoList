@@ -58,11 +58,11 @@ function container(extra: Record<string, unknown> = {}): MappedContainer {
   return {
     type: 'folder',
     name: 'Algorithms',
-    path: ['Notability'],
-    props: { driveFileId: 'fld-alg' },
+    path: ['Courses'],
+    props: { folderId: 'fld-alg' },
     deletedAt: null,
     topicId: 'college',
-    matchKey: 'Notability/Algorithms',
+    matchKey: 'Courses/Algorithms',
     source: source({ key: null, updatedAtSource: null }),
     ...extra,
   };

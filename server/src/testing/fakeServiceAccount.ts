@@ -1,5 +1,5 @@
 /**
- * Test-only Google service account, for the google_calendar and google_drive adapter tests.
+ * Test-only Google service account, for the google_calendar adapter tests.
  *
  * - fakeServiceAccount(): an RSA key pair generated in memory, once per test process. It is never
  *   written to disk or the repo, so no real-looking key is ever committed; the client email is

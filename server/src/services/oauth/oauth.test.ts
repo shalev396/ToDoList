@@ -482,14 +482,15 @@ describe('the routes', () => {
         },
       );
       const data = list.body?.['data'] as {
-        providers: { provider: string; configured: boolean; callbackUrl: string }[];
+        providers: { provider: string; configured: boolean }[];
       };
       assert.equal(data.providers.find((entry) => entry.provider === 'clickup')?.configured, false);
       assert.equal(data.providers.find((entry) => entry.provider === 'linear')?.configured, true);
-      assert.equal(
-        data.providers.find((entry) => entry.provider === 'github')?.callbackUrl,
-        `${api.baseUrl}/api/public/oauth/github/callback`,
+      assert.deepEqual(
+        data.providers.map((entry) => entry.provider),
+        ['github', 'jira', 'clickup', 'linear', 'google_calendar'],
       );
+      assert.ok(!list.text.includes('callbackUrl'), 'the listing carries no operator setup');
       assert.ok(!list.text.includes('FAKE-'), 'the listing carries no client secret');
     } finally {
       setAppSecretsForTests({ ...secrets });

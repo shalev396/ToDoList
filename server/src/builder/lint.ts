@@ -54,7 +54,6 @@ const ROW_BLOCKS: ReadonlySet<BlockType> = new Set([
   'agenda',
   'deadlines',
   'calendar',
-  'fileTree',
 ]);
 
 /** Field paths that read like a credential (BUILDER.md §8, privacy rule). */

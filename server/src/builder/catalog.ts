@@ -362,29 +362,6 @@ export const BLOCK_CATALOG: Readonly<Record<BlockType, BlockCatalogEntry>> = {
       viz: { kind: 'deadlines', overdueOnTop: true },
     },
   },
-  fileTree: {
-    size: { w: 6, h: 10 },
-    requiredQuery: true,
-    allowedViz: ['fileTree'],
-    vizSchema: VIZ_SCHEMAS.fileTree,
-    // File ITEMS only (Drive / Notability): the client builds the folders from each file's
-    // props.path. Containers never reach a file tree.
-    defaults: {
-      query: {
-        source: 'items',
-        where: {
-          combinator: 'and',
-          rules: [
-            { field: 'kind', operator: '=', value: 'file' },
-            { field: 'source.provider', operator: '=', value: 'google_drive' },
-          ],
-        },
-        sort: [{ field: 'title', dir: 'asc' }],
-        limit: 200,
-      },
-      viz: { kind: 'fileTree' },
-    },
-  },
   note: {
     size: { w: 6, h: 4 },
     requiredQuery: false,
@@ -488,12 +465,6 @@ export function checkBlock(block: Block): CatalogIssue[] {
   }
   if (!entry.requiredQuery && block.query !== undefined) {
     issues.push({ pointer: '/query', message: `a ${block.type} block takes no query` });
-  }
-  if (block.type === 'fileTree' && block.query !== undefined && block.query.source !== 'items') {
-    issues.push({
-      pointer: '/query/source',
-      message: 'a file tree reads file items: it builds its folders from props.path',
-    });
   }
   if (block.type === 'filter' && block.sets === undefined) {
     issues.push({ pointer: '/sets', message: 'a filter block sets a $page variable' });
