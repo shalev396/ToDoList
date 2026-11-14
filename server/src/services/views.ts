@@ -11,12 +11,15 @@ import { BLOCK_CATALOG } from '../builder/catalog.js';
 import { compileQuery, parseQuery } from '../builder/compile.js';
 import { OpValidationError, QueryValidationError, toPointer } from '../builder/errors.js';
 import { validationContext } from '../builder/validate.js';
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
+import { WorkspacePolicy } from '../classes/policies/WorkspacePolicy.js';
 import { AppError } from '../errors/AppError.js';
 import type { ViewData, ViewPatch } from '../models/definitions/View.js';
-import { getAuditLogRepository, getViewRepository } from '../models/index.js';
+import { getViewRepository } from '../models/index.js';
 import { BLOCK_TYPES, type Query } from '../types/builder.js';
 import type { SavedView } from '../types/dashboards.js';
-import { ROLE_RANK, type Visibility } from '../types/domain.js';
+import type { Visibility } from '../types/domain.js';
 import type { WorkspaceContext } from './accessFilter.js';
 import type { BuilderActor } from './dashboards.js';
 import { findSecrets } from './secretPatterns.js';
@@ -40,9 +43,9 @@ function notFound(): AppError {
   return new AppError(404, 'Not found');
 }
 
+/** Editors and owners change the workspace's content (WorkspacePolicy). */
 function assertEditor(ws: WorkspaceContext, action: string): void {
-  if (ROLE_RANK[ws.role] < ROLE_RANK.editor)
-    throw new AppError(403, `Only an editor can ${action}`);
+  WorkspacePolicy.requireRole(ws.role, 'edit', action);
 }
 
 function visibleTo(view: ViewData, userId: string): boolean {
@@ -104,23 +107,6 @@ function assertNoSecrets(view: { title?: unknown; query?: unknown; viz?: unknown
   }
 }
 
-async function audit(
-  ws: WorkspaceContext,
-  actor: BuilderActor,
-  action: string,
-  viewId: string,
-): Promise<void> {
-  await (
-    await getAuditLogRepository()
-  ).append(ws.id, {
-    actorUserId: actor.userId,
-    actorAgentId: actor.agentId,
-    action,
-    targetType: 'view',
-    targetId: viewId,
-  });
-}
-
 async function load(ws: WorkspaceContext, userId: string, id: string): Promise<ViewData> {
   const view = await (await getViewRepository()).findById(ws.id, id);
   if (view === null || !visibleTo(view, userId)) throw notFound();
@@ -159,7 +145,11 @@ export async function createView(
     viz,
     ...(input.visibility === undefined ? {} : { visibility: input.visibility }),
   });
-  await audit(ws, actor, 'view.create', view.id);
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'view.create',
+    AuditTarget.of('view', view.id),
+  );
   return toSavedView(view);
 }
 
@@ -181,7 +171,7 @@ export async function updateView(
   assertNoSecrets(patch);
   const view = await (await getViewRepository()).update(ws.id, id, patch);
   if (view === null) throw notFound();
-  await audit(ws, actor, 'view.update', id);
+  await AuditLog.record({ workspaceId: ws.id, actor }, 'view.update', AuditTarget.of('view', id));
   return toSavedView(view);
 }
 
@@ -194,5 +184,5 @@ export async function deleteView(
   assertEditor(ws, 'delete views');
   await load(ws, actor.userId, id);
   if (!(await (await getViewRepository()).delete(ws.id, id))) throw notFound();
-  await audit(ws, actor, 'view.delete', id);
+  await AuditLog.record({ workspaceId: ws.id, actor }, 'view.delete', AuditTarget.of('view', id));
 }

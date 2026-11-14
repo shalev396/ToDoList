@@ -6,7 +6,7 @@
  *   hashed with the arguments: it is free text from the agent);
  * - a catalog tool past the key's scopes or role, or a write on the read-only endpoint: `denied`.
  */
-import type { AgentPrincipal } from './auth/principal.js';
+import type { AuthenticatedAgent } from './auth/principal.js';
 import { canCall } from './auth/scopes.js';
 import { JSON_RPC, methodOf } from './jsonRpc.js';
 import { recordToolCall } from './middleware/audit.js';
@@ -32,15 +32,16 @@ export function toolCallOf(body: unknown): { name: string; args: unknown } | nul
 /** Null when the message may go on to the server; otherwise the error to answer with. */
 export async function screenToolCall(
   body: unknown,
-  principal: AgentPrincipal,
+  agent: AuthenticatedAgent,
   readonly: boolean,
 ): Promise<Refusal | null> {
+  const { principal, caller } = agent;
   const call = toolCallOf(body);
   if (call === null) return null;
   const tool = findTool(call.name);
   if (tool === undefined) {
     await recordToolCall(
-      principal,
+      caller,
       UNKNOWN_TOOL,
       { name: call.name, arguments: call.args },
       'refused',
@@ -51,7 +52,7 @@ export async function screenToolCall(
     };
   }
   if (canCall(toolAccess(tool), principal, { readonly })) return null;
-  await recordToolCall(principal, tool.name, call.args, 'denied');
+  await recordToolCall(caller, tool.name, call.args, 'denied');
   return {
     code: JSON_RPC.invalidParams,
     message:

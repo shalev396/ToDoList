@@ -13,6 +13,9 @@
  * moved down to viewer keeps control of their own credentials, ruling 10): for anyone else the
  * integration does not exist (404), workspace owners included (integrationOwnership.ts).
  */
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { Caller } from '../classes/base/Caller.js';
+import { AuditLog } from '../classes/AuditLog.js';
 import { LIMITS } from '../config/limits.js';
 import { AppError } from '../errors/AppError.js';
 import { revokeGoogleGrant } from '../gcal/oauthCalendar.js';
@@ -23,14 +26,13 @@ import type {
   IntegrationPatch,
 } from '../models/definitions/Integration.js';
 import {
-  getAuditLogRepository,
   getContainerRepository,
   getCredentialRepository,
   getIntegrationRepository,
   getItemRepository,
   getWorkspaceRepository,
 } from '../models/index.js';
-import { PROVIDERS, ROLE_RANK, type Provider, type Role } from '../types/domain.js';
+import { PROVIDERS, type Provider } from '../types/domain.js';
 import type { WorkspaceContext } from './accessFilter.js';
 import { findOwnIntegration, findOwnIntegrationIncludingDeleted } from './integrationOwnership.js';
 import {
@@ -59,40 +61,11 @@ export interface UpdateIntegrationInput {
   expiresAt?: Date | null | undefined;
 }
 
-// ─── Access ─────────────────────────────────────────────────────────────────
-
-/** Requests route through requireWorkspace(minRole) too; services check again for MCP callers. */
-export function assertRole(ctx: WorkspaceContext, minRole: Role): void {
-  if (ROLE_RANK[ctx.role] < ROLE_RANK[minRole]) {
-    throw new AppError(403, `Only an ${minRole === 'owner' ? 'owner' : 'editor'} can do this`);
-  }
-}
-
 /** MongoDB's E11000: here, an account already connected in the workspace. */
 export function isDuplicateKey(error: unknown): boolean {
   return (
     typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000
   );
-}
-
-/** One audit entry about an integration. `meta` holds names and codes, never a secret or a value. */
-export async function auditIntegration(
-  ctx: Pick<WorkspaceContext, 'id'>,
-  actor: IntegrationActor,
-  action: string,
-  integrationId: string,
-  meta: Record<string, unknown>,
-): Promise<void> {
-  await (
-    await getAuditLogRepository()
-  ).append(ctx.id, {
-    actorUserId: actor.userId,
-    actorAgentId: actor.agentId,
-    action,
-    targetType: 'integration',
-    targetId: integrationId,
-    meta,
-  });
 }
 
 // ─── List and connect ───────────────────────────────────────────────────────
@@ -207,7 +180,8 @@ export async function createIntegration(
   input: ConnectionInput,
   options: { demo?: boolean } = {},
 ): Promise<IntegrationData> {
-  assertRole(ctx, 'editor');
+  // Requests route through requireWorkspace(minRole) too; the service checks again for MCP.
+  Caller.fromContext(ctx, actor).require('editor');
   if (options.demo !== true) assertUserConnectable(input.provider);
   const plan = planConnection(input);
   if (plan.topicId !== undefined && plan.topicId !== null)
@@ -263,7 +237,12 @@ export async function createIntegration(
     const topicRule = await addOwnerTopicRule(ctx.id, login);
     if (topicRule !== null) meta['topicRule'] = topicRule;
   }
-  await auditIntegration(ctx, actor, 'integration.create', created.id, meta);
+  await AuditLog.record(
+    { workspaceId: ctx.id, actor },
+    'integration.create',
+    AuditTarget.integration(created.id),
+    meta,
+  );
   return created;
 }
 
@@ -327,7 +306,12 @@ export async function updateIntegration(
   }
   const updated = await (await getIntegrationRepository()).update(ctx.id, integrationId, patch);
   if (updated === null) throw new AppError(404, 'Not found');
-  await auditIntegration(ctx, actor, 'integration.update', integrationId, { changed });
+  await AuditLog.record(
+    { workspaceId: ctx.id, actor },
+    'integration.update',
+    AuditTarget.integration(integrationId),
+    { changed },
+  );
   return updated;
 }
 
@@ -401,9 +385,14 @@ async function disconnectSteps(
   }
   // False when another request deleted it meanwhile: that one audits, this one finishes the steps.
   if (integration.deletedAt === null && (await integrations.softDelete(ctx.id, integrationId))) {
-    await auditIntegration(ctx, actor, 'integration.disconnect', integrationId, {
-      provider: integration.provider,
-    });
+    await AuditLog.record(
+      { workspaceId: ctx.id, actor },
+      'integration.disconnect',
+      AuditTarget.integration(integrationId),
+      {
+        provider: integration.provider,
+      },
+    );
   }
   const credentials = await getCredentialRepository();
   await credentials.delete(ctx.id, integrationId);

@@ -2,12 +2,9 @@ import { z } from 'zod';
 
 import { AppError } from '../../../errors/AppError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
-import {
-  getAuditLogRepository,
-  getIntegrationRepository,
-  type AuditLogData,
-} from '../../../models/index.js';
-import { isOwnIntegration } from '../../../services/integrationOwnership.js';
+import { AuditLog } from '../../../classes/AuditLog.js';
+import { getIntegrationRepository } from '../../../models/index.js';
+import { IntegrationPolicy } from '../../../classes/policies/IntegrationPolicy.js';
 import { PROVIDERS, type Provider } from '../../../types/domain.js';
 import { RESULT_STATUSES, type ResultStatus } from '../../middleware/audit.js';
 import { defineTool } from '../../tool.js';
@@ -34,7 +31,7 @@ const Entry = z.object({
 type Entry = z.infer<typeof Entry>;
 
 /** An opaque page position: the last entry's time and id. */
-function encodeCursor(entry: AuditLogData): string {
+function encodeCursor(entry: AuditLog): string {
   return Buffer.from(JSON.stringify({ at: entry.at.toISOString(), id: entry.id }), 'utf8').toString(
     'base64url',
   );
@@ -69,7 +66,7 @@ function isProvider(value: unknown): value is Provider {
  * The integration an entry is an event of: its target, or for the items a calendar push wrote or
  * deleted (`gcal.*`, target an item) the integration in its meta. Null for anything else.
  */
-function integrationIdOf(entry: AuditLogData): string | null {
+function integrationIdOf(entry: AuditLog): string | null {
   if (entry.targetType === 'integration') return entry.targetId;
   const id = entry.meta['integrationId'];
   return entry.targetType === 'item' && typeof id === 'string' ? id : null;
@@ -82,7 +79,7 @@ function integrationIdOf(entry: AuditLogData): string | null {
  * event, without the integration's id or the item it wrote (PERMISSIONS-V2 ruling 15).
  */
 function toEntry(
-  entry: AuditLogData,
+  entry: AuditLog,
   userId: string,
   integrations: ReadonlyMap<string, IntegrationData>,
 ): Entry {
@@ -90,7 +87,7 @@ function toEntry(
   const integrationId = integrationIdOf(entry);
   const about = integrationId === null ? undefined : integrations.get(integrationId);
   const isIntegration = entry.targetType === 'integration' || integrationId !== null;
-  const mine = about !== undefined && isOwnIntegration(about, userId);
+  const mine = about !== undefined && IntegrationPolicy.isOwn(about, userId);
   const metaProvider = entry.meta['provider'];
   return {
     id: entry.id,
@@ -149,8 +146,7 @@ export const auditLogQuery = defineTool({
   scopes: ['workspace:read'],
   minRole: 'viewer',
   async handler(ctx, input) {
-    const auditLogs = await getAuditLogRepository();
-    const rows = await auditLogs.list(
+    const rows = await AuditLog.list(
       ctx.workspace.id,
       {
         ...(input.agentId === undefined ? {} : { actorAgentId: input.agentId }),

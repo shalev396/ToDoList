@@ -52,10 +52,10 @@ const validate: RequestHandler = async (req, res): Promise<void> => {
 
 const instantiate: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(InstantiateBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
+  const { workspace, caller } = req as WorkspaceRequest;
   const data: InstantiateTemplateResponseData = await instantiateDashboard(
     workspace,
-    { userId: user.id, agentId: null },
+    caller.actor,
     {
       templateKey: body.templateKey,
       language: body.language ?? 'en',
@@ -68,9 +68,9 @@ const instantiate: RequestHandler = async (req, res): Promise<void> => {
 
 const templateShares: RequestHandler = async (req, res): Promise<void> => {
   const { templateKeys } = parseOr400(TemplateSharesBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
+  const { workspace, caller } = req as WorkspaceRequest;
   const data: TemplateSharesResponseData = {
-    shares: await listTemplateShares(workspace, { userId: user.id, agentId: null }, templateKeys),
+    shares: await listTemplateShares(workspace, caller.actor, templateKeys),
   };
   res.success(data);
 };
@@ -92,16 +92,12 @@ const personas: RequestHandler = (_req, res): void => {
 
 const instantiatePersonaTemplate: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(InstantiatePersonaBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
-  const data: InstantiatePersonaResponseData = await instantiatePersona(
-    workspace,
-    { userId: user.id, agentId: null },
-    {
-      personaKey: routeParam(req, 'key'),
-      language: body.language ?? 'en',
-      shareIntegrations: body.shareIntegrations,
-    },
-  );
+  const { workspace, caller } = req as WorkspaceRequest;
+  const data: InstantiatePersonaResponseData = await instantiatePersona(workspace, caller.actor, {
+    personaKey: routeParam(req, 'key'),
+    language: body.language ?? 'en',
+    shareIntegrations: body.shareIntegrations,
+  });
   res.success(data, 201);
 };
 

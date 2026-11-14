@@ -3,11 +3,11 @@
  * acted, `action: "mcp.<tool>"`, the target, and `meta: {argsHash, resultStatus}`. The arguments
  * themselves are never stored, only a hash of them.
  */
-import { getAuditLogRepository } from '../../models/index.js';
+import { AuditTarget } from '../../classes/base/AuditTarget.js';
+import { AuditLog, type AuditScope } from '../../classes/AuditLog.js';
 import { sha256Hex } from '../../services/crypto/hashing.js';
 import { logger } from '../../services/logger.js';
-import type { AgentPrincipal } from '../auth/principal.js';
-import type { AuditTarget } from '../tool.js';
+import type { AuditTarget as ToolTarget } from '../tool.js';
 
 /**
  * ok: done. preview: a destructive tool ran without `confirm`, nothing changed. error: refused by
@@ -55,27 +55,25 @@ export interface AuditExtra {
 }
 
 /**
- * Appends the entry. A failed write is logged and does not fail the call: by then the call has
- * happened, and answering an error would invite the agent to repeat it.
+ * Appends the entry, as the caller (the agent key, from the request's origin; auth/principal.ts).
+ * A failed write is logged and does not fail the call: by then the call has happened, and
+ * answering an error would invite the agent to repeat it.
  */
 export async function recordToolCall(
-  principal: AgentPrincipal,
+  scope: AuditScope,
   tool: string,
   args: unknown,
   status: ResultStatus,
-  target?: AuditTarget,
+  target?: ToolTarget,
   extra: AuditExtra = {},
 ): Promise<void> {
   try {
-    const auditLogs = await getAuditLogRepository();
-    await auditLogs.append(principal.workspaceId, {
-      actorUserId: principal.userId,
-      actorAgentId: principal.agentId,
-      action: `mcp.${extra.action ?? tool}`,
-      targetType: target?.type ?? 'workspace',
-      targetId: target?.id ?? principal.workspaceId,
-      meta: { argsHash: argsHash(args), resultStatus: status, ...extraMeta(extra.meta) },
-    });
+    await AuditLog.record(
+      scope,
+      `mcp.${extra.action ?? tool}`,
+      target === undefined ? AuditTarget.workspace(scope.workspaceId) : AuditTarget.from(target),
+      { argsHash: argsHash(args), resultStatus: status, ...extraMeta(extra.meta) },
+    );
   } catch (error) {
     logger.error(`[mcp] the audit entry for ${tool} could not be written`, error);
   }

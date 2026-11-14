@@ -4,12 +4,11 @@
  * define, rename, change and delete them. The built-in Importance cannot be deleted (it can be
  * renamed). Values are local data: never written to a provider.
  */
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
+import { WorkspacePolicy } from '../classes/policies/WorkspacePolicy.js';
 import { AppError } from '../errors/AppError.js';
-import {
-  getAuditLogRepository,
-  getItemRepository,
-  getWorkspaceRepository,
-} from '../models/index.js';
+import { getItemRepository, getWorkspaceRepository } from '../models/index.js';
 import {
   BUILTIN_IMPORTANCE,
   attributeValueError,
@@ -20,7 +19,6 @@ import {
   type AttributePatch,
   type NewAttribute,
 } from '../types/attributes.js';
-import { ROLE_RANK } from '../types/domain.js';
 import { PLAN_LIMITS } from '../types/limits.js';
 import type { WorkspaceContext } from './accessFilter.js';
 
@@ -29,10 +27,9 @@ export interface AttributeActor {
   agentId: string | null;
 }
 
+/** Editors and owners change the workspace's content (WorkspacePolicy). */
 function assertEditor(ws: WorkspaceContext, action: string): void {
-  if (ROLE_RANK[ws.role] < ROLE_RANK.editor) {
-    throw new AppError(403, `Only an editor can ${action}`);
-  }
+  WorkspacePolicy.requireRole(ws.role, 'edit', action);
 }
 
 /** The definitions of the workspace, the built-in first (implied for a workspace not yet migrated). */
@@ -41,23 +38,6 @@ export function attributesOf(ws: Pick<WorkspaceContext, 'settings'>): AttributeD
   return stored.some((def) => def.key === BUILTIN_IMPORTANCE.key)
     ? stored
     : [{ ...BUILTIN_IMPORTANCE }, ...stored];
-}
-
-async function audit(
-  ws: WorkspaceContext,
-  actor: AttributeActor,
-  action: string,
-  key: string,
-): Promise<void> {
-  const log = await getAuditLogRepository();
-  await log.append(ws.id, {
-    actorUserId: actor.userId,
-    actorAgentId: actor.agentId,
-    action,
-    targetType: 'attribute',
-    targetId: key,
-    meta: {},
-  });
 }
 
 export function listAttributes(ws: WorkspaceContext): AttributeDef[] {
@@ -90,7 +70,11 @@ export async function createAttribute(
       { code: 'attribute_limit' },
     );
   }
-  await audit(ws, actor, 'attribute.create', def.key);
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'attribute.create',
+    AuditTarget.of('attribute', def.key),
+  );
   return def;
 }
 
@@ -131,7 +115,11 @@ export async function updateAttribute(
     ...(patch.options === undefined ? {} : { options: [...new Set(patch.options)] }),
   });
   if (updated === null) throw new AppError(404, 'Not found');
-  await audit(ws, actor, 'attribute.update', key);
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'attribute.update',
+    AuditTarget.of('attribute', key),
+  );
   return updated;
 }
 
@@ -152,7 +140,11 @@ export async function deleteAttribute(
   const workspaces = await getWorkspaceRepository();
   if (!(await workspaces.removeAttribute(ws.id, key))) throw new AppError(404, 'Not found');
   const items = await (await getItemRepository()).clearAttribute(ws.id, key);
-  await audit(ws, actor, 'attribute.delete', key);
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'attribute.delete',
+    AuditTarget.of('attribute', key),
+  );
   return { items };
 }
 

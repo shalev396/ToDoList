@@ -42,12 +42,7 @@ const start: RequestHandler = async (req, res): Promise<void> => {
   const provider = providerParam(req);
   const body = parseOr400(StartProviderOAuthBody, req.body ?? {});
   const request = req as WorkspaceRequest;
-  const started = await startProviderOAuth(
-    request.workspace,
-    { userId: request.user.id, agentId: null },
-    provider,
-    body,
-  );
+  const started = await startProviderOAuth(request.workspace, request.caller.actor, provider, body);
   res.cookie(OAUTH_COOKIE, started.browserNonce, {
     ...cookieOptions(),
     maxAge: OAUTH_STATE_TTL_MS,
@@ -71,7 +66,7 @@ const callback: RequestHandler = async (req, res): Promise<void> => {
 /** Any member: every provider's sign-in setup (no secret). */
 const providers: RequestHandler = async (req, res): Promise<void> => {
   const data: ListOAuthProvidersResponseData = await listOAuthProviders(
-    (req as WorkspaceRequest).workspace,
+    (req as WorkspaceRequest).caller,
   );
   res.success(data);
 };

@@ -5,6 +5,7 @@ import { AppError } from '../../../errors/AppError.js';
 import { CreateTargetsInput } from '../../../services/providerCreate/schemas.js';
 import { createCopy } from '../../../services/providerCreate/service.js';
 import { PROVIDERS_CREATE_SCOPE } from '../../../types/providerCreate.js';
+import { toolCaller } from '../../auth/principal.js';
 import { confirmField } from '../../middleware/confirm.js';
 
 import { CreateItemBody } from '../../../services/itemSchemas.js';
@@ -88,12 +89,11 @@ export const createTodo = defineTool({
         .digest('base64url')
         .slice(0, 40);
       try {
-        const outcome = await createCopy(
-          ctx.workspace,
-          { userId: ctx.principal.userId, agentId: ctx.principal.agentId },
-          item.id,
-          { requestId, integrationId, target },
-        );
+        const outcome = await createCopy(ctx.workspace, toolCaller(ctx).actor, item.id, {
+          requestId,
+          integrationId,
+          target,
+        });
         providerCopies.push({
           integrationId,
           status: outcome.status,

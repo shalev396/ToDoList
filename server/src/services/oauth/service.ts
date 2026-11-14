@@ -21,10 +21,11 @@ import { oauthEndpoints } from '../../sync/providers/oauthEndpoints.js';
 import type { WorkspaceContext } from '../accessFilter.js';
 import { connectOAuthIntegration } from '../integrationConnect.js';
 import { findOwnIntegration } from '../integrationOwnership.js';
-import { assertRole, type IntegrationActor } from '../integrations.js';
+import { Actor } from '../../classes/base/Actor.js';
+import { Caller } from '../../classes/base/Caller.js';
+import type { IntegrationActor } from '../integrations.js';
 import { googleOAuthCredentials } from '../googleOAuthClient.js';
 import { logger } from '../logger.js';
-import { getWorkspaceContext } from '../workspaceContext.js';
 import { oauthAppCredentials, oauthClient } from './client.js';
 import {
   callbackUrl,
@@ -92,7 +93,7 @@ export async function startProviderOAuth(
   if (input.includeWrite === true && def.writeScopes.length === 0) {
     throw new AppError(400, `includeWrite: ${provider} has no scope to ask for`);
   }
-  if (input.integrationId === undefined) assertRole(ctx, 'editor');
+  if (input.integrationId === undefined) Caller.fromContext(ctx, actor).require('editor');
   else {
     const existing = await findOwnIntegration(ctx, actor.userId, input.integrationId);
     if (existing.provider !== provider || existing.authMethod !== 'oauth') {
@@ -148,7 +149,7 @@ async function connect(
   now: Date,
 ): Promise<string> {
   // Still a member; the role (a new integration needs an editor) is connectOAuthIntegration's.
-  const ctx = await getWorkspaceContext(record.workspaceId, record.userId);
+  const ctx = (await Caller.enter(record.workspaceId, Actor.user(record.userId)))?.context ?? null;
   if (ctx === null) throw new OAuthFailure('oauth_not_editor');
   const credentials = await oauthAppCredentials(def.id);
   if (credentials === null) throw new OAuthFailure('oauth_failed');
@@ -249,8 +250,8 @@ async function providerInfo(def: OAuthProviderDef): Promise<OAuthProviderInfo> {
  * Any member: whether each provider (Google Calendar too) can sign in on this stage, for the
  * cards (editors and owners connect their own; a viewer may reconnect their own). No secret.
  */
-export async function listOAuthProviders(ctx: WorkspaceContext): Promise<OAuthProvidersResponse> {
-  assertRole(ctx, 'viewer');
+export async function listOAuthProviders(caller: Caller): Promise<OAuthProvidersResponse> {
+  caller.require('viewer');
   const providers = await Promise.all(Object.values(OAUTH_PROVIDER_DEFS).map(providerInfo));
   const google = (await googleOAuthCredentials().catch(() => null)) !== null;
   return {

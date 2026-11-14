@@ -8,7 +8,7 @@
 import { McpServer, type StandardSchemaWithJSON } from '@modelcontextprotocol/server';
 import type { z } from 'zod';
 
-import type { WorkspaceContext } from '../services/accessFilter.js';
+import type { Caller, WorkspaceContext } from '../classes/base/Caller.js';
 import type { AgentScope, Role } from '../types/domain.js';
 import type { AgentPrincipal } from './auth/principal.js';
 import { canCall, endpointScopes, type ToolAccess } from './auth/scopes.js';
@@ -105,6 +105,8 @@ export interface BuildServerOptions {
   principal: AgentPrincipal;
   /** The principal's workspace context, as the services take it. */
   workspace: WorkspaceContext;
+  /** The authenticated agent as a caller (auth/principal.ts); absent, it is made from the two above. */
+  caller?: Caller;
   /** The clock; tests inject one. Default: the real time. */
   now?: () => Date;
 }
@@ -114,11 +116,13 @@ export function buildServer({
   readonly,
   principal,
   workspace,
+  caller,
   now = (): Date => new Date(),
 }: BuildServerOptions): McpServer {
   const ctx: ToolContext = {
     principal: { ...principal, scopes: endpointScopes(principal.scopes, { readonly }) },
     workspace,
+    ...(caller === undefined ? {} : { caller }),
     readonly,
     now,
   };

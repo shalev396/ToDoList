@@ -12,8 +12,8 @@
  *   (the base access filter applies) and cached briefly.
  */
 import { redactString } from './secretPatterns.js';
-import { baseItemFilter, type ItemAccess, type WorkspaceContext } from './accessFilter.js';
-import { resolveItemAccess } from './itemAccess.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
+import { ItemPolicy, type ItemAccess } from '../classes/policies/ItemPolicy.js';
 import { getItemRepository } from '../models/index.js';
 import type { FieldType, ProviderField } from '../types/builder.js';
 import { PROVIDERS } from '../types/domain.js';
@@ -173,8 +173,8 @@ export async function providerFieldsOf(
   userId: string,
   now: number = Date.now(),
 ): Promise<ProviderField[]> {
-  const access = await resolveItemAccess(ws, userId);
-  const key = `${ws.id}:${userId}:${accessKey(access)}`;
+  const policy = await ItemPolicy.for({ workspaceId: ws.id, userId });
+  const key = `${ws.id}:${userId}:${accessKey(policy.access)}`;
   const hit = cache.get(key);
   if (hit !== undefined && now - hit.at < CACHE_MS) return hit.fields;
   const rows = await (
@@ -182,7 +182,7 @@ export async function providerFieldsOf(
   ).aggregate(
     ws.id,
     [
-      { $match: baseItemFilter(ws, access) },
+      { $match: policy.itemFilter(ws) },
       { $sort: { updatedAt: -1 } },
       { $limit: SAMPLE_ITEMS },
       { $project: { provider: '$source.provider', props: 1 } },

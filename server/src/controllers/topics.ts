@@ -34,7 +34,7 @@ export function toTopicView(topic: TopicData): TopicView {
 }
 
 function uiActor(req: WorkspaceRequest): TopicActor {
-  return { userId: req.user.id, agentId: null };
+  return req.caller.actor;
 }
 
 const list: RequestHandler = async (req, res): Promise<void> => {

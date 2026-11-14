@@ -25,7 +25,6 @@ import {
   type ItemData,
 } from '../../models/definitions/Item.js';
 import {
-  getAuditLogRepository,
   getCreateQuotaRepository,
   getCredentialRepository,
   getIntegrationRepository,
@@ -46,11 +45,16 @@ import {
   type CreateTarget,
   type CreateTargetsResponseData,
 } from '../../types/providerCreate.js';
+import { Actor } from '../../classes/base/Actor.js';
+import { AuditTarget } from '../../classes/base/AuditTarget.js';
+import { AuditLog } from '../../classes/AuditLog.js';
+import { Caller } from '../../classes/base/Caller.js';
+import { IntegrationPolicy } from '../../classes/policies/IntegrationPolicy.js';
+import { ItemPolicy } from '../../classes/policies/ItemPolicy.js';
 import type { WorkspaceContext } from '../accessFilter.js';
 import { sha256Hex } from '../crypto/hashing.js';
-import { assertRole, type IntegrationActor } from '../integrations.js';
-import { findOwnIntegration, isOwnIntegration } from '../integrationOwnership.js';
-import { isIntegrationShared } from '../itemAccess.js';
+import type { IntegrationActor } from '../integrations.js';
+import { findOwnIntegration } from '../integrationOwnership.js';
 import { logger } from '../logger.js';
 import { isOAuthProviderId, OAUTH_PROVIDER_DEFS } from '../oauth/providers.js';
 import { readBackClickup, readBackGithub, readBackJira, readBackLinear } from './created.js';
@@ -107,7 +111,7 @@ export async function listCreateTargets(
     const { provider } = integration;
     if (
       !isCreatableProvider(provider) ||
-      !isOwnIntegration(integration, userId) ||
+      !IntegrationPolicy.isOwn(integration, userId) ||
       integration.status !== 'active'
     ) {
       continue;
@@ -121,7 +125,7 @@ export async function listCreateTargets(
       authMethod: integration.authMethod,
       needsConsent: await lacksWriteScope(integration),
       writable: writeModeFor(integration) !== 'off',
-      shared: await isIntegrationShared(integration),
+      shared: await ItemPolicy.isShared(integration),
     });
   }
   return { targets };
@@ -146,7 +150,7 @@ export async function createOptions(
   integrationId: string,
   query: CreateOptionsQuery,
 ): Promise<CreateOptionsResponseData> {
-  assertRole(ctx, 'editor');
+  Caller.fromContext(ctx, Actor.user(userId)).require('editor');
   const integration = await ownIntegration(ctx, userId, integrationId);
   if (!isCreatableProvider(integration.provider)) {
     throw new AppError(409, 'Nothing can be created in this provider');
@@ -242,20 +246,16 @@ async function auditCreate(
   record: CreatedRecord | null,
 ): Promise<void> {
   try {
-    await (
-      await getAuditLogRepository()
-    ).append(ctx.id, {
-      actorUserId: actor.userId,
-      actorAgentId: actor.agentId,
-      action: AUDIT_ACTION,
-      targetType: 'integration',
-      targetId: integration.id,
-      meta: {
+    await AuditLog.record(
+      { workspaceId: ctx.id, actor },
+      AUDIT_ACTION,
+      AuditTarget.integration(integration.id),
+      {
         provider: integration.provider,
         result,
         ...(record === null ? {} : { externalKey: record.key ?? record.id }),
       },
-    });
+    );
   } catch (error) {
     logger.error('A provider create could not be audited', {
       integrationId: integration.id,
@@ -473,7 +473,7 @@ export async function createCopy(
   body: CreateCopyRequestBody,
   now: Date = new Date(),
 ): Promise<CreateCopyOutcome> {
-  assertRole(ctx, 'editor');
+  Caller.fromContext(ctx, actor).require('editor');
   const requestId = checkedId('requestId', body.requestId, 'requestId');
   const todo = await loadTodo(ctx, actor.userId, todoId);
   const integration = await ownIntegration(ctx, actor.userId, body.integrationId);

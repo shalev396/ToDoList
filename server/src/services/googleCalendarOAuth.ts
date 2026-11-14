@@ -20,6 +20,9 @@
  */
 import { z } from 'zod';
 
+import { Actor } from '../classes/base/Actor.js';
+import { Caller } from '../classes/base/Caller.js';
+
 import { AppError } from '../errors/AppError.js';
 import { type OAuthStateData } from '../models/definitions/OAuthState.js';
 import { listOAuthCalendars, type GoogleCalendarEntry } from '../gcal/oauthCalendar.js';
@@ -34,7 +37,7 @@ import {
 } from './googleOAuthClient.js';
 import { connectOAuthIntegration } from './integrationConnect.js';
 import { findOwnIntegration } from './integrationOwnership.js';
-import { assertRole, type IntegrationActor } from './integrations.js';
+import type { IntegrationActor } from './integrations.js';
 import { logger } from './logger.js';
 import {
   callbackUrl,
@@ -50,7 +53,6 @@ import {
   type OAuthErrorCode,
 } from './oauth/common.js';
 import { pkceChallenge } from './crypto/hashing.js';
-import { getWorkspaceContext } from './workspaceContext.js';
 
 export {
   OAUTH_COOKIE,
@@ -97,7 +99,7 @@ export async function startGoogleCalendarOAuth(
   now: Date = new Date(),
 ): Promise<OAuthStart> {
   let loginHint: string | null = null;
-  if (input.integrationId === undefined) assertRole(ctx, 'editor');
+  if (input.integrationId === undefined) Caller.fromContext(ctx, actor).require('editor');
   else {
     const existing = await findOwnIntegration(ctx, actor.userId, input.integrationId);
     if (existing.provider !== PROVIDER || existing.authMethod !== 'oauth') {
@@ -189,7 +191,7 @@ async function revokeQuietly(client: ReadOnlyClient, token: string): Promise<voi
 /** Code → tokens → account → integration and sealed credential. Returns the integration id. */
 async function connect(record: OAuthStateData, code: string): Promise<string> {
   // Still a member; the role (a new integration needs an editor) is connectOAuthIntegration's.
-  const ctx = await getWorkspaceContext(record.workspaceId, record.userId);
+  const ctx = (await Caller.enter(record.workspaceId, Actor.user(record.userId)))?.context ?? null;
   if (ctx === null) throw new OAuthFailure('oauth_not_editor');
   const credentials = await googleOAuthCredentials();
   if (credentials === null) throw new OAuthFailure('oauth_failed');

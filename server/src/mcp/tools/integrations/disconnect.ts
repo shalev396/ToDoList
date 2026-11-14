@@ -2,7 +2,8 @@ import { z } from 'zod';
 
 import { findOwnIntegration } from '../../../services/integrationOwnership.js';
 import { disconnectIntegration } from '../../../services/integrations.js';
-import { isIntegrationShared } from '../../../services/itemAccess.js';
+import { ItemPolicy } from '../../../classes/policies/ItemPolicy.js';
+import { toolCaller } from '../../auth/principal.js';
 import { confirmField } from '../../middleware/confirm.js';
 import { defineTool } from '../../tool.js';
 import { IntegrationId } from '../sync/views.js';
@@ -42,7 +43,7 @@ export const integrationsDisconnect = defineTool({
       output: {
         applied: false,
         integration: toIntegrationStatusView(integration),
-        shared: await isIntegrationShared(integration),
+        shared: await ItemPolicy.isShared(integration),
         summary:
           'Preview: this integration would be disconnected and its items deleted. Nothing changed; call again with confirm: true to disconnect it.',
       },
@@ -55,12 +56,8 @@ export const integrationsDisconnect = defineTool({
       ctx.principal.userId,
       input.integrationId,
     );
-    const shared = await isIntegrationShared(integration);
-    await disconnectIntegration(
-      ctx.workspace,
-      { userId: ctx.principal.userId, agentId: ctx.principal.agentId },
-      integration.id,
-    );
+    const shared = await ItemPolicy.isShared(integration);
+    await disconnectIntegration(ctx.workspace, toolCaller(ctx).actor, integration.id);
     return {
       output: {
         applied: true,

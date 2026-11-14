@@ -10,10 +10,14 @@ import { randomInt } from 'node:crypto';
 
 import { environment } from '../config/environment.js';
 import { LIMITS } from '../config/limits.js';
+import { Actor } from '../classes/base/Actor.js';
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
+import { Caller } from '../classes/base/Caller.js';
+import { WorkspacePolicy } from '../classes/policies/WorkspacePolicy.js';
 import { AppError } from '../errors/AppError.js';
 import {
   getAgentKeyRepository,
-  getAuditLogRepository,
   getContainerRepository,
   getCredentialRepository,
   getIntegrationRepository,
@@ -35,7 +39,7 @@ import type {
   WorkspaceSettings,
 } from '../models/definitions/Workspace.js';
 import { isDemoDataStage } from '../seed/stage.js';
-import type { Role } from '../types/domain.js';
+import type { Role as RoleName } from '../types/domain.js';
 import type { Env } from '../types/env.d.ts';
 import { openJoinToken, sealJoinToken } from './crypto/joinLinkVault.js';
 import { canonicalTimeZone } from '../utils/timeZone.js';
@@ -45,7 +49,6 @@ import { hashInviteToken, INVITE_TOKEN_PATTERN, newInviteToken } from './inviteT
 import { logger } from './logger.js';
 import { sendWorkspaceDeletedEmail } from './workspaceDeletedEmail.js';
 import { ensureDefaultTopics, listTopics } from './topics.js';
-import { getWorkspaceContext } from './workspaceContext.js';
 
 export const WORKSPACE_NAME_MAX = 80;
 export const SLUG_MIN = 2;
@@ -98,7 +101,7 @@ export interface CreateWorkspaceDeps {
 /** One of my workspaces, with my standing in it. */
 export interface MyWorkspace {
   workspace: WorkspaceData;
-  role: Role;
+  role: RoleName;
 }
 
 /** What a client needs at sign-in: onboarding or not, and which workspace to open. */
@@ -124,7 +127,7 @@ export interface UpdateWorkspaceInput {
 export interface CreateInviteInput {
   email: string;
   /** editor or viewer: a workspace's owner is whoever created it. */
-  role: Role;
+  role: RoleName;
 }
 
 export interface CreatedInvite {
@@ -148,7 +151,7 @@ export interface MemberWithUser {
 
 export interface UpdateMemberInput {
   /** editor or viewer: ownership transfer is not supported. */
-  role?: Role | undefined;
+  role?: RoleName | undefined;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -159,31 +162,31 @@ function isDuplicateKey(error: unknown): boolean {
   );
 }
 
-function assertOwner(ctx: WorkspaceContext): void {
-  if (ctx.role !== 'owner') throw new AppError(403, 'Only an owner can do this');
+/** The caller behind a change: the user, through an agent key when `agentId` is set. */
+function callerOf(ctx: WorkspaceContext, userId: string, agentId: string | null = null): Caller {
+  return Caller.fromContext(ctx, Actor.from({ userId, agentId }));
+}
+
+/** Only an owner manages the workspace (WorkspacePolicy): 403 "Only an owner can do this". */
+function assertOwner(caller: Caller): void {
+  caller.authorize(WorkspacePolicy.instance, 'manage', { workspaceId: caller.workspaceId });
+}
+
+/** The same rule for an owner's read that names no actor: the standing's role alone decides. */
+function assertOwnerStanding(ctx: WorkspaceContext): void {
+  WorkspacePolicy.requireRole(ctx.role, 'manage');
 }
 
 /**
- * `actorAgentId`: the agent key a change came through (an MCP tool), or null for the app. The
- * REST routes never pass one.
+ * Who a change is audited as: the user, through the agent key a change came through (an MCP
+ * tool), or the app (`actorAgentId` null; the REST routes never pass one).
  */
-async function audit(
+function auditScope(
   workspaceId: string,
   actorUserId: string,
-  action: string,
-  target: { type: string; id: string },
-  meta: Record<string, unknown> = {},
   actorAgentId: string | null = null,
-): Promise<void> {
-  const auditLogs = await getAuditLogRepository();
-  await auditLogs.append(workspaceId, {
-    actorUserId,
-    actorAgentId,
-    action,
-    targetType: target.type,
-    targetId: target.id,
-    meta,
-  });
+): { workspaceId: string; actor: Actor } {
+  return { workspaceId, actor: Actor.from({ userId: actorUserId, agentId: actorAgentId }) };
 }
 
 function normalizeName(name: string): string {
@@ -237,7 +240,7 @@ function settingsPatch(
   return settings;
 }
 
-function assertInvitableRole(role: Role): void {
+function assertInvitableRole(role: RoleName): void {
   if (role === 'owner') {
     throw new AppError(
       400,
@@ -361,7 +364,7 @@ async function createFirstPage(
   language: 'en' | 'he',
 ): Promise<void> {
   const { createDashboard } = await import('./dashboards.js');
-  const ctx = await getWorkspaceContext(workspaceId, ownerId);
+  const ctx = (await Caller.enter(workspaceId, Actor.user(ownerId)))?.context ?? null;
   if (ctx === null) return;
   const [personal] = await ensureDefaultTopics(workspaceId, ['personal'], language);
   if (personal === undefined) return;
@@ -424,11 +427,10 @@ export async function createWorkspace(
   const memberships = await getMembershipRepository();
   await memberships.create(workspace.id, { userId: user.id, role: 'owner' });
   await (await getUserRepository()).setDefaultWorkspace(user.id, workspace.id);
-  await audit(
-    workspace.id,
-    user.id,
+  await AuditLog.record(
+    auditScope(workspace.id, user.id),
     'workspace.create',
-    { type: 'workspace', id: workspace.id },
+    AuditTarget.of('workspace', workspace.id),
     {
       slug: workspace.slug,
       loadDemoData,
@@ -487,7 +489,7 @@ export async function workspaceStatus(user: {
 
 /** Remembers the workspace the user last opened. 404 unless they are a member of it. */
 export async function setDefaultWorkspace(userId: string, workspaceId: string): Promise<string> {
-  if ((await getWorkspaceContext(workspaceId, userId)) === null) {
+  if ((await Caller.enter(workspaceId, Actor.user(userId))) === null) {
     throw new AppError(404, 'Workspace not found');
   }
   await (await getUserRepository()).setDefaultWorkspace(userId, workspaceId);
@@ -507,7 +509,7 @@ export async function updateWorkspace(
   actorUserId: string,
   input: UpdateWorkspaceInput,
 ): Promise<WorkspaceData> {
-  assertOwner(ctx);
+  assertOwner(callerOf(ctx, actorUserId));
   const patch: WorkspacePatch = {};
   if (input.name !== undefined) patch.name = normalizeName(input.name);
   if (input.settings !== undefined) patch.settings = settingsPatch(input.settings);
@@ -521,11 +523,10 @@ export async function updateWorkspace(
   if (changed.length === 0) throw new AppError(400, 'No changes provided');
   const updated = await (await getWorkspaceRepository()).update(ctx.id, patch);
   if (updated === null) throw new AppError(404, 'Workspace not found');
-  await audit(
-    ctx.id,
-    actorUserId,
+  await AuditLog.record(
+    auditScope(ctx.id, actorUserId),
     'workspace.update',
-    { type: 'workspace', id: ctx.id },
+    AuditTarget.of('workspace', ctx.id),
     { changed },
   );
   return updated;
@@ -545,8 +546,7 @@ async function assertInviteEmailAllowed(
   email: string,
   now: number,
 ): Promise<void> {
-  const auditLogs = await getAuditLogRepository();
-  const sentToAddress = await auditLogs.findRecent(workspaceId, {
+  const sentToAddress = await AuditLog.findRecent(workspaceId, {
     action: 'member.invite',
     metaEquals: { email },
     since: new Date(now - LIMITS.inviteResendCooldownMs),
@@ -560,7 +560,7 @@ async function assertInviteEmailAllowed(
     );
   }
   const daily = LIMITS.inviteEmailsPerWorkspacePerDay;
-  const sentToday = await auditLogs.list(
+  const sentToday = await AuditLog.list(
     workspaceId,
     { action: 'member.invite', since: new Date(now - DAY_MS) },
     daily,
@@ -587,7 +587,7 @@ export async function createInvite(
   input: CreateInviteInput,
   actorAgentId: string | null = null,
 ): Promise<CreatedInvite> {
-  assertOwner(ctx);
+  assertOwner(callerOf(ctx, inviterUserId, actorAgentId));
   assertInvitableRole(input.role);
   const email = normalizeEmail(input.email);
 
@@ -624,24 +624,22 @@ export async function createInvite(
   });
   for (const old of replaced) await invites.revoke(ctx.id, old.id);
   // Never the token or its hash.
-  await audit(
-    ctx.id,
-    inviterUserId,
+  await AuditLog.record(
+    auditScope(ctx.id, inviterUserId, actorAgentId),
     'member.invite',
-    { type: 'invite', id: invite.id },
+    AuditTarget.of('invite', invite.id),
     {
       email,
       role: input.role,
       ...(replaced.length > 0 ? { replaced: replaced.map((old) => old.id) } : {}),
     },
-    actorAgentId,
   );
   return { invite, rawToken };
 }
 
 /** Owner only: every invite of the workspace, newest first. Never a token or a hash. */
 export async function listInvites(ctx: WorkspaceContext): Promise<InviteData[]> {
-  assertOwner(ctx);
+  assertOwnerStanding(ctx);
   return (await getInviteRepository()).listForWorkspace(ctx.id);
 }
 
@@ -651,11 +649,15 @@ export async function revokeInvite(
   actorUserId: string,
   inviteId: string,
 ): Promise<void> {
-  assertOwner(ctx);
+  assertOwner(callerOf(ctx, actorUserId));
   if (!(await (await getInviteRepository()).revoke(ctx.id, inviteId))) {
     throw new AppError(404, 'Pending invite not found');
   }
-  await audit(ctx.id, actorUserId, 'invite.revoke', { type: 'invite', id: inviteId });
+  await AuditLog.record(
+    auditScope(ctx.id, actorUserId),
+    'invite.revoke',
+    AuditTarget.of('invite', inviteId),
+  );
 }
 
 /**
@@ -713,11 +715,10 @@ export async function acceptInvite(
     role: invite.role,
     invitedBy: invite.invitedBy,
   });
-  await audit(
-    invite.workspaceId,
-    user.id,
+  await AuditLog.record(
+    auditScope(invite.workspaceId, user.id),
     'member.join',
-    { type: 'user', id: user.id },
+    AuditTarget.of('user', user.id),
     { inviteId: invite.id, role: invite.role },
   );
   return { workspaceId: invite.workspaceId };
@@ -750,7 +751,7 @@ export interface JoinLinkState {
 export interface SetJoinLinkInput {
   enabled: boolean;
   /** editor or viewer; kept as it is when absent (viewer for a new link). */
-  role?: Role | undefined;
+  role?: RoleName | undefined;
 }
 
 const NO_JOIN_LINK: JoinLinkState = { enabled: false, role: null, token: null };
@@ -785,7 +786,7 @@ async function storeNewJoinLink(
 
 /** Owner only: the join link's state, with its token while it is on. */
 export async function getJoinLink(ctx: WorkspaceContext): Promise<JoinLinkState> {
-  assertOwner(ctx);
+  assertOwnerStanding(ctx);
   const link = await (await getWorkspaceRepository()).getJoinLink(ctx.id);
   return link === null ? NO_JOIN_LINK : await readJoinLink(ctx.id, link);
 }
@@ -800,7 +801,7 @@ export async function setJoinLink(
   actorUserId: string,
   input: SetJoinLinkInput,
 ): Promise<JoinLinkState> {
-  assertOwner(ctx);
+  assertOwner(callerOf(ctx, actorUserId));
   if (input.role !== undefined) assertInvitableRole(input.role);
   const workspaces = await getWorkspaceRepository();
   let state: JoinLinkState;
@@ -822,11 +823,10 @@ export async function setJoinLink(
       state = await readJoinLink(ctx.id, next);
     }
   }
-  await audit(
-    ctx.id,
-    actorUserId,
+  await AuditLog.record(
+    auditScope(ctx.id, actorUserId),
     'workspace.link_update',
-    { type: 'workspace', id: ctx.id },
+    AuditTarget.of('workspace', ctx.id),
     { enabled: state.enabled, role: state.role },
   );
   return state;
@@ -837,17 +837,16 @@ export async function resetJoinLink(
   ctx: WorkspaceContext,
   actorUserId: string,
 ): Promise<JoinLinkState> {
-  assertOwner(ctx);
+  assertOwner(callerOf(ctx, actorUserId));
   const existing = await (await getWorkspaceRepository()).getJoinLink(ctx.id);
   if (existing === null) {
     throw new AppError(409, 'The link is off: turn it on first');
   }
   const state = await storeNewJoinLink(ctx.id, existing.role);
-  await audit(
-    ctx.id,
-    actorUserId,
+  await AuditLog.record(
+    auditScope(ctx.id, actorUserId),
     'workspace.link_update',
-    { type: 'workspace', id: ctx.id },
+    AuditTarget.of('workspace', ctx.id),
     { enabled: true, role: state.role, reset: true },
   );
   return state;
@@ -881,11 +880,10 @@ export async function acceptJoinLink(
     throw new AppError(409, 'This workspace is full', { code: 'workspace_full' });
   }
   await memberships.create(workspace.id, { userId: user.id, role: link.role });
-  await audit(
-    workspace.id,
-    user.id,
+  await AuditLog.record(
+    auditScope(workspace.id, user.id),
     'member.join_link',
-    { type: 'user', id: user.id },
+    AuditTarget.of('user', user.id),
     { role: link.role },
   );
   return { workspaceId: workspace.id };
@@ -949,7 +947,7 @@ export async function updateMember(
   input: UpdateMemberInput,
   actorAgentId: string | null = null,
 ): Promise<MembershipData> {
-  assertOwner(ctx);
+  assertOwner(callerOf(ctx, actorUserId, actorAgentId));
   if (input.role === 'owner') {
     throw new AppError(400, 'Ownership transfer is not supported: members are editors or viewers');
   }
@@ -964,13 +962,11 @@ export async function updateMember(
   }
   const updated = await (await getMembershipRepository()).update(ctx.id, userId, patch);
   if (updated === null) throw new AppError(404, 'Member not found');
-  await audit(
-    ctx.id,
-    actorUserId,
+  await AuditLog.record(
+    auditScope(ctx.id, actorUserId, actorAgentId),
     'member.update',
-    { type: 'user', id: userId },
+    AuditTarget.of('user', userId),
     { ...patch },
-    actorAgentId,
   );
   return updated;
 }
@@ -987,7 +983,7 @@ export async function removeMember(
   userId: string,
   actorAgentId: string | null = null,
 ): Promise<void> {
-  assertOwner(ctx);
+  assertOwner(callerOf(ctx, actorUserId, actorAgentId));
   const member = await (await getMembershipRepository()).find(ctx.id, userId);
   if (member === null) {
     const finished = await disconnectMemberIntegrations(
@@ -1000,13 +996,11 @@ export async function removeMember(
   }
   await assertNotLastOwner(member, 'The last owner cannot be removed');
   await endMembership(ctx.id, userId, { userId: actorUserId, agentId: actorAgentId });
-  await audit(
-    ctx.id,
-    actorUserId,
+  await AuditLog.record(
+    auditScope(ctx.id, actorUserId, actorAgentId),
     'member.remove',
-    { type: 'user', id: userId },
+    AuditTarget.of('user', userId),
     { role: member.role },
-    actorAgentId,
   );
 }
 
@@ -1022,7 +1016,7 @@ async function memberIds(workspaceId: string): Promise<string[]> {
  * still holds. Nobody can open them; only this count is ever shown, never their content.
  */
 export async function countFormerMembersTodos(ctx: WorkspaceContext): Promise<number> {
-  assertOwner(ctx);
+  assertOwnerStanding(ctx);
   return (await getItemRepository()).countPrivateLocalOfFormerMembers(
     ctx.id,
     await memberIds(ctx.id),
@@ -1037,15 +1031,14 @@ export async function deleteFormerMembersTodos(
   ctx: WorkspaceContext,
   actorUserId: string,
 ): Promise<number> {
-  assertOwner(ctx);
+  assertOwner(callerOf(ctx, actorUserId));
   const deleted = await (
     await getItemRepository()
   ).softDeletePrivateLocalOfFormerMembers(ctx.id, await memberIds(ctx.id));
-  await audit(
-    ctx.id,
-    actorUserId,
+  await AuditLog.record(
+    auditScope(ctx.id, actorUserId),
     'member.former_todos_delete',
-    { type: 'workspace', id: ctx.id },
+    AuditTarget.of('workspace', ctx.id),
     { count: deleted },
   );
   return deleted;
@@ -1056,7 +1049,12 @@ export async function leaveWorkspace(ctx: WorkspaceContext, userId: string): Pro
   const member = await findMember(ctx.id, userId);
   await assertNotLastOwner(member, 'You are the only owner: delete the workspace instead');
   await endMembership(ctx.id, userId, { userId, agentId: null });
-  await audit(ctx.id, userId, 'member.leave', { type: 'user', id: userId }, { role: member.role });
+  await AuditLog.record(
+    auditScope(ctx.id, userId),
+    'member.leave',
+    AuditTarget.of('user', userId),
+    { role: member.role },
+  );
 }
 
 // ─── Deletion ───────────────────────────────────────────────────────────────
@@ -1098,11 +1096,10 @@ async function cascadeDeleteWorkspace(
   for (const member of await (await getMembershipRepository()).listMembers(workspaceId)) {
     await endMembership(workspaceId, member.userId, { userId: actorUserId, agentId: null });
   }
-  await audit(
-    workspaceId,
-    actorUserId,
+  await AuditLog.record(
+    auditScope(workspaceId, actorUserId),
     'workspace.delete',
-    { type: 'workspace', id: workspaceId },
+    AuditTarget.of('workspace', workspaceId),
     meta,
   );
   // Owners of the integrations this deletion removed, even when it resumes after deleting them.
@@ -1118,7 +1115,7 @@ async function cascadeDeleteWorkspace(
 
 /** Owner only: deletes the workspace and everything in it (see cascadeDeleteWorkspace). */
 export async function deleteWorkspace(ctx: WorkspaceContext, actorUserId: string): Promise<void> {
-  assertOwner(ctx);
+  assertOwner(callerOf(ctx, actorUserId));
   await cascadeDeleteWorkspace(ctx.id, actorUserId, {});
 }
 
@@ -1134,11 +1131,10 @@ export async function deleteAccountCascade(userId: string): Promise<void> {
       await cascadeDeleteWorkspace(workspaceId, userId, { reason: 'account_deleted' });
     } else {
       await endMembership(workspaceId, userId, { userId, agentId: null });
-      await audit(
-        workspaceId,
-        userId,
+      await AuditLog.record(
+        auditScope(workspaceId, userId),
         'member.leave',
-        { type: 'user', id: userId },
+        AuditTarget.of('user', userId),
         {
           role,
           reason: 'account_deleted',

@@ -17,6 +17,8 @@ import { listTemplates, localizeTemplate, resolveTemplateKey } from '../builder/
 import { AppError } from '../errors/AppError.js';
 import { getDashboard, listDashboards, listDashboardVersions } from '../services/dashboards.js';
 import type { AgentScope, Role } from '../types/domain.js';
+import type { Actor } from '../classes/base/Actor.js';
+import { toolCaller } from './auth/principal.js';
 import { canCall } from './auth/scopes.js';
 import { blockSecrets } from './middleware/redact.js';
 import { recordToolCall } from './middleware/audit.js';
@@ -66,8 +68,8 @@ function variable(variables: Variables, name: string): string {
   return ((Array.isArray(value) ? value[0] : value) ?? '').split('?')[0] ?? '';
 }
 
-function actorOf(ctx: ToolContext): { userId: string; agentId: string } {
-  return { userId: ctx.principal.userId, agentId: ctx.principal.agentId };
+function actorOf(ctx: ToolContext): Actor {
+  return toolCaller(ctx).actor;
 }
 
 const plain = (value: unknown): unknown => JSON.parse(JSON.stringify(value)) as unknown;
@@ -276,7 +278,7 @@ async function readResource(
   try {
     read = await resource.read(ctx, uri, variables);
   } catch (error) {
-    await recordToolCall(ctx.principal, audited, { uri: uri.href }, 'error');
+    await recordToolCall(toolCaller(ctx), audited, { uri: uri.href }, 'error');
     if (error instanceof AppError && error.statusCode === 404) {
       throw new ResourceNotFoundError(uri.href);
     }
@@ -290,14 +292,14 @@ async function readResource(
   try {
     blocked = blockSecrets(result, `the MCP resource ${resource.name}`);
   } catch (error) {
-    await recordToolCall(ctx.principal, audited, { uri: uri.href }, 'blocked');
+    await recordToolCall(toolCaller(ctx), audited, { uri: uri.href }, 'blocked');
     throw error;
   }
   if (blocked) {
-    await recordToolCall(ctx.principal, audited, { uri: uri.href }, 'blocked');
+    await recordToolCall(toolCaller(ctx), audited, { uri: uri.href }, 'blocked');
     throw new Error(INTERNAL_ERROR_MESSAGE);
   }
-  await recordToolCall(ctx.principal, audited, { uri: uri.href }, 'ok', read.target);
+  await recordToolCall(toolCaller(ctx), audited, { uri: uri.href }, 'ok', read.target);
   return result;
 }
 

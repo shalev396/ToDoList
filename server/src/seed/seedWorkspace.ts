@@ -50,7 +50,8 @@ import { createItem } from '../services/items.js';
 import { DEFAULT_TOPIC_SLUGS, type DefaultTopicSlug } from '../types/topics.js';
 import { ensureDefaultTopics } from '../services/topics.js';
 import { updateWorkspace } from '../services/workspaces.js';
-import { getWorkspaceContext } from '../services/workspaceContext.js';
+import { Actor } from '../classes/base/Actor.js';
+import { Caller } from '../classes/base/Caller.js';
 import { fixtureSetDir } from '../sync/fixtureSets.js';
 import type { Transport } from '../sync/http.js';
 import { getAdapter } from '../sync/registry.js';
@@ -478,13 +479,13 @@ export async function seedWorkspace(
   if (refusal !== null) throw new Error(refusal);
   const workspace = await (await getWorkspaceRepository()).findById(workspaceId);
   if (workspace === null) throw new Error('seedWorkspace: no such workspace');
-  const first = await getWorkspaceContext(workspaceId, workspace.ownerId);
+  const first = (await Caller.enter(workspaceId, Actor.user(workspace.ownerId)))?.context;
   if (first?.role !== 'owner') throw new Error('seedWorkspace: the workspace has no owner');
   const actor: IntegrationActor = { userId: workspace.ownerId, agentId: null };
 
   const topics = await leaveMinimalShape(first, actor, options.language ?? 'en');
   // Read again: the context carries the settings.
-  const ctx = await getWorkspaceContext(workspaceId, workspace.ownerId);
+  const ctx = (await Caller.enter(workspaceId, Actor.user(workspace.ownerId)))?.context;
   if (ctx?.role !== 'owner') throw new Error('seedWorkspace: the workspace has no owner');
   const connected: Connected[] = [];
   for (const spec of DEMO_INTEGRATIONS) {

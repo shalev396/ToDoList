@@ -46,7 +46,7 @@ import { withBuilderErrors } from './builderErrors.js';
 
 /** The UI: a person, no agent. */
 function uiActor(req: WorkspaceRequest): BuilderActor {
-  return { userId: req.user.id, agentId: null };
+  return req.caller.actor;
 }
 
 /** A write made of ops; the service already parsed them, so the answer is never a dry run. */

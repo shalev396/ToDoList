@@ -6,10 +6,11 @@
  */
 import type { Response } from 'express';
 
-import type { AgentKeyData } from '../../models/index.js';
-import type { WorkspaceContext } from '../../services/accessFilter.js';
-import { getWorkspaceContext } from '../../services/workspaceContext.js';
+import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
+import { Caller, type WorkspaceContext } from '../../classes/base/Caller.js';
+import type { AgentKeyData } from '../../models/definitions/AgentKey.js';
 import type { AgentScope, Role } from '../../types/domain.js';
+import type { ToolContext } from '../tool.js';
 import { effectiveScopes } from './scopes.js';
 
 export interface AgentPrincipal {
@@ -26,12 +27,21 @@ export interface AgentPrincipal {
 export interface AuthenticatedAgent {
   principal: AgentPrincipal;
   workspace: WorkspaceContext;
+  /** The agent key, acting for its user in the key's workspace, from this request's origin. */
+  caller: Caller;
 }
 
-/** The principal behind a usable key, or null when its user is no longer an active member. */
-export async function resolvePrincipal(key: AgentKeyData): Promise<AuthenticatedAgent | null> {
-  const workspace = await getWorkspaceContext(key.workspaceId, key.userId);
-  if (workspace === null) return null;
+/**
+ * The principal behind a usable key, or null when its user is no longer an active member.
+ * `origin`: the request's address and user agent, which the audit log records.
+ */
+export async function resolvePrincipal(
+  key: AgentKeyData,
+  origin: ActorOrigin = {},
+): Promise<AuthenticatedAgent | null> {
+  const caller = await Caller.enter(key.workspaceId, Actor.agent(key.userId, key.id, origin));
+  if (caller === null) return null;
+  const workspace = caller.context;
   return {
     principal: {
       userId: key.userId,
@@ -41,7 +51,19 @@ export async function resolvePrincipal(key: AgentKeyData): Promise<Authenticated
       scopes: effectiveScopes(key.scopes, workspace.role),
     },
     workspace,
+    caller,
   };
+}
+
+/**
+ * The caller a tool call acts as: the one the request authenticated, or (a context built without
+ * one, as tests build them) the principal's agent key in its workspace.
+ */
+export function toolCaller(ctx: ToolContext): Caller {
+  return (
+    ctx.caller ??
+    Caller.fromContext(ctx.workspace, Actor.agent(ctx.principal.userId, ctx.principal.agentId))
+  );
 }
 
 const LOCALS_KEY = 'mcpAgent';

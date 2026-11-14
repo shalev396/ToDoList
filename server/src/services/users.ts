@@ -1,9 +1,10 @@
+import { User } from '../classes/User.js';
 import { AppError } from '../errors/AppError.js';
-import { getUserRepository, type UserData } from '../models/index.js';
+import type { UserData } from '../models/definitions/User.js';
 
-/** The user row, or null. */
+/** The user row (User#toJSON), or null. */
 export async function findUser(userId: string): Promise<UserData | null> {
-  return (await getUserRepository()).findById(userId);
+  return (await User.findById(userId))?.toJSON() ?? null;
 }
 
 /** The signed-in user's row (email, name, default workspace); 404 when it is gone. */

@@ -70,7 +70,6 @@ import { ConflictError } from '../errors/ConflictError.js';
 import type { DashboardSnapshot } from '../models/definitions/Dashboard.js';
 import type { IntegrationData } from '../models/definitions/Integration.js';
 import {
-  getAuditLogRepository,
   getContainerRepository,
   getDashboardRepository,
   getDashboardVersionRepository,
@@ -106,16 +105,17 @@ import type {
   IntegrationShare,
   JsonPatchOperation,
 } from '../types/dashboards.js';
-import { ROLE_RANK, type DashboardPage, type Role } from '../types/domain.js';
+import type { DashboardPage, Role as RoleName } from '../types/domain.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
-import type { WorkspaceContext } from './accessFilter.js';
-import { isOwnIntegration } from './integrationOwnership.js';
-import {
-  blockScope,
-  forgetItemAccess,
-  resolveItemAccess,
-  sharedConnectorIds,
-} from './itemAccess.js';
+import { Actor, type ActorRef } from '../classes/base/Actor.js';
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
+import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
+import { Role } from '../classes/base/Role.js';
+import { DashboardPolicy } from '../classes/policies/DashboardPolicy.js';
+import { IntegrationPolicy } from '../classes/policies/IntegrationPolicy.js';
+import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
+import { ForbiddenError } from '../errors/ForbiddenError.js';
 import { logger } from './logger.js';
 import { assertTopicOf } from './topics.js';
 
@@ -192,24 +192,32 @@ function notFound(): AppError {
   return new AppError(404, 'Not found');
 }
 
-function assertRole(ws: WorkspaceContext, minRole: Role, action: string): void {
-  if (ROLE_RANK[ws.role] < ROLE_RANK[minRole]) {
-    throw new AppError(403, `Only ${minRole === 'owner' ? 'an owner' : 'an editor'} can ${action}`);
-  }
+/** 403 unless the caller's role is at least `minRole`: "Only an editor can edit dashboards". */
+function assertRole(
+  ws: WorkspaceContext,
+  actor: ActorRef,
+  minRole: RoleName,
+  action: string,
+): void {
+  Caller.fromContext(ws, actor).require(minRole, ForbiddenError.roleMessage(minRole, action));
 }
 
 function isEditor(ws: WorkspaceContext): boolean {
-  return ROLE_RANK[ws.role] >= ROLE_RANK.editor;
+  return Role.of(ws.role).atLeast(Role.editor);
 }
 
-/** Private dashboards are their owner's alone. */
-function canSee(userId: string, dashboard: DashboardData): boolean {
-  return dashboard.visibility !== 'private' || dashboard.ownerUserId === userId;
+/** Private dashboards are their owner's alone (DashboardPolicy). */
+function canSee(ws: WorkspaceContext, userId: string, dashboard: DashboardData): boolean {
+  return Caller.fromContext(ws, Actor.user(userId)).can(
+    DashboardPolicy.instance,
+    'read',
+    dashboard,
+  );
 }
 
 async function load(ws: WorkspaceContext, userId: string, id: string): Promise<DashboardData> {
   const dashboard = await (await getDashboardRepository()).findById(ws.id, id);
-  if (dashboard === null || !canSee(userId, dashboard)) throw notFound();
+  if (dashboard === null || !canSee(ws, userId, dashboard)) throw notFound();
   return dashboard;
 }
 
@@ -224,7 +232,7 @@ function lintMode(actor: BuilderActor): LintMode {
 
 /** The owner's UI editor publishes as it saves (BUILDER.md §8). */
 function autoPublishes(ws: WorkspaceContext, actor: BuilderActor): boolean {
-  return actor.agentId === null && ws.role === 'owner';
+  return actor.agentId === null && Role.of(ws.role).equals(Role.owner);
 }
 
 // ─── Shapes ─────────────────────────────────────────────────────────────────
@@ -306,7 +314,7 @@ async function connectorInfo(
           : {
               provider: integration.provider,
               ownerUserId: integration.ownerUserId,
-              mine: isOwnIntegration(integration, userId),
+              mine: IntegrationPolicy.isOwn(integration, userId),
               removed: false,
             },
       ];
@@ -461,11 +469,11 @@ async function checkConnectors(
   const refused =
     added.find((change) => {
       const integration = live(change.integrationId);
-      return integration === undefined || !isOwnIntegration(integration, actor.userId);
+      return integration === undefined || !IntegrationPolicy.isOwn(integration, actor.userId);
     }) ?? null;
   const foreignRemovals = removed.flatMap((change): ForeignRemoval[] => {
     const integration = live(change.integrationId);
-    if (integration === undefined || isOwnIntegration(integration, actor.userId)) return [];
+    if (integration === undefined || IntegrationPolicy.isOwn(integration, actor.userId)) return [];
     return [{ ...change, provider: integration.provider }];
   });
   return { refused, foreignRemovals };
@@ -519,7 +527,7 @@ async function notSharedYet(
   integrations: readonly IntegrationData[],
 ): Promise<IntegrationData[]> {
   if (integrations.length === 0) return [];
-  const shared = await sharedConnectorIds(ws.id);
+  const shared = await ItemPolicy.sharedConnectorIds(ws.id);
   return integrations.filter((integration) => !shared.has(integration.id));
 }
 
@@ -567,7 +575,7 @@ export async function templateShares(
   actor: BuilderActor,
   templateKeys: readonly string[],
 ): Promise<IntegrationShare[]> {
-  assertRole(ws, 'editor', 'create dashboards');
+  assertRole(ws, actor, 'editor', 'create dashboards');
   // A key names a dashboard template, a view template or a persona (a set of both).
   const drafts = templateKeys.flatMap((key, index): { blocks: Block[] }[] => {
     const page = resolveTemplateKey(key);
@@ -598,25 +606,6 @@ export async function templateShares(
 }
 
 // ─── Writes ─────────────────────────────────────────────────────────────────
-
-async function audit(
-  ws: Pick<WorkspaceContext, 'id'>,
-  actor: BuilderActor,
-  action: string,
-  dashboardId: string,
-  meta: Record<string, unknown>,
-): Promise<void> {
-  await (
-    await getAuditLogRepository()
-  ).append(ws.id, {
-    actorUserId: actor.userId,
-    actorAgentId: actor.agentId,
-    action,
-    targetType: 'dashboard',
-    targetId: dashboardId,
-    meta,
-  });
-}
 
 /** After a refused compare-and-set: gone (404), or moved on (409 with the current version). */
 async function conflictOrGone(ws: WorkspaceContext, id: string): Promise<AppError> {
@@ -666,14 +655,19 @@ async function commit(write: Commit): Promise<number> {
   });
   if (updated === null) throw await conflictOrGone(ws, dashboard.id);
   // What is shared may have changed: this request reads it again (itemAccess.ts).
-  forgetItemAccess(ws.id);
+  ItemPolicy.forget(ws.id);
   for (const removal of foreignRemovals) {
-    await audit(ws, actor, 'dashboard.connector_remove', dashboard.id, {
-      version,
-      blockId: removal.blockId,
-      integrationId: removal.integrationId,
-      provider: removal.provider,
-    });
+    await AuditLog.record(
+      { workspaceId: ws.id, actor },
+      'dashboard.connector_remove',
+      AuditTarget.of('dashboard', dashboard.id),
+      {
+        version,
+        blockId: removal.blockId,
+        integrationId: removal.integrationId,
+        provider: removal.provider,
+      },
+    );
   }
 
   const versions = await getDashboardVersionRepository();
@@ -693,11 +687,16 @@ async function commit(write: Commit): Promise<number> {
     KEEP_VERSIONS,
     updated.publishedVersion === null ? [] : [updated.publishedVersion],
   );
-  await audit(ws, actor, 'dashboard.update', dashboard.id, {
-    version,
-    summary: write.summary,
-    published: publish,
-  });
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'dashboard.update',
+    AuditTarget.of('dashboard', dashboard.id),
+    {
+      version,
+      summary: write.summary,
+      published: publish,
+    },
+  );
   return version;
 }
 
@@ -803,7 +802,7 @@ async function plannedDashboard(
   actor: BuilderActor,
   input: CreateDashboardInput,
 ): Promise<{ draft: DashboardDraft; templateKey: string | null }> {
-  assertRole(ws, 'editor', 'create dashboards');
+  assertRole(ws, actor, 'editor', 'create dashboards');
   const planned = initialDraft(input);
   const { templateKey } = planned;
   const initial =
@@ -873,7 +872,7 @@ export async function createDashboard(
     views: draft.views ?? [],
     updatedBy: { userId: actor.userId, agentId: actor.agentId },
   });
-  forgetItemAccess(ws.id);
+  ItemPolicy.forget(ws.id);
   await (
     await getDashboardVersionRepository()
   ).append(ws.id, {
@@ -890,7 +889,12 @@ export async function createDashboard(
     ? ((await dashboards.setPublished(ws.id, created.id, created.version, publishedCopy(draft))) ??
       created)
     : created;
-  await audit(ws, actor, 'dashboard.create', created.id, { version: created.version, templateKey });
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'dashboard.create',
+    AuditTarget.of('dashboard', created.id),
+    { version: created.version, templateKey },
+  );
   return viewFor(ws, actor.userId, result, 'draft');
 }
 
@@ -951,7 +955,7 @@ export async function listDashboards(
   });
   const editor = isEditor(ws);
   return all
-    .filter((dashboard) => canSee(actor.userId, dashboard))
+    .filter((dashboard) => canSee(ws, actor.userId, dashboard))
     .filter((dashboard) => editor || dashboard.published !== null)
     .map((dashboard) => toSummary(dashboard, editor ? 'draft' : 'published'));
 }
@@ -1002,7 +1006,7 @@ async function previews(
   );
   if (rows <= 0) return {};
   const now = new Date();
-  const access = await resolveItemAccess(ws, actor.userId);
+  const policy = await ItemPolicy.for({ workspaceId: ws.id, userId: actor.userId });
   const entries = await runWithConcurrency(
     blocks,
     PREVIEW_CONCURRENCY,
@@ -1014,8 +1018,8 @@ async function previews(
           {
             ws: { id: ws.id },
             userId: actor.userId,
-            access,
-            ...blockScope(access, block.connectors),
+            access: policy.access,
+            ...policy.blockScope(block.connectors),
             vars: draft.vars,
             now,
             timeZone: ws.settings.timezone,
@@ -1048,7 +1052,7 @@ export async function applyDashboardOps(
   id: string,
   input: DashboardOpsInput,
 ): Promise<DashboardOpsResult> {
-  assertRole(ws, 'editor', 'edit dashboards');
+  assertRole(ws, actor, 'editor', 'edit dashboards');
   const dashboard = await load(ws, actor.userId, id);
   assertVersion(dashboard, input.expectedVersion);
   const dryRun = input.dryRun === true;
@@ -1190,7 +1194,7 @@ async function undoPlan(
   state: DashboardDraft;
   summary: string;
 }> {
-  assertRole(ws, 'editor', 'undo changes');
+  assertRole(ws, actor, 'editor', 'undo changes');
   const steps = input.steps ?? 1;
   if (!Number.isInteger(steps) || steps < 1 || steps > MAX_UNDO_STEPS) {
     throw new AppError(400, `steps: from 1 to ${String(MAX_UNDO_STEPS)}`);
@@ -1234,7 +1238,7 @@ export async function redoDashboard(
   id: string,
   input: { expectedVersion: number },
 ): Promise<DashboardWriteResult> {
-  assertRole(ws, 'editor', 'redo changes');
+  assertRole(ws, actor, 'editor', 'redo changes');
   const dashboard = await load(ws, actor.userId, id);
   assertVersion(dashboard, input.expectedVersion);
   const entries = await history(ws, dashboard.id);
@@ -1272,7 +1276,7 @@ export async function revertDashboard(
   id: string,
   input: { expectedVersion: number; toVersion: number },
 ): Promise<DashboardWriteResult> {
-  assertRole(ws, 'editor', 'revert dashboards');
+  assertRole(ws, actor, 'editor', 'revert dashboards');
   const dashboard = await load(ws, actor.userId, id);
   assertVersion(dashboard, input.expectedVersion);
   const { toVersion } = input;
@@ -1319,7 +1323,7 @@ export async function previewRevert(
   id: string,
   input: { expectedVersion: number; toVersion: number; previewRows?: number | undefined },
 ): Promise<DashboardDryRunResult> {
-  assertRole(ws, 'editor', 'revert dashboards');
+  assertRole(ws, actor, 'editor', 'revert dashboards');
   const dashboard = await load(ws, actor.userId, id);
   assertVersion(dashboard, input.expectedVersion);
   const target = await revertTarget(ws, dashboard, input.toVersion);
@@ -1347,7 +1351,7 @@ export async function applyDashboardPatch(
   id: string,
   input: DashboardPatchInput,
 ): Promise<DashboardOpsResult> {
-  assertRole(ws, 'editor', 'edit dashboards');
+  assertRole(ws, actor, 'editor', 'edit dashboards');
   const dashboard = await load(ws, actor.userId, id);
   assertVersion(dashboard, input.expectedVersion);
   const before = draftOf(dashboard);
@@ -1453,7 +1457,7 @@ export async function publishDashboard(
     dryRun?: boolean | undefined;
   },
 ): Promise<DashboardPublishResult> {
-  assertRole(ws, 'owner', 'publish dashboards');
+  assertRole(ws, actor, 'owner', 'publish dashboards');
   if (actor.agentId !== null && input.allowAgentPublish !== true) {
     throw new AppError(403, 'Publishing needs the builder:publish scope');
   }
@@ -1466,7 +1470,12 @@ export async function publishDashboard(
     await getDashboardRepository()
   ).setPublished(ws.id, id, input.expectedVersion, publishedCopy(dashboard));
   if (published === null) throw await conflictOrGone(ws, id);
-  await audit(ws, actor, 'dashboard.publish', id, { version: input.expectedVersion });
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'dashboard.publish',
+    AuditTarget.of('dashboard', id),
+    { version: input.expectedVersion },
+  );
   return { version: published.version, publishedVersion: input.expectedVersion };
 }
 
@@ -1476,10 +1485,15 @@ export async function deleteDashboard(
   actor: BuilderActor,
   id: string,
 ): Promise<void> {
-  assertRole(ws, 'owner', 'delete dashboards');
+  assertRole(ws, actor, 'owner', 'delete dashboards');
   await load(ws, actor.userId, id);
   if (!(await (await getDashboardRepository()).softDelete(ws.id, id))) throw notFound();
-  await audit(ws, actor, 'dashboard.delete', id, {});
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'dashboard.delete',
+    AuditTarget.of('dashboard', id),
+    {},
+  );
 }
 
 // ─── Stop sharing ───────────────────────────────────────────────────────────
@@ -1548,7 +1562,7 @@ export async function listDashboardVersions(
   id: string,
   options: { limit?: number | undefined },
 ): Promise<DashboardVersionView[]> {
-  assertRole(ws, 'editor', 'see the history');
+  assertRole(ws, actor, 'editor', 'see the history');
   const dashboard = await load(ws, actor.userId, id);
   const limit = Math.min(Math.max(options.limit ?? DEFAULT_HISTORY_PAGE, 1), MAX_HISTORY_PAGE);
   const entries = await (await getDashboardVersionRepository()).list(ws.id, id, limit);

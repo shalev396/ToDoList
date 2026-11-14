@@ -3,7 +3,8 @@
  * role permits, so a key never exceeds its user. On /api/mcp/readonly the write scopes are
  * ignored as well.
  */
-import { AGENT_SCOPES, ROLE_RANK, type AgentScope, type Role } from '../../types/domain.js';
+import { Role as MemberRole } from '../../classes/base/Role.js';
+import { AGENT_SCOPES, type AgentScope, type Role } from '../../types/domain.js';
 
 /**
  * The scopes each role may use through a key, read off the DATA.md §5 role matrix (and the REST
@@ -68,7 +69,7 @@ export function canCall(
 ): boolean {
   const readonly = options.readonly === true;
   if (readonly && !tool.readOnly) return false;
-  if (ROLE_RANK[principal.role] < ROLE_RANK[tool.minRole]) return false;
+  if (!MemberRole.of(principal.role).atLeast(tool.minRole)) return false;
   const usable = endpointScopes(principal.scopes, { readonly });
   return tool.scopes.every((scope) => usable.includes(scope));
 }

@@ -16,6 +16,7 @@ import { MirroredItemError } from '../errors/MirroredItemError.js';
 import { MirroredItemError as StoredMirroredItemError } from '../models/errors.js';
 import { logger } from '../services/logger.js';
 import { redactString } from '../services/secretPatterns.js';
+import { toolCaller } from './auth/principal.js';
 import { canCall } from './auth/scopes.js';
 import { recordToolCall, type AuditExtra, type ResultStatus } from './middleware/audit.js';
 import { runConfirmed } from './middleware/confirm.js';
@@ -167,13 +168,13 @@ export async function runTool<I extends z.ZodObject, O extends z.ZodObject>(
   try {
     blocked = blockSecrets(call.result, `the result of MCP tool ${tool.name}`);
   } catch (error) {
-    await recordToolCall(ctx.principal, tool.name, args, 'blocked');
+    await recordToolCall(toolCaller(ctx), tool.name, args, 'blocked');
     throw error;
   }
   if (blocked) {
-    await recordToolCall(ctx.principal, tool.name, args, 'blocked');
+    await recordToolCall(toolCaller(ctx), tool.name, args, 'blocked');
     return errorResult(INTERNAL_ERROR_MESSAGE);
   }
-  await recordToolCall(ctx.principal, tool.name, args, call.status, call.target, call.audit);
+  await recordToolCall(toolCaller(ctx), tool.name, args, call.status, call.target, call.audit);
   return call.result;
 }

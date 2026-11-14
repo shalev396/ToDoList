@@ -37,11 +37,7 @@ export function browserNonceOf(req: Request): string | null {
 const start: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(StartOAuthBody, req.body ?? {});
   const request = req as WorkspaceRequest;
-  const started = await startGoogleCalendarOAuth(
-    request.workspace,
-    { userId: request.user.id, agentId: null },
-    body,
-  );
+  const started = await startGoogleCalendarOAuth(request.workspace, request.caller.actor, body);
   res.cookie(OAUTH_COOKIE, started.browserNonce, {
     ...cookieOptions(),
     maxAge: OAUTH_STATE_TTL_MS,

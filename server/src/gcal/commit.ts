@@ -16,12 +16,14 @@
  */
 import { z } from 'zod';
 
+import { Actor } from '../classes/base/Actor.js';
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
 import { AppError } from '../errors/AppError.js';
 import type { CalendarLinkData } from '../models/definitions/CalendarLink.js';
 import type { IntegrationData } from '../models/definitions/Integration.js';
 import type { ItemData, LocalItemPatch } from '../models/definitions/Item.js';
 import {
-  getAuditLogRepository,
   getCalendarLinkRepository,
   getIntegrationRepository,
   getItemRepository,
@@ -109,21 +111,14 @@ interface Run {
   failures: number;
 }
 
-async function audit(
-  run: Run,
-  action: string,
-  itemId: string,
-  meta: Record<string, unknown>,
-): Promise<void> {
-  await (
-    await getAuditLogRepository()
-  ).append(run.workspaceId, {
-    actorUserId: 'system',
-    action,
-    targetType: 'item',
-    targetId: itemId,
-    meta: { runId: run.runId, integrationId: run.integration.id, ...meta },
-  });
+/** A calendar push run is the system acting in the integration's workspace. */
+function systemIn(run: Run): { workspaceId: string; actor: Actor } {
+  return { workspaceId: run.workspaceId, actor: Actor.system() };
+}
+
+/** What every entry of a run names: the run and its integration, then the entry's own meta. */
+function runMeta(run: Run, meta: Record<string, unknown>): Record<string, unknown> {
+  return { runId: run.runId, integrationId: run.integration.id, ...meta };
 }
 
 // ─── op results ─────────────────────────────────────────────────────────────
@@ -147,10 +142,15 @@ async function applyOpResult(run: Run, result: z.infer<typeof OpResult>): Promis
       await links.tombstone(workspaceId, link.id, 'dashboard');
     }
     run.counts.deleted += 1;
-    await audit(run, 'gcal.write', op.itemId, {
-      op: 'delete',
-      eventId: link?.googleEventId ?? null,
-    });
+    await AuditLog.record(
+      systemIn(run),
+      'gcal.write',
+      AuditTarget.of('item', op.itemId),
+      runMeta(run, {
+        op: 'delete',
+        eventId: link?.googleEventId ?? null,
+      }),
+    );
     return;
   }
   const item = await (await getItemRepository()).findById(workspaceId, op.itemId);
@@ -180,7 +180,12 @@ async function applyOpResult(run: Run, result: z.infer<typeof OpResult>): Promis
   );
   if (op.type === 'create') run.counts.created += 1;
   else run.counts.updated += 1;
-  await audit(run, 'gcal.write', op.itemId, { op: op.type, eventId });
+  await AuditLog.record(
+    systemIn(run),
+    'gcal.write',
+    AuditTarget.of('item', op.itemId),
+    runMeta(run, { op: op.type, eventId }),
+  );
 }
 
 // ─── pulled events ──────────────────────────────────────────────────────────
@@ -217,7 +222,12 @@ async function applyLinkedEvent(
     else await items.setOverlay(workspaceId, item.id, { calendarSync: false });
     await links.tombstone(workspaceId, link.id, 'google');
     run.counts.deleted += 1;
-    await audit(run, 'gcal.delete', item.id, { source: 'google', eventId: ev.id });
+    await AuditLog.record(
+      systemIn(run),
+      'gcal.delete',
+      AuditTarget.of('item', item.id),
+      runMeta(run, { source: 'google', eventId: ev.id }),
+    );
     return;
   }
   if (ev.etag !== undefined && ev.etag === link.lastEtag) {
@@ -239,11 +249,16 @@ async function applyLinkedEvent(
 
   if (dashboardChanged) {
     run.counts.conflicts += 1;
-    await audit(run, 'gcal.conflict', item.id, {
-      winner: googleWins ? 'google' : 'dashboard',
-      google: { summary: redactString(typeof ev['summary'] === 'string' ? ev['summary'] : '') },
-      dashboard: { title: redactString(item.title) },
-    });
+    await AuditLog.record(
+      systemIn(run),
+      'gcal.conflict',
+      AuditTarget.of('item', item.id),
+      runMeta(run, {
+        winner: googleWins ? 'google' : 'dashboard',
+        google: { summary: redactString(typeof ev['summary'] === 'string' ? ev['summary'] : '') },
+        dashboard: { title: redactString(item.title) },
+      }),
+    );
   }
 
   if (!googleWins || !isLocal(item)) {

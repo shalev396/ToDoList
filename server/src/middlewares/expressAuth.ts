@@ -1,6 +1,6 @@
 import { type Request, type Response, type NextFunction, type RequestHandler } from 'express';
 import { verifyToken } from '../utils/cognitoUtil.js';
-import { getUserRepository } from '../models/index.js';
+import { User } from '../classes/User.js';
 import type { AuthenticatedRequest } from '../types/express.js';
 
 //cognito validation fails returns the following payload : { message: 'Unauthorized' }
@@ -39,8 +39,7 @@ export const expressAuth: RequestHandler = async (
       return;
     }
 
-    const userRepo = await getUserRepository();
-    const user = await userRepo.findByCognitoSub(cognitoSub);
+    const user = await User.findByCognitoSub(cognitoSub);
 
     if (!user) {
       res.error('User not found', 404);

@@ -75,8 +75,8 @@ type ServerFactory = (ctx: McpRequestContext) => McpServer;
 
 function serverFactory(readonly: boolean): ServerFactory {
   return (ctx) => {
-    const { principal, workspace } = agentOf(ctx.authInfo);
-    return buildServer({ readonly, principal, workspace });
+    const { principal, workspace, caller } = agentOf(ctx.authInfo);
+    return buildServer({ readonly, principal, workspace, caller });
   };
 }
 
@@ -169,7 +169,7 @@ async function guarded(
   const call = toolCallOf(body);
   const tool = call === null ? undefined : findTool(call.name);
   if (call !== null && tool !== undefined) {
-    await recordToolCall(agent.principal, tool.name, call.args, 'blocked');
+    await recordToolCall(agent.caller, tool.name, call.args, 'blocked');
   }
   return Response.json(jsonRpcError(safeId(body), JSON_RPC.internalError, 'Internal error'), {
     status: 500,
@@ -245,7 +245,7 @@ const requestChecks: RequestHandler = (req, res, next) => {
  */
 function scopeGuard(readonly: boolean): RequestHandler {
   return async (req, res, next): Promise<void> => {
-    const refusal = await screenToolCall(req.body, requestAgent(res).principal, readonly);
+    const refusal = await screenToolCall(req.body, requestAgent(res), readonly);
     if (refusal === null) {
       next();
       return;

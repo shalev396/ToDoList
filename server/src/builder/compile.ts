@@ -12,12 +12,8 @@
  * - the compiler emits no `$where`, `$function`, `$accumulator`, `$expr` or `$lookup` (and asserts it).
  */
 import type { WeekStart } from '../models/definitions/Workspace.js';
-import {
-  baseContainerFilter,
-  baseItemFilterFor,
-  type ItemAccess,
-  type WorkspaceContext,
-} from '../services/accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
+import { ItemPolicy, type ItemAccess } from '../classes/policies/ItemPolicy.js';
 import {
   CAPS,
   DATE_PRESETS,
@@ -62,7 +58,7 @@ type Filter = Record<string, unknown>;
 export interface CompileContext {
   ws: Pick<WorkspaceContext, 'id' | 'onlyTopics'>;
   userId: string;
-  /** What the caller may see (services/itemAccess.ts): the first stage's base filter. */
+  /** What the caller may see (ItemPolicy): the first stage's base filter. */
   access: ItemAccess;
   /**
    * A block's connectors: only items of these integrations (and local to-dos when `local` is one
@@ -71,7 +67,7 @@ export interface CompileContext {
   connectors?: readonly string[];
   /**
    * Items only: two integrations read here mirror one account, so each record is kept once, from
-   * the first integration of this list that holds it (services/itemAccess.ts blockScope).
+   * the first integration of this list that holds it (ItemPolicy#blockScope).
    */
   dedup?: readonly string[];
   /** Runtime `$page` values, keyed `$page.<name>` or by bare name. */
@@ -809,10 +805,9 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
 
   const filter = combine(filters, '$and');
   // A block filtered by provider (not `local`) shows a provider copy: its to-do does not match.
+  const policy = ItemPolicy.of(ctx.access);
   const base =
-    source === 'items'
-      ? baseItemFilterFor(ctx.ws, ctx.access, filter)
-      : baseContainerFilter(ctx.ws, ctx.access);
+    source === 'items' ? policy.itemFilter(ctx.ws, filter) : policy.containerFilter(ctx.ws);
   const computed: Filter = {};
   if (compilation.usesImportance) {
     Object.assign(computed, importanceFields(ctx.importance, ctx.attributes ?? [], ctx.now));

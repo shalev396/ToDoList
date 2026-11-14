@@ -7,6 +7,7 @@
  */
 import type { Request, RequestHandler, Response } from 'express';
 
+import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
 import { getAgentKeyRepository, type AgentKeyData } from '../../models/index.js';
 import { hashAgentKey } from '../../services/agentKeys.js';
 import { jsonRpcError, JSON_RPC, requestIdOf } from '../jsonRpc.js';
@@ -46,16 +47,18 @@ function isUsable(key: AgentKeyData, now: Date): boolean {
 /**
  * The agent behind a raw key, or null when the key is malformed, unknown, revoked or expired, or
  * its user is no longer an active member of the key's workspace. Records the use (`lastUsedAt`).
+ * `origin`: the request's address and user agent, for the audit log.
  */
 export async function authenticateAgentKey(
   rawKey: string,
   now: Date = new Date(),
+  origin: ActorOrigin = {},
 ): Promise<AuthenticatedAgent | null> {
   if (!AGENT_KEY_PATTERN.test(rawKey)) return null;
   const keys = await getAgentKeyRepository();
   const key = await keys.findByHash(hashAgentKey(rawKey));
   if (key === null || !isUsable(key, now)) return null;
-  const agent = await resolvePrincipal(key);
+  const agent = await resolvePrincipal(key, origin);
   if (agent === null) return null;
   const lastUsed = key.lastUsedAt?.getTime() ?? null;
   if (lastUsed === null || now.getTime() - lastUsed >= TOUCH_INTERVAL_MS) {
@@ -109,7 +112,8 @@ function withinFailureLimit(
 export function createMcpAuth(failures: RequestHandler): RequestHandler {
   return async (req, res, next): Promise<void> => {
     const { presented, key } = bearerKey(req.headers.authorization);
-    const agent = key === null ? null : await authenticateAgentKey(key);
+    const agent =
+      key === null ? null : await authenticateAgentKey(key, new Date(), Actor.originOf(req));
     if (agent !== null) {
       setRequestAgent(res, agent);
       next();

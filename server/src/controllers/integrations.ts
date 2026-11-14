@@ -29,7 +29,7 @@ import { parseOr400, routeParam } from '../utils/validation.js';
 
 /** The UI: a person, no agent. */
 function uiActor(req: WorkspaceRequest): IntegrationActor {
-  return { userId: req.user.id, agentId: null };
+  return req.caller.actor;
 }
 
 // Every integration answer is toIntegrationStatus(), to its owner only: nothing else of it.

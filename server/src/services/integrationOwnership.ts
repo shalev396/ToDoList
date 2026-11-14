@@ -1,27 +1,28 @@
 /**
- * Integration ownership (PERMISSIONS-V2): an integration belongs to one member inside one
- * workspace. Only its owner sees its details or manages it: the config, a test, a sync, an edit,
- * a disconnect, its sync runs. For anyone else it does not exist (404, never 403), workspace
- * owners included (rulings 1, 2 and 23c).
- *
- * `isOwnIntegration` is the one test: the manage actions here, connector adds on blocks
- * (dashboards.ts) and writes to providers (H5) all ask it.
+ * Loading an integration for its owner. The rule (only its owner sees or manages it; for anyone
+ * else it does not exist: 404, never 403, workspace owners included) is IntegrationPolicy's
+ * (classes/policies/IntegrationPolicy.ts); these reads apply it.
  */
-import { AppError } from '../errors/AppError.js';
+import { IntegrationPolicy } from '../classes/policies/IntegrationPolicy.js';
+import { NotFoundError } from '../errors/NotFoundError.js';
 import type { IntegrationData } from '../models/definitions/Integration.js';
 import { getIntegrationRepository } from '../models/index.js';
 import type { WorkspaceContext } from './accessFilter.js';
 
-/** True when `userId` owns the integration. */
+/** True when `userId` owns the integration (IntegrationPolicy.isOwn). */
 export function isOwnIntegration(
   integration: Pick<IntegrationData, 'ownerUserId'>,
   userId: string,
 ): boolean {
-  return integration.ownerUserId === userId;
+  return IntegrationPolicy.isOwn(integration, userId);
 }
 
-function notFound(): AppError {
-  return new AppError(404, 'Not found');
+/** The integration when `userId` owns it; otherwise the policy's refusal (404). */
+function owned(integration: IntegrationData | null, userId: string): IntegrationData {
+  if (integration === null || !IntegrationPolicy.isOwn(integration, userId)) {
+    throw new NotFoundError();
+  }
+  return integration;
 }
 
 /**
@@ -33,9 +34,7 @@ export async function findOwnIntegration(
   userId: string,
   integrationId: string,
 ): Promise<IntegrationData> {
-  const integration = await (await getIntegrationRepository()).findById(ctx.id, integrationId);
-  if (integration === null || !isOwnIntegration(integration, userId)) throw notFound();
-  return integration;
+  return owned(await (await getIntegrationRepository()).findById(ctx.id, integrationId), userId);
 }
 
 /** findOwnIntegration, soft-deleted ones too: a disconnect that stopped part-way resumes. */
@@ -44,11 +43,10 @@ export async function findOwnIntegrationIncludingDeleted(
   userId: string,
   integrationId: string,
 ): Promise<IntegrationData> {
-  const integration = await (
-    await getIntegrationRepository()
-  ).findIncludingDeleted(ctx.id, integrationId);
-  if (integration === null || !isOwnIntegration(integration, userId)) throw notFound();
-  return integration;
+  return owned(
+    await (await getIntegrationRepository()).findIncludingDeleted(ctx.id, integrationId),
+    userId,
+  );
 }
 
 /** The caller's own live integrations in this workspace, oldest first. */

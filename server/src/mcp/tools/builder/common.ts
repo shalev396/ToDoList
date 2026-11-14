@@ -17,7 +17,7 @@ import { z } from 'zod';
 import type { TemplateLanguage } from '../../../builder/templates.js';
 import { TEMPLATE_LANGUAGES } from '../../../builder/templates.js';
 import { AppError } from '../../../errors/AppError.js';
-import { getAuditLogRepository } from '../../../models/index.js';
+import { AuditLog } from '../../../classes/AuditLog.js';
 import {
   applyDashboardOps,
   applyDashboardPatch,
@@ -34,6 +34,7 @@ import type {
   JsonPatchOperation,
 } from '../../../types/dashboards.js';
 import { DASHBOARD_PAGES } from '../../../types/domain.js';
+import { toolCaller } from '../../auth/principal.js';
 import { argsHash } from '../../middleware/audit.js';
 import type { ToolContext, ToolOutcome } from '../../tool.js';
 
@@ -169,8 +170,9 @@ export function json<S extends z.ZodType>(schema: S, value: unknown): z.output<S
   return schema.parse(JSON.parse(JSON.stringify(value)));
 }
 
+/** The agent key as the builder's actor, with this request's origin for the audit log. */
 export function actorOf(ctx: ToolContext): BuilderActor {
-  return { userId: ctx.principal.userId, agentId: ctx.principal.agentId };
+  return toolCaller(ctx).actor;
 }
 
 // ─── D12 ────────────────────────────────────────────────────────────────────
@@ -208,9 +210,7 @@ export function changeHash(change: Change): string {
 
 /** Refused (isError) unless this agent key previewed the identical change in the window. */
 export async function requirePreview(ctx: ToolContext, change: Change): Promise<void> {
-  const entry = await (
-    await getAuditLogRepository()
-  ).findRecent(ctx.principal.workspaceId, {
+  const entry = await AuditLog.findRecent(ctx.principal.workspaceId, {
     action: `mcp.${PREVIEW_TOOL}`,
     actorAgentId: ctx.principal.agentId,
     metaEquals: { opsHash: changeHash(change) },

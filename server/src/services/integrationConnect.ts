@@ -15,13 +15,15 @@
 import type { IntegrationData } from '../models/definitions/Integration.js';
 import { getIntegrationRepository, getSyncStateRepository } from '../models/index.js';
 import { RUN_STATE_RESOURCE } from '../sync/runSync.js';
-import { ROLE_RANK, type IntegrationMode, type Provider } from '../types/domain.js';
+import type { IntegrationMode, Provider } from '../types/domain.js';
 import type { WorkspaceContext } from './accessFilter.js';
 import { storeCredential } from './crypto/credentialWriter.js';
-import { isOwnIntegration } from './integrationOwnership.js';
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
+import { Role } from '../classes/base/Role.js';
+import { IntegrationPolicy } from '../classes/policies/IntegrationPolicy.js';
 import {
   addOwnerTopicRule,
-  auditIntegration,
   createWithinCaps,
   CREDENTIAL_MISSING,
   isDuplicateKey,
@@ -78,7 +80,7 @@ async function upsertIntegration(
   const integrations = await getIntegrationRepository();
   if (conn.reconnectIntegrationId !== undefined && conn.reconnectIntegrationId !== null) {
     const target = await integrations.findById(ctx.id, conn.reconnectIntegrationId);
-    if (target === null || !isOwnIntegration(target, actor.userId)) {
+    if (target === null || !IntegrationPolicy.isOwn(target, actor.userId)) {
       throw new OAuthFailure('oauth_failed');
     }
   }
@@ -88,7 +90,7 @@ async function upsertIntegration(
     ) ?? null;
   const existing = await find();
   if (existing !== null) return { integration: reconnectable(existing), created: false };
-  if (ROLE_RANK[ctx.role] < ROLE_RANK.editor) throw new OAuthFailure('oauth_not_editor');
+  if (!Role.of(ctx.role).atLeast(Role.editor)) throw new OAuthFailure('oauth_not_editor');
   const topicId = await topicIdBySlug(ctx.id, conn.topicSlug);
   try {
     const { created } = await createOrLimit(ctx.id, {
@@ -109,7 +111,12 @@ async function upsertIntegration(
       const topicRule = await addOwnerTopicRule(ctx.id, conn.githubLogin);
       if (topicRule !== null) meta['topicRule'] = topicRule;
     }
-    await auditIntegration(ctx, actor, 'integration.create', created.id, meta);
+    await AuditLog.record(
+      { workspaceId: ctx.id, actor },
+      'integration.create',
+      AuditTarget.integration(created.id),
+      meta,
+    );
     return { integration: created, created: true };
   } catch (error) {
     // The member connected the same account meanwhile (another tab): that one is reconnected.

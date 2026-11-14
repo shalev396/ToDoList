@@ -14,9 +14,10 @@ import {
 } from '../models/index.js';
 import type { RuleGroup } from '../types/builder.js';
 import type { ItemQueryRow } from '../types/builder.js';
-import { ownItemAccess } from '../services/itemAccess.js';
+import { Actor } from '../classes/base/Actor.js';
+import { Caller } from '../classes/base/Caller.js';
+import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
 import { runWorkspaceQuery } from '../services/workspaceQuery.js';
-import { getWorkspaceContext } from '../services/workspaceContext.js';
 import { zonedTime } from '../sync/transports/fixtureDates.js';
 import {
   buildOps,
@@ -155,8 +156,11 @@ export async function loadPlan(
   const { workspaceId } = integration;
   const config = readGcalConfig(integration);
   const owner = integration.ownerUserId;
-  const ctx = await getWorkspaceContext(workspaceId, owner);
-  if (ctx === null) throw new AppError(409, 'The member who connected this integration is gone');
+  const caller = await Caller.enter(workspaceId, Actor.user(owner));
+  if (caller === null) {
+    throw new AppError(409, 'The member who connected this integration is gone');
+  }
+  const ctx = caller.context;
   const timeZone = ctx.settings.timezone;
 
   const result = await runWorkspaceQuery(
@@ -164,7 +168,7 @@ export async function loadPlan(
     owner,
     { draft: pushQuery(config, narrowing, timeZone) },
     now,
-    await ownItemAccess(ctx, owner),
+    await ItemPolicy.ownFor(caller),
   );
   const rows = (result.rows ?? []).filter(
     (row): row is ItemQueryRow => 'kind' in row && row.source.provider !== 'google_calendar',

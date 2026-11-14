@@ -19,14 +19,12 @@
  * becomes the real one (once) and a default label becomes the account's own.
  */
 import { syncModeFor } from '../sync/syncMode.js';
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
 import { LIMITS } from '../config/limits.js';
 import { AppError } from '../errors/AppError.js';
 import type { ConnectionTestPatch, IntegrationData } from '../models/definitions/Integration.js';
-import {
-  getAuditLogRepository,
-  getCredentialRepository,
-  getIntegrationRepository,
-} from '../models/index.js';
+import { getCredentialRepository, getIntegrationRepository } from '../models/index.js';
 import { FixtureMissingError, ProviderHttpError } from '../sync/errors.js';
 import { fixtureSetDir } from '../sync/fixtureSets.js';
 import type { Clock, HttpRequest, HttpResponse, Transport } from '../sync/http.js';
@@ -47,7 +45,7 @@ import {
   isConnectableProvider,
   isPlaceholderAccountId,
 } from './integrationConfig.js';
-import { auditIntegration, isDuplicateKey, type IntegrationActor } from './integrations.js';
+import { isDuplicateKey, type IntegrationActor } from './integrations.js';
 import { logger } from './logger.js';
 import { findSecrets } from './secretPatterns.js';
 
@@ -337,9 +335,7 @@ async function recordSuccess(
  */
 async function waitBeforeNextTest(ctx: WorkspaceContext, integrationId: string): Promise<number> {
   const now = Date.now();
-  const entries = await (
-    await getAuditLogRepository()
-  ).list(
+  const entries = await AuditLog.list(
     ctx.id,
     { action: 'integration.test', since: new Date(now - RATE_WINDOW_MS) },
     RECENT_TESTS_SCANNED,
@@ -383,11 +379,10 @@ export async function testIntegrationConnection(
     }
     result = { ok: false, code: outcome.code };
   }
-  await auditIntegration(
-    ctx,
-    actor,
+  await AuditLog.record(
+    { workspaceId: ctx.id, actor },
     'integration.test',
-    integration.id,
+    AuditTarget.integration(integration.id),
     result.ok ? { ok: true } : { ok: false, code: result.code },
   );
   return result;

@@ -20,12 +20,8 @@ const list: RequestHandler = async (req, res): Promise<void> => {
 
 const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateViewBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
-  const data: CreateViewResponseData = await createView(
-    workspace,
-    { userId: user.id, agentId: null },
-    body,
-  );
+  const { workspace, caller } = req as WorkspaceRequest;
+  const data: CreateViewResponseData = await createView(workspace, caller.actor, body);
   res.success(data, 201);
 };
 
@@ -37,10 +33,10 @@ const get: RequestHandler = async (req, res): Promise<void> => {
 
 const update: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(UpdateViewBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
+  const { workspace, caller } = req as WorkspaceRequest;
   const data: UpdateViewResponseData = await updateView(
     workspace,
-    { userId: user.id, agentId: null },
+    caller.actor,
     routeParam(req, 'id'),
     body,
   );
@@ -48,8 +44,8 @@ const update: RequestHandler = async (req, res): Promise<void> => {
 };
 
 const remove: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
-  await deleteView(workspace, { userId: user.id, agentId: null }, routeParam(req, 'id'));
+  const { workspace, caller } = req as WorkspaceRequest;
+  await deleteView(workspace, caller.actor, routeParam(req, 'id'));
   res.status(204).end();
 };
 

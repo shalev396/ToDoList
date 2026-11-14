@@ -15,12 +15,16 @@ import { randomBytes } from 'node:crypto';
 
 import { environment } from '../config/environment.js';
 import { AppError } from '../errors/AppError.js';
-import { getAuditLogRepository, getReplayNonceRepository } from '../models/index.js';
+import { getReplayNonceRepository } from '../models/index.js';
 import { CONNECTABLE_PROVIDERS, type ConnectableProvider } from '../types/integrations.js';
+import { Actor } from '../classes/base/Actor.js';
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { Caller } from '../classes/base/Caller.js';
+import { AuditLog } from '../classes/AuditLog.js';
 import type { WorkspaceContext } from './accessFilter.js';
 import { sha256Hex } from './crypto/hashing.js';
 import { assertProviderOpen } from './integrationConfig.js';
-import { assertRole, type IntegrationActor } from './integrations.js';
+import type { IntegrationActor } from './integrations.js';
 
 export const CONNECT_LINK_TTL_MS = 10 * 60 * 1000;
 export const CONNECT_LINK_ACTION = 'integration.connect_link';
@@ -58,20 +62,16 @@ export async function createConnectLink(
   provider: ConnectableProvider,
   now: Date,
 ): Promise<ConnectLink> {
-  assertRole(ctx, 'editor');
+  Caller.fromContext(ctx, actor).require('editor');
   assertProviderOpen(provider);
   const rawLink = randomBytes(32).toString('base64url');
   const expiresAt = new Date(now.getTime() + CONNECT_LINK_TTL_MS);
-  await (
-    await getAuditLogRepository()
-  ).append(ctx.id, {
-    actorUserId: actor.userId,
-    actorAgentId: actor.agentId,
-    action: CONNECT_LINK_ACTION,
-    targetType: 'workspace',
-    targetId: ctx.id,
-    meta: { provider, linkHash: hashConnectLink(rawLink), expiresAt: expiresAt.toISOString() },
-  });
+  await AuditLog.record(
+    { workspaceId: ctx.id, actor },
+    CONNECT_LINK_ACTION,
+    AuditTarget.workspace(ctx.id),
+    { provider, linkHash: hashConnectLink(rawLink), expiresAt: expiresAt.toISOString() },
+  );
   return { provider, connectUrl: connectLinkUrl(ctx.id, provider, rawLink), expiresAt };
 }
 
@@ -89,10 +89,9 @@ export async function consumeConnectLink(
   rawLink: string,
   now: Date = new Date(),
 ): Promise<{ provider: ConnectableProvider; expiresAt: Date }> {
-  assertRole(ctx, 'editor');
+  Caller.fromContext(ctx, Actor.user(userId)).require('editor');
   const linkHash = hashConnectLink(rawLink);
-  const audit = await getAuditLogRepository();
-  const entry = await audit.findRecent(ctx.id, {
+  const entry = await AuditLog.findRecent(ctx.id, {
     action: CONNECT_LINK_ACTION,
     metaEquals: { linkHash },
     since: new Date(now.getTime() - CONNECT_LINK_TTL_MS),
@@ -109,13 +108,11 @@ export async function consumeConnectLink(
     await getReplayNonceRepository()
   ).insert(ctx.id, NONCE_SCOPE, `${NONCE_PREFIX}${linkHash}`, expiresAt);
   if (!fresh) throw new AppError(410, 'This link was already used');
-  await audit.append(ctx.id, {
-    actorUserId: userId,
-    actorAgentId: null,
-    action: CONSUMED_ACTION,
-    targetType: 'workspace',
-    targetId: ctx.id,
-    meta: { provider, requestedByAgentId: entry.actorAgentId ?? '' },
-  });
+  await AuditLog.record(
+    { workspaceId: ctx.id, actor: Actor.user(userId) },
+    CONSUMED_ACTION,
+    AuditTarget.workspace(ctx.id),
+    { provider, requestedByAgentId: entry.actorAgentId ?? '' },
+  );
   return { provider, expiresAt };
 }

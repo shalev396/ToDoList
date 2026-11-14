@@ -9,10 +9,10 @@
 import { getPersona, type PersonaFile } from '../builder/personas.js';
 import { resolveTemplateKey, type TemplateLanguage } from '../builder/templates.js';
 import { resolveViewTemplateKey } from '../builder/viewTemplates.js';
+import { WorkspacePolicy } from '../classes/policies/WorkspacePolicy.js';
 import { AppError } from '../errors/AppError.js';
 import { getDashboardRepository } from '../models/index.js';
 import type { IntegrationShare, PersonaInstantiateResult } from '../types/dashboards.js';
-import { ROLE_RANK } from '../types/domain.js';
 import type { WorkspaceContext } from './accessFilter.js';
 import {
   applyDashboardOps,
@@ -56,9 +56,7 @@ export async function planPersona(
   actor: BuilderActor,
   input: InstantiatePersonaInput,
 ): Promise<PersonaPlan> {
-  if (ROLE_RANK[ws.role] < ROLE_RANK.editor) {
-    throw new AppError(403, 'Only an editor can add pages');
-  }
+  WorkspacePolicy.requireRole(ws.role, 'edit', 'add pages');
   const found = persona(input.personaKey);
   const dashboards = await getDashboardRepository();
   const topics = await listTopics(ws);
@@ -100,9 +98,7 @@ export async function instantiatePersona(
   actor: BuilderActor,
   input: InstantiatePersonaInput,
 ): Promise<PersonaInstantiateResult> {
-  if (ROLE_RANK[ws.role] < ROLE_RANK.editor) {
-    throw new AppError(403, 'Only an editor can add pages');
-  }
+  WorkspacePolicy.requireRole(ws.role, 'edit', 'add pages');
   const found = persona(input.personaKey);
   const language: TopicLanguage = input.language;
   const dashboards = await getDashboardRepository();

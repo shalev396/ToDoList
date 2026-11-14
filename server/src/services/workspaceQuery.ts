@@ -29,10 +29,13 @@ import {
   type QueryResult,
 } from '../types/builder.js';
 import { ImportanceConfigSchema, type ImportanceConfig } from '../types/importance.js';
-import { ROLE_RANK, type Visibility } from '../types/domain.js';
-import type { ItemAccess, WorkspaceContext } from './accessFilter.js';
+import type { Visibility } from '../types/domain.js';
+import { Actor } from '../classes/base/Actor.js';
+import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
+import { Role } from '../classes/base/Role.js';
+import { DashboardPolicy } from '../classes/policies/DashboardPolicy.js';
+import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
 import { attributesOf } from './attributes.js';
-import { blockScope, resolveItemAccess } from './itemAccess.js';
 import { logger } from './logger.js';
 import { providerFieldsOf, registryOf } from './providerFields.js';
 
@@ -109,9 +112,12 @@ async function blockQuery(
 ): Promise<QueryTarget> {
   const dashboards = await getDashboardRepository();
   const dashboard = await dashboards.findById(workspace.id, dashboardId);
-  if (dashboard === null || !visibleTo(dashboard, userId)) throw notFound();
+  const caller = Caller.fromContext(workspace, Actor.user(userId));
+  if (dashboard === null || !caller.can(DashboardPolicy.instance, 'read', dashboard)) {
+    throw notFound();
+  }
   // Editors work on the draft; viewers see what was published (DATA.md §3.11).
-  const config = ROLE_RANK[workspace.role] >= ROLE_RANK.editor ? dashboard : dashboard.published;
+  const config = caller.role.atLeast(Role.editor) ? dashboard : dashboard.published;
   if (config === null) throw notFound();
   const index = config.blocks.findIndex((block) => isRecord(block) && block['id'] === blockId);
   const block = config.blocks[index];
@@ -187,14 +193,14 @@ async function repositoryDeps(): Promise<RunQueryDeps> {
 /**
  * Runs one query request (`body` as received) for `userId` in `workspace`. Request vars override
  * the dashboard's default vars; time zone and week start come from the workspace settings.
- * `access` defaults to what `userId` may see; a calendar push passes their own only (ruling 12).
+ * `policy` defaults to what `userId` may see; a calendar push passes their own only (ruling 12).
  */
 export async function runWorkspaceQuery(
   workspace: WorkspaceContext,
   userId: string,
   body: unknown,
   now: Date = new Date(),
-  access?: ItemAccess,
+  policy?: ItemPolicy,
 ): Promise<QueryResult> {
   let pointer = '';
   try {
@@ -202,13 +208,13 @@ export async function runWorkspaceQuery(
     const target = await resolveTarget(workspace, userId, request);
     pointer = target.pointer;
     const query = parseQuery(target.query);
-    const seen = access ?? (await resolveItemAccess(workspace, userId));
+    const seen = policy ?? (await ItemPolicy.for({ workspaceId: workspace.id, userId }));
     const importance = importanceOf(target.importance);
     const ctx: CompileContext = {
       ws: workspace,
       userId,
-      access: seen,
-      ...blockScope(seen, target.connectors),
+      access: seen.access,
+      ...seen.blockScope(target.connectors),
       vars: { ...bareVars(target.vars), ...bareVars(request.vars ?? {}) },
       now,
       timeZone: workspace.settings.timezone,

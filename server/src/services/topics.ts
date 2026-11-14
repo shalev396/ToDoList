@@ -10,9 +10,11 @@
  *   layouts and filters). Its items stay, Unsorted (`topicId: null`): they live at their source,
  *   and local to-dos stay too.
  */
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
+import { WorkspacePolicy } from '../classes/policies/WorkspacePolicy.js';
 import { AppError } from '../errors/AppError.js';
 import {
-  getAuditLogRepository,
   getContainerRepository,
   getDashboardRepository,
   getIntegrationRepository,
@@ -21,7 +23,6 @@ import {
   getWorkspaceRepository,
 } from '../models/index.js';
 import type { TopicData, TopicPatch } from '../models/definitions/Topic.js';
-import { ROLE_RANK } from '../types/domain.js';
 import {
   DEFAULT_TOPICS,
   TOPIC_COLOURS,
@@ -92,10 +93,9 @@ function notFound(): AppError {
   return new AppError(404, 'Not found');
 }
 
+/** Editors and owners change the workspace's content (WorkspacePolicy). */
 function assertEditor(ws: WorkspaceContext, action: string): void {
-  if (ROLE_RANK[ws.role] < ROLE_RANK.editor) {
-    throw new AppError(403, `Only an editor can ${action}`);
-  }
+  WorkspacePolicy.requireRole(ws.role, 'edit', action);
 }
 
 /**
@@ -135,25 +135,6 @@ function assertLook(input: Pick<CreateTopicInput, 'icon' | 'colour'>): void {
   ) {
     throw new AppError(400, 'Unknown topic colour');
   }
-}
-
-async function auditTopic(
-  ws: WorkspaceContext,
-  actor: TopicActor,
-  action: string,
-  topicId: string,
-  meta: Record<string, unknown>,
-): Promise<void> {
-  await (
-    await getAuditLogRepository()
-  ).append(ws.id, {
-    actorUserId: actor.userId,
-    actorAgentId: actor.agentId,
-    action,
-    targetType: 'topic',
-    targetId: topicId,
-    meta,
-  });
 }
 
 /** The workspace's topics, in sidebar order. Any member. */
@@ -243,7 +224,12 @@ export async function createTopic(
         order,
         createdBy: actor.userId,
       });
-      await auditTopic(ws, actor, 'topic.create', created.id, { slug });
+      await AuditLog.record(
+        { workspaceId: ws.id, actor },
+        'topic.create',
+        AuditTarget.of('topic', created.id),
+        { slug },
+      );
       return created;
     } catch (error) {
       // Another page took the slug meanwhile: pick again.
@@ -312,7 +298,12 @@ export async function updateTopic(
   if (Object.keys(patch).length === 0) throw new AppError(400, 'Nothing to change');
   const updated = await (await getTopicRepository()).update(ws.id, topicId, patch);
   if (updated === null) throw notFound();
-  await auditTopic(ws, actor, 'topic.update', topicId, { fields: Object.keys(patch) });
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'topic.update',
+    AuditTarget.of('topic', topicId),
+    { fields: Object.keys(patch) },
+  );
   return updated;
 }
 
@@ -345,6 +336,11 @@ export async function deleteTopic(
     rules: await workspaces.pullTopicRules(ws.id, topicId),
   };
   await repository.delete(ws.id, topicId);
-  await auditTopic(ws, actor, 'topic.delete', topicId, { slug: topic.slug, ...result });
+  await AuditLog.record(
+    { workspaceId: ws.id, actor },
+    'topic.delete',
+    AuditTarget.of('topic', topicId),
+    { slug: topic.slug, ...result },
+  );
   return result;
 }

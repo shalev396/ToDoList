@@ -1,10 +1,13 @@
 /** Agent keys (DATA.md §3.14): create (raw key once), list, revoke. Framework-free. */
 import { randomBytes } from 'node:crypto';
 
+import { Actor } from '../classes/base/Actor.js';
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
 import { LIMITS } from '../config/limits.js';
 import { AppError } from '../errors/AppError.js';
 import type { AgentKeyData } from '../models/definitions/AgentKey.js';
-import { getAgentKeyRepository, getAuditLogRepository } from '../models/index.js';
+import { getAgentKeyRepository } from '../models/index.js';
 import type { AgentKeyView } from '../routes/private/agentKeys.js';
 import type { AgentScope } from '../types/domain.js';
 import type { WorkspaceContext } from './accessFilter.js';
@@ -29,23 +32,6 @@ function toView(key: AgentKeyData, withUser: boolean): AgentKeyView {
     lastUsedAt: key.lastUsedAt,
     revokedAt: key.revokedAt,
   };
-}
-
-async function audit(
-  workspaceId: string,
-  actorUserId: string,
-  action: string,
-  keyId: string,
-  meta: Record<string, unknown>,
-): Promise<void> {
-  const logs = await getAuditLogRepository();
-  await logs.append(workspaceId, {
-    actorUserId,
-    action,
-    targetType: 'agent_key',
-    targetId: keyId,
-    meta,
-  });
 }
 
 export async function listAgentKeys(ws: WorkspaceContext, userId: string): Promise<AgentKeyView[]> {
@@ -78,10 +64,15 @@ export async function createAgentKey(
     scopes: [...new Set(input.scopes)],
     expiresAt: new Date(Date.now() + days * DAY_MS),
   });
-  await audit(ws.id, userId, 'agent_key.create', created.id, {
-    name: created.name,
-    scopes: created.scopes,
-  });
+  await AuditLog.record(
+    { workspaceId: ws.id, actor: Actor.user(userId) },
+    'agent_key.create',
+    AuditTarget.of('agent_key', created.id),
+    {
+      name: created.name,
+      scopes: created.scopes,
+    },
+  );
   return { ...toView(created, true), key: raw };
 }
 
@@ -96,5 +87,10 @@ export async function revokeAgentKey(
     throw new AppError(404, 'Not found');
   }
   if (!(await keys.revoke(ws.id, id))) throw new AppError(404, 'Not found');
-  await audit(ws.id, userId, 'agent_key.revoke', id, { name: key.name });
+  await AuditLog.record(
+    { workspaceId: ws.id, actor: Actor.user(userId) },
+    'agent_key.revoke',
+    AuditTarget.of('agent_key', id),
+    { name: key.name },
+  );
 }

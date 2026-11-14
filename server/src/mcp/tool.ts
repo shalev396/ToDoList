@@ -5,7 +5,7 @@
  */
 import type { z } from 'zod';
 
-import type { WorkspaceContext } from '../services/accessFilter.js';
+import type { Caller, WorkspaceContext } from '../classes/base/Caller.js';
 import type { AgentScope, Role } from '../types/domain.js';
 import type { AgentPrincipal } from './auth/principal.js';
 
@@ -27,6 +27,11 @@ export interface ToolContext {
   principal: AgentPrincipal;
   /** The caller's standing in the workspace, as the services take it (requireWorkspace's shape). */
   workspace: WorkspaceContext;
+  /**
+   * The agent key as a caller, from this request's address and user agent (absent in contexts
+   * tests build: auth/principal.ts toolCaller fills it in).
+   */
+  caller?: Caller;
   readonly: boolean;
   /** The clock. Tests inject one (the builder's preview window, D12). */
   now: () => Date;

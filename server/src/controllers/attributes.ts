@@ -18,7 +18,7 @@ import type { WorkspaceRequest } from '../types/express.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
 
 function uiActor(req: WorkspaceRequest): AttributeActor {
-  return { userId: req.user.id, agentId: null };
+  return req.caller.actor;
 }
 
 const list: RequestHandler = (req, res): void => {

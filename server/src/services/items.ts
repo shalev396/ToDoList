@@ -1,12 +1,16 @@
 /**
  * Items and facets for one caller (BACKEND.md §4), framework-free. Every read starts from
- * `baseItemFilter` / `baseContainerFilter` with the caller's access (share-on-attach,
- * itemAccess.ts), and every write first finds the item through that filter, so an item outside
- * the caller's access is a 404: an unshared integration's item, through the sheet or a deep link
+ * ItemPolicy's item or container filter with the caller's access (share-on-attach), and every
+ * write first finds the item through that filter and asks the policy, so an item outside the
+ * caller's access is a 404: an unshared integration's item, through the sheet or a deep link
  * too (PERMISSIONS-V2 ruling 14). Text goes out redacted, like `/query`.
  */
+import { Actor } from '../classes/base/Actor.js';
+import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
+import { ItemPolicy, type ItemFacts } from '../classes/policies/ItemPolicy.js';
 import { AppError } from '../errors/AppError.js';
 import { MirroredItemError } from '../errors/MirroredItemError.js';
+import { NotFoundError } from '../errors/NotFoundError.js';
 import { effectiveCopyStatus, type ItemData } from '../models/definitions/Item.js';
 import { MirroredItemError as StoredMirroredItemError } from '../models/errors.js';
 import { getContainerRepository, getItemRepository } from '../models/index.js';
@@ -22,14 +26,6 @@ import type {
 import { LOCAL_CONNECTOR } from '../types/builder.js';
 import type { ItemCopyView } from '../types/items.js';
 import type { ContainerType, ItemKind, ItemStatus, Provider } from '../types/domain.js';
-import {
-  baseContainerFilter,
-  baseItemFilterFor,
-  baseItemFilterUnabsorbed,
-  type ItemAccess,
-  type WorkspaceContext,
-} from './accessFilter.js';
-import { resolveItemAccess } from './itemAccess.js';
 import { prepareAttributeValues } from './attributes.js';
 import { assertTopicOf, topicIdBySlug } from './topics.js';
 import { scrub } from './scrub.js';
@@ -164,24 +160,41 @@ async function aggregateItems(
   return items.aggregate(workspaceId, stages);
 }
 
+/** What the caller may see of the workspace's items (share-on-attach). */
+function policyFor(ws: WorkspaceContext, userId: string): Promise<ItemPolicy> {
+  return ItemPolicy.for({ workspaceId: ws.id, userId });
+}
+
 /** The raw item when the caller may see it; 404 otherwise. */
-async function loadVisible(ws: WorkspaceContext, access: ItemAccess, id: string): Promise<Doc> {
+async function loadVisible(ws: WorkspaceContext, policy: ItemPolicy, id: string): Promise<Doc> {
   const [doc] = await aggregateItems(ws.id, [
-    { $match: { ...baseItemFilterUnabsorbed(ws, access), _id: id } },
+    { $match: { ...policy.itemFilterUnabsorbed(ws), _id: id } },
     { $limit: 1 },
   ]);
-  if (doc === undefined) throw new AppError(404, 'Not found');
+  if (doc === undefined) throw new NotFoundError();
   return doc;
 }
 
 /** The 409 a mirrored item answers (errors/MirroredItemError.ts), under the name callers know. */
 export { MirroredItemError as ItemMirroredResponse };
 
-function assertLocal(doc: Doc): void {
+/** What ItemPolicy reads of a stored item (a missing visibility is not `workspace`). */
+function factsOf(doc: Doc): ItemFacts {
   const source = record(doc['source']);
-  if (source['provider'] !== 'local') {
-    throw new MirroredItemError(source['provider'] as Provider, text(source['url']) ?? '');
-  }
+  return {
+    workspaceId: text(doc['workspaceId']) ?? '',
+    integrationId: text(doc['integrationId']),
+    ownerUserId: text(doc['ownerUserId']),
+    visibility: doc['visibility'] === 'workspace' ? 'workspace' : 'private',
+    topicId: text(doc['topicId']),
+    deletedAt: date(doc['deletedAt']),
+    source: { provider: source['provider'] as Provider, url: text(source['url']) ?? '' },
+  };
+}
+
+/** A local to-do the caller may change; a mirrored item answers 409 with its source link. */
+function assertEditable(ws: WorkspaceContext, userId: string, policy: ItemPolicy, doc: Doc): void {
+  Caller.fromContext(ws, Actor.user(userId)).authorize(policy, 'edit', factsOf(doc));
 }
 
 // ─── list ───────────────────────────────────────────────────────────────────
@@ -292,7 +305,7 @@ export async function listItems(
   // collide.
   const match: Doc = {
     $and: [
-      baseItemFilterFor(ws, await resolveItemAccess(ws, userId), filters),
+      (await policyFor(ws, userId)).itemFilter(ws, filters),
       filters,
       ...(query.cursor === undefined ? [] : [afterCursor(decodeCursor(query.cursor))]),
     ],
@@ -315,8 +328,8 @@ export async function getItem(
   userId: string,
   id: string,
 ): Promise<ItemDetail> {
-  const access = await resolveItemAccess(ws, userId);
-  const [doc] = await withLiveStatus(ws.id, [await loadVisible(ws, access, id)]);
+  const policy = await policyFor(ws, userId);
+  const [doc] = await withLiveStatus(ws.id, [await loadVisible(ws, policy, id)]);
   return toDetail(doc ?? {});
 }
 
@@ -331,9 +344,9 @@ export async function getItemSummaries(
   ids: readonly string[],
 ): Promise<ItemSummary[]> {
   if (ids.length === 0) return [];
-  const access = await resolveItemAccess(ws, userId);
+  const policy = await policyFor(ws, userId);
   const docs = await aggregateItems(ws.id, [
-    { $match: { ...baseItemFilterUnabsorbed(ws, access), _id: { $in: [...ids] } } },
+    { $match: { ...policy.itemFilterUnabsorbed(ws), _id: { $in: [...ids] } } },
   ]);
   const byId = new Map(docs.map((doc) => [String(doc['_id']), doc]));
   return ids.flatMap((id) => {
@@ -362,12 +375,12 @@ function isDuplicateKey(error: unknown): boolean {
 
 async function assertContainer(
   ws: WorkspaceContext,
-  access: ItemAccess,
+  policy: ItemPolicy,
   containerId: string,
 ): Promise<void> {
   const containers = await getContainerRepository();
   const [found] = await containers.aggregate(ws.id, [
-    { $match: { ...baseContainerFilter(ws, access), _id: containerId } },
+    { $match: { ...policy.containerFilter(ws), _id: containerId } },
     { $limit: 1 },
   ]);
   if (found === undefined) throw new AppError(400, 'containerId: unknown container');
@@ -383,7 +396,7 @@ export async function createItem(
   input: CreateItemInput,
 ): Promise<{ item: ItemDetail; created: boolean }> {
   if (input.containerId !== undefined && input.containerId !== null) {
-    await assertContainer(ws, await resolveItemAccess(ws, userId), input.containerId);
+    await assertContainer(ws, await policyFor(ws, userId), input.containerId);
   }
   if (input.topicId !== undefined && input.topicId !== null) {
     await assertTopicOf(ws.id, input.topicId);
@@ -462,10 +475,10 @@ export async function updateItem(
   id: string,
   input: UpdateItemInput,
 ): Promise<ItemDetail> {
-  const access = await resolveItemAccess(ws, userId);
-  assertLocal(await loadVisible(ws, access, id));
+  const policy = await policyFor(ws, userId);
+  assertEditable(ws, userId, policy, await loadVisible(ws, policy, id));
   if (input.containerId !== undefined && input.containerId !== null) {
-    await assertContainer(ws, access, input.containerId);
+    await assertContainer(ws, policy, input.containerId);
   }
   if (input.topicId !== undefined && input.topicId !== null) {
     await assertTopicOf(ws.id, input.topicId);
@@ -489,13 +502,16 @@ export async function completeItem(
   id: string,
   done: boolean,
 ): Promise<ItemDetail> {
-  assertLocal(await loadVisible(ws, await resolveItemAccess(ws, userId), id));
+  const policy = await policyFor(ws, userId);
+  assertEditable(ws, userId, policy, await loadVisible(ws, policy, id));
   const status: ItemStatus = done ? 'done' : 'open';
   return updateLocal(ws, id, { status, closedAt: closedAtFor(status) });
 }
 
 export async function deleteItem(ws: WorkspaceContext, userId: string, id: string): Promise<void> {
-  assertLocal(await loadVisible(ws, await resolveItemAccess(ws, userId), id));
+  const policy = await policyFor(ws, userId);
+  const doc = await loadVisible(ws, policy, id);
+  Caller.fromContext(ws, Actor.user(userId)).authorize(policy, 'manage', factsOf(doc));
   const items = await getItemRepository();
   if (!(await items.softDelete(ws.id, id))) throw new AppError(404, 'Not found');
 }
@@ -506,7 +522,7 @@ export async function updateOverlay(
   id: string,
   overlay: Loose<UpdateOverlayRequestBody>,
 ): Promise<ItemDetail> {
-  await loadVisible(ws, await resolveItemAccess(ws, userId), id);
+  await loadVisible(ws, await policyFor(ws, userId), id);
   if (overlay.topicOverride !== undefined && overlay.topicOverride !== null) {
     await assertTopicOf(ws.id, overlay.topicOverride);
   }
@@ -543,7 +559,7 @@ export async function getFacets(
   userId: string,
   connectors?: readonly string[],
 ): Promise<FacetsResponseData> {
-  const access = await resolveItemAccess(ws, userId);
+  const policy = await policyFor(ws, userId);
   // Given, even empty (blocks that read no source): only what those sources hold.
   const narrowed = connectors !== undefined;
   const ids = narrowed ? connectors.filter((id) => id !== LOCAL_CONNECTOR) : [];
@@ -558,7 +574,7 @@ export async function getFacets(
       }
     : {};
   const [facet] = await aggregateItems(ws.id, [
-    { $match: { $and: [baseItemFilterUnabsorbed(ws, access), itemSources] } },
+    { $match: { $and: [policy.itemFilterUnabsorbed(ws), itemSources] } },
     {
       $facet: {
         providers: [{ $group: { _id: '$source.provider' } }],
@@ -575,7 +591,7 @@ export async function getFacets(
   const containerDocs = await containerRepo.aggregate(ws.id, [
     {
       $match: {
-        $and: [baseContainerFilter(ws, access), narrowed ? { integrationId: { $in: ids } } : {}],
+        $and: [policy.containerFilter(ws), narrowed ? { integrationId: { $in: ids } } : {}],
       },
     },
     { $sort: { name: 1, _id: 1 } },

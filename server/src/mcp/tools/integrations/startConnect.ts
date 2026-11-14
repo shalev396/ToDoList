@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { createConnectLink } from '../../../services/connectLinks.js';
 import { CONNECTABLE_PROVIDERS } from '../../../types/integrations.js';
+import { toolCaller } from '../../auth/principal.js';
 import { defineTool } from '../../tool.js';
 
 export const integrationsStartConnect = defineTool({
@@ -27,7 +28,7 @@ export const integrationsStartConnect = defineTool({
   async handler(ctx, input) {
     const link = await createConnectLink(
       ctx.workspace,
-      { userId: ctx.principal.userId, agentId: ctx.principal.agentId },
+      toolCaller(ctx).actor,
       input.provider,
       ctx.now(),
     );

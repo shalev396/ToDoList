@@ -26,6 +26,9 @@
  * (reconnect); other failures do so after three failed runs in a row, each run counted once
  * however often its job is retried.
  */
+import { Actor } from '../classes/base/Actor.js';
+import { AuditTarget } from '../classes/base/AuditTarget.js';
+import { AuditLog } from '../classes/AuditLog.js';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -42,7 +45,6 @@ import type { SyncRunFailure, SyncRunPatch } from '../models/definitions/SyncRun
 import type { SyncStateData } from '../models/definitions/SyncState.js';
 import type { WorkspaceData } from '../models/definitions/Workspace.js';
 import {
-  getAuditLogRepository,
   getContainerRepository,
   getIntegrationRepository,
   getItemRepository,
@@ -1010,15 +1012,12 @@ async function executeRun(
     await recordOutcome(run, connected, { error, fullSyncCompleted, finishedAt });
   }
 
-  await (
-    await getAuditLogRepository()
-  ).append(workspaceId, {
-    actorUserId: 'system',
-    action: 'sync.run',
-    targetType: 'integration',
-    targetId: integration.id,
-    meta: { trigger: run.trigger, counts },
-  });
+  await AuditLog.record(
+    { workspaceId, actor: Actor.system() },
+    'sync.run',
+    AuditTarget.integration(integration.id),
+    { trigger: run.trigger, counts },
+  );
 
   return { runId: run.runId, status, counts, error };
 }

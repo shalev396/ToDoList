@@ -39,10 +39,10 @@ const options: RequestHandler = async (req, res): Promise<void> => {
 /** Editor: creates a to-do's copy in one of the caller's own providers. */
 const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateCopyBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
+  const { workspace, caller } = req as WorkspaceRequest;
   const data: CreateCopyResponseData = await createCopy(
     workspace,
-    { userId: user.id, agentId: null },
+    caller.actor,
     routeParam(req, 'id'),
     body,
   );
