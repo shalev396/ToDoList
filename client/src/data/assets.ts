@@ -1,8 +1,9 @@
-import { LogoIcon } from '@/components/ui/LogoIcon';
+import { Logo, LogoMark } from '@/components/ui/Logo';
 import { FAVICON } from './favicon';
 
 export const assets = {
-  LogoIcon,
+  Logo,
+  LogoMark,
   faviconPath: FAVICON.light,
   FAVICON,
 } as const;

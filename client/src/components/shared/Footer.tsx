@@ -14,7 +14,7 @@ const footerLink =
 export default function Footer() {
   const { t } = useTranslation();
   const { language } = useLanguage();
-  const { LogoIcon } = assets;
+  const { Logo } = assets;
   const year = new Date().getFullYear();
   const links = [
     { to: pathTo(ROUTES.PRICING, language), label: t('footer.pricing') },
@@ -29,10 +29,9 @@ export default function Footer() {
           <div className="flex flex-col gap-2">
             <Link
               to={pathTo(ROUTES.HOME, language)}
-              className="flex w-fit items-center gap-2 rounded-sm text-[15px] font-semibold tracking-[-0.01em] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className="flex w-fit items-center rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
-              <LogoIcon className="size-6" />
-              {app.name}
+              <Logo className="text-base" />
             </Link>
             <p className="text-[13px] text-muted-foreground">{t('footer.tagline')}</p>
           </div>

@@ -14,7 +14,7 @@ import { pathTo, ROUTES } from '@/router/routes';
 export function AuthLayout() {
   const { t } = useTranslation();
   const { language } = useLanguage();
-  const { LogoIcon } = assets;
+  const { LogoMark } = assets;
 
   return (
     <div className="flex min-h-svh flex-col bg-background">
@@ -28,7 +28,7 @@ export function AuthLayout() {
           aria-label={t('auth.layout.home')}
           className="mb-6 flex min-h-11 min-w-11 items-center justify-center rounded-md pointer-fine:min-h-0 pointer-fine:min-w-0 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background focus-visible:outline-none"
         >
-          <LogoIcon className="size-10" />
+          <LogoMark className="size-10" />
         </Link>
         <div className="w-full max-w-[400px] rounded-lg border bg-card p-6 sm:p-8">
           <Outlet />

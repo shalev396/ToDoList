@@ -2,7 +2,7 @@ import { Link, Outlet } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { useTranslation } from 'react-i18next';
 import { LogOut } from 'lucide-react';
-import { app, assets } from '@/data';
+import { assets } from '@/data';
 import { Button } from '@/components/ui/button';
 import { LanguageSwitcher } from '@/components/ui/language-switcher';
 import { ModeToggle } from '@/components/ui/mode-toggle';
@@ -21,7 +21,7 @@ export default function FocusLayout() {
   const { language } = useLanguage();
   const user = useSelector(selectUser);
   const signOut = useSignOut();
-  const { LogoIcon } = assets;
+  const { Logo } = assets;
   useWorkspaceReconciler();
 
   return (
@@ -29,10 +29,9 @@ export default function FocusLayout() {
       <header className="flex h-14 items-center gap-2 border-b px-3 pt-[env(safe-area-inset-top)] sm:px-5">
         <Link
           to={pathTo(ROUTES.HOME, language)}
-          className="flex min-h-11 items-center gap-2 rounded-sm text-base font-semibold pointer-fine:min-h-9 tracking-[-0.01em] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="flex min-h-11 items-center rounded-sm pointer-fine:min-h-9 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          <LogoIcon className="size-6" />
-          {app.name}
+          <Logo className="text-base" />
         </Link>
         <div className="ms-auto flex items-center gap-1">
           {user ? (

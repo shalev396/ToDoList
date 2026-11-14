@@ -51,7 +51,7 @@ export function ThemeProvider({
     });
   }, [theme]);
 
-  // Sync favicon with theme (light vs dark) — same paths as LogoIcon (single source of truth)
+  // Sync the favicon with the theme (data/favicon.ts). The in-app logo swaps in CSS (Logo.tsx).
   useEffect(() => {
     const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (link) {

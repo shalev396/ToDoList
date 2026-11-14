@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { useTranslation } from 'react-i18next';
 import { Menu } from 'lucide-react';
-import { app, assets } from '@/data';
+import { assets } from '@/data';
 import { cn } from '@/lib/utils';
 import { ModeToggle } from '@/components/ui/mode-toggle';
 import { LanguageSwitcher } from '@/components/ui/language-switcher';
@@ -143,7 +143,7 @@ export default function NavBar() {
   const { t } = useTranslation();
   const isAuthenticated = useSelector(selectIsAuthenticated);
   const { language } = useLanguage();
-  const { LogoIcon } = assets;
+  const { Logo } = assets;
   const home = pathTo(ROUTES.HOME, language);
 
   return (
@@ -154,10 +154,9 @@ export default function NavBar() {
       >
         <Link
           to={home}
-          className="me-3 flex shrink-0 items-center gap-2 rounded-sm text-[15px] font-semibold tracking-[-0.01em] text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="me-3 flex shrink-0 items-center rounded-sm focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
-          <LogoIcon className="size-6" />
-          {app.name}
+          <Logo className="text-base" />
         </Link>
 
         <div className="hidden items-center md:flex">
