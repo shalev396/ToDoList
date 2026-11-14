@@ -1,0 +1,16 @@
+{
+  "request": {
+    "url": "https://www.googleapis.com/drive/v3/about?fields=user"
+  },
+  "response": {
+    "body": {
+      "user": {
+        "kind": "drive#user",
+        "displayName": "Notability backup sync (demo)",
+        "me": true,
+        "permissionId": "FAKE-permission-0001",
+        "emailAddress": "fake-sync@fake-project.iam.example.invalid"
+      }
+    }
+  }
+}

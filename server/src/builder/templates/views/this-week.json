@@ -1,0 +1,67 @@
+{
+  "key": "this-week@1",
+  "version": 1,
+  "titles": {
+    "en": "This week",
+    "he": "השבוע"
+  },
+  "type": "timeline",
+  "vars": {},
+  "blocks": [
+    {
+      "id": "blk_week",
+      "type": "timeline",
+      "titles": {
+        "en": "This week",
+        "he": "השבוע"
+      },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "combinator": "or",
+              "rules": [
+                {
+                  "field": "kind",
+                  "operator": "=",
+                  "value": "event"
+                },
+                {
+                  "field": "status",
+                  "operator": "in",
+                  "value": ["open", "in_progress"]
+                }
+              ]
+            },
+            {
+              "field": "topic",
+              "operator": "=",
+              "value": "$page.topic"
+            }
+          ]
+        },
+        "dateRange": "this_week",
+        "dateField": "any",
+        "sort": [
+          {
+            "field": "startAt",
+            "dir": "asc"
+          }
+        ],
+        "limit": 100
+      },
+      "viz": {
+        "kind": "timeline",
+        "days": 7
+      },
+      "listen": ["$page.topic"]
+    }
+  ],
+  "layouts": {
+    "lg": [],
+    "md": [],
+    "sm": []
+  }
+}

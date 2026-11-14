@@ -1,0 +1,661 @@
+import { randomUUID } from 'node:crypto';
+import mongoose from 'mongoose';
+
+import { ATTRIBUTE_KEY_PATTERN } from '../../types/attributes.js';
+import { ITEM_KINDS, ITEM_STATUSES, VISIBILITIES, type ItemStatus } from '../../types/domain.js';
+import {
+  ITEM_TABLE_NAME,
+  localItemUrl,
+  SWEEP_WINDOW_FIELDS,
+  type IItemRepository,
+  COPY_STATUSES,
+  type ItemCopy,
+  type ItemData,
+  type ItemOverlay,
+  type ItemSweepOptions,
+  type ItemUpsert,
+  type LocalItemPatch,
+  type SweepWindow,
+} from '../definitions/Item.js';
+import type { AggregateOptions } from '../definitions/common.js';
+import { MirroredItemError } from '../errors.js';
+import {
+  SourceSchema,
+  scopedPipeline,
+  orphanedResourcesFilter,
+  setFields,
+  softDeleteBySource,
+  toSourceRef,
+  upsertBySource,
+  uuidIdField,
+  type SourceUpsertStore,
+  type StoredSource,
+} from './common.js';
+
+/** `copies` is absent from items stored before H5 (lean reads apply no defaults). */
+type StoredCopy = Omit<ItemCopy, 'at'> & { at?: Date };
+type ItemFields = Omit<ItemData, 'id' | 'copies'> & { _id: string; copies?: StoredCopy[] };
+
+/** `bodyPreview` is a short preview; the full body stays at the source. */
+export const BODY_PREVIEW_MAX = 500;
+
+const copySchema = new mongoose.Schema<ItemCopy>(
+  {
+    integrationId: { type: String, required: true },
+    provider: { type: String, required: true },
+    externalId: { type: String, default: '' },
+    key: { type: String, default: null },
+    url: { type: String, default: '' },
+    status: { type: String, enum: COPY_STATUSES, required: true },
+    requestId: { type: String, required: true },
+    at: { type: Date, default: (): Date => new Date() },
+  },
+  { _id: false },
+);
+
+const itemSchema = new mongoose.Schema<ItemFields>(
+  {
+    _id: uuidIdField,
+    workspaceId: { type: String, required: true },
+    integrationId: { type: String, default: null },
+    containerId: { type: String, default: null },
+    kind: { type: String, enum: ITEM_KINDS, required: true },
+    topicId: { type: String, default: null },
+    title: { type: String, required: true },
+    bodyPreview: { type: String, default: null, maxlength: BODY_PREVIEW_MAX },
+    status: { type: String, enum: ITEM_STATUSES, default: 'open' },
+    statusRaw: { type: String, default: null },
+    priority: { type: Number, default: null },
+    startAt: { type: Date, default: null },
+    dueAt: { type: Date, default: null },
+    endAt: { type: Date, default: null },
+    allDay: { type: Boolean, default: false },
+    assignees: { type: [String], default: [] },
+    labels: { type: [String], default: [] },
+    parentId: { type: String, default: null },
+    source: { type: SourceSchema, required: true },
+    syncResource: { type: String, default: null },
+    props: { type: mongoose.Schema.Types.Mixed, default: (): Record<string, unknown> => ({}) },
+    overlay: {
+      pinned: { type: Boolean, default: null },
+      note: { type: String, default: null },
+      hidden: { type: Boolean, default: null },
+      topicOverride: { type: String, default: null },
+      calendarSync: { type: Boolean, default: null },
+      editedAt: { type: Date, default: null },
+      copyOf: { type: String, default: null },
+      copyOfOwner: { type: String, default: null },
+      copyOfShared: { type: Boolean, default: null },
+      attrs: { type: mongoose.Schema.Types.Mixed, default: (): Record<string, unknown> => ({}) },
+    },
+    visibility: { type: String, enum: VISIBILITIES, default: 'workspace' },
+    ownerUserId: { type: String, default: null },
+    closedAt: { type: Date, default: null },
+    deletedAt: { type: Date, default: null },
+    lastSeenAt: { type: Date, default: null },
+    linkedItemIds: { type: [String], default: [] },
+    copies: { type: [copySchema], default: [] },
+  },
+  // minimize: false keeps an empty `props` as {} instead of dropping the field.
+  { timestamps: true, collection: ITEM_TABLE_NAME, minimize: false },
+);
+
+const NOT_DELETED = { deletedAt: null };
+
+itemSchema.index(
+  {
+    workspaceId: 1,
+    'source.provider': 1,
+    'source.accountId': 1,
+    'source.externalId': 1,
+    integrationId: 1,
+  },
+  { unique: true },
+); // upsert key: one copy per integration (two members may connect one account, ruling 8)
+itemSchema.index({ workspaceId: 1, status: 1, dueAt: 1 }, { partialFilterExpression: NOT_DELETED }); // deadlines, donut
+itemSchema.index({ workspaceId: 1, kind: 1, startAt: 1 }, { partialFilterExpression: NOT_DELETED }); // calendar
+itemSchema.index(
+  { workspaceId: 1, topicId: 1, status: 1 },
+  { partialFilterExpression: NOT_DELETED },
+); // topic filters
+itemSchema.index({ workspaceId: 1, containerId: 1, dueAt: 1 }); // per course/project
+itemSchema.index({ integrationId: 1, lastSeenAt: 1 }); // deletion sweep
+itemSchema.index({ integrationId: 1, syncResource: 1, lastSeenAt: 1 }); // per-resource sweep
+itemSchema.index({ deletedAt: 1 }, { partialFilterExpression: { deletedAt: { $type: 'date' } } }); // purge job
+// Hebrew + English: no stemming.
+itemSchema.index(
+  { title: 'text', bodyPreview: 'text' },
+  { weights: { title: 5, bodyPreview: 1 }, default_language: 'none' },
+);
+
+itemSchema.index(
+  { workspaceId: 1, 'overlay.copyOf': 1 },
+  { partialFilterExpression: { 'overlay.copyOf': { $type: 'string' } } },
+); // a to-do's provider copies (H5)
+
+// Idempotent local create: one item per owner and client key, permanently.
+itemSchema.index(
+  { workspaceId: 1, ownerUserId: 1, 'props.idempotencyKey': 1 },
+  { unique: true, partialFilterExpression: { 'props.idempotencyKey': { $exists: true } } },
+);
+
+export const ItemMongoModel = mongoose.model<ItemFields>('Item', itemSchema);
+
+const LOCAL_PATCH_KEYS: readonly (keyof LocalItemPatch)[] = [
+  'title',
+  'topicId',
+  'kind',
+  'bodyPreview',
+  'status',
+  'priority',
+  'startAt',
+  'dueAt',
+  'endAt',
+  'allDay',
+  'assignees',
+  'labels',
+  'parentId',
+  'containerId',
+  'props',
+  'visibility',
+  'closedAt',
+];
+
+const OVERLAY_KEYS: readonly (keyof ItemOverlay)[] = [
+  'pinned',
+  'note',
+  'hidden',
+  'topicOverride',
+  'calendarSync',
+  'editedAt',
+  'copyOf',
+  'copyOfOwner',
+  'copyOfShared',
+];
+
+/** At most 500 UTF-16 units, without splitting a surrogate pair (an emoji) at the cut. */
+function toPreview(text: string | null | undefined): string | null {
+  if (text === undefined || text === null || text.length <= BODY_PREVIEW_MAX) return text ?? null;
+  const lastKept = text.charCodeAt(BODY_PREVIEW_MAX - 1);
+  const splitsPair = lastKept >= 0xd800 && lastKept <= 0xdbff;
+  return text.slice(0, splitsPair ? BODY_PREVIEW_MAX - 1 : BODY_PREVIEW_MAX);
+}
+
+/** A patch or input with its `bodyPreview` (when present) cut by the one preview rule. */
+function withPreview<T extends { bodyPreview?: string | null }>(input: T): T {
+  if (input.bodyPreview === undefined) return input;
+  return { ...input, bodyPreview: toPreview(input.bodyPreview) };
+}
+
+function toItemData(doc: ItemFields): ItemData {
+  const { overlay } = doc;
+  return {
+    id: doc._id,
+    workspaceId: doc.workspaceId,
+    integrationId: doc.integrationId ?? null,
+    containerId: doc.containerId ?? null,
+    kind: doc.kind,
+    topicId: doc.topicId ?? null,
+    title: doc.title,
+    bodyPreview: doc.bodyPreview ?? null,
+    status: doc.status,
+    statusRaw: doc.statusRaw ?? null,
+    priority: doc.priority ?? null,
+    startAt: doc.startAt ?? null,
+    dueAt: doc.dueAt ?? null,
+    endAt: doc.endAt ?? null,
+    allDay: doc.allDay,
+    assignees: [...doc.assignees],
+    labels: [...doc.labels],
+    parentId: doc.parentId ?? null,
+    source: toSourceRef(doc.source),
+    syncResource: doc.syncResource ?? null,
+    props: doc.props,
+    overlay: {
+      pinned: overlay.pinned ?? null,
+      note: overlay.note ?? null,
+      hidden: overlay.hidden ?? null,
+      topicOverride: overlay.topicOverride ?? null,
+      calendarSync: overlay.calendarSync ?? null,
+      editedAt: overlay.editedAt ?? null,
+      copyOf: overlay.copyOf ?? null,
+      copyOfOwner: overlay.copyOfOwner ?? null,
+      copyOfShared: overlay.copyOfShared ?? null,
+      attrs: { ...overlay.attrs },
+    },
+    visibility: doc.visibility,
+    ownerUserId: doc.ownerUserId ?? null,
+    closedAt: doc.closedAt ?? null,
+    deletedAt: doc.deletedAt ?? null,
+    lastSeenAt: doc.lastSeenAt ?? null,
+    linkedItemIds: [...doc.linkedItemIds],
+    copies: (doc.copies ?? []).map((copy) => ({
+      integrationId: copy.integrationId,
+      provider: copy.provider,
+      externalId: copy.externalId,
+      key: copy.key,
+      url: copy.url,
+      status: copy.status,
+      requestId: copy.requestId,
+      at: copy.at ?? new Date(0),
+    })),
+    createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
+  };
+}
+
+/** Every field the sync owns; left-out values are cleared. Overlay, owner and links are untouched. */
+function syncedItemFields(item: ItemUpsert, seenAt: Date): Record<string, unknown> {
+  return {
+    integrationId: item.integrationId,
+    containerId: item.containerId ?? null,
+    kind: item.kind,
+    topicId: item.topicId,
+    title: item.title,
+    bodyPreview: toPreview(item.bodyPreview),
+    status: item.status,
+    statusRaw: item.statusRaw ?? null,
+    priority: item.priority ?? null,
+    startAt: item.startAt ?? null,
+    dueAt: item.dueAt ?? null,
+    endAt: item.endAt ?? null,
+    allDay: item.allDay ?? false,
+    assignees: item.assignees ?? [],
+    labels: item.labels ?? [],
+    parentId: item.parentId ?? null,
+    source: toSourceRef(item.source),
+    syncResource: item.syncResource ?? null,
+    props: item.props ?? {},
+    closedAt: item.closedAt ?? null,
+    deletedAt: item.deletedAt ?? null,
+    lastSeenAt: seenAt,
+  };
+}
+
+/** What bulkUpsert reads of a stored item: enough to tell whether a write closes it. */
+interface StoredItem extends StoredSource {
+  status?: ItemStatus;
+  closedAt?: Date | null;
+}
+
+const itemStore: SourceUpsertStore<StoredItem> = {
+  findStored: (filter) =>
+    ItemMongoModel.find(filter, {
+      integrationId: 1,
+      source: 1,
+      deletedAt: 1,
+      status: 1,
+      closedAt: 1,
+    })
+      .lean<StoredItem[]>()
+      .exec(),
+  bulkWrite: (writes) => ItemMongoModel.bulkWrite(writes),
+};
+
+const CLOSED_STATUSES: ReadonlySet<ItemStatus> = new Set(['done', 'cancelled']);
+
+function isClosed(item: { status?: ItemStatus; closedAt?: Date | null }): boolean {
+  return (
+    item.status !== undefined &&
+    CLOSED_STATUSES.has(item.status) &&
+    (item.closedAt ?? null) !== null
+  );
+}
+
+/** `{ <field>: { $gte: from, $lt: to } }`, for a time field a sweep may be bounded by only. */
+function windowFilter(window: SweepWindow): Record<string, unknown> {
+  if (!(SWEEP_WINDOW_FIELDS as readonly string[]).includes(window.field)) {
+    throw new Error(`sweepUnseen: cannot bound a sweep by "${window.field}"`);
+  }
+  return { [window.field]: { $gte: window.from, $lt: window.to } };
+}
+
+/** The write closes the item: its stored copy was not closed, and nothing signals a delete. */
+function closesItem(item: ItemUpsert, stored: StoredItem | undefined): boolean {
+  return (
+    stored !== undefined && (item.deletedAt ?? null) === null && isClosed(item) && !isClosed(stored)
+  );
+}
+
+/**
+ * A to-do's copies as list rows show them: `props.copies`, a plain copy of what the chips need
+ * (a row of a dashboard block carries `props`, not the copies). Rewritten whenever the copies
+ * change; the copies themselves stay the record.
+ */
+async function refreshCopyProps(workspaceId: string, id: string): Promise<ItemFields | null> {
+  // One pipeline update from the stored copies: parallel targets cannot leave a stale list.
+  return ItemMongoModel.findOneAndUpdate(
+    { _id: id, workspaceId },
+    [
+      {
+        $set: {
+          'props.copies': {
+            $map: {
+              input: { $ifNull: ['$copies', []] },
+              as: 'copy',
+              in: {
+                provider: '$$copy.provider',
+                key: '$$copy.key',
+                url: '$$copy.url',
+                status: '$$copy.status',
+                at: '$$copy.at',
+              },
+            },
+          },
+        },
+      },
+    ],
+    { new: true },
+  ).lean<ItemFields>();
+}
+
+/** Live local items marked private whose owner is none of `memberIds`: former members'. */
+function formerMembersPrivateLocal(
+  workspaceId: string,
+  memberIds: readonly string[],
+): Record<string, unknown> {
+  return {
+    workspaceId,
+    integrationId: null,
+    visibility: 'private',
+    deletedAt: null,
+    ownerUserId: { $nin: [...memberIds] },
+  };
+}
+
+export const ItemRepository: IItemRepository = {
+  async findById(workspaceId, id) {
+    const doc = await ItemMongoModel.findOne({
+      _id: id,
+      workspaceId,
+      deletedAt: null,
+    }).lean<ItemFields>();
+    return doc ? toItemData(doc) : null;
+  },
+
+  async createLocal(workspaceId, input) {
+    const id = randomUUID();
+    const doc = await ItemMongoModel.create({
+      _id: id,
+      workspaceId,
+      integrationId: null,
+      kind: input.kind ?? 'todo',
+      topicId: input.topicId,
+      title: input.title,
+      ownerUserId: input.ownerUserId,
+      ...setFields(withPreview(input), [
+        'bodyPreview',
+        'status',
+        'priority',
+        'startAt',
+        'dueAt',
+        'endAt',
+        'allDay',
+        'assignees',
+        'labels',
+        'parentId',
+        'containerId',
+        'props',
+        'visibility',
+      ]),
+      source: {
+        provider: 'local',
+        accountId: '',
+        externalId: id,
+        key: null,
+        url: localItemUrl(workspaceId, id),
+        updatedAtSource: null,
+        etag: null,
+        hash: null,
+      },
+    });
+    return toItemData(doc);
+  },
+
+  async updateLocal(workspaceId, id, patch) {
+    const doc = await ItemMongoModel.findOneAndUpdate(
+      { _id: id, workspaceId, deletedAt: null, 'source.provider': 'local' },
+      { $set: setFields(withPreview(patch), LOCAL_PATCH_KEYS) },
+      { new: true, runValidators: true },
+    ).lean<ItemFields>();
+    if (doc) {
+      // The to-do's sharing moved: its provider copies follow (they hide for whoever sees it).
+      if (patch.visibility !== undefined && (doc.copies ?? []).length > 0) {
+        await ItemMongoModel.updateMany(
+          { workspaceId, 'overlay.copyOf': id },
+          { $set: { 'overlay.copyOfShared': patch.visibility === 'workspace' } },
+        );
+      }
+      return toItemData(doc);
+    }
+
+    const mirrored = await ItemMongoModel.findOne(
+      { _id: id, workspaceId, deletedAt: null },
+      { source: 1 },
+    ).lean<Pick<ItemFields, '_id' | 'source'>>();
+    if (mirrored) {
+      throw new MirroredItemError(mirrored._id, mirrored.source.provider, mirrored.source.url);
+    }
+    return null;
+  },
+
+  async setOverlay(workspaceId, id, overlay) {
+    const set = setFields(overlay, OVERLAY_KEYS, 'overlay.');
+    const unset: Record<string, ''> = {};
+    for (const [key, value] of Object.entries(overlay.attrs ?? {})) {
+      // Attribute keys are slugs (the service checks them); refuse anything else as a path.
+      if (!ATTRIBUTE_KEY_PATTERN.test(key)) throw new Error('Invalid attribute key');
+      if (value === null) unset[`overlay.attrs.${key}`] = '';
+      else set[`overlay.attrs.${key}`] = value;
+    }
+    const doc = await ItemMongoModel.findOneAndUpdate(
+      { _id: id, workspaceId, deletedAt: null },
+      {
+        ...(Object.keys(set).length === 0 ? {} : { $set: set }),
+        ...(Object.keys(unset).length === 0 ? {} : { $unset: unset }),
+      },
+      { new: true, runValidators: true },
+    ).lean<ItemFields>();
+    return doc ? toItemData(doc) : null;
+  },
+
+  async clearAttribute(workspaceId, key) {
+    if (!ATTRIBUTE_KEY_PATTERN.test(key)) throw new Error('Invalid attribute key');
+    const path = `overlay.attrs.${key}`;
+    const result = await ItemMongoModel.updateMany(
+      { workspaceId, [path]: { $exists: true } },
+      { $unset: { [path]: '' } },
+    );
+    return result.modifiedCount;
+  },
+
+  async softDelete(workspaceId, id) {
+    const result = await ItemMongoModel.updateOne(
+      { _id: id, workspaceId, deletedAt: null },
+      { $set: { deletedAt: new Date() } },
+    );
+    if (result.modifiedCount === 0) return false;
+    // Its provider copies become ordinary mirrored items again; nothing is deleted at the provider.
+    await ItemMongoModel.updateMany(
+      { workspaceId, 'overlay.copyOf': id },
+      {
+        $set: {
+          'overlay.copyOf': null,
+          'overlay.copyOfOwner': null,
+          'overlay.copyOfShared': null,
+        },
+      },
+    );
+    return true;
+  },
+
+  async findBySource(workspaceId, account, externalId) {
+    const doc = await ItemMongoModel.findOne({
+      workspaceId,
+      'source.provider': account.provider,
+      'source.accountId': account.accountId,
+      integrationId: account.integrationId,
+      'source.externalId': externalId,
+      deletedAt: null,
+    }).lean<ItemFields>();
+    return doc ? toItemData(doc) : null;
+  },
+
+  async addCopy(workspaceId, localId, copy, options = {}) {
+    const result = await ItemMongoModel.updateOne(
+      {
+        _id: localId,
+        workspaceId,
+        deletedAt: null,
+        'source.provider': 'local',
+        'copies.requestId': { $ne: copy.requestId },
+        ...(options.allowActive === true
+          ? {}
+          : {
+              copies: {
+                $not: {
+                  $elemMatch: {
+                    integrationId: copy.integrationId,
+                    status: { $in: ['pending', 'created', 'unknown'] },
+                  },
+                },
+              },
+            }),
+      },
+      { $push: { copies: copy } },
+    );
+    if (result.modifiedCount === 0) return false;
+    await refreshCopyProps(workspaceId, localId);
+    return true;
+  },
+
+  async updateCopy(workspaceId, localId, requestId, patch) {
+    const set: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(patch)) {
+      set[`copies.$.${key}`] = value;
+    }
+    const doc = await ItemMongoModel.findOneAndUpdate(
+      { _id: localId, workspaceId, 'copies.requestId': requestId },
+      { $set: set },
+      { new: true },
+    ).lean<ItemFields>();
+    if (doc === null) return null;
+    const refreshed = await refreshCopyProps(workspaceId, localId);
+    return toItemData(refreshed ?? doc);
+  },
+
+  async removeCopy(workspaceId, localId, requestId) {
+    await ItemMongoModel.updateOne(
+      { _id: localId, workspaceId },
+      { $pull: { copies: { requestId } } },
+    );
+    await refreshCopyProps(workspaceId, localId);
+  },
+
+  async softDeleteForWorkspace(workspaceId) {
+    const result = await ItemMongoModel.updateMany(
+      { workspaceId, deletedAt: null },
+      { $set: { deletedAt: new Date() } },
+    );
+    return result.modifiedCount;
+  },
+
+  async countPrivateLocalOfFormerMembers(workspaceId, memberIds) {
+    return ItemMongoModel.countDocuments(formerMembersPrivateLocal(workspaceId, memberIds));
+  },
+
+  async softDeletePrivateLocalOfFormerMembers(workspaceId, memberIds) {
+    const result = await ItemMongoModel.updateMany(
+      formerMembersPrivateLocal(workspaceId, memberIds),
+      { $set: { deletedAt: new Date() } },
+    );
+    return result.modifiedCount;
+  },
+
+  async bulkUpsert(workspaceId, docs) {
+    let closed = 0;
+    const result = await upsertBySource(
+      workspaceId,
+      docs,
+      itemStore,
+      syncedItemFields,
+      (item, stored) => {
+        if (closesItem(item, stored)) closed += 1;
+      },
+    );
+    return { ...result, closed };
+  },
+
+  async softDeleteBySource(workspaceId, account, externalIds, deletedAt = new Date()) {
+    return softDeleteBySource(ItemMongoModel, workspaceId, account, externalIds, deletedAt);
+  },
+
+  async sweepUnseen(
+    workspaceId: string,
+    integrationId: string,
+    resource: string,
+    before: Date,
+    options: ItemSweepOptions = {},
+  ) {
+    const { deletedAt = new Date(), keepExternalIds = [], window } = options;
+    const result = await ItemMongoModel.updateMany(
+      {
+        // The window first, so the scope keys below always win.
+        ...(window === undefined ? {} : windowFilter(window)),
+        ...(keepExternalIds.length > 0
+          ? { 'source.externalId': { $nin: [...keepExternalIds] } }
+          : {}),
+        workspaceId,
+        integrationId,
+        syncResource: resource,
+        deletedAt: null,
+        lastSeenAt: { $lt: before },
+      },
+      { $set: { deletedAt } },
+    );
+    return result.modifiedCount;
+  },
+
+  async sweepOrphanedResources(workspaceId, integrationId, resources, options = {}) {
+    const { deletedAt = new Date(), keepExternalIds = [] } = options;
+    const result = await ItemMongoModel.updateMany(
+      orphanedResourcesFilter(workspaceId, integrationId, resources, keepExternalIds),
+      { $set: { deletedAt } },
+    );
+    return result.modifiedCount;
+  },
+
+  async softDeleteForIntegration(workspaceId, integrationId, deletedAt = new Date()) {
+    const result = await ItemMongoModel.updateMany(
+      { workspaceId, integrationId, deletedAt: null },
+      { $set: { deletedAt } },
+    );
+    return result.modifiedCount;
+  },
+
+  async unsetTopic(workspaceId, topicId) {
+    const result = await ItemMongoModel.updateMany(
+      { workspaceId, topicId },
+      { $set: { topicId: null } },
+    );
+    await ItemMongoModel.updateMany(
+      { workspaceId, 'overlay.topicOverride': topicId },
+      { $set: { 'overlay.topicOverride': null } },
+    );
+    return result.modifiedCount;
+  },
+
+  // Global on purpose: the nightly purge job runs over every workspace (jobs/purge.ts).
+  async purgeDeletedBefore(date) {
+    const result = await ItemMongoModel.deleteMany({ deletedAt: { $lt: date } });
+    return result.deletedCount;
+  },
+
+  async aggregate<T>(
+    workspaceId: string,
+    stages: readonly Record<string, unknown>[],
+    options: AggregateOptions = {},
+  ) {
+    return ItemMongoModel.aggregate<T>(scopedPipeline(workspaceId, stages), { ...options }).exec();
+  },
+};

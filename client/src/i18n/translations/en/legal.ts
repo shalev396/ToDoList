@@ -1,70 +1,110 @@
+/**
+ * Privacy and Terms in plain language. Each section body may hold several paragraphs separated
+ * by a blank line. The review note stays until a lawyer has reviewed the text.
+ */
 export const legal = {
+  reviewNote:
+    'This summary is written to be accurate about how TodoList works; have it reviewed by a lawyer before launch.',
+  lastUpdated: 'Last updated: {{date}}',
+  contents: 'On this page',
   privacy: {
-    title: 'Privacy Policy',
-    lastUpdated: 'Last updated: February 27, 2026',
-    section1: {
-      title: '1. Open-Source Template',
-      content:
-        '{{appName}} is a free, open-source template released under the MIT License. This privacy policy describes how instances of {{appName}} may handle data. As this is a template, developers who deploy their own instances are responsible for implementing their own privacy practices and policies.',
-    },
-    section2: {
-      title: '2. Information Collection',
-      content:
-        'The {{appName}} template itself does not collect, store, or transmit any personal data. When deployed by a third party, the instance operator is solely responsible for any data collection, processing, and storage that occurs.',
-    },
-    section3: {
-      title: '3. Third-Party Services',
-      content:
-        'The template integrates with third-party services such as AWS Cognito for authentication. Any data processed by these services is governed by their respective privacy policies. Developers deploying {{appName}} should review and disclose the third-party services they use.',
-    },
-    section4: {
-      title: '4. Cookies and Local Storage',
-      content:
-        'The template may use browser local storage or cookies for functionality such as theme preferences and language settings. These are stored locally on your device and are not transmitted to any server.',
-    },
-    section5: {
-      title: '5. No Warranty',
-      content:
-        'This privacy policy is provided as a template for informational purposes only and does not constitute legal advice. Developers using {{appName}} should consult a legal professional to draft a privacy policy appropriate for their specific use case and jurisdiction.',
-    },
-    section6: {
-      title: '6. Contact',
-      content:
-        'For questions about the {{appName}} open-source project, visit the GitHub repository at {{repoUrl}} or contact the maintainer at {{privacyEmail}}.',
+    title: 'Privacy policy',
+    metaTitle: 'Privacy policy',
+    intro:
+      'TodoList shows your classes, work and deadlines in one place. This page explains what it keeps, who can see it and how it is protected, in plain words.',
+    sections: {
+      summary: {
+        title: 'The short version',
+        body: 'TodoList keeps your account, your workspaces and copies of the items from the tools you connect. Your connection secrets are encrypted and never shown again. We don’t sell your data and we don’t show ads.',
+      },
+      accounts: {
+        title: 'Your account and workspaces',
+        body: 'For your account we keep your email address and your name. Sign-in is handled by our hosting provider’s sign-in service, so we never see your password.\n\nFor your workspaces we keep their names, their members and roles, and the pages and blocks you build. We also keep short service logs with tokens and personal details removed.',
+      },
+      sources: {
+        title: 'Connected sources',
+        body: 'When you connect a tool, TodoList reads items from it and keeps a copy so your dashboards can show them. We only read from these tools. The one exception is Google Calendar, described below.\n\nJira: issues your account can see, with titles, statuses, dates and links.\n\nClickUp: tasks and lists, with titles, statuses, due dates and links.\n\nLinear: issues and projects, with titles, statuses, dates and links.\n\nMoodle: your courses, assignments, deadlines and submission status, using a token you create on your school’s Moodle site.\n\nGitHub: repositories, issues, pull requests and Projects boards that your connection can see, read-only.\n\nGoogle Drive (Notability backup): the names, folders and modification dates of the files in the backup folder you share, so your notes show up next to your classes. We use it to list files, not to change them.\n\nGoogle Calendar: we read your events. You connect it with Google sign-in (OAuth). TodoList writes to your calendar only when you set up a push, and only the events you choose to push.',
+      },
+      secrets: {
+        title: 'How connection secrets are stored',
+        body: 'Tokens and keys you give us are encrypted at rest with AES-256-GCM, under a separate encryption key for each stage of the service held in AWS KMS. Each secret is bound to the workspace and the connection it belongs to, so it can’t be used anywhere else.\n\nSecrets are write-only. After you save one it is never shown again, and it is never sent to your browser or to AI agents. Only the sync and calendar processes can decrypt a secret, and only when they need it.\n\nWhen you disconnect a source, we delete the stored secret, and we revoke it at Google where Google supports that.',
+      },
+      agents: {
+        title: 'AI agents (MCP)',
+        body: 'You can create agent keys so an AI assistant can work with your workspace over MCP. We store only a hash of each key. An agent sees only what the key’s scopes and your role in the workspace allow, and it never sees connection tokens. You can revoke a key at any time.',
+      },
+      sharing: {
+        title: 'Sharing and who can see what',
+        body: 'Members of a workspace see that workspace’s mirrored items, within their topic scope: an owner can limit a member to certain topics, and a member then sees only those.\n\nYou bring people in with an email invite or a join link. Anyone who joins can see what their role and scope allow, so share links only with people you trust. Remove a member or revoke a link at any time.',
+      },
+      retention: {
+        title: 'How long we keep things',
+        body: 'When you delete an item, it is purged for good after 30 days. When you disconnect a source, its items disappear from view right away and are purged on the same schedule.\n\nWhen you delete your account, we delete the workspaces it owns, with their data and secrets, and remove your memberships in other workspaces.',
+      },
+      processors: {
+        title: 'Who processes data for us',
+        body: 'Amazon Web Services hosts the service, holds the encryption keys (KMS) and sends our email (SES).\n\nMongoDB Atlas hosts the database.\n\nThe providers you connect, such as Atlassian, ClickUp, Linear, your school’s Moodle, Google and GitHub, receive the requests we make on your behalf. Their own privacy policies cover what they do with your data.',
+      },
+      promises: {
+        title: 'What we don’t do',
+        body: 'We don’t sell your data, we don’t show ads and we don’t use advertising or tracking cookies. Your browser keeps your sign-in session, your language and your theme so the app works between visits.',
+      },
+      contact: {
+        title: 'Contact',
+        body: 'Questions about privacy go to <email>{{contactEmail}}</email>.',
+      },
     },
   },
   terms: {
-    title: 'Terms of Service',
-    lastUpdated: 'Last updated: February 27, 2026',
-    section1: {
-      title: '1. MIT License',
-      content:
-        '{{appName}} is released under the MIT License. You are free to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of this software, subject to the conditions of the MIT License included in the project repository.',
-    },
-    section2: {
-      title: '2. Free to Use',
-      content:
-        'This template is provided free of charge. You may use it for personal, commercial, or educational projects without restriction. Attribution is appreciated but not required beyond the license notice.',
-    },
-    section3: {
-      title: '3. No Warranty',
-      content:
-        'The software is provided "as is", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and noninfringement.',
-    },
-    section4: {
-      title: '4. Limitation of Liability',
-      content:
-        'In no event shall the authors or copyright holders be liable for any claim, damages, or other liability, whether in an action of contract, tort, or otherwise, arising from, out of, or in connection with the software or the use or other dealings in the software.',
-    },
-    section5: {
-      title: '5. Contributions',
-      content:
-        'Contributions to {{appName}} are welcome and are subject to the same MIT License. By submitting a contribution, you agree that your work will be licensed under the same terms.',
-    },
-    section6: {
-      title: '6. Template Disclaimer',
-      content:
-        'These terms apply to the {{appName}} template itself. If you deploy an application based on this template, you are responsible for providing your own terms of service appropriate for your product and jurisdiction.',
+    title: 'Terms of service',
+    metaTitle: 'Terms of service',
+    intro:
+      'These terms are the agreement between you and TodoList when you use it. They are short on purpose.',
+    sections: {
+      summary: {
+        title: 'The short version',
+        body: 'TodoList is free for individuals. Connect only accounts you’re allowed to use, take care of the workspaces you share, and don’t misuse the service. It is provided as is.',
+      },
+      free: {
+        title: 'Free for individuals',
+        body: 'The individual plan is free and has no feature limits. Fair use applies: please don’t overload the service, and expect sensible technical safeguards, such as how often you can sync by hand, that keep it running for everyone.',
+      },
+      business: {
+        title: 'Business and school use',
+        body: 'If you want to use TodoList for a company, a school or a larger group, contact us first and we’ll work something out.',
+      },
+      account: {
+        title: 'Your account',
+        body: 'You need an account to use TodoList. Keep your sign-in safe and tell us if you think someone else is using it. You’re responsible for what happens in your account.',
+      },
+      responsibilities: {
+        title: 'Connected accounts and shared workspaces',
+        body: 'Connect only accounts and tokens you have the right to use, and keep them valid. You’re responsible for what you connect.\n\nWhen you invite people or share a join link, you choose to share that workspace’s data with them. Owners decide who can edit and who can only view, and who sees which topics.',
+      },
+      thirdParty: {
+        title: 'Third-party terms',
+        body: 'Jira, ClickUp, Linear, Moodle, Google and GitHub each have their own terms, and they still apply to you. TodoList isn’t responsible for those tools or for what’s in them.',
+      },
+      warranty: {
+        title: 'Provided as is',
+        body: 'We work to keep TodoList running and your data safe, but the service is provided as is, without warranties, and may be unavailable at times. As far as the law allows, we aren’t liable for indirect losses, missed deadlines, lost data or downtime. Your items still live in the original tools, so keep anything important there too.',
+      },
+      openSource: {
+        title: 'Open source',
+        body: 'TodoList’s code is open source and you can read it <repo>on GitHub</repo>. Its license covers the code; these terms cover your use of the hosted service.',
+      },
+      ending: {
+        title: 'Ending your account',
+        body: 'You can delete your account at any time. We may suspend or close an account that breaks these terms or harms the service, or end the service, and we’ll try to give notice first.',
+      },
+      changes: {
+        title: 'Changes to these terms',
+        body: 'We may update these terms. If a change matters, we’ll say so in the app before it takes effect. Using TodoList after that means you accept the new terms.',
+      },
+      contact: {
+        title: 'Contact',
+        body: 'Questions about these terms go to <email>{{contactEmail}}</email>.',
+      },
     },
   },
 };

@@ -5,7 +5,7 @@
  *
  * Usage:
  *   npx tsx tests/scripts/run-tests.ts install   - Create venv, install deps, playwright
- *   npx tsx tests/scripts/run-tests.ts run       - Run pytest (local)
+ *   npx tsx tests/scripts/run-tests.ts run       - Run pytest against Vite (:5173) and the local API (:3000)
  *   npx tsx tests/scripts/run-tests.ts run --headed - Run with visible browser (non-headless)
  *   npx tsx tests/scripts/run-tests.ts run --qa  - Run pytest against QA URLs
  *
@@ -13,9 +13,13 @@
  * 0 = one process). Each worker drives its own Chromium, so more workers than CPUs starves them.
  * --dist loadgroup keeps the tests conftest.py marks as shared-state on a single worker.
  *
+ * There is no offline mode: the local API (server: `npm run start:local -- --stage <stage>`) runs
+ * against a deployed stage's Cognito, database and resources, and every test account is a real
+ * Cognito user. Start the two servers yourself; this script starts nothing.
+ *
  * --qa also loads server/.env.qa (shell and CI variables win), derives BASE_URL and API_BASE_URL
  * from DOMAIN_NAME when they are unset, and requires BASIC_AUTH_PASSWORD for the WAF gate on the
- * qa pages. Local runs never need the password.
+ * qa pages. Runs against the local API never need the password.
  *
  * The suite does not reset the stage; to start from an empty dev/qa stage, run
  * `npm run reset:db -- <stage>` in server/ first (CI does). See tests/README.md.
@@ -102,8 +106,10 @@ function cmdRun(): void {
       process.exit(1);
     }
   } else {
-    baseUrl = 'http://localhost:5173';
-    apiBaseUrl = 'http://localhost:3000/api';
+    // The default dev servers, unless the shell names others. conftest.py refuses to run when
+    // either URL is missing, so a forgotten variable never reaches somebody else's server.
+    baseUrl = process.env['BASE_URL'] ?? 'http://localhost:5173';
+    apiBaseUrl = process.env['API_BASE_URL'] ?? 'http://localhost:3000/api';
   }
 
   if (!fs.existsSync(PYTHON)) {

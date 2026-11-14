@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Elytra is actively maintained on the `main` branch.
+TodoList is actively maintained on the `main` branch.
 
 | Version / Branch      | Supported |
 | --------------------- | --------- |
@@ -46,4 +46,4 @@ Examples of in-scope areas:
 Out of scope:
 
 - issues only affecting modified downstream forks
-- missing hardening in a user’s custom deployment that is outside Elytra defaults
+- missing hardening in a user’s custom deployment that is outside TodoList defaults

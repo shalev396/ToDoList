@@ -1,0 +1,201 @@
+/**
+ * Integrations and sync over the API (BACKEND.md §4, DATA.md §3.4–3.5, §3.9): the shapes the
+ * server and the client share (`@api-types/integrations`). Types and constant lists only.
+ *
+ * A secret travels one way: in the body of `PUT …/integrations/:iid/credential`. No response ever
+ * carries one, in any form. An integration is shown as `IntegrationStatusView`
+ * (models/definitions/Integration.ts) and nothing else.
+ */
+import type { Query } from './builder.js';
+import type { SyncRunStatus, SyncTrigger } from './domain.js';
+
+/** Providers an owner can connect through the API. Slack, Notion and local are not among them. */
+export const CONNECTABLE_PROVIDERS = [
+  'jira',
+  'clickup',
+  'linear',
+  'moodle',
+  'google_drive',
+  'google_calendar',
+  'github',
+] as const;
+export type ConnectableProvider = (typeof CONNECTABLE_PROVIDERS)[number];
+
+// ─── Non-secret config, per provider ────────────────────────────────────────
+
+export interface JiraConfig {
+  /** `https://<site>.atlassian.net`. Its host is the integration's account (token connections). */
+  baseUrl?: string;
+  /** An OAuth connection (one grant): the sites it reads, chosen from the grant's own list. */
+  sites?: { cloudId: string; url: string; name: string }[];
+  jql?: string;
+}
+
+/** Linear takes no settings. */
+export type EmptyConfig = Record<string, never>;
+
+export interface ClickUpConfig {
+  /** An OAuth connection: the workspaces it reads (all when absent). */
+  teamIds?: string[];
+}
+
+export interface MoodleConfig {
+  /** e.g. `https://moodle.example.ac.il`. Its host is the integration's account. */
+  siteUrl: string;
+}
+
+export interface GoogleDriveConfig {
+  rootFolderId: string;
+}
+
+export interface GoogleCalendarConfig {
+  calendars: { id: string; mode: 'two_way' | 'read' }[];
+  targetCalendarId?: string;
+  /** Which items are pushed to the calendar: a builder query (BUILDER.md). */
+  pushFilter?: Query;
+  horizonDays?: number;
+  maxOpsPerRun?: number;
+}
+
+export interface GitHubConfig {
+  /** A user or organization login. It is the integration's account. */
+  owner: string;
+  ownerType: 'user' | 'org';
+  repos?: { include?: string[]; forks?: boolean; archived?: boolean };
+  issues?: {
+    involvement?: ('assigned' | 'created')[];
+    closedWithinDays?: number;
+  };
+  /**
+   * Projects (v2) boards. `enabled` follows the connection test (false when the token can't read
+   * boards); `include` takes board numbers or title globs.
+   */
+  boards?: { enabled?: boolean; include?: (number | string)[]; dueField?: string };
+}
+
+export interface IntegrationConfigs {
+  jira: JiraConfig;
+  clickup: ClickUpConfig;
+  linear: EmptyConfig;
+  moodle: MoodleConfig;
+  google_drive: GoogleDriveConfig;
+  google_calendar: GoogleCalendarConfig;
+  github: GitHubConfig;
+}
+
+// ─── The credential (write-only), per auth method ───────────────────────────
+
+/** Jira (`api_token_basic`). */
+export interface JiraCredential {
+  email: string;
+  token: string;
+}
+
+/** ClickUp (`personal_token`) and Moodle (`moodle_ws_token`). */
+export interface TokenCredential {
+  token: string;
+}
+
+/** Linear (`personal_api_key`). */
+export interface LinearCredential {
+  apiKey: string;
+}
+
+/** Google Drive, or Google Calendar connected with a service account (`service_account`). */
+export interface ServiceAccountCredential {
+  clientEmail: string;
+  privateKey: string;
+}
+
+/** GitHub (`fine_grained_pat`): `projectsToken` is a classic PAT for a personal account's boards. */
+export interface GitHubCredential {
+  token: string;
+  projectsToken?: string;
+}
+
+export type IntegrationCredential =
+  | JiraCredential
+  | TokenCredential
+  | LinearCredential
+  | ServiceAccountCredential
+  | GitHubCredential;
+
+// ─── Test connection ────────────────────────────────────────────────────────
+
+/** Why a connection test failed: a fixed code, never provider text. */
+export const INTEGRATION_TEST_CODES = [
+  // The provider's answer (sync/errors.ts).
+  'auth_failed',
+  'not_found',
+  'gone',
+  'rate_limited',
+  'client_error',
+  'server_error',
+  'bad_response',
+  'network',
+  // Before or around the call.
+  'no_adapter',
+  'not_supported',
+  'fixtures_missing',
+  'credential_missing',
+  'credential_unavailable',
+  'already_connected',
+  'internal',
+] as const;
+export type IntegrationTestCode = (typeof INTEGRATION_TEST_CODES)[number];
+
+export type IntegrationTestResult =
+  | { ok: true; accountLabel: string; capabilities?: Record<string, boolean> }
+  | { ok: false; code: IntegrationTestCode };
+
+// ─── Sync runs ──────────────────────────────────────────────────────────────
+
+/** One sync run, sanitized: counts and a fixed `{code, message}`, never provider data. */
+export interface SyncRunView {
+  id: string;
+  integrationId: string;
+  trigger: SyncTrigger;
+  status: SyncRunStatus;
+  startedAt: Date;
+  finishedAt: Date | null;
+  /** e.g. `{fetched, inserted, updated, unchanged, deleted, failed}`. */
+  counts: Record<string, number>;
+  error: { code: string; message: string } | null;
+}
+
+// ─── OAuth sign-in (GitHub, Jira, ClickUp, Linear) ──────────────────────────
+
+/** The providers that connect with OAuth besides Google Calendar. */
+export const OAUTH_SIGN_IN_PROVIDERS = ['github', 'jira', 'clickup', 'linear'] as const;
+export type OAuthSignInProvider = (typeof OAUTH_SIGN_IN_PROVIDERS)[number];
+
+/** What the Integrations page shows about one provider's sign-in (no secret). */
+export interface OAuthProviderInfo {
+  provider: OAuthSignInProvider;
+  /** This server has the OAuth app's id and secret. */
+  configured: boolean;
+  /** The exact callback URL to register at the provider. */
+  callbackUrl: string;
+  /** Requested on every connection: read-only. */
+  scopes: readonly string[];
+  /** Asked for later, by re-consent, when writing is enabled. */
+  writeScopes: readonly string[];
+  /** Where the operator registers the OAuth app. */
+  consoleUrl: string;
+  /** The app secret to create on a deployed stage: `todolist/<stage>/oauth-<provider>`. */
+  secretName: string;
+  /** GitHub: where the user installs the app on the repositories and organizations to read. */
+  installUrl: string | null;
+}
+
+export interface OAuthProvidersResponse {
+  stage: 'dev' | 'qa' | 'prod';
+  providers: OAuthProviderInfo[];
+}
+
+/** A Jira site (cloud id) or ClickUp workspace a grant can read. */
+export interface OAuthResource {
+  id: string;
+  name: string;
+  url?: string;
+}

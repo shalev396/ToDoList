@@ -1,70 +1,81 @@
 import { Link } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { Trans, useTranslation } from 'react-i18next';
 import { app, assets } from '@/data';
 import { pathTo, ROUTES } from '@/router/routes';
 import { useLanguage } from '@/hooks/useLanguage';
-import { Trans } from 'react-i18next';
 
-const footerLinks = [
-  { to: ROUTES.LEGAL.TERMS, key: 'terms' as const },
-  { to: ROUTES.LEGAL.PRIVACY, key: 'privacy' as const },
-  { to: ROUTES.PRICING, key: 'pricing' as const },
-] as const;
+const footerLink =
+  'rounded-sm text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none';
 
+/**
+ * Public footer: Pricing, Privacy, Terms and the GitHub repository, the copyright, and the
+ * credit to the template TodoList is built on, the only place its name appears in the UI.
+ */
 export default function Footer() {
   const { t } = useTranslation();
   const { language } = useLanguage();
-  const year = new Date().getFullYear();
   const { LogoIcon } = assets;
+  const year = new Date().getFullYear();
+  const links = [
+    { to: pathTo(ROUTES.PRICING, language), label: t('footer.pricing') },
+    { to: pathTo(ROUTES.LEGAL.PRIVACY, language), label: t('footer.privacy') },
+    { to: pathTo(ROUTES.LEGAL.TERMS, language), label: t('footer.terms') },
+  ];
 
   return (
-    <footer className="border-t border-border/60 bg-muted/30" role="contentinfo">
-      <div className="container mx-auto px-4 pt-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] sm:px-6 lg:px-8">
-        {/* Mobile: stacked layout — links (two rows) → disclaimer → logo + copyright */}
-        <div className="flex flex-col items-center gap-4 text-sm text-muted-foreground sm:flex-row sm:flex-wrap sm:items-center sm:justify-center sm:gap-x-6 sm:gap-y-3">
-          {/* Links: wrap into rows (e.g. two rows on mobile) */}
-          <nav
-            className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 text-center"
-            aria-label="Footer"
-          >
-            {footerLinks.map(({ to, key }) => (
-              <Link
-                key={key}
-                to={pathTo(to, language)}
-                className="transition-colors hover:text-foreground"
-              >
-                {t(`footer.${key}`)}
-              </Link>
-            ))}
+    <footer className="border-t bg-background">
+      <div className="mx-auto max-w-[1200px] px-4 pt-10 pb-[calc(2.5rem+env(safe-area-inset-bottom))] sm:px-6 lg:px-8">
+        <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
+          <div className="flex flex-col gap-2">
+            <Link
+              to={pathTo(ROUTES.HOME, language)}
+              className="flex w-fit items-center gap-2 rounded-sm text-[15px] font-semibold tracking-[-0.01em] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            >
+              <LogoIcon className="size-6" />
+              {app.name}
+            </Link>
+            <p className="text-[13px] text-muted-foreground">{t('footer.tagline')}</p>
+          </div>
+          <nav aria-label={t('footer.nav')}>
+            <ul className="flex flex-wrap gap-x-6 gap-y-3 text-sm">
+              {links.map(({ to, label }) => (
+                <li key={to}>
+                  <Link to={to} className={footerLink}>
+                    {label}
+                  </Link>
+                </li>
+              ))}
+              <li>
+                <a
+                  href={app.repositoryUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={footerLink}
+                >
+                  {t('footer.github')}
+                  <span className="sr-only"> {t('footer.newTab')}</span>
+                </a>
+              </li>
+            </ul>
           </nav>
-          {/* Disclaimer */}
-          <span className="text-center">
+        </div>
+        <div className="mt-10 flex flex-col gap-2 border-t pt-6 text-[13px] text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+          <p>{t('footer.copyright', { year, name: app.name })}</p>
+          <p>
             <Trans
-              i18nKey="footer.madeWithLove"
-              values={{ name: app.name }}
+              i18nKey="footer.credit"
               components={{
-                elytraLink: (
+                creditLink: (
                   <a
-                    href={app.repoUrl}
+                    href={app.templateRepoUrl}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-medium text-foreground transition-colors hover:text-primary"
+                    className="rounded-sm underline decoration-border underline-offset-4 transition-colors hover:text-foreground hover:decoration-current focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                   />
                 ),
               }}
             />
-          </span>
-          {/* Logo + copyright */}
-          <div className="flex flex-col items-center gap-2 sm:flex-row sm:gap-2 sm:gap-x-6">
-            <Link
-              to={pathTo(ROUTES.HOME, language)}
-              className="flex items-center gap-2 font-medium text-foreground transition-colors hover:text-primary"
-              aria-label={t('nav.homeAria')}
-            >
-              <LogoIcon className="size-8 shrink-0" />
-            </Link>
-            <span>{t('footer.copyright', { year, name: app.name })}</span>
-          </div>
+          </p>
         </div>
       </div>
     </footer>

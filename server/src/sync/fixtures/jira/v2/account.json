@@ -1,0 +1,39 @@
+[
+  {
+    "request": {
+      "url": "https://example.invalid/jira/rest/api/3/myself"
+    },
+    "response": {
+      "body": {
+        "accountId": "FAKE-jira-account-001",
+        "displayName": "Demo Dev",
+        "emailAddress": "demo.dev@example.invalid",
+        "timeZone": "Asia/Jerusalem",
+        "active": true
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/jira/rest/api/3/project/search"
+    },
+    "response": {
+      "body": {
+        "startAt": 0,
+        "maxResults": 50,
+        "total": 1,
+        "isLast": true,
+        "values": [
+          {
+            "id": "10001",
+            "key": "ADS",
+            "name": "AutoDS",
+            "self": "https://example.invalid/jira/rest/api/3/project/10001",
+            "projectTypeKey": "software",
+            "style": "classic"
+          }
+        ]
+      }
+    }
+  }
+]

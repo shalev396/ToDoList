@@ -1,159 +1,162 @@
 export const landing = {
-  hero: {
-    badge: 'Open Source Full-Stack Template',
-    title: 'Build Serverless Apps',
-    titleHighlight: 'Lightning Fast',
+  meta: {
+    title: 'TodoList: classes, work and deadlines on one clock',
     description:
-      'A production-ready full-stack serverless template with authentication, file uploads, and modern UI components. Start building your next project in minutes, not weeks.',
-    cta: 'Try It Now',
-    viewGithub: 'View on GitHub',
-    exploreLabel: 'Explore',
+      'TodoList puts Moodle, Jira, ClickUp, Linear, GitHub, Google Calendar and Google Drive on one dashboard: what’s on now, what’s next and every deadline this week. Free for students who also work.',
   },
-  nav: {
-    benefits: 'Benefits',
-    features: 'Features',
-    tech: 'Tech Stack',
-    pricing: 'Pricing',
+  hero: {
+    title: 'Classes, work and deadlines on one clock',
+    lead: 'TodoList brings Moodle, Jira, ClickUp, Linear, GitHub, Google Calendar and Google Drive into one dashboard. See what’s on now, what’s next and everything due this week, without opening six tabs.',
+    cta: 'Create your workspace',
+    login: 'Log in',
+    note: 'Free for everyone. No card needed.',
   },
-  benefits: {
-    title: 'Why Choose {{appName}}',
-    instant: {
-      title: 'Instant Loading',
-      description: 'Optimized for performance with sub-second load times',
+  demo: {
+    today: 'Today',
+    now: 'Now',
+    next: 'Next',
+    until: 'until {{time}}',
+    tomorrowAt: 'tomorrow {{time}}',
+    nothingNext: 'Nothing else today',
+    deadlines: 'Deadlines',
+    nextSevenDays: 'Next 7 days',
+    legend: 'Sources',
+    clockSummary: 'Today on a 24-hour clock, with {{count}} events. It’s {{time}} now. {{status}}',
+    statusNow: 'Now: {{title}}, until {{time}}.',
+    statusNext: 'Next: {{title}} at {{time}}.',
+    statusTomorrow: 'Next: {{title}}, tomorrow at {{time}}.',
+    statusNone: 'Nothing else today.',
+    eventList: 'Today’s events',
+    event: '{{title}}, {{start}} to {{end}}, {{source}}',
+  },
+  sources: {
+    title: 'Reads from the tools your courses and your job already use',
+  },
+  live: {
+    idle: 'Sample data, changing live',
+    deadline: '{{source}}: {{title}} added',
+    done: '{{source}}: {{title}} done',
+    event: '{{source}}: {{title}} added to today',
+    moved: '{{source}}: {{title}} moved',
+  },
+  flow: {
+    title: 'Connect, build, share',
+    connect: {
+      title: 'Connect your sources',
+      body: 'Paste a token or a link. Remove it any time.',
     },
-    seo: {
-      title: 'SEO Friendly',
-      description: 'Built-in SEO best practices for better discoverability',
+    build: {
+      title: 'Build your page',
+      body: 'Start from a template, then move and resize blocks.',
     },
-    responsive: {
-      title: 'Fully Responsive',
-      description: 'Works perfectly from 320px mobile to 4K displays',
+    share: {
+      title: 'Share with classmates',
+      body: 'Choose who edits and who only looks.',
     },
-    darkMode: {
-      title: 'Dark & Light Mode',
-      description: "Follows the system theme or the user's own choice",
+  },
+  everyone: {
+    title: 'Built for everyone',
+    body: 'The same blocks fit a light week of classes and a packed one with two jobs, a degree and a side project.',
+    switch: 'Choose a week',
+    light: {
+      label: 'A light student week',
+      who: 'Classes, a gym session and a quiz.',
     },
-    accessible: {
-      title: 'Accessible',
-      description: 'Every page is checked by automated accessibility tests',
+    packed: {
+      label: 'A packed week',
+      who: 'Two jobs, studies and a side project.',
     },
-    typeSafe: {
-      title: 'Type-Safe End to End',
-      description: "The client is built on the API's own TypeScript types",
+    summary: 'Events: {{events}}. Sources: {{sources}}. Booked: {{hours}} h.',
+  },
+  logic: {
+    title: 'Logic at every turn',
+    body: 'Every block has rules you can edit: what it shows, how it is sorted, what counts as important. Change a rule and the list follows.',
+    steps: 'Edit, then Logic, then pick “Only important”: the list keeps what matters.',
+    play: 'Play the walkthrough',
+    pause: 'Pause the walkthrough',
+    description:
+      'Walkthrough: select Edit on a block, open the Logic tab, choose Only important, and the to-do list keeps the important items, soonest first.',
+    count: '{{shown}} of {{total}}',
+    tabs: {
+      data: 'Data',
+      logic: 'Logic',
     },
-    secure: {
-      title: 'Secure by Default',
-      description: 'Private buckets, rate limiting and security headers out of the box',
-    },
-    payPerUse: {
-      title: 'Pay Per Use',
-      description: 'No servers sitting idle: costs follow your traffic',
-    },
-    onePush: {
-      title: 'One Push to Deploy',
-      description: 'Push a branch and its environment updates itself',
-    },
-    yourData: {
-      title: 'Data Export & Deletion',
-      description: 'Users can download their data or delete their account',
-    },
-    documented: {
-      title: 'Well Documented',
-      description: 'Guides, an OpenAPI spec and an architecture diagram',
-    },
-    openSource: {
-      title: 'Open Source',
-      description: 'MIT licensed: fork it and make it yours',
-    },
+    show: 'Show',
+    sources: 'Sources',
+    all: 'Everything',
+    important: 'Only important',
+  },
+  showcase: {
+    title: 'And the rest of your week, handled',
+    rail: 'More features',
+  },
+  templates: {
+    college: 'College',
+    work: 'Work',
+    personal: 'Personal',
+  },
+  roles: {
+    owner: 'Owner',
+    editor: 'Editor',
+    viewer: 'Viewer',
+  },
+  scopes: {
+    all: 'Everything',
+    college: 'College only',
   },
   features: {
-    title: 'Everything You Need to Build',
-    titleHighlight: 'Fast',
-    subtitle: 'Production-ready features out of the box',
-    auth: {
-      title: 'Authentication Ready',
-      description:
-        'AWS Cognito sign-up with email verification, login and password reset. Private API routes are protected with JWT.',
+    time: {
+      title: 'Your day as a clock, your week as a calendar',
+      body: 'The clock shows today on a 24-hour ring, with the needle on now. The calendar opens on the week, with each source in its own color.',
     },
-    s3: {
-      title: 'File Uploads',
-      description:
-        'Profile photos upload through the API to a private S3 bucket and are served from your own domain through CloudFront.',
+    deadlines: {
+      title: 'Deadlines from every source',
+      body: 'Moodle assignments, Jira tickets, GitHub reviews and Linear issues in one list. The soonest come first, and anything overdue sits on top.',
     },
-    serverless: {
-      title: 'Serverless Architecture',
-      description:
-        'Built on AWS Lambda with API Gateway. Pay only for what you use with automatic scaling.',
+    sharing: {
+      title: 'Share with classmates',
+      body: 'Create a workspace and invite people. Editors can change pages, viewers can only look, and you can share just College while Work stays private.',
     },
-    database: {
-      title: 'Your Database',
-      description:
-        'PostgreSQL through Sequelize, or MongoDB through Mongoose, picked automatically from your connection string.',
+    agents: {
+      title: 'Ask your AI agent',
+      body: 'Connect an AI agent through MCP with a key you can revoke any time. It reads your deadlines and pages, and can only do what the key allows.',
     },
-    infra: {
-      title: 'Infrastructure as Code',
-      description:
-        'The whole stack is AWS CDK in TypeScript, checked by cdk-nag and drawn as an Infrastructure Composer diagram.',
-    },
-    cdn: {
-      title: 'Custom Domain & CDN',
-      description:
-        'CloudFront on your own domain, with the HTTPS certificate and DNS records created for you.',
-    },
-    cicd: {
-      title: 'CI/CD Pipeline',
-      description:
-        'GitHub Actions deploy dev, qa and prod from their branches, with lint, build and tests on every pull request.',
-    },
-    testing: {
-      title: 'Automated Testing',
-      description:
-        'Playwright end-to-end tests, Postman API tests and infrastructure tests, locally and in CI.',
-    },
-    state: {
-      title: 'State Management',
-      description:
-        'Redux Toolkit with TypeScript. Single source of truth with optimized selectors and middleware.',
-    },
-    i18n: {
-      title: 'Internationalization',
-      description:
-        'Supports RTL and LTR languages. Built-in support for English and Hebrew with easy extensibility.',
-    },
-    email: {
-      title: 'Email Sending',
-      description:
-        'AWS SES with DKIM on your domain for verification codes and emails sent by the app.',
-    },
-    monitoring: {
-      title: 'Logs & Error Handling',
-      description:
-        'Every request is logged to CloudWatch with 30-day retention, and errors come back in one consistent format.',
+    privacy: {
+      title: 'Your tokens stay secret',
+      body: 'Tokens are encrypted the moment you save them and are never shown again, not even to you. To change one, you replace it.',
     },
   },
-  tech: {
-    title: 'Built with',
-    titleHighlight: 'Modern Technologies',
-    subtitle: 'Industry-standard tools and frameworks',
-    react: { name: 'React 19', description: 'Latest React with Hooks' },
-    typescript: { name: 'TypeScript', description: 'Type-safe development' },
-    vite: { name: 'Vite', description: 'Lightning-fast builds' },
-    tailwind: { name: 'Tailwind CSS', description: 'Utility-first styling' },
-    shadcn: { name: 'shadcn/ui', description: 'Beautiful UI components' },
-    reactBits: { name: 'React Bits', description: 'Animated UI components' },
-    lambda: { name: 'AWS Lambda', description: 'Serverless compute' },
-    redux: { name: 'Redux Toolkit', description: 'State management' },
-    query: { name: 'React Query', description: 'Server state sync' },
-    axios: { name: 'Axios', description: 'HTTP client' },
-    cdk: { name: 'AWS CDK', description: 'Infrastructure as code' },
-    aws: { name: 'AWS', description: 'Cloud infrastructure' },
+  dashboard: {
+    edit: 'Edit',
+    openTodos: 'Open to-dos',
   },
-  cta: {
-    title: 'Ready to Start',
-    titleHighlight: 'Building?',
-    description:
-      'Join developers who are shipping faster with {{appName}}. Free, open source, and ready for production.',
-    button: 'Create Account',
-    docs: 'Read Documentation',
+  week: {
+    title: 'This week',
+    eventList: 'This week’s events',
+    event: '{{title}}, {{day}}, {{hours}}, {{source}}',
+    hours: 'from {{start}} to {{end}}',
+  },
+  sharing: {
+    members: 'Members',
+    invite: 'Invite',
+    access: 'Access',
+  },
+  agents: {
+    you: 'You',
+    agent: 'Your AI agent',
+    via: 'Read through TodoList’s MCP server',
+  },
+  privacy: {
+    status: 'Connected',
+    token: 'Token',
+    sealed: 'Saved and encrypted',
+    saved: 'It can’t be shown again, not even to you. To change it, you replace it.',
+    synced: 'Synced {{when}}',
+  },
+  closing: {
+    title: 'Put your week on one clock',
+    body: 'TodoList is free for everyone, with no paid plan, no trial and no card. Create a workspace, connect a first source, and your dashboard is ready.',
+    cta: 'Create your workspace',
+    pricing: 'See what’s included',
   },
 };

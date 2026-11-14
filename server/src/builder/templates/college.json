@@ -1,0 +1,114 @@
+{
+  "key": "college@1",
+  "version": 1,
+  "titles": { "en": "College", "he": "מכללה" },
+  "scope": { "topicId": null, "containerId": null, "page": "topic", "groupVar": null },
+  "vars": { "range": "this_week", "course": null, "type": null, "topic": null },
+  "blocks": [
+    {
+      "id": "blk_course",
+      "type": "filter",
+      "titles": { "en": "Course", "he": "קורס" },
+      "viz": { "kind": "select", "field": "containerId" },
+      "sets": "$page.course"
+    },
+    {
+      "id": "blk_type",
+      "type": "filter",
+      "titles": { "en": "Type", "he": "סוג" },
+      "viz": { "kind": "chips", "field": "kind" },
+      "sets": "$page.type"
+    },
+    {
+      "id": "blk_calendar",
+      "type": "calendar",
+      "titles": { "en": "Calendar", "he": "יומן" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "combinator": "or",
+              "rules": [
+                { "field": "startAt", "operator": "notNull" },
+                { "field": "dueAt", "operator": "notNull" }
+              ]
+            },
+            { "field": "topic", "operator": "=", "value": "$page.topic" },
+            { "field": "containerId", "operator": "=", "value": "$page.course" },
+            { "field": "kind", "operator": "=", "value": "$page.type" }
+          ]
+        },
+        "dateRange": "$page.range",
+        "dateField": "any",
+        "sort": [{ "field": "startAt", "dir": "asc" }]
+      },
+      "viz": { "kind": "calendar", "view": "week", "allowMonth": true },
+      "listen": ["$page.topic", "$page.range", "$page.course", "$page.type"]
+    },
+    {
+      "id": "blk_courses",
+      "type": "list",
+      "titles": { "en": "Courses", "he": "קורסים" },
+      "query": {
+        "source": "containers",
+        "containerType": "course",
+        "sort": [{ "field": "name", "dir": "asc" }]
+      },
+      "viz": { "kind": "list", "linkTo": "group" }
+    },
+    {
+      "id": "blk_deadlines",
+      "type": "deadlines",
+      "titles": { "en": "Deadlines", "he": "תאריכי יעד" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            { "field": "dueAt", "operator": "notNull" },
+            { "field": "status", "operator": "in", "value": ["open", "in_progress"] },
+            { "field": "topic", "operator": "=", "value": "$page.topic" },
+            { "field": "containerId", "operator": "=", "value": "$page.course" },
+            { "field": "kind", "operator": "=", "value": "$page.type" }
+          ]
+        },
+        "dateRange": "upcoming_14d",
+        "dateField": "dueAt",
+        "sort": [{ "field": "dueAt", "dir": "asc" }]
+      },
+      "rules": [
+        {
+          "if": { "field": "dueAt", "operator": "<", "value": "@now" },
+          "then": { "tone": "destructive" }
+        }
+      ],
+      "viz": { "kind": "deadlines", "overdueOnTop": true },
+      "listen": ["$page.topic", "$page.course", "$page.type"]
+    }
+  ],
+  "layouts": {
+    "lg": [
+      { "i": "blk_course", "x": 0, "y": 0, "w": 6, "h": 2 },
+      { "i": "blk_type", "x": 6, "y": 0, "w": 6, "h": 2 },
+      { "i": "blk_calendar", "x": 0, "y": 2, "w": 8, "h": 10 },
+      { "i": "blk_courses", "x": 8, "y": 2, "w": 4, "h": 10 },
+      { "i": "blk_deadlines", "x": 0, "y": 12, "w": 12, "h": 8 }
+    ],
+    "md": [
+      { "i": "blk_course", "x": 0, "y": 0, "w": 4, "h": 2 },
+      { "i": "blk_type", "x": 4, "y": 0, "w": 4, "h": 2 },
+      { "i": "blk_calendar", "x": 0, "y": 2, "w": 8, "h": 10 },
+      { "i": "blk_courses", "x": 0, "y": 12, "w": 8, "h": 8 },
+      { "i": "blk_deadlines", "x": 0, "y": 20, "w": 8, "h": 8 }
+    ],
+    "sm": [
+      { "i": "blk_course", "x": 0, "y": 0, "w": 1, "h": 2 },
+      { "i": "blk_type", "x": 0, "y": 2, "w": 1, "h": 2 },
+      { "i": "blk_calendar", "x": 0, "y": 4, "w": 1, "h": 10 },
+      { "i": "blk_courses", "x": 0, "y": 14, "w": 1, "h": 8 },
+      { "i": "blk_deadlines", "x": 0, "y": 22, "w": 1, "h": 8 }
+    ]
+  }
+}

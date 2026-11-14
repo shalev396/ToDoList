@@ -5,16 +5,21 @@
  *
  * Every resource of the real stack is kept, with its real type and properties. The drawing only:
  *   1. renames hashed logical IDs after their constructs, without the top-level construct
- *      (Email/VerificationFunction/ServiceRole → VerificationFunctionServiceRole, an API route → PublicRoute)
+ *      (Compute/FunctionRole/DefaultPolicy → FunctionRoleDefaultPolicy, an API route → PublicRoute)
  *   2. drops what differs between machines, so every OS generates the same file: CDK path
  *      metadata, the bootstrap-version parameter and rule, asset hashes, CRLF line endings
+ *   2b. drops what is code or settings, not architecture (COMPOSER_DROPPED_PROPERTIES): function
+ *      and layer code, CloudFront function code, Cognito message templates and schema, bucket
+ *      settings, key policies, DependsOn and deletion policies. Composer refuses a template
+ *      this size otherwise ("incompatible or malformed template"); every resource and every
+ *      property that references another resource (the lines Composer draws) is kept.
  *   3. works around what Composer cannot draw:
  *      - its CloudFront card only draws the first S3 origin and its functions, so the API,
  *        certificate and origin access control get a reference back to the distribution (a tag
  *        or description) and are drawn connected to it. The assets bucket (second S3 origin)
  *        cannot be: Composer's S3 card draws nothing from its own references.
  *      - its S3 card rejects bucket names with dots, so they are spelled as Fn::Join
- *   4. boxes the cards into groups (AWS::Composer::Groups): Edge, Api, Compute, Storage, Auth
+ *   4. boxes the cards into groups (AWS::Composer::Groups): Edge (with Email), Api, Compute, Storage (with Kms), Auth
  *
  * Checked by rendering the output in the Composer build the AWS Toolkit loads.
  */
@@ -51,11 +56,72 @@ const GROUP_OF_CONSTRUCT: Record<string, ComposerGroup> = {
   Email: 'Edge',
   Api: 'Api',
   Compute: 'Compute',
+  Kms: 'Storage',
   Storage: 'Storage',
   Auth: 'Auth',
 };
 
 const CDK_INTERNAL_TYPES = new Set(['AWS::CDK::Metadata']);
+
+/**
+ * Properties that are code or settings rather than architecture, per resource type. They are
+ * dropped from the drawing unless they reference another resource (a line Composer draws).
+ */
+const COMPOSER_DROPPED_PROPERTIES: Record<string, readonly string[]> = {
+  'AWS::Lambda::Function': [
+    'Code',
+    'Description',
+    'MemorySize',
+    'Timeout',
+    'Architectures',
+    'LoggingConfig',
+    'ReservedConcurrentExecutions',
+    'TracingConfig',
+  ],
+  'AWS::Lambda::LayerVersion': ['Content', 'CompatibleRuntimes', 'Description', 'LicenseInfo'],
+  'AWS::CloudFront::Function': ['FunctionCode'],
+  'AWS::Cognito::UserPool': [
+    'Schema',
+    'Policies',
+    'VerificationMessageTemplate',
+    'EmailVerificationMessage',
+    'EmailVerificationSubject',
+    'AdminCreateUserConfig',
+    'AccountRecoverySetting',
+    'UsernameConfiguration',
+    'UserAttributeUpdateSettings',
+    'DeletionProtection',
+    'MfaConfiguration',
+    'AutoVerifiedAttributes',
+    'UsernameAttributes',
+    'AliasAttributes',
+  ],
+  'AWS::Cognito::UserPoolClient': [
+    'ExplicitAuthFlows',
+    'TokenValidityUnits',
+    'AccessTokenValidity',
+    'IdTokenValidity',
+    'RefreshTokenValidity',
+    'SupportedIdentityProviders',
+    'AllowedOAuthFlows',
+    'AllowedOAuthScopes',
+    'PreventUserExistenceErrors',
+    'EnableTokenRevocation',
+  ],
+  'AWS::S3::Bucket': [
+    'BucketEncryption',
+    'CorsConfiguration',
+    'LifecycleConfiguration',
+    'OwnershipControls',
+    'PublicAccessBlockConfiguration',
+    'VersioningConfiguration',
+  ],
+  'AWS::KMS::Key': ['KeyPolicy', 'EnableKeyRotation', 'PendingWindowInDays', 'KeySpec', 'KeyUsage'],
+  'AWS::Logs::LogGroup': ['RetentionInDays'],
+};
+
+/** Resource attributes that never change the drawing. */
+const COMPOSER_DROPPED_ATTRIBUTES = ['DependsOn', 'DeletionPolicy', 'UpdateReplacePolicy'] as const;
 const BOOTSTRAP_PARAMETER = 'BootstrapVersion';
 const BOOTSTRAP_RULE = 'CheckBootstrapVersion';
 const LINK_TAG = 'composer:used-by';
@@ -136,12 +202,13 @@ function normalize(value: Json): Json {
 /**
  * Composer folds some resources into another resource's card, and a group may only list the
  * resource that card is keyed by (anything else makes Composer reject the file as incompatible).
- * These are the Composer grouping rules this stack hits:
+ * These are Composer's grouping rules for the types this stack has, or had (a custom resource and
+ * SQS event source mappings once broke the drawing):
  *   ApiGatewayV2 route/integration/stage/authorizer → the Api they reference
  *   Lambda::Permission                               → the non-function resource it references
  *   IAM::Policy                                      → the Role it references
  *   S3::BucketPolicy                                 → the Bucket it references
- *   Custom:: resources                               → the Lambda function behind them
+ *   Custom:: resources, Lambda::EventSourceMapping   → the Lambda function behind them
  *   anything that references a Logs::LogGroup        → that log group (the function's card)
  */
 export function cardRoot(template: CfnTemplate, id: string, depth = 0): string {
@@ -166,7 +233,7 @@ export function cardRoot(template: CfnTemplate, id: string, depth = 0): string {
           ? into((t) => t === 'AWS::IAM::Role')
           : type === 'AWS::S3::BucketPolicy'
             ? into((t) => t === 'AWS::S3::Bucket')
-            : type.startsWith('Custom::')
+            : type.startsWith('Custom::') || type === 'AWS::Lambda::EventSourceMapping'
               ? into((t) => t === 'AWS::Lambda::Function')
               : refs.find((ref) => typeOf(ref) === 'AWS::Logs::LogGroup');
   return folded ?? id;
@@ -183,6 +250,21 @@ function spellBucketNamesForComposer(resources: Record<string, CfnResource>): vo
       (r.Properties ??= {})['BucketName'] = { 'Fn::Join': ['', [name]] };
     }
   }
+}
+
+/**
+ * Drops the resource's code and settings properties (COMPOSER_DROPPED_PROPERTIES), keeping any
+ * that reference another drawn resource, since those are the lines Composer draws.
+ */
+function slimForComposer(resource: CfnResource, drawnIds: ReadonlySet<string>): void {
+  const dropped = COMPOSER_DROPPED_PROPERTIES[resource.Type];
+  const props = resource.Properties;
+  if (dropped === undefined || props === undefined) return;
+  const connects = (value: Json): boolean =>
+    [...referencedIds(value)].some((id) => drawnIds.has(id));
+  resource.Properties = Object.fromEntries(
+    Object.entries(props).filter(([name, value]) => !dropped.includes(name) || connects(value)),
+  );
 }
 
 /** Types whose Composer card draws nothing from its own references, so a link would not show. */
@@ -275,17 +357,19 @@ export function toComposerTemplate(source: CfnTemplate): CfnTemplate {
       return undefined;
     });
 
-  // 2. Resources with their real types and properties, minus CDK/machine-specific noise.
+  // 2. Resources with their real types, minus CDK/machine-specific noise and minus what is code
+  //    or settings rather than architecture (2b in the header).
+  const drawnIds = new Set(kept.map(([id]) => rename.get(id) ?? id));
   const resources: Record<string, CfnResource> = {};
   for (const [id, r] of kept) {
-    const rest: Record<string, Json | undefined> = { ...r };
-    delete rest['Metadata'];
+    const rest = Object.fromEntries(
+      Object.entries(r).filter(
+        ([key]) =>
+          key !== 'Metadata' && !(COMPOSER_DROPPED_ATTRIBUTES as readonly string[]).includes(key),
+      ),
+    );
     const resource = normalize(renameRefs(rest as JsonObject)) as CfnResource;
-    if (resource.DependsOn !== undefined) {
-      resource.DependsOn = ([] as string[])
-        .concat(resource.DependsOn)
-        .map((d) => rename.get(d) ?? d);
-    }
+    slimForComposer(resource, drawnIds);
     resources[rename.get(id) ?? id] = resource;
   }
 

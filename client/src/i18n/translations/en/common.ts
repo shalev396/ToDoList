@@ -1,5 +1,4 @@
 export const common = {
-  app: { name: '{{appName}}' },
   aria: { toggleTheme: 'Toggle theme' },
   theme: { light: 'Light', dark: 'Dark', system: 'System' },
   nav: {
@@ -13,6 +12,14 @@ export const common = {
     myAccount: 'My account',
     logOut: 'Log out',
     guest: 'Guest',
+    primary: 'Main',
+    logIn: 'Log in',
+    signUp: 'Sign up',
+    openMenu: 'Open menu',
+    menu: 'Menu',
+    closeMenu: 'Close menu',
+    language: 'Language',
+    theme: 'Theme',
   },
   imageUpload: {
     choose: 'Choose image',

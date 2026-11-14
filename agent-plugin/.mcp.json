@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "todolist": {
+      "type": "http",
+      "url": "${TODOLIST_MCP_URL:-https://dev.todolist.example/api/mcp}",
+      "headers": {
+        "Authorization": "Bearer ${TODOLIST_AGENT_KEY}"
+      }
+    }
+  }
+}

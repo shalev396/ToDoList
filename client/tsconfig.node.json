@@ -5,8 +5,12 @@
     "lib": ["ES2022"],
     "types": ["node"],
     "moduleResolution": "NodeNext",
-    "module": "NodeNext"
+    "module": "NodeNext",
+    // Unit tests reach the server's shared, import-free domain enums (AREAS, ROLES) as the app does.
+    "paths": {
+      "@api-types/*": ["../server/src/types/*"]
+    }
   },
-  "include": ["vite.config.ts", "tests/**/*.ts"],
+  "include": ["vite.config.ts", "tests/**/*.ts", "src/**/*.test.ts"],
   "exclude": ["dist", "node_modules"]
 }

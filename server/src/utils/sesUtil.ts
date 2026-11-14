@@ -1,5 +1,6 @@
 import { SESClient, SendEmailCommand } from '@aws-sdk/client-ses';
 import { environment } from '../config/environment.js';
+import { assertUnderTest } from '../config/testSwitches.js';
 
 const sesClient = new SESClient({ region: environment.awsRegion });
 
@@ -14,6 +15,19 @@ export interface SendEmailParams {
   subject: string;
   htmlBody: string;
   textBody: string;
+}
+
+export type MailSender = (params: SendEmailParams) => Promise<void>;
+
+let senderForTests: MailSender | null = null;
+
+/**
+ * Tests only (node:test): sendEmail hands every email to `sender` instead of SES; null restores
+ * SES. It throws in a server.
+ */
+export function setMailSenderForTests(sender: MailSender | null): void {
+  assertUnderTest('setMailSenderForTests');
+  senderForTests = sender;
 }
 
 /**
@@ -31,6 +45,10 @@ export interface SendEmailParams {
  * });
  */
 export async function sendEmail(params: SendEmailParams): Promise<void> {
+  if (senderForTests !== null) {
+    await senderForTests(params);
+    return;
+  }
   const fromEmail = getFromEmail();
 
   await sesClient.send(

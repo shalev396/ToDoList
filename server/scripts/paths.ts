@@ -17,6 +17,10 @@ export const COMPOSER_TEMPLATE = join(SERVER_ROOT, 'infra', 'composer', 'templat
 /** Where the bundled app lands inside the code layer (mounted at /opt/nodejs/app/index.mjs). */
 export const CODE_ENTRY_IN_LAYER = join('nodejs', 'app', 'index.mjs');
 
+/** Recorded provider fixtures (fixtures mode), shipped next to the bundle where runSync looks. */
+export const SYNC_FIXTURES_DIR = join(SERVER_ROOT, 'src', 'sync', 'fixtures');
+export const SYNC_FIXTURES_IN_LAYER = join('nodejs', 'app', 'fixtures');
+
 export interface LayerManifest {
   code: string;
   deps: string;

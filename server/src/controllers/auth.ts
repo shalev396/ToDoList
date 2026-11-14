@@ -1,4 +1,5 @@
 import { type RequestHandler } from 'express';
+import { allowSecretKinds } from '../middlewares/responseFormatter.js';
 import {
   CognitoIdentityProviderClient,
   SignUpCommand,
@@ -11,6 +12,7 @@ import {
 import jwt from 'jsonwebtoken';
 import { User } from '../classes/index.js';
 import { environment } from '../config/environment.js';
+import { workspaceStatus } from '../services/workspaces.js';
 import type { CognitoJwtPayload } from '../types/express.js';
 import type { EmptySuccessResponseData } from '../types/response.js';
 import type {
@@ -27,6 +29,17 @@ import type {
 } from '../routes/public/auth/index.js';
 
 const EMPTY: EmptySuccessResponseData = {};
+
+/** The Cognito exception's name, if it is one. Its message is never sent: it can quote the input. */
+function cognitoErrorName(error: unknown): string | undefined {
+  return error instanceof Error ? error.name : undefined;
+}
+
+/** Answers that never quote the request: one generic message and a machine code per case. */
+const INVALID_CREDENTIALS = 'Incorrect email or password.';
+const PASSWORD_POLICY = 'The password does not meet the requirements.';
+const CODE_INVALID = 'The verification code is not valid.';
+const CODE_EXPIRED = 'The verification code has expired. Request a new one.';
 
 const cognitoClient = new CognitoIdentityProviderClient({
   region: environment.awsRegion,
@@ -63,8 +76,16 @@ const signup: RequestHandler = async (req, res): Promise<void> => {
     res.success(data);
   } catch (error) {
     console.error('Signup error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Signup failed';
-    res.error(errorMessage, 400);
+    switch (cognitoErrorName(error)) {
+      case 'UsernameExistsException':
+        res.error('An account with this email already exists.', 400, 'user_exists');
+        return;
+      case 'InvalidPasswordException':
+        res.error(PASSWORD_POLICY, 400, 'password_policy');
+        return;
+      default:
+        res.error('Sign-up failed. Check your details and try again.', 400);
+    }
   }
 };
 
@@ -90,8 +111,16 @@ const confirmSignup: RequestHandler = async (req, res): Promise<void> => {
     res.success(EMPTY);
   } catch (error) {
     console.error('Confirmation error:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Email verification failed';
-    res.error(errorMessage, 400);
+    switch (cognitoErrorName(error)) {
+      case 'CodeMismatchException':
+        res.error(CODE_INVALID, 400, 'code_invalid');
+        return;
+      case 'ExpiredCodeException':
+        res.error(CODE_EXPIRED, 400, 'code_expired');
+        return;
+      default:
+        res.error('Email verification failed. Please try again.', 400);
+    }
   }
 };
 
@@ -191,19 +220,27 @@ const login: RequestHandler = async (req, res): Promise<void> => {
         refreshToken: refreshToken ?? '',
         expiresIn: expiresIn ?? 3600,
       },
+      // No workspace is created here: onboarding does that.
+      ...(await workspaceStatus(user)),
     };
 
+    allowSecretKinds(res, 'jwt'); // the user's own session tokens
     res.success(data);
   } catch (error: unknown) {
     console.error('Login error:', error);
 
-    if (error instanceof Error && error.name === 'UserNotConfirmedException') {
-      res.error('Please verify your email before signing in.', 403);
-      return;
+    switch (cognitoErrorName(error)) {
+      case 'UserNotConfirmedException':
+        res.error('Please verify your email before signing in.', 403, 'email_unverified');
+        return;
+      case 'NotAuthorizedException':
+      case 'UserNotFoundException':
+        // One answer for both, so the response doesn't reveal which emails have an account.
+        res.error(INVALID_CREDENTIALS, 401, 'invalid_credentials');
+        return;
+      default:
+        res.error('Login failed. Please try again.', 401);
     }
-
-    const errorMessage = error instanceof Error ? error.message : 'Login failed';
-    res.error(errorMessage, 401);
   }
 };
 
@@ -271,20 +308,17 @@ const resetPassword: RequestHandler = async (req, res): Promise<void> => {
 
     if (error instanceof Error) {
       if (error.name === 'CodeMismatchException') {
-        res.error('Invalid verification code. Please check and try again.', 400);
+        res.error(CODE_INVALID, 400, 'code_invalid');
         return;
       }
 
       if (error.name === 'ExpiredCodeException') {
-        res.error('Verification code has expired. Please request a new one.', 400);
+        res.error(CODE_EXPIRED, 400, 'code_expired');
         return;
       }
 
       if (error.name === 'InvalidPasswordException') {
-        res.error(
-          'Password does not meet requirements. Must be at least 8 characters with uppercase, lowercase, number, and special character.',
-          400,
-        );
+        res.error(PASSWORD_POLICY, 400, 'password_policy');
         return;
       }
 
@@ -336,6 +370,7 @@ const refreshTokenHandler: RequestHandler = async (req, res): Promise<void> => {
       expiresIn: ExpiresIn ?? 3600,
     };
 
+    allowSecretKinds(res, 'jwt'); // the user's own session tokens
     res.success(data);
   } catch (error: unknown) {
     console.error('Token refresh failed:', error);

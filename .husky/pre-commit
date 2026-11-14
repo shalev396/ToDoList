@@ -7,6 +7,10 @@ set -e
 IFS='
 '
 
+# Tools get the file lists in chunks of 40 paths: on Windows, npx runs through cmd.exe, whose
+# command line is capped at 8191 characters, so a large commit (a folder rename) would fail.
+CHUNK=40
+
 # 1. Staged files (deleted files left out)
 FILES=$(git diff --cached --name-only --diff-filter=ACMR)
 if [ -z "$FILES" ]; then
@@ -15,22 +19,28 @@ fi
 
 # 2. Prettier formats them and the result is staged.
 #    It skips files in .gitignore / .prettierignore and file types it does not know.
-#    Note: this re-stages whole files, so partially staged hunks get committed too.
-npx prettier --write --ignore-unknown --no-error-on-unmatched-pattern $FILES
-git add $FILES
+#    Note: this re-stages whole files, so partially staged hunks get committed too; that is why the
+#    secret scan below runs after it, on the final index.
+printf '%s\n' "$FILES" | tr '\n' '\0' | xargs -0 -n "$CHUNK" npx prettier --write --ignore-unknown --no-error-on-unmatched-pattern
+printf '%s\n' "$FILES" | tr '\n' '\0' | xargs -0 -n "$CHUNK" git add
 
-# 3. ESLint checks the staged code of each package with that package's own config.
-CLIENT_FILES=$(echo "$FILES" | grep -E '^client/.+\.(js|jsx|ts|tsx)$' | sed 's|^client/||')
-SERVER_FILES=$(echo "$FILES" | grep -E '^server/.+\.(js|ts)$' | sed 's|^server/||')
+# 3. No secrets: the FINAL staged content (after Prettier re-staged it) is scanned for token shapes
+#    (pk_, lin_api_, ATATT, xox, ghp_, github_pat_, elk_, private keys, database URLs with a
+#    password). Prints path:line only.
+(cd server && npx tsx scripts/scan-secrets.ts --staged)
+
+# 4. ESLint checks the staged code of each package with that package's own config.
+CLIENT_FILES=$(echo "$FILES" | grep -E '^client/.+\.(js|jsx|ts|tsx)$' | sed 's|^client/||' || true)
+SERVER_FILES=$(echo "$FILES" | grep -E '^server/.+\.(js|ts)$' | sed 's|^server/||' || true)
 
 if [ -n "$CLIENT_FILES" ]; then
-  (cd client && npx eslint --max-warnings 0 --no-warn-ignored $CLIENT_FILES)
+  (cd client && printf '%s\n' "$CLIENT_FILES" | tr '\n' '\0' | xargs -0 -n "$CHUNK" npx eslint --max-warnings 0 --no-warn-ignored)
 fi
 if [ -n "$SERVER_FILES" ]; then
-  (cd server && npx eslint --max-warnings 0 --no-warn-ignored $SERVER_FILES)
+  (cd server && printf '%s\n' "$SERVER_FILES" | tr '\n' '\0' | xargs -0 -n "$CHUNK" npx eslint --max-warnings 0 --no-warn-ignored)
 fi
 
-# 4. Infra changed: regenerate the committed Infrastructure Composer drawing (no AWS access
+# 5. Infra changed: regenerate the committed Infrastructure Composer drawing (no AWS access
 #    needed) and stage it. CI's test:infra fails when the drawing is stale.
 if echo "$FILES" | grep -q '^server/infra/'; then
   (cd server && npm run synth:composer)

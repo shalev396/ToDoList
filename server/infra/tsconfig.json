@@ -4,5 +4,12 @@
     "exactOptionalPropertyTypes": false
   },
   "include": ["**/*.ts", "../scripts/**/*.ts"],
-  "exclude": ["functions", "composer", "fixtures"]
+  "exclude": [
+    "functions",
+    "composer",
+    "fixtures",
+    "../scripts/sync-db-local.ts",
+    "../scripts/sync-local.ts",
+    "../scripts/gcal-local.ts"
+  ]
 }

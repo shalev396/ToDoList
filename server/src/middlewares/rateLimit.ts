@@ -9,8 +9,7 @@ const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
  * Every API surface gets its own instance (its own in-memory counter): one Lambda serves them
  * all, and a shared counter would add public, private and dev traffic into a single budget.
  *
- * Off on the local dev server (src/local.ts sets DISABLE_RATE_LIMIT): one process sees every
- * request from one IP, and a test run alone exceeds the per-IP limits.
+ * Always on; only a test turns them off (config/testSwitches.ts).
  */
 function limiter(max: number): RateLimitRequestHandler {
   return rateLimit({
@@ -32,3 +31,6 @@ export const privateLimiter = limiter(200);
  * These hit Cognito/SES and are the primary abuse target — keep tight.
  */
 export const authLimiter = limiter(100);
+
+/** OAuth callbacks (/api/public/oauth): a browser lands there once per connection. */
+export const oauthLimiter = limiter(60);

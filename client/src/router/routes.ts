@@ -2,6 +2,7 @@
 // These will be prefixed with /:lng in the router. Use pathTo(ROUTES.*, lng) for links.
 const AUTH_BASE = 'auth' as const;
 const LEGAL_BASE = 'legal' as const;
+const SETTINGS_BASE = 'settings' as const;
 
 export const ROUTES = {
   HOME: '',
@@ -10,6 +11,22 @@ export const ROUTES = {
   PROFILE: 'profile',
   EDIT_PROFILE: 'profile/edit',
   EDIT_PROFILE_SEGMENT: 'edit',
+  ONBOARDING: 'onboarding',
+  /** Route pattern; build links with invitePath(). */
+  INVITE: 'invites/:token',
+  /** Route pattern of a join link ("anyone with the link"); build links with joinPath(). */
+  JOIN: 'join/:token',
+  /** Route pattern; build links with topicPath(). */
+  TOPIC: 't/:topic',
+  /** Route pattern; build links with topicPath(). */
+  TOPIC_GROUP: 't/:topic/:group',
+  INTEGRATIONS: 'integrations',
+  TEMPLATES: 'templates',
+  SETTINGS: SETTINGS_BASE,
+  MEMBERS: `${SETTINGS_BASE}/members`,
+  AGENT_KEYS: `${SETTINGS_BASE}/agent-keys`,
+  /** Route pattern of a local item's source link (server: localItemUrl); see ItemLinkPage. */
+  ITEM_LINK: 'w/:wid/items/:id',
   AUTH: {
     BASE: AUTH_BASE,
     SEGMENTS: {
@@ -46,4 +63,20 @@ export type RoutePath = (typeof ROUTES)[RouteKey];
 export function pathTo(segment: string, lng: string): string {
   const trimmed = segment.replace(/^\/+/, '');
   return trimmed ? `/${lng}/${trimmed}` : `/${lng}`;
+}
+
+/** A topic page (`t/work`), or one group in it (`t/college/<container id>`). */
+export function topicPath(topic: string, group?: string): string {
+  const base = `t/${encodeURIComponent(topic)}`;
+  return group === undefined ? base : `${base}/${encodeURIComponent(group)}`;
+}
+
+/** The accept page of an invite link. */
+export function invitePath(token: string): string {
+  return `invites/${encodeURIComponent(token)}`;
+}
+
+/** The page of a join link ("anyone with the link"). */
+export function joinPath(token: string): string {
+  return `join/${encodeURIComponent(token)}`;
 }

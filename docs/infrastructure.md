@@ -2,7 +2,7 @@
 
 [← Back to main README](../README.md) · [Deployment](deployment.md) · [Staging access](staging-access.md)
 
-Elytra's AWS infrastructure is an [AWS CDK](https://docs.aws.amazon.com/cdk/) (TypeScript) app in [`server/infra`](../server/infra). It synthesizes one CloudFormation stack per stage — `elytra-dev`, `elytra-qa`, `elytra-prod` — each fully independent.
+TodoList's AWS infrastructure is an [AWS CDK](https://docs.aws.amazon.com/cdk/) (TypeScript) app in [`server/infra`](../server/infra). It synthesizes one CloudFormation stack per stage — `todolist-dev`, `todolist-qa`, `todolist-prod` — each fully independent.
 
 ## Request flow
 
@@ -13,32 +13,44 @@ flowchart LR
   cf -- "/media/*" --> assets[(S3 assets bucket<br/>private, OAC)]
   user -- "presigned POST / GET (tmp/)" --> assets
   cf -- "/api/*" --> api[HTTP API]
-  api -- "/api/public/*" --> fn[Lambda elytra-stage-api]
+  api -- "/api/public/*" --> fn[Lambda todolist-stage-api]
   api -- "/api/private/* (Cognito JWT)" --> fn
+  fn -- "sync jobs: async invoke of itself" --> fn
   fn --> cognito[Cognito user pool]
   fn --> assets
   fn --> ses[SES]
+  fn --> kms[KMS credentials key]
   fn --> db[(DATABASE_URL)]
 ```
 
-## Resources (one stack, ~30 resources)
+## Resources (one stack, ~37 resources)
 
-| Construct ([`infra/lib/constructs`](../server/infra/lib/constructs)) | Creates                                                                                                                                                                             |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Storage`                                                            | Client bucket `DOMAIN_NAME` (Vite build) and assets bucket `DOMAIN_NAME-assets` (layout below). Both block all public access; CloudFront reads them through origin access control.  |
-| `Email`                                                              | SES domain identity for `DOMAIN_NAME`, its three DKIM CNAME records, and the deploy-time wait until SES has verified them (see below).                                              |
-| `Api`                                                                | HTTP API with routes `/api/public/{proxy+}`, `/api/private/{proxy+}` (Cognito JWT authorizer), throttled 100/200. Nothing else is routed.                                           |
-| `Edge`                                                               | ACM certificate (imported or created), optional WAF attachment, CloudFront distribution, SPA rewrite CloudFront Function, Route 53 alias record (plus `www` with `WWW_ALIAS=true`). |
-| `Auth`                                                               | Cognito user pool (email sign-in, SES sender `authenticator@DOMAIN_NAME`) and app client.                                                                                           |
-| `Compute`                                                            | **One** Lambda function, **one** dependencies layer, **one** codebase layer, its log group (30 days) and least-privilege role.                                                      |
+| Construct ([`infra/lib/constructs`](../server/infra/lib/constructs)) | Creates                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Storage`                                                            | Client bucket `DOMAIN_NAME` (Vite build) and assets bucket `DOMAIN_NAME-assets` (layout below). Both block all public access; CloudFront reads them through origin access control.                                                                             |
+| `Email`                                                              | SES domain identity for `DOMAIN_NAME` and its three DKIM CNAME records ([SES before Cognito](#ses-before-cognito)).                                                                                                                                            |
+| `Kms`                                                                | Customer-managed key `alias/todolist-<stage>-credentials` (yearly rotation) for the envelope encryption of integration credentials; retained on qa and prod.                                                                                                   |
+| `Api`                                                                | HTTP API with routes `/api/public/{proxy+}`, `/api/public/auth/{proxy+}`, `/api/private/{proxy+}` (Cognito JWT authorizer), `/api/mcp` and `/api/mcp/{proxy+}` (agent keys, checked in the app), throttled per stage (`STAGE_LIMITS`). Nothing else is routed. |
+| `Edge`                                                               | ACM certificate (imported or created), optional WAF attachment, CloudFront distribution, SPA rewrite CloudFront Function, Route 53 alias record.                                                                                                               |
+| `Auth`                                                               | Cognito user pool (email sign-in, SES sender `authenticator@DOMAIN_NAME`) and app client.                                                                                                                                                                      |
+| `Compute`                                                            | **One** Lambda function (HTTP, maintenance actions and background syncs), **one** dependencies layer, **one** codebase layer, its log group (30 days) and its **one** least-privilege role.                                                                    |
 
-Besides the API function, the stack creates exactly one helper: the SES verification wait below. No auto-delete, log-retention or other custom resources. [`infra/test/stack.test.ts`](../server/infra/test/stack.test.ts) fails if another one appears.
+There is no deploy-time helper (no custom resource, no wait condition, no auto-delete or log-retention function) and, like Elytra, no queue, worker function, alarm or schedule. [`infra/test/stack.test.ts`](../server/infra/test/stack.test.ts) fails if one appears.
 
 ### Why one function
 
 Auth is verified inside the app (`expressAuth`), and API Gateway attaches its JWT authorizer per route, not per function — so a single function serves every route with the same protection. One function means one warm pool (public traffic keeps logged-in requests warm), one role, one log group and one deploy artifact. Stage maintenance is a direct invoke of the same function, an event API Gateway can never produce: `{"action":"sync-db"}` (the backend deploy syncs the schema) and `{"action":"reset-db"}` (`npm run reset:db -- <stage>`, run by CI before the test suites; empties the database, S3 user uploads and Cognito users, and is refused on prod). Only lambda:InvokeFunction reaches them, so there are no public destructive endpoints.
 
 Splitting public/private later is ~10 lines (second `lambda.Function` on the same layers, second integration) if you want a public function without S3/SES/Cognito-admin permissions or separate reserved concurrency.
+
+### Background work without a queue
+
+The same function does the background work, and nothing else exists for it: no queue, no worker, no schedule.
+
+- **Syncs.** "Sync now" (and the `sync-dispatch` / `gcal-dispatch` actions) start a job: the function invokes **itself** asynchronously (`InvocationType: Event`) with `{"action":"sync-run","integrationId","runId","mode"}` or `{"action":"gcal-run","integrationId"}`, and its action dispatcher runs it ([`src/services/syncJobs.ts`](../server/src/services/syncJobs.ts), [`src/sync/worker.ts`](../server/src/sync/worker.ts)). It finds its own name in `AWS_LAMBDA_FUNCTION_NAME`, which Lambda sets itself. The role may invoke exactly this function, through an ARN built from its name (`arn:aws:lambda:<region>:<account>:function:todolist-<stage>-api`): a CDK reference to the function would be a dependency cycle, since the function depends on its role's policy. A job that throws (the database was unreachable, the provider rate-limited it) is retried twice by Lambda, then dropped. Outside Lambda ([`src/local.ts`](../server/src/local.ts)), the job runs inline in the process.
+- **Email.** Sent straight through SES by the request that sends it (invites, the workspace-deleted notice). A failed invite email is logged; the invite stands.
+- **Timeout and concurrency.** The function's timeout is 5 minutes, the longest a sync job may run (API Gateway still cuts HTTP requests at 30 seconds). Its reserved concurrency (`STAGE_LIMITS` in [`infra/lib/config.ts`](../server/infra/lib/config.ts): dev 10, qa 15, prod 55) is shared by HTTP requests and sync jobs.
+- **No schedules for now.** `sync-dispatch`, `gcal-dispatch` and `purge` run only when the function is invoked with them directly (like `sync-db`).
 
 ### Layers
 
@@ -61,7 +73,6 @@ Both layers are built by [`scripts/build-layers.ts`](../server/scripts/build-lay
 | `AWS_REGION`      | no — defaults to `us-east-1`       | Region of the whole stack                                                                                                                             |
 | `CERTIFICATE_ARN` | only if `AWS_REGION` ≠ `us-east-1` | ACM certificate for `DOMAIN_NAME`, always in `us-east-1`. Used as-is whenever it is set                                                               |
 | `WAF_WEB_ACL_ARN` | no                                 | Existing global (CloudFront scope) web ACL to attach; no WAF when unset. The dev/qa basic-auth gate lives there ([Staging access](staging-access.md)) |
-| `WWW_ALIAS`       | no                                 | `true` also serves `www.DOMAIN_NAME` from the same distribution ([Deployment](deployment.md#4-github-configuration))                                  |
 
 Certificate rule, checked before synth: `CERTIFICATE_ARN` set → use it (it must be a `us-east-1` ACM ARN). Not set → the stack creates and DNS-validates one, which is only possible when the stack itself is in `us-east-1`; any other region fails with an explanation.
 
@@ -87,6 +98,7 @@ Planned: when `WAF_WEB_ACL_ARN` is not set, the stack will create a web ACL for 
 | `ApiRoleArn`                           | Atlas database user (MONGODB-AWS, see below)                |
 | `CognitoUserPoolId`, `CognitoClientId` | Local API server ([`src/local.ts`](../server/src/local.ts)) |
 | `S3AssetsBucketName`                   | Local API server                                            |
+| `KmsKeyId`                             | Local API server (`KMS_KEY_ID`)                             |
 
 ## Assets bucket layout
 
@@ -98,7 +110,7 @@ Planned: when `WAF_WEB_ACL_ARN` is not set, the stack will create a web ACL for 
 
 The prefixes and the expiry are `S3_PREFIXES` / `TMP_OBJECT_EXPIRATION_DAYS` in [`infra/lib/constants.ts`](../server/infra/lib/constants.ts); the lifecycle rules are `DeleteOldVersions`, `DeleteStagedUploads` and `DeleteExportZips`. `/media/*` is the only CloudFront behavior on the assets bucket, so nothing under `tmp/` is ever public; the browser reaches it only through short-lived presigned requests. The function's role may read, write and delete only `media/*` and `tmp/*`, and list only those prefixes.
 
-Bucket CORS allows `GET`, `HEAD` and `POST` from `http://localhost:5173` and `https://DOMAIN_NAME` (plus `https://www.DOMAIN_NAME` with `WWW_ALIAS=true`), never `*`. A CORS change only takes effect once the stage is deployed, so a PR that needs it can fail its own browser tests against the currently deployed stage.
+Bucket CORS allows `GET`, `HEAD` and `POST` from `http://localhost:5173` and `https://DOMAIN_NAME`, never `*`. A CORS change only takes effect once the stage is deployed, so a PR that needs it can fail its own browser tests against the currently deployed stage.
 
 ### File transfer limits
 
@@ -117,7 +129,7 @@ Lambda has no fixed outbound IP. With MongoDB Atlas, **Network Access must allow
 
 ## MongoDB Atlas IAM authentication
 
-With Atlas, the function authenticates as its execution role instead of a password (`MONGODB-AWS`). The role name is fixed to `elytra-<stage>-api` (output `ApiRoleArn`), so its ARN survives stack updates. `DATABASE_URL` then carries no credentials:
+With Atlas, the function authenticates as its execution role instead of a password (`MONGODB-AWS`). The role name is fixed to `todolist-<stage>-api` (output `ApiRoleArn`), so its ARN survives stack updates. `DATABASE_URL` then carries no credentials:
 
 ```
 mongodb+srv://<cluster-host>/<database>?authSource=%24external&authMechanism=MONGODB-AWS&retryWrites=true&w=majority
@@ -127,32 +139,32 @@ The driver (with its optional `aws4` and `@aws-sdk/credential-providers` depende
 
 | Identity                       | Atlas roles                                                                              |
 | ------------------------------ | ---------------------------------------------------------------------------------------- |
-| `elytra-<stage>-api`           | `readWrite` + `dbAdmin` on that stage's database only                                    |
+| `todolist-<stage>-api`         | `readWrite` + `dbAdmin` on that stage's database only                                    |
 | CI OIDC role (`AWS_ROLE_NAME`) | `readWriteAnyDatabase` + `dbAdminAnyDatabase` (`_test-local` runs the API on the runner) |
 | Local SSO role                 | `readWriteAnyDatabase` + `dbAdminAnyDatabase`                                            |
 
 Register an assumed role by its ARN **without the IAM path**: the SSO role `arn:aws:iam::<account>:role/aws-reserved/sso.amazonaws.com/<region>/AWSReservedSSO_…` becomes `arn:aws:iam::<account>:role/AWSReservedSSO_…`. Locally, run `aws sso login` when the session expires. Atlas checks each new connection with STS, so the connection opened at cold start is reused across invocations.
 
-## Waiting for SES before Cognito
+## SES before Cognito
 
-Cognito rejects an SES sender whose domain identity is not verified yet, and SES verifies a new domain some time after its DKIM records appear (typically about 1–2 minutes; 44 minutes has been seen). The stack waits for it, so the first deploy of a stage behaves like every other deploy:
+Cognito rejects an SES sender whose domain identity is not verified yet, and SES verifies a new domain some time after its DKIM records appear (typically about 1–2 minutes; 44 minutes has been seen). Nothing waits for SES: the stack only orders the resources, through CloudFormation dependencies ([`infra/lib/app-stack.ts`](../server/infra/lib/app-stack.ts)):
 
-1. `Email/VerificationCheck` (custom resource, after the identity and DKIM records) starts a background check in [`infra/functions/ses-domain-verification`](../server/infra/functions/ses-domain-verification/index.mjs) and returns immediately.
-2. The check polls SES every 30 seconds, handing over to a fresh Lambda invocation every 15 minutes, and signals the `Email/DomainVerified…` **WaitCondition** once SES reports the domain verified.
-3. The WaitCondition (timeout 12 hours, the CloudFormation maximum) is what the user pool depends on.
+1. The SES identity and its three DKIM records are created first.
+2. The CloudFront distribution depends on the DKIM records. It is slow to create (several minutes, after its certificate), which gives SES time to verify the domain.
+3. The Cognito user pool (and its client) depends on the distribution.
 
-Later deploys do not wait again: nothing in the chain changes. The WaitCondition's logical ID includes a hash of `DOMAIN_NAME`, so changing the domain creates a new wait for the new identity. If SES never verifies (for example, broken DKIM records), the check signals a failure with the reason instead of timing out silently.
+If SES has not verified the domain by then, the first deploy of a brand-new stage fails on the user pool and is simply run again ([Deployment → First deploy of a stage](deployment.md#first-deploy-of-a-stage)). Later deploys are unaffected: the identity stays verified, and nothing in the chain is created again.
 
 ## Tags
 
 Tagging is app-wide and automatic: [`infra/lib/tags.ts`](../server/infra/lib/tags.ts) is called once on the CDK app and tags the stack and every resource that can carry tags — including any resource you add later — with exactly two tags, and nothing else (the `Name` tags some CDK constructs add are removed). No construct tags anything itself.
 
-| Key       | Value                 |
-| --------- | --------------------- |
-| `Project` | `APP_NAME` (`elytra`) |
-| `Stage`   | `dev`, `qa` or `prod` |
+| Key       | Value                   |
+| --------- | ----------------------- |
+| `Project` | `APP_NAME` (`todolist`) |
+| `Stage`   | `dev`, `qa` or `prod`   |
 
-CloudFormation cannot tag bucket policies, Route 53 records, API routes, integrations and authorizers, Lambda permissions and layer versions, the origin access control, the user pool client, the IAM inline policies, the SES verification custom resource, or the WaitCondition and its handle. [`infra/test/stack.test.ts`](../server/infra/test/stack.test.ts) fails if any other resource is missing a tag or has an extra one.
+CloudFormation cannot tag bucket policies, Route 53 records, API routes, integrations and authorizers, Lambda permissions and layer versions, the origin access control, the user pool client, the KMS alias or the IAM inline policies. [`infra/test/stack.test.ts`](../server/infra/test/stack.test.ts) fails if any other resource is missing a tag or has an extra one.
 
 **Billing.** CloudFormation cannot activate cost allocation tags (it is an account-wide billing setting), so `npm run deploy:backend` activates `Project` and `Stage` through the Cost Explorer API after every deploy. It never fails a deploy: keys billing has not seen yet (up to a day after the first tagged resources exist) are activated on a later deploy, and in an AWS Organizations member account only the management account can activate them. Then filter or group by `Project` and `Stage` in Cost Explorer.
 
@@ -176,12 +188,12 @@ Every synth runs the [cdk-nag](https://github.com/cdklabs/cdk-nag) AwsSolutions 
 
 | Command                              | Needs AWS? | What it does                                                                                                             |
 | ------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `npm run dev`                        | yes        | Local API on :3000 against the `elytra-dev` stack (also `qa`, `prod`)                                                    |
+| `npm run dev`                        | yes        | Local API on :3000 against the `todolist-dev` stack (also `qa`, `prod`)                                                  |
 | `npm run build`                      | no         | Typecheck `src/`, `infra/`, `scripts/`                                                                                   |
 | `npm run test:infra`                 | no         | Synth all stages with fixture values, assertions, cdk-nag, Composer drawing                                              |
 | `npm run build:layers`               | no         | Build both Lambda layers                                                                                                 |
 | `npm run verify:layers`              | no         | Prove the layers link                                                                                                    |
-| `npm run synth`                      | no         | `cdk synth` of `elytra-dev` with fixture values                                                                          |
+| `npm run synth`                      | no         | `cdk synth` of `todolist-dev` with fixture values                                                                        |
 | `npm run synth:composer`             | no         | Write the Infrastructure Composer drawing (below)                                                                        |
 | `npm run deploy:backend -- <stage>`  | yes        | Guard, find the hosted zone, build + verify layers, `cdk deploy`, sync the database schema ([Deployment](deployment.md)) |
 | `npm run deploy:frontend -- <stage>` | yes        | Build the client, upload it to the client bucket, invalidate CloudFront and wait for it                                  |
@@ -194,9 +206,9 @@ It is regenerated by [`scripts/composer-template.ts`](../server/scripts/composer
 
 What the drawing contains ([`infra/lib/composer.ts`](../server/infra/lib/composer.ts)):
 
-- **Every resource of the real stack** with its real type and properties: buckets and bucket policies, SES identity and DKIM records, the HTTP API with its stage, routes, integration, authorizer and invoke permissions, certificate, origin access control, SPA rewrite function, distribution, alias record, user pool and client, both layers, the function with its log group, and its IAM role and policy.
-- **Readable names** from the construct path without the top-level construct: `ClientBucket`, `FunctionServiceRole`, `ServiceRoleDefaultPolicy`, `PublicRoute`.
-- **Group boxes:** **Edge** (DNS records, certificate, CloudFront, SES), **Api**, **Compute**, **Storage**, **Auth**.
+- **Every resource of the real stack** with its real type and properties: buckets and bucket policies, SES identity and DKIM records, the KMS key and its alias, the HTTP API with its stage, routes, integration, authorizer and invoke permissions, certificate, origin access control, SPA rewrite function, distribution, alias record, user pool and client, both layers, the function with its log group, and its one IAM role and policy.
+- **Readable names** from the construct path without the top-level construct: `ClientBucket`, `FunctionRole`, `FunctionRoleDefaultPolicy`, `PublicRoute`.
+- **Group boxes:** **Edge** (SES identity and DKIM records, certificate, origin access control, SPA rewrite, distribution, alias record), **Api** (the HTTP API), **Compute** (the two layers, the function with its log group, the role), **Storage** (both buckets, the KMS key and alias), **Auth** (user pool and client). A group lists only resources Composer draws as their own card; folded ones (permissions, policies, bucket policies) are drawn inside their card.
 - Composer nests some resources inside another card (routes, integration, authorizer and permissions in the `HttpApi` card; the log group in the `Function` card; the policy in the role card; bucket policies in their bucket).
 
 Two Composer limitations are worked around, only in the drawing: its CloudFront card draws only the first S3 origin, so the API, certificate and origin access control carry a tag or description referencing the distribution to get their connection line (the assets bucket cannot be drawn connected to CloudFront); and its S3 card rejects dotted bucket names, so they are written as `Fn::Join`. The file is formatted exactly as Composer saves it, so opening it does not modify it.

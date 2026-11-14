@@ -1,0 +1,340 @@
+[
+  {
+    "request": { "graphql": "Boards", "variables": { "owner": "shalev396" } },
+    "response": {
+      "body": {
+        "data": {
+          "repositoryOwner": {
+            "login": "shalev396",
+            "projectsV2": {
+              "pageInfo": { "hasNextPage": false, "endCursor": "FAKE-cursor-boards-1" },
+              "nodes": [
+                {
+                  "id": "PVT_FAKE_ideas",
+                  "number": 3,
+                  "title": "Old ideas",
+                  "url": "https://example.invalid/github/users/shalev396/projects/3",
+                  "closed": true,
+                  "updatedAt": "{{datetime:-90d@12:00}}",
+                  "fields": {
+                    "nodes": [
+                      { "id": "PVTF_FAKE_r3_title", "name": "Title", "dataType": "TITLE" },
+                      {
+                        "id": "PVTSSF_FAKE_r3_status",
+                        "name": "Status",
+                        "dataType": "SINGLE_SELECT",
+                        "options": [{ "name": "Ideas" }, { "name": "Later" }]
+                      }
+                    ]
+                  },
+                  "items": {
+                    "pageInfo": { "hasNextPage": false, "endCursor": "FAKE-cursor-r3-1" },
+                    "nodes": [
+                      {
+                        "id": "PVTI_FAKE_r3_1",
+                        "type": "ISSUE",
+                        "isArchived": false,
+                        "fieldValues": {
+                          "nodes": [
+                            {},
+                            { "name": "Later", "field": { "id": "PVTSSF_FAKE_r3_status" } }
+                          ]
+                        },
+                        "content": {
+                          "__typename": "Issue",
+                          "id": "I_FAKE_sandbox_2",
+                          "number": 2,
+                          "title": "Document the fixture date tokens",
+                          "body": "Explain date, datetime, epoch and epochms with examples.",
+                          "url": "https://example.invalid/github/shalev396/dashboard-sandbox/issues/2",
+                          "state": "OPEN",
+                          "stateReason": null,
+                          "closedAt": null,
+                          "updatedAt": "{{datetime:-2d@09:30}}",
+                          "author": { "login": "shalev396" },
+                          "repository": { "nameWithOwner": "shalev396/dashboard-sandbox" },
+                          "assignees": { "nodes": [{ "login": "shalev396" }] },
+                          "labels": { "nodes": [{ "name": "docs" }] },
+                          "milestone": { "title": "v0.2", "dueOn": "{{datetime:+5d@10:00}}" }
+                        }
+                      },
+                      {
+                        "id": "PVTI_FAKE_r3_2",
+                        "type": "ISSUE",
+                        "isArchived": false,
+                        "fieldValues": {
+                          "nodes": [
+                            {},
+                            { "name": "Ideas", "field": { "id": "PVTSSF_FAKE_r3_status" } }
+                          ]
+                        },
+                        "content": {
+                          "__typename": "Issue",
+                          "id": "I_FAKE_elytra_10",
+                          "number": 10,
+                          "title": "Explore a widget gallery",
+                          "body": null,
+                          "url": "https://example.invalid/github/shalev396/Elytra/issues/10",
+                          "state": "OPEN",
+                          "stateReason": null,
+                          "closedAt": null,
+                          "updatedAt": "{{datetime:-20d@11:00}}",
+                          "author": { "login": "demo-teammate" },
+                          "repository": { "nameWithOwner": "shalev396/Elytra" },
+                          "assignees": { "nodes": [] },
+                          "labels": { "nodes": [] },
+                          "milestone": null
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "id": "PVT_FAKE_roadmap",
+                  "number": 7,
+                  "title": "Personal roadmap",
+                  "url": "https://example.invalid/github/users/shalev396/projects/7",
+                  "closed": false,
+                  "updatedAt": "{{datetime:-1d@21:10}}",
+                  "fields": {
+                    "nodes": [
+                      { "id": "PVTF_FAKE_r7_title", "name": "Title", "dataType": "TITLE" },
+                      {
+                        "id": "PVTF_FAKE_r7_assignees",
+                        "name": "Assignees",
+                        "dataType": "ASSIGNEES"
+                      },
+                      {
+                        "id": "PVTSSF_FAKE_r7_status",
+                        "name": "Status",
+                        "dataType": "SINGLE_SELECT",
+                        "options": [
+                          { "name": "Todo" },
+                          { "name": "In Progress" },
+                          { "name": "Done" }
+                        ]
+                      },
+                      { "id": "PVTF_FAKE_r7_target", "name": "Target date", "dataType": "DATE" },
+                      {
+                        "id": "PVTIF_FAKE_r7_iteration",
+                        "name": "Iteration",
+                        "dataType": "ITERATION"
+                      }
+                    ]
+                  },
+                  "items": {
+                    "pageInfo": { "hasNextPage": true, "endCursor": "FAKE-cursor-r7-1" },
+                    "nodes": [
+                      {
+                        "id": "PVTI_FAKE_r7_1",
+                        "type": "ISSUE",
+                        "isArchived": false,
+                        "fieldValues": {
+                          "nodes": [
+                            {},
+                            { "name": "Done", "field": { "id": "PVTSSF_FAKE_r7_status" } },
+                            { "date": "{{date:+1d}}", "field": { "id": "PVTF_FAKE_r7_target" } },
+                            {
+                              "title": "Iteration 12",
+                              "field": { "id": "PVTIF_FAKE_r7_iteration" }
+                            }
+                          ]
+                        },
+                        "content": {
+                          "__typename": "Issue",
+                          "id": "I_FAKE_sandbox_1",
+                          "number": 1,
+                          "title": "Wire the kanban block to board fields",
+                          "body": "Read Status, Iteration and Target date from the board.",
+                          "url": "https://example.invalid/github/shalev396/dashboard-sandbox/issues/1",
+                          "state": "CLOSED",
+                          "stateReason": "COMPLETED",
+                          "closedAt": "{{datetime:-1d@22:30}}",
+                          "updatedAt": "{{datetime:-1d@22:30}}",
+                          "author": { "login": "shalev396" },
+                          "repository": { "nameWithOwner": "shalev396/dashboard-sandbox" },
+                          "assignees": { "nodes": [{ "login": "shalev396" }] },
+                          "labels": { "nodes": [{ "name": "ui" }, { "name": "feature" }] },
+                          "milestone": null
+                        }
+                      },
+                      {
+                        "id": "PVTI_FAKE_r7_2",
+                        "type": "ISSUE",
+                        "isArchived": false,
+                        "fieldValues": {
+                          "nodes": [
+                            {},
+                            { "name": "Todo", "field": { "id": "PVTSSF_FAKE_r7_status" } }
+                          ]
+                        },
+                        "content": {
+                          "__typename": "Issue",
+                          "id": "I_FAKE_sandbox_2",
+                          "number": 2,
+                          "title": "Document the fixture date tokens",
+                          "body": "Explain date, datetime, epoch and epochms with examples.",
+                          "url": "https://example.invalid/github/shalev396/dashboard-sandbox/issues/2",
+                          "state": "OPEN",
+                          "stateReason": null,
+                          "closedAt": null,
+                          "updatedAt": "{{datetime:-2d@09:30}}",
+                          "author": { "login": "shalev396" },
+                          "repository": { "nameWithOwner": "shalev396/dashboard-sandbox" },
+                          "assignees": { "nodes": [{ "login": "shalev396" }] },
+                          "labels": { "nodes": [{ "name": "docs" }] },
+                          "milestone": { "title": "v0.2", "dueOn": "{{datetime:+5d@10:00}}" }
+                        }
+                      },
+                      {
+                        "id": "PVTI_FAKE_r7_3",
+                        "type": "PULL_REQUEST",
+                        "isArchived": false,
+                        "fieldValues": {
+                          "nodes": [
+                            {},
+                            { "name": "Done", "field": { "id": "PVTSSF_FAKE_r7_status" } }
+                          ]
+                        },
+                        "content": {
+                          "__typename": "PullRequest",
+                          "id": "PR_FAKE_sandbox_3",
+                          "number": 3,
+                          "title": "Add the board view",
+                          "body": "Columns from the Status field; cards link back to GitHub.",
+                          "url": "https://example.invalid/github/shalev396/dashboard-sandbox/pull/3",
+                          "state": "MERGED",
+                          "closedAt": "{{datetime:-1d@16:40}}",
+                          "updatedAt": "{{datetime:-1d@16:40}}",
+                          "isDraft": false,
+                          "merged": true,
+                          "reviewDecision": "APPROVED",
+                          "author": { "login": "shalev396" },
+                          "repository": { "nameWithOwner": "shalev396/dashboard-sandbox" },
+                          "assignees": { "nodes": [{ "login": "shalev396" }] },
+                          "labels": { "nodes": [{ "name": "feature" }] },
+                          "milestone": null
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "graphql": "BoardItems",
+      "variables": { "owner": "shalev396", "number": 7, "after": "FAKE-cursor-r7-1" }
+    },
+    "response": {
+      "body": {
+        "data": {
+          "repositoryOwner": {
+            "projectV2": {
+              "items": {
+                "pageInfo": { "hasNextPage": false, "endCursor": "FAKE-cursor-r7-2" },
+                "nodes": [
+                  {
+                    "id": "PVTI_FAKE_r7_5",
+                    "type": "ISSUE",
+                    "isArchived": false,
+                    "fieldValues": {
+                      "nodes": [
+                        {},
+                        { "name": "Todo", "field": { "id": "PVTSSF_FAKE_r7_status" } },
+                        { "date": "{{date:+0d}}", "field": { "id": "PVTF_FAKE_r7_target" } },
+                        { "title": "Iteration 12", "field": { "id": "PVTIF_FAKE_r7_iteration" } }
+                      ]
+                    },
+                    "content": {
+                      "__typename": "Issue",
+                      "id": "I_FAKE_elytra_14",
+                      "number": 14,
+                      "title": "Port the area rules screen to the new design",
+                      "body": "Use the new tokens; keep the rule order editable.",
+                      "url": "https://example.invalid/github/shalev396/Elytra/issues/14",
+                      "state": "OPEN",
+                      "stateReason": null,
+                      "closedAt": null,
+                      "updatedAt": "{{datetime:-1d@11:45}}",
+                      "author": { "login": "shalev396" },
+                      "repository": { "nameWithOwner": "shalev396/Elytra" },
+                      "assignees": { "nodes": [{ "login": "shalev396" }] },
+                      "labels": { "nodes": [{ "name": "design" }] },
+                      "milestone": null
+                    }
+                  },
+                  {
+                    "id": "PVTI_FAKE_r7_6",
+                    "type": "ISSUE",
+                    "isArchived": false,
+                    "fieldValues": {
+                      "nodes": [
+                        {},
+                        { "name": "In Progress", "field": { "id": "PVTSSF_FAKE_r7_status" } }
+                      ]
+                    },
+                    "content": {
+                      "__typename": "Issue",
+                      "id": "I_FAKE_widgets_88",
+                      "number": 88,
+                      "title": "Upstream: allow a custom fixtures directory",
+                      "body": "Proposal and a small patch for the widgets test kit.",
+                      "url": "https://example.invalid/github/octo-demo/widgets/issues/88",
+                      "state": "OPEN",
+                      "stateReason": null,
+                      "closedAt": null,
+                      "updatedAt": "{{datetime:-3d@14:20}}",
+                      "author": { "login": "shalev396" },
+                      "repository": { "nameWithOwner": "octo-demo/widgets" },
+                      "assignees": { "nodes": [] },
+                      "labels": { "nodes": [{ "name": "enhancement" }] },
+                      "milestone": null
+                    }
+                  },
+                  {
+                    "id": "PVTI_FAKE_r7_7",
+                    "type": "ISSUE",
+                    "isArchived": true,
+                    "fieldValues": {
+                      "nodes": [{}, { "name": "Done", "field": { "id": "PVTSSF_FAKE_r7_status" } }]
+                    },
+                    "content": {
+                      "__typename": "Issue",
+                      "id": "I_FAKE_sandbox_9",
+                      "number": 9,
+                      "title": "Spike: an offline-first cache",
+                      "body": null,
+                      "url": "https://example.invalid/github/shalev396/dashboard-sandbox/issues/9",
+                      "state": "OPEN",
+                      "stateReason": null,
+                      "closedAt": null,
+                      "updatedAt": "{{datetime:-6d@10:00}}",
+                      "author": { "login": "shalev396" },
+                      "repository": { "nameWithOwner": "shalev396/dashboard-sandbox" },
+                      "assignees": { "nodes": [] },
+                      "labels": { "nodes": [{ "name": "spike" }] },
+                      "milestone": null
+                    }
+                  },
+                  {
+                    "id": "PVTI_FAKE_r7_8",
+                    "type": "REDACTED",
+                    "isArchived": false,
+                    "fieldValues": { "nodes": [] },
+                    "content": null
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+]

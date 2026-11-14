@@ -2,6 +2,8 @@ import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   copyFileSync,
+  cpSync,
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -9,7 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { join, sep } from 'node:path';
 import { build } from 'esbuild';
 import {
   BUILD_ROOT,
@@ -18,6 +20,8 @@ import {
   DEPS_LAYER_DIR,
   LAYER_MANIFEST,
   SERVER_ROOT,
+  SYNC_FIXTURES_DIR,
+  SYNC_FIXTURES_IN_LAYER,
   type LayerManifest,
 } from './paths.js';
 
@@ -25,6 +29,7 @@ import {
  * Builds the two Lambda layers into server/.build/layers:
  *
  *   code/nodejs/app/index.mjs   the whole API bundled by esbuild, every package left external
+ *   code/nodejs/app/fixtures/   recorded provider fixtures (src/sync/fixtures): the demo data that dev and qa load
  *   deps/nodejs/node_modules    production dependencies from package-lock.json (npm ci --omit=dev)
  *
  * Lambda extracts both into /opt, so they merge at /opt/nodejs and Node resolves the bundle's bare
@@ -59,7 +64,19 @@ async function buildCodeLayer(): Promise<string> {
     throw new Error('Code layer bundle does not export "handler".');
   }
 
-  return sha256(readFileSync(outfile));
+  // The layer's hash covers the fixtures too, so a fixture change publishes a new layer version.
+  const hash = createHash('sha256').update(readFileSync(outfile));
+  if (existsSync(SYNC_FIXTURES_DIR)) {
+    const target = join(CODE_LAYER_DIR, SYNC_FIXTURES_IN_LAYER);
+    cpSync(SYNC_FIXTURES_DIR, target, { recursive: true });
+    const files = readdirSync(target, { recursive: true, encoding: 'utf8' })
+      .filter((file) => statSync(join(target, file)).isFile())
+      .sort();
+    for (const file of files) {
+      hash.update(file.split(sep).join('/')).update(readFileSync(join(target, file)));
+    }
+  }
+  return hash.digest('hex');
 }
 
 function buildDepsLayer(): string {

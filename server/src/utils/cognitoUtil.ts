@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
 import { environment } from '../config/environment.js';
+import { assertUnderTest } from '../config/testSwitches.js';
 
 let client: jwksClient.JwksClient | null = null;
 
@@ -26,7 +27,27 @@ function getKey(header: jwt.JwtHeader, callback: jwt.SigningKeyCallback): void {
   });
 }
 
+export type TokenVerifier = (token: string) => Promise<jwt.JwtPayload>;
+
+let verifierForTests: TokenVerifier | null = null;
+
+/**
+ * Tests only (node:test): verifies tokens with `verifier` instead of Cognito (testing/testAuth.ts
+ * mints and verifies them); null restores Cognito. It throws in a server, so a running API only
+ * ever accepts Cognito's tokens.
+ */
+export function setTokenVerifierForTests(verifier: TokenVerifier | null): void {
+  assertUnderTest('setTokenVerifierForTests');
+  verifierForTests = verifier;
+}
+
+/** Verifies a Cognito ID token: RS256, signed by the user pool's JWKS, issuer and audience checked. */
 export async function verifyToken(token: string): Promise<jwt.JwtPayload> {
+  if (verifierForTests !== null) return await verifierForTests(token);
+  // Anything but RS256 is refused before a signing key is fetched (jwt.verify fetches it first).
+  if (jwt.decode(token, { complete: true })?.header.alg !== 'RS256') {
+    throw new jwt.JsonWebTokenError('invalid algorithm');
+  }
   return new Promise((resolve, reject) => {
     jwt.verify(
       token,

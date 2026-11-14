@@ -1,0 +1,13 @@
+{
+  "name": "todolist",
+  "displayName": "TodoList",
+  "version": "0.1.0",
+  "description": "Connect agents to TodoList over MCP, with skills that teach the task methodology and hooks that enforce it.",
+  "author": {
+    "name": "TodoList"
+  },
+  "license": "MIT",
+  "keywords": ["todolist", "mcp", "tasks", "dashboard"],
+  "icon": "./.claude-plugin/icon.png",
+  "privacyPolicyUrl": "https://todolist.shalev396.com/privacy"
+}

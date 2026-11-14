@@ -44,6 +44,13 @@ export default tseslint.config(
     },
   },
   {
+    // Offline-server stand-in for S3 browser uploads: undici's Request.formData() is flagged as
+    // deprecated for large server-side bodies; here it only parses small local uploads (≤ 5 MB),
+    // and a multipart dependency in the Lambda bundle for a local-only route isn't worth it.
+    files: ['src/routes/public/localStorage.ts'],
+    rules: { '@typescript-eslint/no-deprecated': 'off' },
+  },
+  {
     // node:test describe/it return promises the runner tracks itself.
     files: ['infra/test/**/*.ts', 'src/**/*.test.ts'],
     rules: { '@typescript-eslint/no-floating-promises': 'off' },

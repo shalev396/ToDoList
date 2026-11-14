@@ -18,8 +18,6 @@ import {
  *   CERTIFICATE_ARN   ACM certificate in us-east-1 for DOMAIN_NAME; optional only when the stack
  *                     region is us-east-1 (the stack then creates the certificate itself)
  *   WAF_WEB_ACL_ARN   optional existing global (CLOUDFRONT scope) web ACL to attach
- *   WWW_ALIAS         'true' also serves www.DOMAIN_NAME from the same distribution (opt-in;
- *                     CERTIFICATE_ARN, when given, must cover it too)
  *
  * The hosted zone is never configured or cached: scripts/stage.ts finds the public Route 53 zone
  * that owns DOMAIN_NAME at deploy time and passes it as `-c hostedZoneId=` / `-c hostedZoneName=`.
@@ -28,8 +26,60 @@ import {
  *
  * `-c fixture=true` swaps in fake values so tests and the Infrastructure Composer drawing synth
  * without credentials, env files or built layers (`-c region=`, `-c certificateArn=`,
- * `-c webAclArn=` and `-c wwwAlias=true` override them).
+ * `-c webAclArn=` override them).
  */
+/**
+ * Load protection per stage (TODO C2). Rates are requests per second, burst is the token bucket.
+ *
+ * - `defaultRate`/`defaultBurst`: API Gateway stage default for every route.
+ * - `auth*`, `mcp*`: tighter limits on the unauthenticated surfaces, per route key: the public
+ *   auth routes and /api/mcp*. Each route key has its own bucket.
+ * - `apiReservedConcurrency`: reserved concurrent executions of the function, the stack's only
+ *   one, shared by HTTP requests and background sync jobs (5 of each stage's count are room for
+ *   the jobs). Each warm execution environment holds a Mongo pool of at most MAX_POOL_SIZE
+ *   connections, so this caps the stage's Atlas connections (see docs/dashboard/DEPLOY-PLAN.md,
+ *   "Atlas connection math").
+ *
+ * dev and qa stay low (a handful of testers); prod is higher. Account-wide, Lambda keeps at least
+ * 10 unreserved executions, so the sum of all reserved concurrency must leave that room.
+ */
+export interface StageLimits {
+  readonly defaultRate: number;
+  readonly defaultBurst: number;
+  readonly authRate: number;
+  readonly authBurst: number;
+  readonly mcpRate: number;
+  readonly mcpBurst: number;
+  readonly apiReservedConcurrency: number;
+}
+
+const LOW_LIMITS: StageLimits = {
+  defaultRate: 10,
+  defaultBurst: 20,
+  authRate: 2,
+  authBurst: 5,
+  mcpRate: 5,
+  mcpBurst: 10,
+  apiReservedConcurrency: 10,
+};
+
+export const STAGE_LIMITS: Readonly<Record<Stage, StageLimits>> = {
+  dev: LOW_LIMITS,
+  qa: { ...LOW_LIMITS, apiReservedConcurrency: 15 },
+  prod: {
+    defaultRate: 100,
+    defaultBurst: 200,
+    authRate: 10,
+    authBurst: 20,
+    mcpRate: 20,
+    mcpBurst: 40,
+    apiReservedConcurrency: 55,
+  },
+};
+
+/** Mongo connections one execution environment can hold (config/providers/mongoose.ts maxPoolSize). */
+export const MAX_POOL_SIZE = 2;
+
 export interface StageConfig {
   readonly stage: Stage;
   readonly isProd: boolean;
@@ -43,9 +93,8 @@ export interface StageConfig {
   readonly certificateArn: string | undefined;
   /** Existing global WAF web ACL to attach; undefined means no WAF. */
   readonly webAclArn: string | undefined;
-  /** `www.<domainName>`, served by the same distribution when WWW_ALIAS=true; otherwise undefined. */
-  readonly wwwDomainName?: string;
   readonly fixture: boolean;
+  readonly limits: StageLimits;
 }
 
 export const FIXTURE_ACCOUNT = '123456789012';
@@ -153,17 +202,6 @@ export function validateEdgeInputs(input: {
   }
 }
 
-/**
- * `www.<DOMAIN_NAME>` when the alias is switched on. Opt-in rather than tied to a stage: a domain
- * like `app.example.com` would otherwise get `www.app.example.com`.
- */
-export function wwwDomainNameFor(
-  domainName: string,
-  enabled: string | undefined,
-): string | undefined {
-  return enabled === 'true' ? `www.${domainName}` : undefined;
-}
-
 export function loadConfig(app: App): StageConfig {
   const context = (key: string): string | undefined => optional(app.node.tryGetContext(key));
 
@@ -178,7 +216,6 @@ export function loadConfig(app: App): StageConfig {
     const region = context(CONTEXT.region) ?? DEFAULT_REGION;
     const certificateArn = context(CONTEXT.certificateArn);
     const webAclArn = context(CONTEXT.webAclArn);
-    const wwwDomainName = wwwDomainNameFor(domainName, context(CONTEXT.wwwAlias));
     validateDomainName(stage, domainName);
     validateEdgeInputs({ stage, region, certificateArn, webAclArn });
     return {
@@ -191,8 +228,8 @@ export function loadConfig(app: App): StageConfig {
       region,
       certificateArn,
       webAclArn,
-      ...(wwwDomainName === undefined ? {} : { wwwDomainName }),
       fixture,
+      limits: STAGE_LIMITS[stage],
     };
   }
 
@@ -221,7 +258,6 @@ export function loadConfig(app: App): StageConfig {
   const region = resolveRegion();
   const certificateArn = optional(process.env['CERTIFICATE_ARN']);
   const webAclArn = optional(process.env['WAF_WEB_ACL_ARN']);
-  const wwwDomainName = wwwDomainNameFor(domainName, optional(process.env['WWW_ALIAS']));
   validateEdgeInputs({ stage, region, certificateArn, webAclArn });
 
   return {
@@ -233,7 +269,7 @@ export function loadConfig(app: App): StageConfig {
     region,
     certificateArn,
     webAclArn,
-    ...(wwwDomainName === undefined ? {} : { wwwDomainName }),
     fixture,
+    limits: STAGE_LIMITS[stage],
   };
 }

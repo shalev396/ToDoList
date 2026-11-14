@@ -29,4 +29,6 @@ export type {
   UploadPurpose,
   DashboardResponseData,
   DeleteUserResponseData,
+  RunQueryRequestBody,
+  RunQueryResponseData,
 } from './api-contracts.js';

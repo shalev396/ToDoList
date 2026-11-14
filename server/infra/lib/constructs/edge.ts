@@ -22,7 +22,7 @@ export interface EdgeProps {
 }
 
 /**
- * Everything on DOMAIN_NAME (plus www.DOMAIN_NAME when WWW_ALIAS=true): certificate, CloudFront
+ * Everything on DOMAIN_NAME: certificate, CloudFront
  * distribution and the DNS alias records.
  *
  * Certificate: CERTIFICATE_ARN when given (always us-east-1), otherwise created here — config.ts
@@ -40,19 +40,15 @@ export interface EdgeProps {
 export class Edge extends Construct {
   readonly distribution: cloudfront.Distribution;
   readonly aliasRecord: route53.ARecord;
-  /** Only when WWW_ALIAS=true. */
-  readonly wwwAliasRecord: route53.ARecord | undefined;
 
   constructor(scope: Construct, id: string, props: EdgeProps) {
     super(scope, id);
     const { config } = props;
-    const { wwwDomainName } = config;
 
     const certificate =
       config.certificateArn === undefined
         ? new acm.Certificate(this, 'Certificate', {
             domainName: config.domainName,
-            ...(wwwDomainName === undefined ? {} : { subjectAlternativeNames: [wwwDomainName] }),
             validation: acm.CertificateValidation.fromDns(props.zone),
           })
         : acm.Certificate.fromCertificateArn(this, 'Certificate', config.certificateArn);
@@ -71,7 +67,7 @@ export class Edge extends Construct {
 
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: `${APP_DISPLAY_NAME} ${config.stage}`,
-      domainNames: [config.domainName, ...(wwwDomainName === undefined ? [] : [wwwDomainName])],
+      domainNames: [config.domainName],
       certificate,
       ...(config.webAclArn === undefined ? {} : { webAclId: config.webAclArn }),
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
@@ -122,14 +118,5 @@ export class Edge extends Construct {
       recordName: `${config.domainName}.`,
       target,
     });
-    // Fails the deploy if the zone already has a www record: remove it first.
-    this.wwwAliasRecord =
-      wwwDomainName === undefined
-        ? undefined
-        : new route53.ARecord(this, 'WwwAliasRecord', {
-            zone: props.zone,
-            recordName: `${wwwDomainName}.`,
-            target,
-          });
   }
 }

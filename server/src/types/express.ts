@@ -1,4 +1,5 @@
 import { type Request } from 'express';
+import type { WorkspaceContext } from '../services/accessFilter.js';
 /// <reference path="./express-extensions.d.ts" />
 
 export interface CognitoJwtPayload {
@@ -23,6 +24,11 @@ export interface AuthenticatedRequest extends Request {
     id: string;
     cognitoSub: string;
   };
+}
+
+/** A request that passed requireWorkspace(minRole). */
+export interface WorkspaceRequest extends AuthenticatedRequest {
+  workspace: WorkspaceContext;
 }
 
 export type { ApiSuccessResponse, ApiErrorResponse, ApiResponse } from './response.js';

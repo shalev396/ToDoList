@@ -1,0 +1,366 @@
+[
+  {
+    "request": {
+      "graphql": "AssignedIssues",
+      "variables": {
+        "after": null
+      }
+    },
+    "response": {
+      "body": {
+        "data": {
+          "issues": {
+            "nodes": [
+              {
+                "id": "a55e0000-0000-4000-8000-000000000101",
+                "identifier": "PER-1",
+                "title": "Redesign hero section",
+                "description": "Tighter copy and a new illustration.",
+                "url": "https://example.invalid/linear/portfolio/issue/PER-1/redesign-hero",
+                "priority": 2,
+                "dueDate": "{{date:+1d}}",
+                "estimate": 3,
+                "createdAt": "{{datetime:-30d@09:00}}",
+                "updatedAt": "{{datetime:-1d@12:00}}",
+                "completedAt": null,
+                "canceledAt": null,
+                "archivedAt": null,
+                "state": {
+                  "name": "In Progress",
+                  "type": "started"
+                },
+                "team": {
+                  "id": "c0de0000-0000-4000-8000-000000000010",
+                  "key": "PER",
+                  "name": "Personal"
+                },
+                "project": {
+                  "id": "d0c0a000-0000-4000-8000-000000000020",
+                  "name": "Portfolio site"
+                },
+                "cycle": {
+                  "id": "cc000000-0000-4000-8000-000000000030",
+                  "number": 4,
+                  "name": null
+                },
+                "assignee": {
+                  "id": "b6a1c7d2-0000-4000-8000-000000000001",
+                  "name": "Demo Dev",
+                  "displayName": "demo",
+                  "email": "demo.dev@example.invalid"
+                },
+                "labels": {
+                  "nodes": [
+                    {
+                      "name": "design"
+                    },
+                    {
+                      "name": "frontend"
+                    }
+                  ]
+                }
+              },
+              {
+                "id": "a55e0000-0000-4000-8000-000000000102",
+                "identifier": "PER-2",
+                "title": "Write case study for Elytra",
+                "description": null,
+                "url": "https://example.invalid/linear/portfolio/issue/PER-2/case-study-elytra",
+                "priority": 3,
+                "dueDate": "{{date:+4d}}",
+                "estimate": 5,
+                "createdAt": "{{datetime:-30d@09:00}}",
+                "updatedAt": "{{datetime:+0d@10:10}}",
+                "completedAt": "{{datetime:+0d@10:10}}",
+                "canceledAt": null,
+                "archivedAt": null,
+                "state": {
+                  "name": "Done",
+                  "type": "completed"
+                },
+                "team": {
+                  "id": "c0de0000-0000-4000-8000-000000000010",
+                  "key": "PER",
+                  "name": "Personal"
+                },
+                "project": {
+                  "id": "d0c0a000-0000-4000-8000-000000000020",
+                  "name": "Portfolio site"
+                },
+                "cycle": null,
+                "assignee": {
+                  "id": "b6a1c7d2-0000-4000-8000-000000000001",
+                  "name": "Demo Dev",
+                  "displayName": "demo",
+                  "email": "demo.dev@example.invalid"
+                },
+                "labels": {
+                  "nodes": []
+                }
+              },
+              {
+                "id": "a55e0000-0000-4000-8000-000000000103",
+                "identifier": "PER-3",
+                "title": "Set up Lighthouse CI",
+                "description": null,
+                "url": "https://example.invalid/linear/portfolio/issue/PER-3/lighthouse-ci",
+                "priority": 4,
+                "dueDate": null,
+                "estimate": null,
+                "createdAt": "{{datetime:-30d@09:00}}",
+                "updatedAt": "{{datetime:-5d@14:00}}",
+                "completedAt": null,
+                "canceledAt": null,
+                "archivedAt": null,
+                "state": {
+                  "name": "Backlog",
+                  "type": "backlog"
+                },
+                "team": {
+                  "id": "c0de0000-0000-4000-8000-000000000010",
+                  "key": "PER",
+                  "name": "Personal"
+                },
+                "project": {
+                  "id": "d0c0a000-0000-4000-8000-000000000020",
+                  "name": "Portfolio site"
+                },
+                "cycle": null,
+                "assignee": {
+                  "id": "b6a1c7d2-0000-4000-8000-000000000001",
+                  "name": "Demo Dev",
+                  "displayName": "demo",
+                  "email": "demo.dev@example.invalid"
+                },
+                "labels": {
+                  "nodes": []
+                }
+              },
+              {
+                "id": "a55e0000-0000-4000-8000-000000000104",
+                "identifier": "PER-4",
+                "title": "Fix mobile nav overflow",
+                "description": null,
+                "url": "https://example.invalid/linear/portfolio/issue/PER-4/mobile-nav-overflow",
+                "priority": 1,
+                "dueDate": "{{date:-1d}}",
+                "estimate": null,
+                "createdAt": "{{datetime:-30d@09:00}}",
+                "updatedAt": "{{datetime:-1d@18:30}}",
+                "completedAt": null,
+                "canceledAt": null,
+                "archivedAt": null,
+                "state": {
+                  "name": "In Progress",
+                  "type": "started"
+                },
+                "team": {
+                  "id": "c0de0000-0000-4000-8000-000000000010",
+                  "key": "PER",
+                  "name": "Personal"
+                },
+                "project": {
+                  "id": "d0c0a000-0000-4000-8000-000000000020",
+                  "name": "Portfolio site"
+                },
+                "cycle": {
+                  "id": "cc000000-0000-4000-8000-000000000030",
+                  "number": 4,
+                  "name": null
+                },
+                "assignee": {
+                  "id": "b6a1c7d2-0000-4000-8000-000000000001",
+                  "name": "Demo Dev",
+                  "displayName": "demo",
+                  "email": "demo.dev@example.invalid"
+                },
+                "labels": {
+                  "nodes": []
+                }
+              },
+              {
+                "id": "a55e0000-0000-4000-8000-000000000105",
+                "identifier": "PER-5",
+                "title": "Add dark mode toggle and persist it",
+                "description": null,
+                "url": "https://example.invalid/linear/portfolio/issue/PER-5/dark-mode-toggle",
+                "priority": 0,
+                "dueDate": "{{date:+2d}}",
+                "estimate": null,
+                "createdAt": "{{datetime:-30d@09:00}}",
+                "updatedAt": "{{datetime:+0d@09:30}}",
+                "completedAt": null,
+                "canceledAt": null,
+                "archivedAt": null,
+                "state": {
+                  "name": "Todo",
+                  "type": "unstarted"
+                },
+                "team": {
+                  "id": "c0de0000-0000-4000-8000-000000000010",
+                  "key": "PER",
+                  "name": "Personal"
+                },
+                "project": {
+                  "id": "d0c0a000-0000-4000-8000-000000000020",
+                  "name": "Portfolio site"
+                },
+                "cycle": null,
+                "assignee": {
+                  "id": "b6a1c7d2-0000-4000-8000-000000000001",
+                  "name": "Demo Dev",
+                  "displayName": "demo",
+                  "email": "demo.dev@example.invalid"
+                },
+                "labels": {
+                  "nodes": [
+                    {
+                      "name": "frontend"
+                    }
+                  ]
+                }
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": true,
+              "endCursor": "FAKE-cursor-1"
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "graphql": "AssignedIssues",
+      "variables": {
+        "after": "FAKE-cursor-1"
+      }
+    },
+    "response": {
+      "body": {
+        "data": {
+          "issues": {
+            "nodes": [
+              {
+                "id": "a55e0000-0000-4000-8000-000000000106",
+                "identifier": "PER-6",
+                "title": "Renew domain",
+                "description": null,
+                "url": "https://example.invalid/linear/portfolio/issue/PER-6/renew-domain",
+                "priority": 2,
+                "dueDate": "{{date:+6d}}",
+                "estimate": null,
+                "createdAt": "{{datetime:-30d@09:00}}",
+                "updatedAt": "{{datetime:-6d@09:00}}",
+                "completedAt": null,
+                "canceledAt": null,
+                "archivedAt": null,
+                "state": {
+                  "name": "Todo",
+                  "type": "unstarted"
+                },
+                "team": {
+                  "id": "c0de0000-0000-4000-8000-000000000010",
+                  "key": "PER",
+                  "name": "Personal"
+                },
+                "project": null,
+                "cycle": null,
+                "assignee": {
+                  "id": "b6a1c7d2-0000-4000-8000-000000000001",
+                  "name": "Demo Dev",
+                  "displayName": "demo",
+                  "email": "demo.dev@example.invalid"
+                },
+                "labels": {
+                  "nodes": []
+                }
+              },
+              {
+                "id": "a55e0000-0000-4000-8000-000000000107",
+                "identifier": "PER-7",
+                "title": "Publish first blog post",
+                "description": null,
+                "url": "https://example.invalid/linear/portfolio/issue/PER-7/first-blog-post",
+                "priority": 0,
+                "dueDate": null,
+                "estimate": null,
+                "createdAt": "{{datetime:-30d@09:00}}",
+                "updatedAt": "{{datetime:-2d@16:00}}",
+                "completedAt": "{{datetime:-2d@16:00}}",
+                "canceledAt": null,
+                "archivedAt": null,
+                "state": {
+                  "name": "Done",
+                  "type": "completed"
+                },
+                "team": {
+                  "id": "c0de0000-0000-4000-8000-000000000010",
+                  "key": "PER",
+                  "name": "Personal"
+                },
+                "project": {
+                  "id": "d0c0a000-0000-4000-8000-000000000020",
+                  "name": "Portfolio site"
+                },
+                "cycle": null,
+                "assignee": {
+                  "id": "b6a1c7d2-0000-4000-8000-000000000001",
+                  "name": "Demo Dev",
+                  "displayName": "demo",
+                  "email": "demo.dev@example.invalid"
+                },
+                "labels": {
+                  "nodes": []
+                }
+              },
+              {
+                "id": "a55e0000-0000-4000-8000-000000000109",
+                "identifier": "PER-9",
+                "title": "Imported issue without a link",
+                "description": null,
+                "url": null,
+                "priority": 0,
+                "dueDate": null,
+                "estimate": null,
+                "createdAt": "{{datetime:-30d@09:00}}",
+                "updatedAt": "{{datetime:-8d@10:00}}",
+                "completedAt": null,
+                "canceledAt": null,
+                "archivedAt": null,
+                "state": {
+                  "name": "Triage",
+                  "type": "triage"
+                },
+                "team": {
+                  "id": "c0de0000-0000-4000-8000-000000000010",
+                  "key": "PER",
+                  "name": "Personal"
+                },
+                "project": {
+                  "id": "d0c0a000-0000-4000-8000-000000000020",
+                  "name": "Portfolio site"
+                },
+                "cycle": null,
+                "assignee": {
+                  "id": "b6a1c7d2-0000-4000-8000-000000000001",
+                  "name": "Demo Dev",
+                  "displayName": "demo",
+                  "email": "demo.dev@example.invalid"
+                },
+                "labels": {
+                  "nodes": []
+                }
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            }
+          }
+        }
+      }
+    }
+  }
+]

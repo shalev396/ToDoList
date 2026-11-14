@@ -1,56 +1,30 @@
-import { Link, useParams } from 'react-router-dom';
-import { PageMetadata } from '@/components/shared/PageMetadata';
-import { pageTitle } from '@/data/pageTitles';
 import { useTranslation } from 'react-i18next';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
+import { useLanguage } from '@/hooks/useLanguage';
 import { pathTo, ROUTES } from '@/router/routes';
-import { FadeContent } from '@/components/animations/FadeContent';
-import { app } from '@/data';
+import { LegalDocument } from './LegalDocument';
+
+const SECTIONS = [
+  'summary',
+  'accounts',
+  'sources',
+  'secrets',
+  'agents',
+  'sharing',
+  'retention',
+  'processors',
+  'promises',
+  'contact',
+] as const;
 
 export default function PrivacyPolicyPage() {
   const { t } = useTranslation();
-  const { lng } = useParams<{ lng: string }>();
-  const language = lng ?? 'en';
-  const tVars = { privacyEmail: app.privacyEmail, repoUrl: app.repoUrl };
-  const sections = [
-    'section1',
-    'section2',
-    'section3',
-    'section4',
-    'section5',
-    'section6',
-  ] as const;
+  const { language } = useLanguage();
 
   return (
-    <Card>
-      <PageMetadata title={pageTitle('Privacy Policy')} />
-      <CardHeader>
-        <CardTitle className="text-3xl">{t('legal.privacy.title')}</CardTitle>
-        <p className="text-sm text-muted-foreground">{t('legal.privacy.lastUpdated')}</p>
-      </CardHeader>
-      <CardContent className="prose prose-neutral dark:prose-invert max-w-none">
-        <Separator className="my-6" />
-
-        {sections.map((section, index) => (
-          <FadeContent key={section} delay={index * 100}>
-            <section>
-              <h2 className="text-2xl font-semibold mt-8 mb-4">
-                {t(`legal.privacy.${section}.title`)}
-              </h2>
-              <p className="mb-4">{t(`legal.privacy.${section}.content`, tVars)}</p>
-            </section>
-          </FadeContent>
-        ))}
-
-        <Separator className="my-6" />
-
-        <div className="text-center">
-          <Link to={pathTo(ROUTES.LEGAL.TERMS, language)} className="text-sm hover:underline">
-            {t('footer.terms')}
-          </Link>
-        </div>
-      </CardContent>
-    </Card>
+    <LegalDocument
+      doc="privacy"
+      sections={SECTIONS}
+      other={{ to: pathTo(ROUTES.LEGAL.TERMS, language), label: t('legal.terms.title') }}
+    />
   );
 }

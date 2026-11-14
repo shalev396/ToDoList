@@ -1,10 +1,11 @@
 import type { DatabaseProvider, Env } from '../types/env.d.ts';
+import { rateLimitsOffForTests } from './testSwitches.js';
 
 /**
  * Runtime configuration. Only DOMAIN_NAME and DATABASE_URL are human inputs; everything else is
  * wired by the CDK stack (Lambda) or read from its outputs (local dev, see local.ts).
  */
-class Environment {
+export class Environment {
   readonly #env: Env;
   readonly #awsRegion: string;
   readonly #databaseUrl: string;
@@ -12,7 +13,6 @@ class Environment {
   readonly #cognitoClientId: string;
   readonly #cognitoUserPoolId: string;
   readonly #domainName: string;
-  readonly #rateLimitEnabled: boolean;
 
   constructor() {
     this.#env = process.env.ENV;
@@ -22,7 +22,6 @@ class Environment {
     this.#cognitoClientId = process.env.COGNITO_CLIENT_ID;
     this.#cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID;
     this.#domainName = process.env.DOMAIN_NAME;
-    this.#rateLimitEnabled = process.env.DISABLE_RATE_LIMIT !== 'true';
   }
 
   get env(): Env {
@@ -73,9 +72,9 @@ class Environment {
     return this.#domainName;
   }
 
-  /** In-app rate limits. Only the local dev server turns them off (DISABLE_RATE_LIMIT, local.ts). */
+  /** In-app rate limits are always on; only a test turns them off (config/testSwitches.ts). */
   get rateLimitEnabled(): boolean {
-    return this.#rateLimitEnabled;
+    return !rateLimitsOffForTests();
   }
 
   /** The destructive reset-db action is allowed on every stage except prod. */

@@ -1,8 +1,12 @@
 """
-Pytest configuration and fixtures for Elytra E2E tests.
+Pytest configuration and fixtures for TodoList E2E tests.
 
-BASE_URL: npm run test   → http://localhost:5173 (local dev)
-          npm run test:qa → https://qa.elytra.shalev396.com (QA)
+BASE_URL: npm run test   → http://localhost:5173 (Vite) with the local API on :3000, which runs
+                           against a deployed stage (server: npm run start:local -- --stage <stage>)
+          npm run test:qa → the deployed qa site (https://<DOMAIN_NAME> in server/.env.qa)
+
+Every account is a real Cognito user made through the API (Mail.tm signup, tests/helpers/mailtm.py);
+tests/helpers/users.py pools them per worker. There is no offline mode.
 
 Requires: client (and server for auth flows) running at the target URL.
 
@@ -26,6 +30,21 @@ from filelock import FileLock
 # Tests that change state other tests read (accounts, profile data). In parallel runs they share
 # one worker, so they never overlap each other.
 SHARED_STATE_TESTS = ("tests/e2e/flows/",)
+
+
+def pytest_configure(config):
+    """Refuse to guess where the app runs. A forgotten BASE_URL used to fall back to
+    localhost:5173 and :3000, which on a shared machine is someone else's dev server.
+    `npm run test` and CI always pass both URLs."""
+    try:
+        base = config.getoption("base_url", default=None)
+    except ValueError:
+        base = None
+    if not (base or os.getenv("BASE_URL")) or not os.getenv("API_BASE_URL"):
+        raise pytest.UsageError(
+            "Set BASE_URL (or --base-url) and API_BASE_URL. `npm run test` sets them for the "
+            "default dev servers; a run against any other server must name its own ports."
+        )
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -54,6 +73,25 @@ def _run_once(tmp_path_factory, name: str, produce):
         return result
 
 
+@pytest.fixture(autouse=True)
+def xdist_group_exclusion(request, tmp_path_factory):
+    """Makes `xdist_group` a real mutual exclusion on every worker.
+
+    `--dist loadgroup` is meant to keep a group on one worker, but pytest 9 moved the node id
+    that pytest-xdist 3.8 rewrites for it (`_nodeid` is now `_id`), so the groups are silently
+    ignored and tests of one group run on several workers at once. Each group takes a file lock
+    (the same run directory `_run_once` uses), so its tests run one at a time whatever the
+    scheduler does."""
+    marker = request.node.get_closest_marker("xdist_group")
+    if marker is None or os.getenv("PYTEST_XDIST_WORKER") is None:
+        yield
+        return
+    name = str(marker.args[0] if marker.args else marker.kwargs.get("name", "default"))
+    run_dir = tmp_path_factory.getbasetemp().parent
+    with FileLock(str(run_dir / f"group-{name}.lock")):
+        yield
+
+
 @pytest.fixture(scope="session", autouse=True)
 def ensure_translations_exported(tmp_path_factory):
     """Ensure translations.json exists before any test (for test_translations)."""
@@ -78,20 +116,21 @@ def ensure_translations_exported(tmp_path_factory):
 
 @pytest.fixture(scope="session")
 def base_url(request):
-    """Base URL for the client app. Uses --base-url if passed, else env or default."""
+    """Base URL for the client app: --base-url if passed, else BASE_URL (pytest_configure
+    has already checked one is set)."""
     try:
         base = request.config.getoption("base_url", default=None)
     except ValueError:
         base = None
     if base:
         return base.rstrip("/")
-    return os.getenv("BASE_URL", "http://localhost:5173").rstrip("/")
+    return os.environ["BASE_URL"].rstrip("/")
 
 
 @pytest.fixture(scope="session")
 def api_base_url():
     """Base URL for the backend API (root, without the public/private prefix)."""
-    return os.getenv("API_BASE_URL", "http://localhost:3000/api")
+    return os.environ["API_BASE_URL"]
 
 
 @pytest.fixture(scope="session")
@@ -144,10 +183,14 @@ def shared_test_user(api_base_url, tmp_path_factory):
     every auth-dependent test behind green skips. To avoid spending SES quota, set E2E_TEST_*.
     """
     from tests.helpers.mailtm import TestUser, create_test_user, get_test_user_from_env
+    from tests.helpers.workspaces import ensure_workspace
 
     def create():
         user = get_test_user_from_env()
         if user:
+            # The app needs a workspace to show the dashboard; an existing account may
+            # predate workspaces.
+            ensure_workspace(api_base_url, user)
             return user._asdict()
         return create_test_user(api_base_url)._asdict()
 
@@ -183,3 +226,52 @@ def authenticated_page(page, app_url, shared_test_user):
 
     login_page_with_user(page, app_url, shared_test_user)
     return page
+
+
+@pytest.fixture
+def fresh_user(api_base_url):
+    """A brand-new Cognito account without a workspace (it lands on onboarding). One Mail.tm
+    signup per test: use it only where the test needs an account nobody has touched."""
+    from tests.helpers.users import new_user
+
+    return new_user(api_base_url)
+
+
+@pytest.fixture
+def new_workspace(api_base_url):
+    """Factory `new_workspace(user, name, **extra)`: creates a workspace through the API and
+    deletes it when the test ends. A user may own only a few workspaces at once, and the pooled
+    accounts serve a whole run, so nothing a test creates may outlive it."""
+    from tests.helpers.workspaces import create_workspace, delete_workspace
+
+    created: list = []
+
+    def make(user, name: str = "E2E workspace", **extra):
+        workspace = create_workspace(api_base_url, user, name, **extra)
+        created.append((user, workspace["id"]))
+        return workspace
+
+    yield make
+    for user, workspace_id in reversed(created):
+        delete_workspace(api_base_url, user, workspace_id)
+
+
+@pytest.fixture
+def fresh_owner(api_base_url, new_workspace):
+    """A pooled account (one per worker) owning a NEW workspace, for tests that change what they
+    own: the workspace is the isolation boundary, so no test sees another's data. The new
+    workspace is the account's default one, and is deleted after the test. Returns
+    (user, workspace)."""
+    from tests.helpers.users import pooled_user
+
+    user = pooled_user(api_base_url, "owner")
+    return user, new_workspace(user, "Owner Lab", timezone="Asia/Jerusalem")
+
+
+@pytest.fixture
+def second_user(api_base_url):
+    """The worker's second account (a member, an invitee). It has no workspace of its own and may
+    belong to workspaces of earlier tests: open pages with `workspace_id=` to pick one."""
+    from tests.helpers.users import pooled_user
+
+    return pooled_user(api_base_url, "member")

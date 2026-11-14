@@ -47,6 +47,20 @@ export async function syncDB(): Promise<string[]> {
   }
 }
 
+/**
+ * The data migrations (migrations/index.ts) not applied yet, run after sync-db (indexes and
+ * validators first: a migration writes documents the new validators accept). MongoDB only. One
+ * line per migration, names and counts only.
+ */
+export async function migrateDB(now: Date = new Date()): Promise<string[]> {
+  if (environment.databaseProvider !== 'mongoose') return [];
+  const mongoose = (await import('mongoose')).default;
+  const db = mongoose.connection.db;
+  if (db === undefined) throw new Error('migrate: MongoDB is not connected');
+  const { runMigrations } = await import('../migrations/index.js');
+  return runMigrations(db, now);
+}
+
 export async function resetDatabase(): Promise<void> {
   if (environment.env !== 'qa' && environment.env !== 'dev') {
     throw new Error(

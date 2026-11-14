@@ -1,6 +1,7 @@
 import { Validations, type CfnElement, type Stack } from 'aws-cdk-lib';
 import type { IConstruct } from 'constructs';
 import type { StageConfig } from './config.js';
+import { appSecretsPrefix } from './constants.js';
 
 /**
  * cdk-nag (AwsSolutions) acknowledgements. Each one is scoped to the exact construct it applies to
@@ -21,6 +22,12 @@ export function applyNagSuppressions(stack: Stack, config: StageConfig): void {
   const noAccessLogs =
     'Access logs are not collected: no consumer for them and they add a log bucket/group per stage. Revisit with a WAF or audit requirement.';
 
+  // Lambda runtime: Node.js 24 (LTS) on purpose. The layers, the local toolchain and CI all run
+  // Node 24, so the runtime moves only when they do, not whenever aws-cdk-lib learns a newer one.
+  const pinnedRuntime =
+    'Pinned to Node.js 24 LTS, the version the layers, local toolchain and CI use; upgraded deliberately, together with them.';
+  ack('Compute/Function', 'AwsSolutions-L1', pinnedRuntime);
+
   // Storage
   ack('Storage/ClientBucket', 'AwsSolutions-S1', noAccessLogs);
   ack('Storage/AssetsBucket', 'AwsSolutions-S1', noAccessLogs);
@@ -32,6 +39,18 @@ export function applyNagSuppressions(stack: Stack, config: StageConfig): void {
     'AwsSolutions-APIG4',
     'Public auth endpoints (signup, login, password reset) are unauthenticated by design; rate limited in-app and throttled at the stage.',
   );
+  ack(
+    'Api/HttpApi/ANY--api--public--auth--{proxy+}',
+    'AwsSolutions-APIG4',
+    'Same public auth endpoints as /api/public, split out only to carry a tighter per-route throttle.',
+  );
+  for (const route of ['Api/HttpApi/ANY--api--mcp', 'Api/HttpApi/ANY--api--mcp--{proxy+}']) {
+    ack(
+      route,
+      'AwsSolutions-APIG4',
+      'MCP clients are agents, not Cognito users: the app authenticates every call with a hashed per-user agent key (MCP.md section 3 and 11), rate limits it and scopes it to the key owner. A JWT authorizer would reject them.',
+    );
+  }
   if (
     stack.node
       .tryFindChild('Api')
@@ -61,13 +80,6 @@ export function applyNagSuppressions(stack: Stack, config: StageConfig): void {
     );
   }
 
-  // Email (deploy-time SES verification waiter)
-  ack(
-    'Email/VerificationFunction/ServiceRole',
-    'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]',
-    'AWSLambdaBasicExecutionRole only grants writing to the function log group.',
-  );
-
   // Auth
   ack(
     'Auth/UserPool',
@@ -96,5 +108,10 @@ export function applyNagSuppressions(stack: Stack, config: StageConfig): void {
     'Compute/FunctionRole/DefaultPolicy',
     `AwsSolutions-IAM5[Resource::arn:aws:ses:${stack.region}:${stack.account}:identity/*]`,
     'SES authorizes SendEmail against sender and (in sandbox) recipient identities; the statement is pinned to ses:FromAddress = noreply@DOMAIN_NAME.',
+  );
+  ack(
+    'Compute/FunctionRole/DefaultPolicy',
+    `AwsSolutions-IAM5[Resource::arn:aws:secretsmanager:${stack.region}:${stack.account}:secret:${appSecretsPrefix(config.stage)}*]`,
+    "App secrets (server/src/services/appSecrets.ts): GetSecretValue only, on this stage's own todolist/<stage>/ names. Each secret is made by hand, so its ARN suffix is unknown at synth time, and the app reads allow-listed names only.",
   );
 }

@@ -5,11 +5,12 @@ import { app } from './app';
  * PageMetadata merges these with per-page overrides.
  */
 export const DEFAULT_METADATA = {
-  title: 'Elytra | Full-Stack Serverless Template',
+  title: 'TodoList',
   description:
-    'A production-ready full-stack serverless template with authentication, file uploads, and modern UI components. Built with React, TypeScript, AWS Lambda, and Tailwind CSS.',
-  keywords: 'serverless, react, typescript, aws, lambda, template, full-stack, authentication',
-  author: 'Elytra',
+    'TodoList puts Moodle, Jira, ClickUp, Linear, GitHub, Google Calendar and Google Drive on one dashboard: what’s on now, what’s next and every deadline this week. Free for students who also work.',
+  keywords:
+    'todo list, students, deadlines, calendar, moodle, jira, clickup, linear, github, dashboard',
+  author: 'TodoList',
   image: '/og-default.png',
   robots: 'index, follow' as const,
   ogType: 'website',

@@ -1,0 +1,19 @@
+{
+  "key": "light-student@1",
+  "version": 1,
+  "titles": { "en": "Light student", "he": "סטודנט קליל" },
+  "descriptions": {
+    "en": "One Studies page: a course dashboard, your deadlines and this week on a timeline.",
+    "he": "עמוד לימודים אחד: לוח קורסים, מועדי הגשה והשבוע על ציר זמן."
+  },
+  "topics": [
+    {
+      "slug": "college",
+      "names": { "en": "Studies", "he": "לימודים" },
+      "icon": "graduation-cap",
+      "colour": "blue",
+      "page": "college@1",
+      "views": ["deadlines-agenda@1", "this-week@1"]
+    }
+  ]
+}

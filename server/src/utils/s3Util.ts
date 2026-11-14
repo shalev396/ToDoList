@@ -12,6 +12,7 @@ import {
 import { createPresignedPost } from '@aws-sdk/s3-presigned-post';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { environment } from '../config/environment.js';
+import { assertUnderTest } from '../config/testSwitches.js';
 import { S3_PREFIXES } from '../../infra/lib/constants.js';
 import { exportKeyFor } from '../constants/s3Folders.js';
 
@@ -30,6 +31,35 @@ const MEDIA_PREFIX = S3_PREFIXES.media;
 const LIST_OBJECTS_MAX_KEYS = 250;
 
 const s3Client = new S3Client({ region: environment.awsRegion });
+
+/** The bucket operations a test stands in for (testing/memoryObjectStore.ts). */
+export interface TestObjectStore {
+  put(
+    key: string,
+    body: Buffer,
+    contentType: string | null,
+    contentDisposition?: string | null,
+  ): Promise<void>;
+  /** Throws an error named `NoSuchKey` (isS3NotFound) when there is no such object. */
+  get(key: string): Promise<Buffer>;
+  head(key: string): Promise<{ size: number; contentType: string | null } | null>;
+  delete(key: string): Promise<void>;
+  list(prefix: string): Promise<string[]>;
+  /** Where the object would be served from (stands in for CloudFront and presigned GETs). */
+  url(key: string): string;
+  presignedUpload(params: { s3Key: string; mimeType: string; maxBytes: number }): PresignedUpload;
+}
+
+let storeForTests: TestObjectStore | null = null;
+
+/**
+ * Tests only (node:test): every function below uses `store` instead of the S3 bucket; null
+ * restores S3. It throws in a server.
+ */
+export function setObjectStoreForTests(store: TestObjectStore | null): void {
+  assertUnderTest('setObjectStoreForTests');
+  storeForTests = store;
+}
 
 interface UploadFileParams {
   buffer: Buffer;
@@ -65,6 +95,13 @@ interface UploadFileResult {
  * // cloudfrontUrl => "https://example.com/media/users/abc-123/d4e5f6.jpg"
  */
 export async function uploadFile(params: UploadFileParams): Promise<UploadFileResult> {
+  if (storeForTests !== null) {
+    const ext = path.extname(params.fileName) || '';
+    const s3Key = `${MEDIA_PREFIX}/${params.folder}/${randomUUID()}${ext}`;
+    await storeForTests.put(s3Key, params.buffer, params.mimeType);
+    const url = storeForTests.url(s3Key);
+    return { s3Key, s3Url: url, cloudfrontUrl: url };
+  }
   const bucket = environment.s3AssetsBucketName;
   const region = environment.awsRegion;
   const domain = environment.domainName;
@@ -91,6 +128,10 @@ export async function uploadFile(params: UploadFileParams): Promise<UploadFileRe
  * Deletes a file from the S3 assets bucket by its key.
  */
 export async function deleteFile(s3Key: string): Promise<void> {
+  if (storeForTests !== null) {
+    await storeForTests.delete(s3Key);
+    return;
+  }
   await s3Client.send(
     new DeleteObjectCommand({
       Bucket: environment.s3AssetsBucketName,
@@ -103,6 +144,7 @@ export async function deleteFile(s3Key: string): Promise<void> {
  * Fetches a file from the S3 assets bucket and returns its contents as a Buffer.
  */
 export async function getObjectBuffer(s3Key: string): Promise<Buffer> {
+  if (storeForTests !== null) return await storeForTests.get(s3Key);
   const response = await s3Client.send(
     new GetObjectCommand({
       Bucket: environment.s3AssetsBucketName,
@@ -139,6 +181,7 @@ export function isS3AccessDenied(error: unknown): boolean {
 export async function headObject(
   s3Key: string,
 ): Promise<{ size: number; contentType: string | null } | null> {
+  if (storeForTests !== null) return await storeForTests.head(s3Key);
   try {
     const response = await s3Client.send(
       new HeadObjectCommand({
@@ -174,6 +217,7 @@ export async function createPresignedUpload(params: {
   maxBytes: number;
   expiresInSeconds: number;
 }): Promise<PresignedUpload> {
+  if (storeForTests !== null) return storeForTests.presignedUpload(params);
   const { url, fields } = await createPresignedPost(s3Client, {
     Bucket: environment.s3AssetsBucketName,
     Key: params.s3Key,
@@ -194,6 +238,7 @@ export async function getPresignedDownloadUrl(
   s3Key: string,
   expiresInSeconds: number,
 ): Promise<string> {
+  if (storeForTests !== null) return storeForTests.url(s3Key);
   const command = new GetObjectCommand({
     Bucket: environment.s3AssetsBucketName,
     Key: s3Key,
@@ -214,6 +259,16 @@ export async function uploadExportZip(params: {
   const s3Key = exportKeyFor(params.userId);
   const safeName = params.filename.replace(/["\\\r\n]/g, '_');
 
+  if (storeForTests !== null) {
+    await storeForTests.put(
+      s3Key,
+      params.buffer,
+      'application/zip',
+      `attachment; filename="${safeName}"`,
+    );
+    return s3Key;
+  }
+
   await s3Client.send(
     new PutObjectCommand({
       Bucket: environment.s3AssetsBucketName,
@@ -231,6 +286,7 @@ export async function uploadExportZip(params: {
  * Lists all object keys under the given prefix in the assets bucket.
  */
 export async function listObjectsInPrefix(prefix: string): Promise<string[]> {
+  if (storeForTests !== null) return await storeForTests.list(prefix);
   const keys: string[] = [];
   let continuationToken: string | undefined;
   do {
@@ -261,6 +317,10 @@ export async function listObjectsInPrefix(prefix: string): Promise<string[]> {
 export async function clearUserUploadedAssets(): Promise<void> {
   const keys = await listObjectsInPrefix(`${MEDIA_PREFIX}/`);
   if (keys.length === 0) return;
+  if (storeForTests !== null) {
+    for (const key of keys) await storeForTests.delete(key);
+    return;
+  }
 
   const BATCH_SIZE = 1000;
   for (let i = 0; i < keys.length; i += BATCH_SIZE) {

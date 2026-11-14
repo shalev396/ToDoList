@@ -1,0 +1,18 @@
+[
+  {
+    "request": { "graphql": "PullRequestDetails", "variables": { "ids": ["PR_FAKE_sandbox_6"] } },
+    "response": {
+      "body": {
+        "data": { "nodes": [{ "isDraft": true, "merged": false, "reviewDecision": null }] }
+      }
+    }
+  },
+  {
+    "request": { "graphql": "PullRequestDetails", "variables": { "ids": ["PR_FAKE_elytra_13"] } },
+    "response": {
+      "body": {
+        "data": { "nodes": [{ "isDraft": false, "merged": false, "reviewDecision": "APPROVED" }] }
+      }
+    }
+  }
+]

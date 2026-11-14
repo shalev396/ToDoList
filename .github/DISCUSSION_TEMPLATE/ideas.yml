@@ -4,7 +4,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Share an idea to improve Elytra. For concrete, scoped feature requests, consider opening an [Issue](https://github.com/shalev396/Elytra/issues) instead.
+        Share an idea to improve TodoList. For concrete, scoped feature requests, consider opening an [Issue](https://github.com/shalev396/TodoList/issues) instead.
   - type: textarea
     id: idea
     attributes:

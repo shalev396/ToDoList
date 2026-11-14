@@ -1,5 +1,5 @@
 /**
- * Generates the Home Screen / PWA icons and the default social image from the bolt logo.
+ * Generates the Home Screen / PWA icons and the default social image from the ring mark.
  *
  * Run from client/: npm run generate:icons
  *
@@ -15,28 +15,24 @@
  * Keep BACKGROUND in sync with --background (dark) in src/index.css, the theme-color tags in
  * index.html and background_color/theme_color in public/manifest.webmanifest.
  */
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
-const BACKGROUND = '#04050d';
-const TILE = '#8b5cf6';
-const SYMBOL = '#ffffff';
-const APP_NAME = 'Elytra';
-const TAGLINE = 'Full-Stack Serverless Template';
+const BACKGROUND = '#16130e';
+const APP_NAME = 'TodoList';
+const TAGLINE = 'Your whole week, one clock.';
 
-/** The bolt from public/favicon-light.svg (24x24 viewBox), drawn at any size and position. */
+/** The ring mark from public/favicon-light.svg (24x24 viewBox), drawn at any size and position. */
 function logo(x: number, y: number, size: number): string {
   const scale = size / 24;
-  return `
-    <g transform="translate(${String(x)} ${String(y)}) scale(${String(scale)})">
-      <rect width="24" height="24" rx="6" fill="${TILE}"/>
-      <path d="M 13 2 L 3 14 h 9 l -1 8 10 -12 h -9 l 1 -8 z" fill="none" stroke="${SYMBOL}"
-        stroke-width="1.5" stroke-linecap="butt" stroke-linejoin="miter"/>
-    </g>`;
+  const markup = readFileSync(join(PUBLIC_DIR, 'favicon-light.svg'), 'utf8')
+    .replace(/^<svg[^>]*>/, '')
+    .replace(/<\/svg>\s*$/, '');
+  return `<g transform="translate(${String(x)} ${String(y)}) scale(${String(scale)})">${markup}</g>`;
 }
 
 /** Square icon with the logo centered at `ratio` of the canvas. */
@@ -54,18 +50,11 @@ function ogSvg(): string {
   const height = 630;
   const logoSize = 220;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${String(width)}" height="${String(height)}" viewBox="0 0 ${String(width)} ${String(height)}">
-    <defs>
-      <radialGradient id="glow" cx="30%" cy="50%" r="60%">
-        <stop offset="0%" stop-color="${TILE}" stop-opacity="0.35"/>
-        <stop offset="100%" stop-color="${TILE}" stop-opacity="0"/>
-      </radialGradient>
-    </defs>
     <rect width="100%" height="100%" fill="${BACKGROUND}"/>
-    <rect width="100%" height="100%" fill="url(#glow)"/>
     ${logo(140, (height - logoSize) / 2, logoSize)}
-    <text x="420" y="300" fill="#ffffff" font-family="Segoe UI, Helvetica, Arial, sans-serif"
-      font-size="120" font-weight="700">${APP_NAME}</text>
-    <text x="424" y="380" fill="#b9b4d6" font-family="Segoe UI, Helvetica, Arial, sans-serif"
+    <text x="420" y="300" fill="#f3ede0" font-family="IBM Plex Sans, Segoe UI, Helvetica, Arial, sans-serif"
+      font-size="112" font-weight="600">${APP_NAME}</text>
+    <text x="424" y="380" fill="#b0a691" font-family="IBM Plex Sans, Segoe UI, Helvetica, Arial, sans-serif"
       font-size="44" font-weight="400">${TAGLINE}</text>
   </svg>`;
 }

@@ -42,6 +42,15 @@ export function LanguageLayout() {
     }
   }, [lng, i18n, navigate, location]);
 
+  // A new page starts at the top. Switching language keeps the place, and links to a section
+  // (#features) are scrolled by the page that owns the section once it has rendered.
+  const pagePath = location.pathname.replace(/^\/[a-z]{2}(?=\/|$)/, '');
+  useEffect(() => {
+    if (!window.location.hash) {
+      window.scrollTo(0, 0);
+    }
+  }, [pagePath]);
+
   // Render child routes
   return <Outlet />;
 }

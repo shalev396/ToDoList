@@ -1,0 +1,36 @@
+[
+  {
+    "request": {
+      "url": "https://www.googleapis.com/calendar/v3/calendars/personal%40example.invalid"
+    },
+    "response": {
+      "body": {
+        "kind": "calendar#calendar",
+        "etag": "\"FAKE-etag-calendar-personal\"",
+        "id": "personal@example.invalid",
+        "summary": "Shalev (demo)",
+        "timeZone": "Asia/Jerusalem",
+        "conferenceProperties": {
+          "allowedConferenceSolutionTypes": ["hangoutsMeet"]
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://www.googleapis.com/calendar/v3/calendars/college%40example.invalid"
+    },
+    "response": {
+      "body": {
+        "kind": "calendar#calendar",
+        "etag": "\"FAKE-etag-calendar-college\"",
+        "id": "college@example.invalid",
+        "summary": "Braude Classes",
+        "timeZone": "Asia/Jerusalem",
+        "conferenceProperties": {
+          "allowedConferenceSolutionTypes": ["hangoutsMeet"]
+        }
+      }
+    }
+  }
+]

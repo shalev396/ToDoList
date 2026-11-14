@@ -4,6 +4,8 @@ export interface ApiSuccessResponse<T = unknown> {
 
 export interface ApiErrorResponse {
   message: string;
+  /** A machine code (types/errorCodes.ts) the client translates; absent for generic errors. */
+  code?: string;
 }
 
 /** `data` of a success response that carries nothing: `{ "data": {} }`. */

@@ -1,0 +1,37 @@
+$kind: collection
+name: TodoList API
+description: 'TodoList API tests. Setup: test account (Mail.tm). Auth: signup
+  (Mail.tm), login, refresh, password. User: me, export, dashboard. Uploads: presign,
+  direct S3 POST, photo update. Run from the repo root with --working-dir . (file bodies).'
+variables:
+  baseUrl: https://qa.todolist.example.com/api
+  testEmail: ''
+  testPassword: ''
+  testName: Test User
+  idToken: ''
+  refreshToken: ''
+  tempEmail: ''
+  tempEmailPassword: ''
+  mailTmToken: ''
+  mailTmDomain: ''
+  mailTmMessageId: ''
+  confirmationCode: ''
+  pollRetryCount: '0'
+  resetCode: ''
+  newPassword: ''
+  stagingKey: ''
+  uploadUrl: ''
+  uploadFields: '{}'
+auth:
+  - id: c77fdf1d-2d72-4d5b-8112-f48266aefdfc
+    type: bearer
+    name: Mail.tm Token
+    description: mail.tm Token for mail.tm/*
+    credentials:
+      token: '{{mailTmToken}}'
+  - id: 383fc78f-96ef-47d9-81d5-e4c7dada7326
+    type: bearer
+    name: API Token
+    description: API Token
+    credentials:
+      token: '{{idToken}}'

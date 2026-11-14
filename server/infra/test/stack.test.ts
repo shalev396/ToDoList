@@ -7,9 +7,16 @@ import { CfnResource as CdkCfnResource, TagManager, Validations } from 'aws-cdk-
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { SERVER_ROOT } from '../../scripts/paths.js';
 import { buildApp } from '../lib/app.js';
-import { FIXTURE_ZONE_ID, validateDomainName, validateHostedZone } from '../lib/config.js';
+import {
+  FIXTURE_ACCOUNT,
+  FIXTURE_ZONE_ID,
+  validateDomainName,
+  validateHostedZone,
+} from '../lib/config.js';
 import {
   APP_NAME,
+  appSecretsPrefix,
+  DEFAULT_REGION,
   OUTPUTS,
   S3_PREFIXES,
   STAGES,
@@ -93,39 +100,58 @@ const spaRewrite = runInNewContext(
 ) as (event: { request: { uri: string } }) => { uri: string };
 
 for (const stage of STAGES) {
-  describe(`elytra-${stage}`, () => {
+  describe(`todolist-${stage}`, () => {
     const { template, resources } = synth(stage);
     const isProd = stage === 'prod';
 
-    it('creates one API function with two layers, and only the SES verification waiter besides', () => {
+    it('creates one function on two layers, with one role and one log group, and no other function or custom resource', () => {
       template.resourceCountIs('AWS::Lambda::LayerVersion', 2);
-      const functions = Object.values(resources).filter((r) => r.Type === 'AWS::Lambda::Function');
-      const api = functions.filter((r) => r.Properties?.['Layers'] !== undefined);
-      assert.equal(api.length, 1);
-      assert.equal((api[0]?.Properties?.['Layers'] as unknown[]).length, 2);
-      assert.equal(functions.length, 2, 'only the API function and the SES verification waiter');
+      template.resourceCountIs('AWS::Lambda::Function', 1);
+      template.resourceCountIs('AWS::IAM::Role', 1);
+      template.resourceCountIs('AWS::Logs::LogGroup', 1);
       template.hasResourceProperties('AWS::Lambda::Function', {
+        FunctionName: `todolist-${stage}-api`,
         Runtime: 'nodejs24.x',
         Architectures: ['arm64'],
         Handler: 'index.handler',
-        Layers: Match.arrayWith([Match.objectLike({ Ref: Match.anyValue() })]),
+        // A background sync job runs up to 5 minutes in this function.
+        Timeout: 300,
+      });
+      const [fn] = Object.values(resources).filter((r) => r.Type === 'AWS::Lambda::Function');
+      const layers = (fn?.Properties?.['Layers'] as { Ref: string }[]).map((l) => l.Ref).sort();
+      assert.equal(layers.length, 2);
+      assert.match(layers[0] ?? '', /^ComputeCodebaseLayer/);
+      assert.match(layers[1] ?? '', /^ComputeDependenciesLayer/);
+      template.hasResourceProperties('AWS::Logs::LogGroup', {
+        LogGroupName: `/aws/lambda/todolist-${stage}-api`,
       });
 
+      // No queue, worker, alarm or schedule (like Elytra): syncs are self-invocations.
+      for (const type of [
+        'AWS::SQS::Queue',
+        'AWS::SQS::QueuePolicy',
+        'AWS::Lambda::EventSourceMapping',
+        'AWS::CloudWatch::Alarm',
+        'AWS::Scheduler::Schedule',
+        'AWS::Scheduler::ScheduleGroup',
+      ]) {
+        template.resourceCountIs(type, 0);
+      }
+
+      // No deploy-time helper: no custom resource, no wait condition (SES is ordered by dependencies).
       const custom = Object.values(resources).filter(
         (r) => r.Type.startsWith('Custom::') || r.Type === 'AWS::CloudFormation::CustomResource',
       );
-      assert.deepEqual(
-        custom.map((r) => r.Type),
-        ['Custom::SesDomainVerification'],
-      );
-      template.resourceCountIs('AWS::CloudFormation::WaitCondition', 1);
+      assert.deepEqual(custom, []);
+      template.resourceCountIs('AWS::CloudFormation::WaitCondition', 0);
+      template.resourceCountIs('AWS::CloudFormation::WaitConditionHandle', 0);
       for (const r of Object.values(resources)) {
         assert.notEqual(r.Type, 'AWS::StepFunctions::StateMachine');
         assert.notEqual(r.Type, 'AWS::CDK::Metadata');
       }
     });
 
-    it('routes only public and private (JWT) to the one integration', () => {
+    it('routes only public, private (JWT) and mcp (no authorizer) to the one integration', () => {
       template.resourceCountIs('AWS::ApiGatewayV2::Integration', 1);
       template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
         RouteKey: 'ANY /api/public/{proxy+}',
@@ -139,7 +165,13 @@ for (const stage of STAGES) {
       const routeKeys = Object.values(template.findResources('AWS::ApiGatewayV2::Route')).map(
         (r) => (r['Properties'] as { RouteKey: string }).RouteKey,
       );
-      assert.deepEqual(routeKeys.sort(), ['ANY /api/private/{proxy+}', 'ANY /api/public/{proxy+}']);
+      assert.deepEqual(routeKeys.sort(), [
+        'ANY /api/mcp',
+        'ANY /api/mcp/{proxy+}',
+        'ANY /api/private/{proxy+}',
+        'ANY /api/public/auth/{proxy+}',
+        'ANY /api/public/{proxy+}',
+      ]);
     });
 
     it('names the buckets after the stage domain', () => {
@@ -287,9 +319,13 @@ for (const stage of STAGES) {
       assert.equal(rule.MaxAge, 3600);
     });
 
-    it('serves DOMAIN_NAME only while WWW_ALIAS is off', () => {
+    it('serves DOMAIN_NAME only, with no www alias', () => {
       assert.deepEqual(distributionConfig(template).Aliases, [`${stage}.example.com`]);
       assert.deepEqual(aliasRecordNames(resources), [`${stage}.example.com.`]);
+      assert.deepEqual(httpApiCorsOrigins(template), [
+        'http://localhost:5173',
+        `https://${stage}.example.com`,
+      ]);
       assert.ok(!JSON.stringify(template.toJSON()).includes('www.'));
     });
 
@@ -300,10 +336,97 @@ for (const stage of STAGES) {
       });
     });
 
+    it('derives the app-secret prefix in code: no variable, no value, no ARN', () => {
+      const prefix = `todolist/${stage}/`;
+      assert.equal(appSecretsPrefix(stage), prefix);
+      // The one function: HTTP, maintenance actions and sync jobs share this environment.
+      const layered = Object.values(resources).filter(
+        (r) => r.Type === 'AWS::Lambda::Function' && r.Properties?.['Layers'] !== undefined,
+      );
+      assert.equal(layered.length, 1);
+      for (const fn of layered) {
+        const variables = (fn.Properties?.['Environment'] as { Variables: Record<string, unknown> })
+          .Variables;
+        // App secrets come from Secrets Manager only: none in the environment, no ARN.
+        assert.deepEqual(
+          Object.keys(variables).filter((name) => /^APP_SECRET|^GOOGLE_|SECRET_ARN$/.test(name)),
+          [],
+        );
+      }
+      // The secrets themselves are made by hand: CDK holds no value, and no output names one.
+      template.resourceCountIs('AWS::SecretsManager::Secret', 0);
+      assert.doesNotMatch(JSON.stringify(template.toJSON()['Outputs']), /secretsmanager|Secret/);
+    });
+
+    it("grants GetSecretValue on this stage's todolist/<stage>/ secrets and nothing else", () => {
+      const prefix = `todolist/${stage}/`;
+      const statements = Object.values(resources).flatMap((r) => {
+        if (r.Type === 'AWS::IAM::Policy' || r.Type === 'AWS::IAM::ManagedPolicy') {
+          return (r.Properties?.['PolicyDocument'] as { Statement: Statement[] }).Statement;
+        }
+        if (r.Type === 'AWS::IAM::Role') {
+          const inline = (r.Properties?.['Policies'] ?? []) as {
+            PolicyDocument: { Statement: Statement[] };
+          }[];
+          return inline.flatMap((policy) => policy.PolicyDocument.Statement);
+        }
+        return [];
+      });
+      assert.ok(statements.length > 5, 'no IAM statements found: is the scan broken?');
+      for (const st of statements) {
+        assert.ok(
+          !actionsOf(st).includes('*'),
+          `a statement allows every action: ${JSON.stringify(st)}`,
+        );
+      }
+      const secrets = statements.filter((st) => JSON.stringify(st).includes('secretsmanager'));
+      assert.equal(secrets.length, 1, JSON.stringify(secrets));
+      const [grant] = secrets;
+      assert.equal(grant?.['Effect'], 'Allow');
+      assert.equal(grant['Action'], 'secretsmanager:GetSecretValue');
+      assert.equal(grant['Condition'], undefined);
+      const arnPrefix = `arn:aws:secretsmanager:${DEFAULT_REGION}:${FIXTURE_ACCOUNT}:secret:`;
+      assert.equal(grant['Resource'], `${arnPrefix}${prefix}*`);
+
+      // IAM's matching (`*` any run of characters, `?` one): which secret ARNs the grant reaches.
+      // Secrets Manager appends `-` and six random characters to every secret's name.
+      const literal = (text: string): string => text.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+      const reaches = new RegExp(
+        `^${literal(grant['Resource']).replace(/\*/g, '.*').replace(/\?/g, '.')}$`,
+      );
+      const arn = (name: string): string => `${arnPrefix}${name}-AbC123`;
+      for (const name of [
+        'google-calendar-oauth',
+        'openrouter',
+        'oauth-github',
+        'oauth-jira',
+        'oauth-clickup',
+        'oauth-linear',
+      ]) {
+        assert.match(arn(`${prefix}${name}`), reaches, name);
+      }
+      for (const outside of [
+        ...STAGES.filter((other) => other !== stage).map((other) => `todolist/${other}/openrouter`),
+        `todolist/${stage}-old/openrouter`,
+        `todolist/${stage}`,
+        `todolist-${stage}/openrouter`,
+        `todolist/openrouter`,
+        `${stage}/openrouter`,
+        `elytra/${stage}/openrouter`,
+      ]) {
+        assert.doesNotMatch(arn(outside), reaches, outside);
+      }
+      assert.doesNotMatch(
+        `arn:aws:secretsmanager:${DEFAULT_REGION}:210987654321:secret:${prefix}openrouter-AbC123`,
+        reaches,
+        'another account',
+      );
+    });
+
     it('pins the API role name (Atlas MONGODB-AWS user is keyed on its ARN)', () => {
-      template.hasResourceProperties('AWS::IAM::Role', { RoleName: `elytra-${stage}-api` });
+      template.hasResourceProperties('AWS::IAM::Role', { RoleName: `todolist-${stage}-api` });
       template.hasResourceProperties('AWS::Lambda::Function', {
-        FunctionName: `elytra-${stage}-api`,
+        FunctionName: `todolist-${stage}-api`,
         Role: { 'Fn::GetAtt': [Match.stringLikeRegexp('^ComputeFunctionRole'), 'Arn'] },
       });
     });
@@ -316,23 +439,29 @@ for (const stage of STAGES) {
       }
     });
 
-    it('creates the user pool only after SES has verified the domain', () => {
-      const pool = Object.values(resources).find((r) => r.Type === 'AWS::Cognito::UserPool');
-      assert.ok((pool?.DependsOn ?? []).some((d) => d.startsWith('EmailDomainVerified')));
-
-      const [checkId, check] = Object.entries(resources).find(
-        ([, r]) => r.Type === 'Custom::SesDomainVerification',
+    it('orders SES before Cognito by dependencies: DKIM records, then the distribution, then the user pool', () => {
+      const [distributionId, distribution] = Object.entries(resources).find(
+        ([, r]) => r.Type === 'AWS::CloudFront::Distribution',
       ) ?? ['', undefined];
-      const checkDeps = check?.DependsOn ?? [];
-      assert.equal(checkDeps.filter((d) => d.startsWith('EmailDkimRecord')).length, 3);
-      assert.ok(checkDeps.some((d) => d.startsWith('EmailEmailIdentity')));
-      assert.equal(check?.Properties?.['DomainName'], `${stage}.example.com`);
-
-      const wait = Object.values(resources).find(
-        (r) => r.Type === 'AWS::CloudFormation::WaitCondition',
+      const dkimRecords = Object.keys(resources).filter((id) => id.startsWith('EmailDkimRecord'));
+      assert.equal(dkimRecords.length, 3);
+      assert.deepEqual(
+        (distribution?.DependsOn ?? []).filter((d) => d.startsWith('EmailDkimRecord')).sort(),
+        dkimRecords.sort(),
+        'the distribution waits for every DKIM record',
       );
-      assert.equal(wait?.Properties?.['Timeout'], '43200');
-      assert.ok((wait.DependsOn ?? []).includes(checkId), 'the wait starts after the check');
+      const pool = Object.values(resources).find((r) => r.Type === 'AWS::Cognito::UserPool');
+      assert.ok(distributionId.startsWith('EdgeDistribution'));
+      assert.ok(
+        (pool?.DependsOn ?? []).includes(distributionId),
+        'the user pool waits for the distribution',
+      );
+      template.hasResourceProperties('AWS::Cognito::UserPool', {
+        EmailConfiguration: Match.objectLike({
+          EmailSendingAccount: 'DEVELOPER',
+          From: `authenticator@${stage}.example.com`,
+        }),
+      });
       template.hasResourceProperties('AWS::Cognito::UserPoolClient', {
         AllowedOAuthFlowsUserPoolClient: false,
         GenerateSecret: false,
@@ -361,6 +490,29 @@ for (const stage of STAGES) {
       assert.ok(!policy.includes('ses:SendRawEmail'));
       assert.ok(!policy.includes('userpool/*'));
       assert.ok(policy.includes('ses:FromAddress'));
+      assert.ok(!policy.includes('sqs:'), 'no queue access: there is no queue');
+    });
+
+    it('lets the role invoke only its own function, by an ARN built from the name (sync jobs)', () => {
+      const statements = Object.values(template.findResources('AWS::IAM::Policy')).flatMap(
+        (p) =>
+          (p['Properties'] as { PolicyDocument: { Statement: Statement[] } }).PolicyDocument
+            .Statement,
+      );
+      const lambdaStatements = statements.filter((st) =>
+        actionsOf(st).some((a) => a.startsWith('lambda:')),
+      );
+      assert.deepEqual(
+        lambdaStatements.map((st) => [st['Effect'], actionsOf(st), st['Resource']]),
+        [
+          [
+            'Allow',
+            ['lambda:InvokeFunction'],
+            // A plain string, not a reference to the function: that would be a dependency cycle.
+            `arn:aws:lambda:${DEFAULT_REGION}:${FIXTURE_ACCOUNT}:function:todolist-${stage}-api`,
+          ],
+        ],
+      );
     });
 
     it('limits the API to media/ and tmp/ in the assets bucket', () => {
@@ -406,13 +558,11 @@ describe('tags', () => {
     'AWS::ApiGatewayV2::Route',
     'AWS::ApiGatewayV2::Authorizer',
     'AWS::Lambda::Permission',
+    'AWS::KMS::Alias',
     'AWS::Lambda::LayerVersion',
     'AWS::CloudFront::OriginAccessControl',
     'AWS::Cognito::UserPoolClient',
     'AWS::IAM::Policy',
-    'Custom::SesDomainVerification',
-    'AWS::CloudFormation::WaitCondition',
-    'AWS::CloudFormation::WaitConditionHandle',
   ]);
 
   for (const stage of STAGES) {
@@ -506,51 +656,11 @@ describe('domain and hosted zone inputs', () => {
   });
 });
 
-describe('www alias (WWW_ALIAS=true)', () => {
-  for (const stage of STAGES) {
-    const domain = `${stage}.example.com`;
-    const www = `www.${domain}`;
-
-    it(`also serves ${www} from the same distribution (${stage})`, () => {
-      const { template, resources } = synth(stage, { wwwAlias: 'true' });
-      template.resourceCountIs('AWS::CloudFront::Distribution', 1);
-      assert.deepEqual(distributionConfig(template).Aliases, [domain, www]);
-      assert.deepEqual(aliasRecordNames(resources), [`${domain}.`, `${www}.`]);
-      assert.ok(Object.keys(resources).some((id) => id.startsWith('EdgeWwwAliasRecord')));
-
-      const origins = ['http://localhost:5173', `https://${domain}`, `https://${www}`];
-      assert.deepEqual(assetsCorsRule(template, domain).AllowedOrigins, origins);
-      assert.deepEqual(httpApiCorsOrigins(template), origins);
-    });
-  }
-
-  it('adds www to a certificate the stack creates', () => {
-    synth('dev', { wwwAlias: 'true' }).template.hasResourceProperties(
-      'AWS::CertificateManager::Certificate',
-      { DomainName: 'dev.example.com', SubjectAlternativeNames: ['www.dev.example.com'] },
-    );
-  });
-
-  it('leaves the certificate, aliases and CORS alone when off', () => {
-    const { template, resources } = synth('dev', { wwwAlias: 'false' });
-    template.hasResourceProperties('AWS::CertificateManager::Certificate', {
-      DomainName: 'dev.example.com',
-      SubjectAlternativeNames: Match.absent(),
-    });
-    assert.deepEqual(distributionConfig(template).Aliases, ['dev.example.com']);
-    assert.deepEqual(aliasRecordNames(resources), ['dev.example.com.']);
-    assert.deepEqual(httpApiCorsOrigins(template), [
-      'http://localhost:5173',
-      'https://dev.example.com',
-    ]);
-  });
-});
-
 describe('region, certificate and WAF inputs', () => {
   const CERT =
     'arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555';
   const WEB_ACL =
-    'arn:aws:wafv2:us-east-1:123456789012:global/webacl/elytra-staging/66666666-7777-8888-9999-000000000000';
+    'arn:aws:wafv2:us-east-1:123456789012:global/webacl/todolist-staging/66666666-7777-8888-9999-000000000000';
 
   const templateFor = (context: Record<string, string>): Template => {
     const { app, stack } = buildApp({ context: { stage: 'dev', fixture: 'true', ...context } });

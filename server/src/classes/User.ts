@@ -4,6 +4,7 @@ import {
   AdminDeleteUserCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { environment } from '../config/environment.js';
+import { deleteAccountCascade } from '../services/workspaces.js';
 
 const cognitoClient = new CognitoIdentityProviderClient({
   region: environment.awsRegion,
@@ -16,6 +17,7 @@ export class User {
   private readonly _email: string | null;
   private readonly _photoId: string | null;
   private readonly _lastLoginAt: Date | null;
+  private readonly _defaultWorkspaceId: string | null;
   private readonly _createdAt: Date;
   private readonly _updatedAt: Date;
 
@@ -26,6 +28,7 @@ export class User {
     this._email = data.email;
     this._photoId = data.photoId;
     this._lastLoginAt = data.lastLoginAt;
+    this._defaultWorkspaceId = data.defaultWorkspaceId;
     this._createdAt = data.createdAt;
     this._updatedAt = data.updatedAt;
   }
@@ -54,6 +57,10 @@ export class User {
     return this._lastLoginAt;
   }
 
+  get defaultWorkspaceId(): string | null {
+    return this._defaultWorkspaceId;
+  }
+
   get createdAt(): Date {
     return this._createdAt;
   }
@@ -70,6 +77,7 @@ export class User {
       email: this._email,
       photoId: this._photoId,
       lastLoginAt: this._lastLoginAt,
+      defaultWorkspaceId: this._defaultWorkspaceId,
       createdAt: this._createdAt,
       updatedAt: this._updatedAt,
     };
@@ -118,6 +126,11 @@ export class User {
     if (user === null) {
       throw new Error('User not found');
     }
+
+    // Workspaces first: the ones this user solely owns are deleted, every other membership
+    // and agent key is revoked. If this fails, the account (Cognito and the row) is still there
+    // and the request can be retried.
+    await deleteAccountCascade(userId);
 
     try {
       const userPoolId = environment.cognitoUserPoolId;

@@ -1,0 +1,32 @@
+---
+description: How to use the TodoList MCP server - task methodology, daily view, builder and sync rules
+alwaysApply: false
+---
+
+# TodoList (MCP server `todolist`)
+
+Use these rules whenever you read or change TodoList data. Cursor has no hooks for this, so the checks are on you.
+
+## Reading (today, deadlines, calendar)
+- `list_today` for today, `list_deadlines` for what is coming, `get_calendar` for a week or month, `get_item` for one item.
+- Respect areas (`work`, `college`, `personal`): filter or group by them.
+- For provider items show an "Open in <provider>" link from `openIn.url`.
+
+## Tasks
+1. Call `search_items` before `create_todo` to avoid duplicates.
+2. Titles: verb-first, 120 characters or fewer. Detail goes in `note`.
+3. Always set `area` and `dueAt`; for "someday" pass `dueAt: null` explicitly.
+4. Always pass a stable `idempotencyKey`.
+5. Never edit mirrored (non-local) items; give the "Open in <provider>" link. Use `set_overlay` for local pins, hides and notes.
+6. Finish work with `complete_todo`, not delete.
+7. Destructive tools (`delete_todo`, `integrations_disconnect`, `builder_remove_block`, ...) preview first. Show the user, get a yes, then repeat with `confirm: true`.
+
+## Dashboards (builder)
+- Order: read the dashboard, use a template if one fits, `builder_preview` the change, write the identical change with `expectedVersion` within 10 minutes (server rule D12), then show the user.
+- Publish (`builder_publish`) only when the user explicitly asks.
+- Caps: 10 rules and 3 group-bys per block, 40 blocks per dashboard. Rule groups use `and`/`or` with operators `=, !=, <, <=, >, >=, in, notIn, contains, beginsWith, null, notNull, within, between`. Wire cross-filters with `builder_connect_blocks`.
+
+## Sync and connecting
+- `sync_now` only when data is stale or the user asks; read the result with `get_sync_status`.
+- Never ask for tokens. To connect a provider call `integrations_start_connect` and give the user the `connectUrl`.
+- `sync_to_google_calendar` is a dry run by default; show the diff first.

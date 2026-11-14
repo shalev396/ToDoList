@@ -5,8 +5,11 @@ import {
   notFound,
   expressAuth,
   privateLimiter,
+  requestMemo,
 } from './middlewares/index.js';
 import { publicRouter, privateRouter } from './routes/index.js';
+import { mcpBodyErrors, mcpRouter } from './mcp/index.js';
+import { installConsoleRedaction } from './services/logger.js';
 
 /** Express 5 leaves `req.body` undefined when a request has no body; handlers can rely on `{}`. */
 const defaultBody: RequestHandler = (req, _res, next) => {
@@ -27,7 +30,7 @@ const parseBody: RequestHandler[] = [
 
 /**
  * The whole API as one Express app — served by the single Lambda (lambda.ts) and by the
- * local dev server (local.ts).
+ * local dev server (local.ts), which runs it against a deployed stage.
  *
  * - /api/public  → no auth (Cognito sign-up/login flows; rate-limited in routes/public/index.ts)
  * - /api/private → JWT verified in-app by expressAuth (API Gateway also runs a JWT authorizer)
@@ -36,6 +39,9 @@ const parseBody: RequestHandler[] = [
  * lambda.ts.
  */
 export function createApp(): Express {
+  // Every console.* call (ours, Express's, the SDKs') is redacted before it reaches the logs.
+  installConsoleRedaction();
+
   const app = express();
 
   // CloudFront → API Gateway → Lambda. Measured on a deployed stage: req.ip is the viewer's address
@@ -44,10 +50,13 @@ export function createApp(): Express {
   // express-rate-limit's ERR_ERL_UNEXPECTED_X_FORWARDED_FOR warning.
   app.set('trust proxy', 1);
 
+  // Each request gets its own memo (services/requestMemo.ts), never shared with another.
+  app.use(requestMemo);
   app.use(responseFormatter);
 
   app.use('/api/public', ...parseBody, publicRouter);
   app.use('/api/private', privateLimiter, expressAuth, ...parseBody, privateRouter);
+  app.use('/api/mcp', ...parseBody, mcpRouter, mcpBodyErrors); // agent keys, not Cognito
 
   app.use(notFound);
   app.use(errorHandler);

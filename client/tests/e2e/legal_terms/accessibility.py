@@ -1,26 +1,27 @@
 """
-Terms of Service page (legal/terms) accessibility tests.
+Terms of service page (legal/terms) accessibility tests.
 """
+import pytest
 from axe_playwright_python.sync_playwright import Axe
-from playwright.sync_api import Page
+from playwright.sync_api import Page, expect
 from tests.helpers.animations import wait_for_fade_in
 
 
-def test_terms_accessibility(page: Page, app_url: str):
-    """Runs axe-core on the terms page; asserts no violations (some landmark/heading rules disabled for legal content)."""
-    page.goto(f"{app_url}/legal/terms", wait_until="domcontentloaded")
+@pytest.mark.parametrize("lng", ["en", "he"])
+def test_terms_accessibility(page: Page, base_url: str, lng: str):
+    """Runs axe-core on the terms page with every rule on; asserts no violations."""
+    page.goto(f"{base_url}/{lng}/legal/terms", wait_until="domcontentloaded")
     page.wait_for_load_state("networkidle")
-    wait_for_fade_in(page, content="h2")  # legal pages have no h1
-    axe = Axe()
-    results = axe.run(
-        page,
-        options={
-            "rules": {
-                "landmark-one-main": {"enabled": False},
-                "page-has-heading-one": {"enabled": False},
-                "region": {"enabled": False},
-            }
-        },
-    )
+    wait_for_fade_in(page)
+    results = Axe().run(page)
     violations = results.response.get("violations", [])
     assert violations == [], f"Accessibility violations: {violations}"
+
+
+def test_terms_landmarks(page: Page, app_url: str):
+    """Asserts one main landmark, one h1, and a section heading per part of the terms."""
+    page.goto(f"{app_url}/legal/terms", wait_until="domcontentloaded")
+    page.wait_for_load_state("networkidle")
+    expect(page.get_by_role("main")).to_have_count(1)
+    expect(page.get_by_role("heading", level=1)).to_have_count(1)
+    expect(page.get_by_role("main").get_by_role("heading", level=2)).to_have_count(11)

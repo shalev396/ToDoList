@@ -17,6 +17,6 @@ def test_edit_profile_responsive(page: Page, app_url: str, authenticated_page: P
     page.wait_for_load_state("networkidle")
     for vp in VIEWPORTS:
         page.set_viewport_size({"width": vp["width"], "height": vp["height"]})
-        expect(page.get_by_label("Name")).to_be_visible(timeout=NORMAL_TIMEOUT)
+        expect(page.get_by_label("Name", exact=True)).to_be_visible(timeout=NORMAL_TIMEOUT)
         expect(page.get_by_role("button", name="Save Changes")).to_be_visible(timeout=NORMAL_TIMEOUT)
         assert_no_horizontal_overflow(page, vp["name"], vp["width"])

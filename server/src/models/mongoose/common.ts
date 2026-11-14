@@ -1,0 +1,328 @@
+import { randomUUID } from 'node:crypto';
+import mongoose from 'mongoose';
+
+import { PROVIDERS, type Provider } from '../../types/domain.js';
+import type {
+  BulkUpsertResult,
+  ErrorInfo,
+  SourceAccount,
+  SourceDeleteResult,
+  SourceRef,
+} from '../definitions/common.js';
+
+/** `_id` of the new collections: a UUID string, exposed as `id` (DATA.md §1). */
+export const uuidIdField = {
+  type: String,
+  default: (): string => randomUUID(),
+};
+
+/** `source` on Items and Containers (DATA.md §3.6). No `_id` of its own. */
+export const SourceSchema = new mongoose.Schema<SourceRef>(
+  {
+    provider: { type: String, enum: PROVIDERS, required: true },
+    // Required, but '' is valid: local items have no provider account. Mongoose's
+    // `required: true` refuses '' for strings, so the default fills a missing value and this
+    // validator refuses anything that is not a string (null included).
+    accountId: {
+      type: String,
+      default: '',
+      validate: {
+        validator: (value: unknown): boolean => typeof value === 'string',
+        message: 'source.accountId is required',
+      },
+    },
+    externalId: { type: String, required: true },
+    key: { type: String, default: null },
+    url: { type: String, required: true },
+    updatedAtSource: { type: Date, default: null },
+    etag: { type: String, default: null },
+    hash: { type: String, default: null },
+  },
+  { _id: false },
+);
+
+/**
+ * `$set` entries for the listed keys a patch carries (undefined = leave unchanged). Only listed
+ * keys are copied, so stray properties on a patch (say, from a request body) never reach the
+ * database. `prefix` targets a nested path, e.g. `overlay.`.
+ */
+export function setFields<T extends object>(
+  patch: T,
+  keys: readonly (keyof T & string)[],
+  prefix = '',
+): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  for (const key of keys) {
+    const value = patch[key];
+    if (value !== undefined) fields[`${prefix}${key}`] = value;
+  }
+  return fields;
+}
+
+/** `{code, message}`: Integrations.lastError and SyncRuns.error. */
+export const ErrorInfoSchema = new mongoose.Schema<ErrorInfo>(
+  {
+    code: { type: String, required: true },
+    message: { type: String, required: true },
+  },
+  { _id: false },
+);
+
+/** A plain SourceRef, whether read from a document or given by a sync. */
+export function toSourceRef(source: SourceRef): SourceRef {
+  return {
+    provider: source.provider,
+    accountId: source.accountId,
+    externalId: source.externalId,
+    key: source.key ?? null,
+    url: source.url,
+    updatedAtSource: source.updatedAtSource ?? null,
+    etag: source.etag ?? null,
+    hash: source.hash ?? null,
+  };
+}
+
+/** Stages that read another collection or write: a workspace-scoped pipeline refuses them. */
+const UNSCOPED_STAGES = new Set(['$lookup', '$graphLookup', '$unionWith', '$out', '$merge']);
+
+function assertScopedStage(stage: Record<string, unknown>): void {
+  for (const [operator, spec] of Object.entries(stage)) {
+    if (UNSCOPED_STAGES.has(operator)) {
+      throw new Error(`aggregate: ${operator} is not allowed in a workspace-scoped pipeline`);
+    }
+    if (operator === '$facet' && typeof spec === 'object' && spec !== null) {
+      for (const pipeline of Object.values(spec as Record<string, unknown>)) {
+        if (Array.isArray(pipeline)) {
+          for (const inner of pipeline as Record<string, unknown>[]) assertScopedStage(inner);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * The pipeline a repository's aggregate() runs. A leading `$match` of the caller is merged with
+ * the scope, `{ $match: { ...callerMatch, workspaceId } }`: MongoDB requires `$text` in the first
+ * stage, so a separate scope stage in front would break text search. Otherwise
+ * `{ $match: { workspaceId } }` is prepended. A caller `$match` naming another `workspaceId` is
+ * refused; the scoped value always wins. Stages that could reach another workspace's documents or
+ * write anywhere ($lookup, $graphLookup, $unionWith, $out, $merge, also inside $facet) are refused.
+ */
+export function scopedPipeline(
+  workspaceId: string,
+  stages: readonly Record<string, unknown>[],
+): mongoose.PipelineStage[] {
+  stages.forEach(assertScopedStage);
+  const [first, ...rest] = stages;
+  const callerMatch = first?.['$match'];
+  if (typeof callerMatch === 'object' && callerMatch !== null && !Array.isArray(callerMatch)) {
+    const match = callerMatch as Record<string, unknown>;
+    if ('workspaceId' in match && match['workspaceId'] !== workspaceId) {
+      throw new Error('aggregate: $match may not name a different workspaceId');
+    }
+    // The stages are plain JSON from the query compiler, checked above; the driver validates them.
+    return [
+      { $match: { ...match, workspaceId } },
+      ...(rest as unknown as mongoose.PipelineStage[]),
+    ];
+  }
+  return [{ $match: { workspaceId } }, ...(stages as unknown as mongoose.PipelineStage[])];
+}
+
+/**
+ * A mapped provider record: its source, maybe a delete signalled by the provider, and the sync
+ * resource it came from (stamped on every write).
+ */
+export interface SourceRecord {
+  /** The integration whose copy this is: part of the natural key (ruling 8). */
+  integrationId: string;
+  source: SourceRef;
+  deletedAt?: Date | null;
+  syncResource?: string | null;
+}
+
+/** What upsertBySource() reads of a stored document. */
+export interface StoredSource {
+  _id: string;
+  integrationId?: string | null;
+  source: SourceRef;
+  deletedAt?: Date | null;
+}
+
+/** The two collection calls upsertBySource() makes, bound to one model by the repository. */
+export interface SourceUpsertStore<S extends StoredSource = StoredSource> {
+  /** Stored documents matching the filter, with `_id`, `source` and `deletedAt` (at least). */
+  findStored(filter: mongoose.FilterQuery<StoredSource>): Promise<S[]>;
+  bulkWrite(writes: mongoose.AnyBulkWriteOperation[]): Promise<{ upsertedCount: number }>;
+}
+
+function sourceKey(integrationId: string | null | undefined, source: SourceRef): string {
+  return JSON.stringify([
+    integrationId ?? null,
+    source.provider,
+    source.accountId,
+    source.externalId,
+  ]);
+}
+
+/**
+ * One `$in` of external ids per (integration, provider, account), so each branch uses the
+ * natural-key index.
+ */
+function storedSourcesFilter(
+  workspaceId: string,
+  records: readonly SourceRecord[],
+): mongoose.FilterQuery<StoredSource> {
+  const groups = new Map<
+    string,
+    { integrationId: string; provider: Provider; accountId: string; ids: string[] }
+  >();
+  for (const { integrationId, source } of records) {
+    const key = JSON.stringify([integrationId, source.provider, source.accountId]);
+    const group = groups.get(key) ?? {
+      integrationId,
+      provider: source.provider,
+      accountId: source.accountId,
+      ids: [],
+    };
+    group.ids.push(source.externalId);
+    groups.set(key, group);
+  }
+  return {
+    workspaceId,
+    $or: [...groups.values()].map((group) => ({
+      'source.provider': group.provider,
+      'source.accountId': group.accountId,
+      'source.externalId': { $in: group.ids },
+      integrationId: group.integrationId,
+    })),
+  };
+}
+
+/**
+ * Natural-key bulk upsert of mapped provider records (DATA.md §4), keyed on (workspaceId,
+ * source.provider, source.accountId, source.externalId, integrationId): two members who connect
+ * the same account each keep their own copies (PERMISSIONS-V2 ruling 8):
+ * - a live stored copy with the same non-null `source.hash` only gets `lastSeenAt` and
+ *   `syncResource`, without an `updatedAt` bump (unchanged);
+ * - so does a record signalling a delete (`deletedAt`) whose stored copy is already deleted: its
+ *   `deletedAt`, the purge clock, is kept (unchanged);
+ * - anything else is written in full, `$set: toSet(record)` with `$setOnInsert: {_id}`, which
+ *   also restores a soft-deleted copy (updated, or inserted). `onWrite` sees each of those
+ *   records with its stored copy (undefined for an insert), before the write.
+ */
+export async function upsertBySource<T extends SourceRecord, S extends StoredSource>(
+  workspaceId: string,
+  records: readonly T[],
+  store: SourceUpsertStore<S>,
+  toSet: (record: T, seenAt: Date) => Record<string, unknown>,
+  onWrite?: (record: T, stored: S | undefined) => void,
+): Promise<BulkUpsertResult> {
+  if (records.length === 0) return { inserted: 0, updated: 0, unchanged: 0 };
+  const seenAt = new Date();
+  const stored = new Map(
+    (await store.findStored(storedSourcesFilter(workspaceId, records))).map((doc) => [
+      sourceKey(doc.integrationId, doc.source),
+      doc,
+    ]),
+  );
+
+  const unchanged: { _id: string; syncResource: string | null }[] = [];
+  const changed: T[] = [];
+  for (const record of records) {
+    const current = stored.get(sourceKey(record.integrationId, record.source));
+    const storedDeleted = current !== undefined && (current.deletedAt ?? null) !== null;
+    const signalsDelete = (record.deletedAt ?? null) !== null;
+    const same =
+      current !== undefined &&
+      !storedDeleted &&
+      !signalsDelete &&
+      record.source.hash !== null &&
+      record.source.hash === current.source.hash;
+    if (same || (storedDeleted && signalsDelete)) {
+      unchanged.push({ _id: current._id, syncResource: record.syncResource ?? null });
+    } else {
+      changed.push(record);
+      onWrite?.(record, current);
+    }
+  }
+
+  const { upsertedCount } = await store.bulkWrite([
+    ...unchanged.map(({ _id, syncResource }) => ({
+      updateOne: {
+        filter: { _id, workspaceId },
+        update: { $set: { lastSeenAt: seenAt, syncResource } },
+        timestamps: false,
+      },
+    })),
+    ...changed.map((record) => ({
+      updateOne: {
+        filter: {
+          workspaceId,
+          'source.provider': record.source.provider,
+          'source.accountId': record.source.accountId,
+          'source.externalId': record.source.externalId,
+          integrationId: record.integrationId,
+        },
+        update: { $set: toSet(record, seenAt), $setOnInsert: { _id: randomUUID() } },
+        upsert: true,
+      },
+    })),
+  ]);
+  return {
+    inserted: upsertedCount,
+    updated: changed.length - upsertedCount,
+    unchanged: unchanged.length,
+  };
+}
+
+/**
+ * The filter of the orphaned-resource sweep: this integration's live records stamped with a
+ * resource other than the listed ones (`$nin` with null also leaves out records with none), minus
+ * the kept external ids.
+ */
+export function orphanedResourcesFilter(
+  workspaceId: string,
+  integrationId: string,
+  resources: readonly string[],
+  keepExternalIds: readonly string[],
+): Record<string, unknown> {
+  return {
+    ...(keepExternalIds.length > 0 ? { 'source.externalId': { $nin: [...keepExternalIds] } } : {}),
+    workspaceId,
+    integrationId,
+    syncResource: { $nin: [null, ...resources] },
+    deletedAt: null,
+  };
+}
+
+/**
+ * Delete-only records (a provider's delete signal that carries only ids): sets `deletedAt` on the
+ * live stored copies of these external ids of one integration's provider account, by the natural
+ * key, and changes nothing else (another member's copies wait for their own sync). Copies already deleted keep their `deletedAt` (the purge clock); ids with
+ * no stored copy are ignored.
+ */
+export async function softDeleteBySource<T>(
+  model: mongoose.Model<T>,
+  workspaceId: string,
+  account: SourceAccount,
+  externalIds: readonly string[],
+  deletedAt: Date,
+): Promise<SourceDeleteResult> {
+  const ids = [...new Set(externalIds)];
+  if (ids.length === 0) return { deleted: 0, alreadyDeleted: 0 };
+  const scope = {
+    workspaceId,
+    'source.provider': account.provider,
+    'source.accountId': account.accountId,
+    'source.externalId': { $in: ids },
+    integrationId: account.integrationId,
+  };
+  // Counted first: a copy this call deletes is never counted as deleted already.
+  const alreadyDeleted = await model.countDocuments({ ...scope, deletedAt: { $ne: null } });
+  const { modifiedCount } = await model.updateMany(
+    { ...scope, deletedAt: null },
+    { $set: { deletedAt } },
+  );
+  return { deleted: modifiedCount, alreadyDeleted };
+}

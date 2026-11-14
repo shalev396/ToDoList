@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useQueryClient } from '@tanstack/react-query';
+import { useTranslation } from 'react-i18next';
+import { Direction } from 'radix-ui';
 import AppRouter from '@/router';
 import { DirectionalToaster } from '@/components/shared/DirectionalToaster';
 import {
@@ -21,6 +23,7 @@ export default function App() {
   const isRestoringSession = useSelector(selectIsRestoringSession);
   const userId = useSelector(selectUser)?.id ?? null;
   const queryClient = useQueryClient();
+  const { i18n } = useTranslation();
   const previousUserIdRef = useRef(userId);
 
   // Private queries are cached with a staleTime, so drop them when the signed-in user changes
@@ -65,10 +68,14 @@ export default function App() {
     })();
   }, [isRestoringSession, dispatch]);
 
+  // Radix menus, popovers and tooltips read the reading direction from here (submenus open
+  // towards the end side, arrow keys follow it).
   return (
-    <ThemeProvider storageKey="elytra-ui-theme">
-      <DirectionalToaster />
-      <AppRouter />
+    <ThemeProvider storageKey="todolist-ui-theme">
+      <Direction.Provider dir={i18n.dir()}>
+        <DirectionalToaster />
+        <AppRouter />
+      </Direction.Provider>
     </ThemeProvider>
   );
 }

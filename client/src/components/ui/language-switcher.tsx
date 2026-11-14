@@ -8,11 +8,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useTranslation } from 'react-i18next';
-
-const LANGUAGE_LABELS = {
-  en: 'English',
-  he: 'עברית',
-} as const;
+import { LANGUAGE_NAMES } from '@/i18n/config';
 
 export function LanguageSwitcher() {
   const { language, changeLanguage, availableLanguages } = useLanguage();
@@ -35,7 +31,7 @@ export function LanguageSwitcher() {
             }}
             className={language === lang ? 'bg-primary/10 text-primary' : undefined}
           >
-            {LANGUAGE_LABELS[lang]}
+            {LANGUAGE_NAMES[lang]}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

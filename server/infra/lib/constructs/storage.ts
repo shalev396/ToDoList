@@ -61,11 +61,7 @@ export class Storage extends Construct {
           // POST is the browser's presigned upload form; without it the preflight fails.
           allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD, s3.HttpMethods.POST],
           // Stage origins only: /media is served same-origin through CloudFront anyway.
-          allowedOrigins: [
-            'http://localhost:5173',
-            `https://${config.domainName}`,
-            ...(config.wwwDomainName === undefined ? [] : [`https://${config.wwwDomainName}`]),
-          ],
+          allowedOrigins: ['http://localhost:5173', `https://${config.domainName}`],
           allowedHeaders: ['*'],
           exposedHeaders: ['ETag'],
           maxAge: 3600,
