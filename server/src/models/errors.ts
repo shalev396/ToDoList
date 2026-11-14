@@ -15,8 +15,10 @@ export class NotSupportedError extends Error {
 }
 
 /**
- * A mirrored item edited as if it were local. Mirrored items are edited at their source: the API
- * answers 409 with the source link (BACKEND.md §4), hence `provider` and `url`.
+ * A mirrored item edited as if it were local, as the repository signals it. Mirrored items are
+ * edited at their source: services turn this into errors/MirroredItemError.ts (the API's 409
+ * with the source link, BACKEND.md §4), hence `provider` and `url`. Its `name` tells the two
+ * apart in logs.
  */
 export class MirroredItemError extends Error {
   readonly itemId: string;
@@ -25,7 +27,7 @@ export class MirroredItemError extends Error {
 
   constructor(itemId: string, provider: Provider, url: string) {
     super(`Item ${itemId} is mirrored from ${provider}: edit it at the source`);
-    this.name = 'MirroredItemError';
+    this.name = 'StoredMirroredItemError';
     this.itemId = itemId;
     this.provider = provider;
     this.url = url;

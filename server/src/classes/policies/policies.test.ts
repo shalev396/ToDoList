@@ -91,10 +91,23 @@ describe('IntegrationPolicy', () => {
     assert.ok(IntegrationPolicy.isOwn(mine, 'u-me') && !IntegrationPolicy.isOwn(theirs, 'u-me'));
   });
 
-  it('a shared one is readable by the other members, never manageable', () => {
-    assert.ok(!policy.canRead(caller('owner'), theirs));
-    assert.ok(policy.canRead(caller('viewer'), { ...theirs, shared: true }));
-    assert.ok(!policy.canManage(caller('owner'), { ...theirs, shared: true }));
+  it('its details are its owner’s alone: another member never reads them, shared or not', () => {
+    // Share-on-attach shows a shared integration's items (ItemPolicy), never its details.
+    const sharing = ItemPolicy.of({
+      userId: 'u-me',
+      integrations: [{ id: 'i-theirs', provider: 'jira', accountId: 'a', ownerUserId: 'u-other' }],
+      local: 'visible',
+    });
+    assert.ok(sharing.access.integrations.some(({ id }) => id === 'i-theirs'));
+    for (const role of ROLES) {
+      assert.ok(!policy.canRead(caller(role), theirs), role);
+      assert.ok(policy.refusal() instanceof NotFoundError, role);
+    }
+    assert.ok(policy.canRead(caller('viewer'), mine));
+    assert.ok(!caller('owner').can(policy, 'read', theirs));
+    assert.throws(() => {
+      caller('owner').authorize(policy, 'read', theirs);
+    }, NotFoundError);
   });
 
   it('every refusal is 404, workspace owners included', () => {
@@ -118,6 +131,12 @@ describe('DashboardPolicy', () => {
     assert.ok(policy.canRead(caller('viewer'), privateMine));
     assert.ok(!policy.canRead(caller('owner'), privateTheirs));
     assert.ok(policy.refusal(caller('owner'), 'edit', privateTheirs) instanceof NotFoundError);
+  });
+
+  it('an unknown visibility counts as private (fails closed)', () => {
+    const odd = { ...open, visibility: 'team' } as unknown as DashboardFacts;
+    assert.ok(!policy.canRead(caller('owner'), odd));
+    assert.ok(policy.canRead(caller('viewer', 'u-x'), odd));
   });
 
   it('editors edit what they see; only an owner manages', () => {
@@ -200,6 +219,12 @@ describe('ItemPolicy', () => {
       policy.refusal(caller('viewer'), 'edit', base).message,
       'Only an editor can do this',
     );
+    assert.ok(!policy.canManage(caller('viewer'), base));
+    assert.equal(
+      policy.refusal(caller('viewer'), 'manage', base).message,
+      'Only an editor can do this',
+    );
+    assert.ok(policy.refusal(caller('owner'), 'manage', jira) instanceof MirroredItemError);
     assert.ok(
       policy.refusal(caller('owner'), 'edit', { ...jira, integrationId: 'x' }) instanceof
         NotFoundError,

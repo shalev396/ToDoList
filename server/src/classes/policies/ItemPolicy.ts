@@ -12,6 +12,7 @@
  * could drift; a request that needs them twice resolves them once (requestMemo.ts), so "Stop
  * sharing" holds from the next request on. An ItemPolicy is bound to one resolved access.
  */
+import { ForbiddenError } from '../../errors/ForbiddenError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { MirroredItemError } from '../../errors/MirroredItemError.js';
 import type { AppError } from '../../errors/AppError.js';
@@ -23,7 +24,7 @@ import type { Provider, Visibility } from '../../types/domain.js';
 import type { Caller, WorkspaceContext } from '../base/Caller.js';
 import { Role } from '../base/Role.js';
 import { IntegrationPolicy } from './IntegrationPolicy.js';
-import { BasePolicy } from './Policy.js';
+import { BasePolicy, type PolicyAction } from './Policy.js';
 
 /** An integration whose items the caller may see, with what connectors and dedup need. */
 export interface VisibleIntegration {
@@ -227,13 +228,16 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
     return this.canEdit(caller, item);
   }
 
-  /** 404 for an item the caller can't see; 409 with its source link for a mirrored one. */
-  override refusal(caller: Caller, action: 'read' | 'edit' | 'manage', item: ItemFacts): AppError {
-    if (!this.canRead(caller, item)) return new NotFoundError();
-    if (action !== 'read' && item.source.provider !== 'local') {
+  /**
+   * 404 for an item the caller can't see; 409 with its source link for a mirrored one; otherwise
+   * the editor refusal (editing and deleting both take an editor).
+   */
+  override refusal(caller: Caller, action: PolicyAction, item: ItemFacts): AppError {
+    if (action === 'read' || !this.canRead(caller, item)) return new NotFoundError();
+    if (item.source.provider !== 'local') {
       return new MirroredItemError(item.source.provider, item.source.url);
     }
-    return super.refusal(caller, action, item);
+    return ForbiddenError.forRole('editor');
   }
 
   // ─── The filters ──────────────────────────────────────────────────────────

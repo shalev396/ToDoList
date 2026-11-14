@@ -3,6 +3,7 @@
  * or the system (jobs, the sync). It also carries where the request came from, the address and
  * the user agent the audit log records, cut to a bounded length.
  */
+import { redactString } from '../../services/secretPatterns.js';
 
 export type ActorKind = 'user' | 'agent' | 'system';
 
@@ -29,7 +30,10 @@ export interface RequestOrigin {
   readonly headers: { readonly 'user-agent'?: string | undefined };
 }
 
-/** Control characters never reach the log, and long values are cut. */
+/**
+ * Control characters never reach the log, secret-shaped text is redacted (the user agent is
+ * client-controlled, and the audit log never holds a secret), and long values are cut.
+ */
 function bounded(value: string | null | undefined, max: number): string | null {
   if (value === null || value === undefined) return null;
   let printable = '';
@@ -37,7 +41,7 @@ function bounded(value: string | null | undefined, max: number): string | null {
     const code = value.charCodeAt(index);
     if (code >= 0x20 && code !== 0x7f) printable += value.charAt(index);
   }
-  const clean = printable.trim();
+  const clean = redactString(printable).trim();
   return clean === '' ? null : clean.slice(0, max);
 }
 
@@ -89,7 +93,7 @@ export class Actor implements ActorRef {
   static from(ref: ActorRef): Actor {
     if (ref instanceof Actor) return ref;
     const origin = { ip: ref.ip, userAgent: ref.userAgent };
-    if (ref.agentId !== null) return new Actor('agent', ref.userId, ref.agentId, origin);
+    if (typeof ref.agentId === 'string') return new Actor('agent', ref.userId, ref.agentId, origin);
     if (ref.userId === Actor.SYSTEM_USER_ID) return new Actor('system', ref.userId, null, origin);
     return new Actor('user', ref.userId, null, origin);
   }

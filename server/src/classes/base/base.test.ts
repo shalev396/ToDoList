@@ -39,6 +39,10 @@ describe('Role', () => {
     assert.equal(Role.parse('editor'), Role.editor);
     for (const bad of ['admin', 'Owner', '', null, 3]) assert.equal(Role.parse(bad), null);
   });
+
+  it('a stored name that is not a role is a clear error, not a broken Role', () => {
+    assert.throws(() => Role.of('admin' as unknown as 'owner'), /^Error: Unknown role: "admin"$/);
+  });
 });
 
 describe('AuditTarget', () => {
@@ -92,8 +96,19 @@ describe('Actor', () => {
     assert.equal(Actor.from({ userId: 'u-1', agentId: null }).kind, 'user');
     assert.equal(Actor.from({ userId: 'u-1', agentId: 'k-1' }).kind, 'agent');
     assert.equal(Actor.from({ userId: 'system', agentId: null }).kind, 'system');
+    // A loose caller (JavaScript, a test) that leaves agentId out is a user, not an agent.
+    const loose = Actor.from({ userId: 'u-1' } as unknown as { userId: string; agentId: null });
+    assert.deepEqual([loose.kind, loose.agentId], ['user', null]);
     const actor = Actor.user('u-2');
     assert.equal(Actor.from(actor), actor);
+  });
+
+  it('redacts a secret-shaped user agent before the audit log can hold it', () => {
+    const token = `ghp_${'a'.repeat(36)}`;
+    const actor = Actor.user('u-1', { userAgent: `Agent/1 ${token}` });
+    const userAgent = actor.userAgent ?? '';
+    assert.ok(!userAgent.includes(token));
+    assert.match(userAgent, /^Agent\/1 \[REDACTED:/);
   });
 
   it('serializes as who acted, never where from', () => {
@@ -123,6 +138,24 @@ class Note extends WorkspaceEntity<NoteData> {
   }
 }
 
+interface DeepData {
+  id: string;
+  workspaceId: string;
+  text: string;
+  tags: string[];
+  meta: { at: { n: number } };
+}
+
+class Deep extends WorkspaceEntity<DeepData> {
+  static of(data: DeepData): Deep {
+    return new Deep(data);
+  }
+
+  get meta(): Readonly<DeepData['meta']> {
+    return this.data.meta;
+  }
+}
+
 class Other extends Entity<{ id: string }> {
   static of(id: string): Other {
     return new Other({ id });
@@ -130,6 +163,24 @@ class Other extends Entity<{ id: string }> {
 }
 
 describe('Entity and WorkspaceEntity', () => {
+  it('freeze their data at every depth and hand out deep copies', () => {
+    const data = { id: 'n-9', workspaceId: 'w-1', text: 'hi', tags: ['a'], meta: { at: { n: 1 } } };
+    const deep = Deep.of(data);
+    data.tags.push('b');
+    data.meta.at.n = 2;
+    assert.deepEqual(deep.toJSON(), {
+      id: 'n-9',
+      workspaceId: 'w-1',
+      text: 'hi',
+      tags: ['a'],
+      meta: { at: { n: 1 } },
+    });
+    assert.ok(Object.isFrozen(deep.meta) && Object.isFrozen(deep.meta.at));
+    const copy = deep.toJSON();
+    copy.meta.at.n = 3;
+    assert.equal(deep.meta.at.n, 1);
+  });
+
   it('keep their data private and frozen, and copy it out', () => {
     const data = { id: 'n-1', workspaceId: 'w-1', text: 'hi' };
     const note = Note.of(data);

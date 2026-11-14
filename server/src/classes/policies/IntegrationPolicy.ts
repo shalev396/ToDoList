@@ -4,17 +4,16 @@ import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { Caller } from '../base/Caller.js';
 import { BasePolicy } from './Policy.js';
 
-/** What the policy reads of an integration; `shared`: a connector on some block (share-on-attach). */
-export type IntegrationFacts = Pick<IntegrationData, 'workspaceId' | 'ownerUserId'> & {
-  readonly shared?: boolean;
-};
+/** What the policy reads of an integration. */
+export type IntegrationFacts = Pick<IntegrationData, 'workspaceId' | 'ownerUserId'>;
 
 /**
  * Integration ownership (PERMISSIONS-V2): an integration belongs to one member inside one
- * workspace. Only its owner manages it (the config, a test, a sync, an edit, a disconnect, its
- * sync runs, stop sharing), whatever their role (rulings 1, 2, 10, 23c). Once shared (attached to
- * a block) the other members read its items, never its details. For anyone else it does not
- * exist: every refusal is 404, never 403, workspace owners included.
+ * workspace. Only its owner reads its details (status, config, card, sync runs) or manages it (a
+ * test, a sync, an edit, a disconnect, stop sharing), whatever their role (rulings 1, 2, 10,
+ * 23c). For anyone else it does not exist: every refusal is 404, never 403, workspace owners
+ * included. Once shared (attached to a block) the other members see its items: that is
+ * ItemPolicy's rule, never a read of the integration itself.
  */
 export class IntegrationPolicy extends BasePolicy<IntegrationFacts> {
   static readonly instance = new IntegrationPolicy();
@@ -29,10 +28,7 @@ export class IntegrationPolicy extends BasePolicy<IntegrationFacts> {
   }
 
   canRead(caller: Caller, integration: IntegrationFacts): boolean {
-    return (
-      integration.workspaceId === caller.workspaceId &&
-      (IntegrationPolicy.isOwn(integration, caller.userId) || integration.shared === true)
-    );
+    return this.canManage(caller, integration);
   }
 
   canEdit(caller: Caller, integration: IntegrationFacts): boolean {

@@ -54,6 +54,12 @@ describe('the error hierarchy', () => {
     );
   });
 
+  it('the API’s mirrored-item 409 and the repository’s signal have distinct names', async () => {
+    const { MirroredItemError: Stored } = await import('../models/errors.js');
+    assert.equal(new MirroredItemError('jira', 'u').name, 'MirroredItemError');
+    assert.equal(new Stored('it-1', 'jira', 'u').name, 'StoredMirroredItemError');
+  });
+
   it('the 409 domain errors are not version conflicts (ConflictError answers currentVersion)', () => {
     assert.equal(new ReadOnlyIntegrationError('i-1') instanceof ConflictError, false);
     assert.equal(new MirroredItemError('jira', 'u') instanceof ConflictError, false);

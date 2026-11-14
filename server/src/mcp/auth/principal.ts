@@ -58,6 +58,10 @@ export async function resolvePrincipal(
 /**
  * The caller a tool call acts as: the one the request authenticated, or (a context built without
  * one, as tests build them) the principal's agent key in its workspace.
+ *
+ * Identity and origin only (who acts, for services and the audit log). It is not narrowed to a
+ * read tool's topics (`ctx.workspace.onlyTopics`, itemViews.ts): a check that should honour that
+ * narrowing builds its caller from the narrowed workspace context.
  */
 export function toolCaller(ctx: ToolContext): Caller {
   return (

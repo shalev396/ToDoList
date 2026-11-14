@@ -16,7 +16,10 @@ export class Role {
     Object.freeze(this);
   }
 
-  /** The role by name (a Role is returned as it is). */
+  /**
+   * The role by name (a Role is returned as it is). A name that is not a role (a stored value
+   * outside ROLES) is a clear error, never a Role that breaks later.
+   */
   static of(role: Role | RoleName): Role {
     if (role instanceof Role) return role;
     switch (role) {
@@ -26,6 +29,8 @@ export class Role {
         return Role.editor;
       case 'viewer':
         return Role.viewer;
+      default:
+        throw new Error(`Unknown role: ${JSON.stringify(role)}`);
     }
   }
 
