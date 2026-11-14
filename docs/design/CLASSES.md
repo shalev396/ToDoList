@@ -23,12 +23,23 @@ It is updated every phase.
 | 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                          | planned   |
 | 7     | The legacy list emptied, dead services deleted                                                                                                                                                               | planned   |
 
-**How the boundary is held.** `server/legacy-db-importers.mjs` holds the places allowed to reach the
-database (classes, models, the connection, migrations, tests) and `LEGACY_DB_IMPORTERS`, the modules
-that still do until their phase moves them (36 after phase 0, down from 42). ESLint
-(`@typescript-eslint/no-restricted-imports`, type imports allowed) and
-`src/classes/classBoundary.test.ts` (which also sees dynamic imports and names) read that one list;
-the test fails on an entry that no longer needs to be there, so the list only shrinks.
+**How the boundary is held.** `server/legacy-db-importers.mjs` names:
+
+- the database modules (the models' barrel, `models/mongoose/**`, `models/sequelize/**`, the
+  connection `config/database.ts` and its providers `config/providers/**`) and packages
+  (`mongoose`, `sequelize`, `pg`, `mongodb`);
+- the places allowed to load them (classes, models, the connection, migrations, tests);
+- the entry points and jobs that may open the connection and nothing else (`lambda.ts`,
+  `local.ts`, `stageMaintenance.ts`);
+- the test helpers production code never loads (`src/testing/**`, `__tests__/**`);
+- `LEGACY_DB_IMPORTERS`, the modules that still reach the database until their phase moves them
+  (35 after phase 0, down from 42).
+
+ESLint (`@typescript-eslint/no-restricted-imports`, type imports allowed) and
+`src/classes/classBoundary.test.ts` (which also resolves paths, sees dynamic imports and names
+`get…Repository` getters) read that one module. The test also holds that only `AuditLog` names the
+audit log's repository, and fails on a legacy entry that no longer needs to be there, so the list
+only shrinks.
 
 ## 1. Base layer, people and permissions
 
@@ -140,6 +151,9 @@ classDiagram
   }
   class BasePolicy~TEntity~ {
     <<abstract>>
+    +canRead(caller, entity)* boolean
+    +canEdit(caller, entity)* boolean
+    +canManage(caller, entity)* boolean
     +refusal(caller, action, entity) AppError
   }
   class WorkspacePolicy {
@@ -148,8 +162,10 @@ classDiagram
     +requireRole(role, action, verb)$ void
   }
   class IntegrationPolicy {
+    owner only, 404 for anyone else
     +instance: IntegrationPolicy$
     +isOwn(integration, userId)$ boolean
+    +refusal() NotFoundError
   }
   class DashboardPolicy {
     +instance: DashboardPolicy$
@@ -167,6 +183,7 @@ classDiagram
     +itemFilterUnabsorbed(ws) Filter
     +containerFilter(ws) Filter
     +blockScope(connectors) BlockScope
+    +refusal(caller, action, item) AppError
   }
   Policy <|.. BasePolicy
   BasePolicy <|-- WorkspacePolicy
@@ -401,6 +418,14 @@ classDiagram
     <<interface>>
     +apiKey: ApiKeyAuth
   }
+  class ItemCopy {
+    <<value object>>
+    +integrationId
+    +status
+    +key
+    +url
+  }
+  TaskProvider ..> ItemCopy : createTask
   class TaskProvider {
     <<interface>>
     +taskKinds
@@ -509,6 +534,7 @@ classDiagram
   class MoodleIntegration:::planned
   class IntegrationRegistry:::planned
   class OAuthFlow:::planned
+  class ItemCopy:::planned
 ```
 
 The write gate is the `protected` `withWriteSession`: only provider subclasses reach a writer, and
@@ -635,6 +661,10 @@ classDiagram
   }
   Calendar *-- SyncCursor
   Calendar *-- PushPlan
+  class AttributeValues {
+    <<value object>>
+  }
+  Item *-- AttributeValues
   class Overlay {
     <<value object>>
   }
@@ -682,6 +712,7 @@ classDiagram
   class TimeRange:::planned
   class DueDate:::planned
   class Copies:::planned
+  class AttributeValues:::planned
 ```
 
 `Todo.copyTo` is polymorphic: `target.createTask()` for any `TaskProvider`, `target.insertEvent()`
@@ -1048,3 +1079,15 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 | `assertRole` (`services/integrations.ts`) | **removed**: `caller.require(minRole)`                                                               |
 | `assertOwner` (`services/workspaces.ts`)  | `caller.authorize(WorkspacePolicy.instance, 'manage', …)`                                            |
 | the 8 audit helpers and inline appends    | **removed**: `AuditLog.record` is the only writer                                                    |
+
+Every audited request records its address and user agent: controllers pass `req.caller.actor`
+(or, before a workspace exists and on the OAuth callbacks, the request's origin) and MCP tools pass
+their caller's actor. Jobs and the sync write as the system, without an origin.
+
+Rules that still live in a service until their phase moves them into a class:
+
+| Rule                                                        | Where                                                                           | Moves with              |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------- |
+| A private saved view is its owner's alone                   | `services/views.ts` (`visibleTo`), `services/workspaceQuery.ts` (the view path) | `View` (phase 6)        |
+| Only your own local to-do is copied to a provider           | `services/providerCreate/service.ts` (`loadTodo`)                               | `Todo.copyTo` (phase 4) |
+| Agent-key visibility and revoking (owner or the key's user) | `services/agentKeys.ts`, through `WorkspacePolicy`                              | `AgentKey` (phase 6)    |
