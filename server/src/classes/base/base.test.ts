@@ -93,6 +93,8 @@ describe('Actor', () => {
       ip: '::1',
       userAgent: 'curl/8',
     });
+    // A hand-built request (a test's stand-in) without headers has no origin, and no crash.
+    assert.deepEqual(Actor.originOf({}), { ip: undefined, userAgent: undefined });
     assert.equal(Actor.from({ userId: 'u-1', agentId: null }).kind, 'user');
     assert.equal(Actor.from({ userId: 'u-1', agentId: 'k-1' }).kind, 'agent');
     assert.equal(Actor.from({ userId: 'system', agentId: null }).kind, 'system');

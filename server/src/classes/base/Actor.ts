@@ -24,10 +24,13 @@ export interface ActorRef {
   readonly userAgent?: string | null;
 }
 
-/** What `Actor.originOf` reads of a request (an Express request is one). */
+/**
+ * What `Actor.originOf` reads of a request (an Express request is one). Both parts are optional:
+ * a request built by hand (a test's stand-in) may carry neither, and then there is no origin.
+ */
 export interface RequestOrigin {
   readonly ip?: string | undefined;
-  readonly headers: { readonly 'user-agent'?: string | undefined };
+  readonly headers?: { readonly 'user-agent'?: string | undefined } | undefined;
 }
 
 /**
@@ -100,7 +103,7 @@ export class Actor implements ActorRef {
 
   /** The address and user agent of a request. */
   static originOf(request: RequestOrigin): ActorOrigin {
-    return { ip: request.ip, userAgent: request.headers['user-agent'] };
+    return { ip: request.ip, userAgent: request.headers?.['user-agent'] };
   }
 
   get kind(): ActorKind {
