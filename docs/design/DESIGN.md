@@ -18,7 +18,8 @@ Status: v1, 2026-11-11. Owner: the build. Covers the landing page, auth, onboard
 
 The **24-hour ring**. Today's events sit around a clock face in their source colours, and an ink needle marks _now_.
 
-- It is the logo mark, the landing hero (live and ticking), and the dashboard's clock block.
+- It is the landing hero (live and ticking) and the dashboard's clock block.
+- The logo, the **square dial**, is the same clock drawn as a to-do box (see "Logo").
 - Everything else stays quiet so this one element is what people remember.
 
 ## Colour
@@ -52,7 +53,7 @@ Everything else in colour is **data**:
 
 - **Hairlines** stay a low-alpha overlay of the ink. 14% matches the contrast of the palette's solid border (`#DDD5C4` on the light page, 1.33:1; `#3A3326` on the dark page, 1.48:1).
 - **Not in the palette sheet, set to match it:** `--sidebar-accent` (`#EBE5DA` / `#27221A`), the dialog scrim `--overlay` (`#16130E`, at 40%) and the overlay shadow (see "Depth").
-- **Browser chrome:** `theme-color` (index.html, ThemeProvider), the manifest and the Home Screen icons use the page plane: `#F7F4EE` light, `#16130E` dark. The logo tile is drawn in each theme's ink.
+- **Browser chrome:** `theme-color` (index.html, ThemeProvider), the manifest and the Home Screen icons use the page plane: `#F7F4EE` light, `#16130E` dark. The Home Screen icons draw the logo's dark variant on the dark plane; the favicons are the logo filled with each theme's plane (see "Logo").
 
 **Contrast**, measured on these tokens (WCAG 2.x; text needs 4.5:1, focus and other non-text marks 3:1):
 
@@ -112,6 +113,64 @@ Rules:
 | warning            | `#fab219` |
 | serious            | `#ec835a` |
 | critical (overdue) | `#d03b3b` |
+
+## Logo
+
+**The square dial:** the to-do box drawn as a clock face.
+
+- The rounded square is the checkbox.
+- The saffron sweep, from 12 o'clock to the hand, is the part of the day already marked with the highlighter.
+- The hand is now. It points into the corner at half past four.
+
+It says both halves of the name at once, a to-do box and a clock. The 24-hour ring stays the hero and the clock block. The alternates (a ring dial and a highlighter tick) and every exploration round are in `.superpowers/sdd/2026-11-11-todolist-dashboard/logo/` (local only).
+
+**Construction** (24-unit box, the rim's outer edge is the box edge):
+
+- Corner radius 7.
+- Rim 3.4 wide, stroked on its centreline.
+- Hand 3 wide with round caps, 7 long, from the centre at 135°.
+- Sweep from 0° to 135°. It ends under the rim, so it needs no clip path.
+
+`client/src/data/logo.ts` is the only source. `<LogoMark>` and `<Logo>` (`components/ui/Logo.tsx`) draw from it. `npm run generate:icons` writes everything else from it:
+
+- the favicons;
+- `public/brand/` (the mark and the lockup, both variants);
+- the PNG icons and the social image.
+
+`data/logo.test.ts` fails when the colours drift from the theme tokens or the shipped SVGs are stale.
+
+**Two variants**, one per background:
+
+| Variant                   | Rim, hand, wordmark              | Sweep                           | Plane (filled favicon, icons) |
+| ------------------------- | -------------------------------- | ------------------------------- | ----------------------------- |
+| Light (light backgrounds) | ink `#1F1A12` (`--foreground`)   | saffron `#F2C14E` (`--accent`)  | `#F7F4EE`                     |
+| Dark (dark backgrounds)   | paper `#F3EDE0` (`--foreground`) | saffron `#F0B53C` (`--primary`) | `#16130E`                     |
+
+**Contrast:**
+
+- **Rim, hand and wordmark** (the parts that carry the shape) clear AA text contrast: 15.75 / 17.02 on the light page and card, 15.88 / 14.84 on the dark ones.
+- **The light hand** where it crosses the sweep: 10.30.
+- **The sweep** is a fill inside the rim, not a boundary: 1.53 on the light page, 10.04 on the dark one.
+
+**Light and dark in use:**
+
+- **In the app,** `<Logo>` and `<LogoMark>` are inline SVG. Both variants' colours are on the element, and `dark:` classes pick one under `.dark`, so the swap is pure CSS: no flash and no image request.
+- **The favicons** follow the app's theme, not the browser's: `data/favicon.ts` is swapped by ThemeProvider. Each one is filled with its own page plane, so it still reads when the tab strip is the opposite colour (the paper plane is 10.99:1 on Chrome's dark tab, the dark plane 18.52:1 on white).
+- **Elsewhere,** use the light variant on the light page and cards and the dark variant on the dark ones.
+- **Don'ts:** never put the mark on saffron or ochre fills, where the sweep disappears. Never recolour the sweep. Never set the mark in the brand ochre.
+- **Email** renders on light backgrounds, so it would use `public/brand/logo-light.svg`. No email embeds the logo today.
+
+**Lockup:**
+
+- The mark is 1.375em, then a 0.4em gap, then "TodoList" in IBM Plex Sans 600 at -0.02em. The capitals are centred on the mark.
+- `<Logo>` sets this in live text; `public/brand/logo-*.svg` carry the same wordmark as outlines (`scripts/wordmark.ts`).
+- The wordmark is always Latin and left to right (`dir="ltr"`, `translate="no"`), including in the Hebrew UI. There the lockup sits at the inline start but reads mark first.
+
+**Clear space and size:**
+
+- **Clear space:** a quarter of the mark's height on every side, with nothing inside it.
+- **Smallest sizes:** 16 px as a favicon (the filled version), 20 px for the mark in the interface, and a 16 px mark in the lockup (an 11.6 px wordmark). The navigation uses a 22 px mark with a 16 px wordmark; the auth pages show the mark alone at 40 px.
+- **Workspace marks** (`WorkspaceMark`, the workspace switcher) keep the earlier ring tile. They are per-workspace avatars, not the logo.
 
 ## Type
 
