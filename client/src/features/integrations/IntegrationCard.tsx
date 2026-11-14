@@ -31,14 +31,16 @@ import type {
 } from '@api-types/integrations';
 import {
   hasResourcePicker,
+  hasTokenFallback,
   REVOKE_PAGES,
   revokesOnDisconnect,
   isOAuthSignIn,
   type OAuthMode,
 } from './oauthSetup';
-import { PROVIDER_REGISTRY } from './providers';
+import { isComingSoon, PROVIDER_REGISTRY } from './providers';
 import { daysUntil, needsRenewalHint } from './status';
 import { SyncStatus } from './SyncStatus';
+import { TokenFallback } from './TokenFallback';
 
 interface IntegrationCardProps {
   workspaceId: string;
@@ -52,29 +54,23 @@ interface IntegrationCardProps {
   canConnect: boolean;
   timeZone: string;
   now: Date;
-  /** Google Calendar: connects with Google (OAuth); the other providers open their form. */
+  /** "Connect with <provider>": the OAuth sign-in, for every provider that is open. */
   onConnect: () => void;
-  /** GitHub, Jira, ClickUp, Linear: opens the token form ("Use a token instead"). */
+  /** GitHub, Jira, ClickUp, Linear: opens the token form ("Use an API token instead"). */
   onTokenConnect?: (() => void) | undefined;
   onReplace: (integration: IntegrationStatusView) => void;
   /** A Google Calendar connected with Google: its calendar picker. */
   onCalendars?: ((integration: IntegrationStatusView) => void) | undefined;
   /** A connection made with OAuth: sign in again (same account). */
   onReconnect?: ((integration: IntegrationStatusView) => void) | undefined;
-  /**
-   * GitHub, Jira, ClickUp and Linear: what the server can do about signing in (the owner's view),
-   * and the actions it leads to. Absent for the other providers.
-   */
-  signIn?:
-    | {
-        mode: OAuthMode;
-        onSetup: () => void;
-        /** Jira sites or ClickUp workspaces of a connected grant. */
-        onResources: (integration: IntegrationStatusView) => void;
-        /** GitHub: where the user installs the app on more repositories or organizations. */
-        installUrl: string | null;
-      }
-    | undefined;
+  /** What this stage can do about signing in, and the actions it leads to. */
+  signIn: {
+    mode: OAuthMode;
+    /** Jira sites or ClickUp workspaces of a connected grant. */
+    onResources: (integration: IntegrationStatusView) => void;
+    /** GitHub: where the user installs the app on more repositories or organizations. */
+    installUrl: string | null;
+  };
 }
 
 /**
@@ -172,11 +168,13 @@ export function IntegrationCard({
   const renew =
     integration !== undefined && needsRenewalHint(integration.expiresAt, now) && days !== null;
   const status = integration?.status;
+  const comingSoon = isComingSoon(provider);
 
   return (
     <article
       data-integration-card={provider}
       data-status={status ?? 'none'}
+      data-coming-soon={comingSoon ? 'true' : undefined}
       aria-label={name}
       className="flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4"
     >
@@ -197,28 +195,37 @@ export function IntegrationCard({
             </p>
           )}
         </div>
-        <p
-          data-status-text
-          className={
-            status === 'connected'
-              ? 'flex shrink-0 items-center gap-1.5 text-[13px]'
-              : status === undefined
-                ? 'shrink-0 text-[13px] text-muted-foreground'
-                : 'flex shrink-0 items-center gap-1.5 text-[13px] text-destructive'
-          }
-        >
-          {status === undefined ? null : (
-            <span
-              aria-hidden="true"
-              className={
-                status === 'connected'
-                  ? 'size-2 rounded-full bg-success'
-                  : 'size-2 rounded-full bg-destructive'
-              }
-            />
-          )}
-          {t(status === undefined ? 'connect.status.none' : `connect.status.${status}`)}
-        </p>
+        {comingSoon ? (
+          <p
+            data-coming-soon-badge
+            className="shrink-0 rounded-full border px-2 py-0.5 text-[12px] font-medium text-muted-foreground"
+          >
+            {t('connect.signin.comingSoon')}
+          </p>
+        ) : (
+          <p
+            data-status-text
+            className={
+              status === 'connected'
+                ? 'flex shrink-0 items-center gap-1.5 text-[13px]'
+                : status === undefined
+                  ? 'shrink-0 text-[13px] text-muted-foreground'
+                  : 'flex shrink-0 items-center gap-1.5 text-[13px] text-destructive'
+            }
+          >
+            {status === undefined ? null : (
+              <span
+                aria-hidden="true"
+                className={
+                  status === 'connected'
+                    ? 'size-2 rounded-full bg-success'
+                    : 'size-2 rounded-full bg-destructive'
+                }
+              />
+            )}
+            {t(status === undefined ? 'connect.status.none' : `connect.status.${status}`)}
+          </p>
+        )}
       </header>
 
       {integration === undefined ? (
@@ -285,64 +292,31 @@ export function IntegrationCard({
 
       <footer className="mt-auto flex flex-wrap items-center gap-2">
         {integration === undefined ? (
-          canConnect ? (
-            signIn !== undefined && signIn.mode !== 'token' ? (
-              <>
-                {signIn.mode === 'connect' ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="max-md:h-11"
-                    data-oauth-connect={provider}
-                    onClick={onConnect}
-                  >
-                    {t('connect.signin.connect', { name })}
-                  </Button>
-                ) : signIn.mode === 'setup' ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="max-md:h-11"
-                    data-oauth-setup={provider}
-                    onClick={signIn.onSetup}
-                  >
-                    {t('connect.signin.setup', { name })}
-                  </Button>
-                ) : null}
-                <Button
-                  type="button"
-                  variant={signIn.mode === 'unavailable' ? 'outline' : 'ghost'}
-                  size="sm"
-                  className="max-md:h-11"
-                  data-use-token={provider}
-                  onClick={onTokenConnect}
-                >
-                  {t('connect.signin.useToken')}
-                </Button>
-                {signIn.mode === 'connect' ? (
-                  <p className="basis-full text-[13px] text-muted-foreground" data-oauth-consent>
-                    {t(`connect.signin.consent.${provider}`)}
-                  </p>
-                ) : signIn.mode === 'unavailable' ? (
-                  <p
-                    className="basis-full text-[13px] text-muted-foreground"
-                    data-oauth-unavailable
-                  >
-                    {t('connect.signin.unavailable', { name })}
-                  </p>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <Button type="button" size="sm" className="max-md:h-11" onClick={onConnect}>
-                  {t(
-                    provider === 'google_calendar'
-                      ? 'connect.oauth.connect'
-                      : 'connect.card.connect',
-                  )}
-                </Button>
-              </>
-            )
+          canConnect && !comingSoon ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                className="max-md:h-11"
+                data-oauth-connect={provider}
+                disabled={signIn.mode !== 'connect'}
+                onClick={onConnect}
+              >
+                {t('connect.signin.connect', { name })}
+              </Button>
+              {signIn.mode === 'connect' ? (
+                <p className="basis-full text-[13px] text-muted-foreground" data-oauth-consent>
+                  {t(`connect.signin.consent.${provider}`)}
+                </p>
+              ) : signIn.mode === 'unavailable' ? (
+                <p className="basis-full text-[13px] text-muted-foreground" data-oauth-unavailable>
+                  {t('connect.signin.unavailable', { name })}
+                </p>
+              ) : null}
+              {hasTokenFallback(provider) && onTokenConnect !== undefined ? (
+                <TokenFallback provider={provider} name={name} onOpen={onTokenConnect} />
+              ) : null}
+            </>
           ) : null
         ) : (
           <>
@@ -381,7 +355,7 @@ export function IntegrationCard({
                     {t('connect.oauth.calendars')}
                   </Button>
                 )}
-                {signIn === undefined || !hasResourcePicker(provider) ? null : (
+                {!hasResourcePicker(provider) ? null : (
                   <Button
                     type="button"
                     variant="outline"
@@ -395,7 +369,7 @@ export function IntegrationCard({
                     {t(`connect.resources.${provider}.button`)}
                   </Button>
                 )}
-                {signIn?.installUrl === undefined || signIn.installUrl === null ? null : (
+                {signIn.installUrl === null ? null : (
                   <a
                     href={signIn.installUrl}
                     target="_blank"
@@ -421,7 +395,7 @@ export function IntegrationCard({
                   </Button>
                 )}
               </>
-            ) : (
+            ) : provider === 'google_calendar' ? null : (
               <Button
                 type="button"
                 variant="ghost"
@@ -447,15 +421,6 @@ export function IntegrationCard({
             </Button>
           </>
         )}
-        <a
-          href={spec.docsUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="ms-auto inline-flex min-h-6 items-center gap-1 text-[13px] text-muted-foreground underline underline-offset-2 hover:text-foreground max-md:min-h-11"
-        >
-          {t('connect.card.docs')}
-          <ExternalLink aria-hidden="true" className="size-3.5" />
-        </a>
       </footer>
 
       <AlertDialog open={confirmingStop} onOpenChange={setConfirmingStop}>

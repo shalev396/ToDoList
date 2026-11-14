@@ -58,7 +58,7 @@ export const app = {
     title: 'חיבורים',
     emptyTitle: 'החיבורים יגיעו לכאן',
     emptyBody:
-      'מכאן תחברו את Moodle,\u200F Jira,\u200F ClickUp,\u200F Linear,\u200F GitHub, יומן Google ו-\u2060Google Drive. רק בעלים יכולים לחבר מקורות.',
+      'מכאן תחברו את Jira,\u200F ClickUp,\u200F Linear, יומן Google ו-\u2060GitHub. רק בעלים יכולים לחבר מקורות.',
   },
   templates: {
     title: 'תבניות',

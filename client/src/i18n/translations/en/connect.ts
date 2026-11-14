@@ -23,7 +23,6 @@ export const connect = {
     jira: 'Issues and due dates from your Jira site.',
     moodle: 'Courses, assignments and deadlines from your Moodle site.',
     google_calendar: 'Events from your calendars, and your tasks sent back to them.',
-    google_drive: 'Course and project files from a Drive folder.',
     clickup: 'Tasks and due dates from ClickUp.',
     linear: 'Issues and cycles from Linear.',
   },
@@ -94,15 +93,12 @@ export const connect = {
     baseUrl: 'Site address',
     jql: 'JQL filter',
     siteUrl: 'Site address',
-    rootFolderId: 'Drive folder ID',
     owner: 'Owner',
     ownerType: 'Owner type',
     email: 'Email',
     token: 'Token',
     projectsToken: 'Projects token',
     apiKey: 'API key',
-    clientEmail: 'Service account email',
-    privateKey: 'Private key',
   },
   options: { user: 'A user', org: 'An organization' },
   hints: {
@@ -153,67 +149,25 @@ export const connect = {
   },
   signin: {
     connect: 'Connect with {{name}}',
-    setup: 'Set up {{name}} sign-in',
-    useToken: 'Use a token instead',
-    unavailable: 'Signing in with {{name}} isn’t available yet. You can connect with a token.',
+    checking: 'Checking sign-in…',
+    comingSoon: 'Coming soon',
+    useToken: 'Use an API token instead',
+    tokenOpen: 'Enter an API token',
+    tokenNote: 'Only if you can’t sign in: paste a token you made at {{name}}.',
+    unavailable: 'Signing in with {{name}} isn’t available yet.',
     consent: {
       github:
         'You’ll be asked to allow read access to issues, pull requests and Projects on the repositories you choose.',
       jira: 'You’ll be asked to allow read access to your Jira issues, projects and profile.',
       clickup: 'You’ll be asked to choose the workspaces TodoList may read.',
       linear: 'You’ll be asked to allow read access to your Linear issues and cycles.',
+      google_calendar: 'You’ll be asked to allow access to your Google calendars and their events.',
     },
     githubInstall: 'Choose repositories and organizations',
     revoked: 'TodoList also revokes its access at {{name}}.',
     revokeYourself:
       '{{name}} has no way for us to revoke access for you. To end it there as well, remove TodoList yourself:',
     revokePage: 'open {{name}}’s connected apps',
-  },
-  guide: {
-    title: 'Set up {{name}} sign-in',
-    description:
-      'This is a one-time step for whoever runs this server. Register TodoList as an app at {{name}}, then store its client id and secret.',
-    openConsole: 'Open the {{name}} developer console and create an app',
-    callback: 'Callback URL (copy it exactly)',
-    scopes: 'Scopes and permissions to request',
-    writeScopes:
-      'Asked for only when someone creates a to-do there, with a consent step: {{scopes}}.',
-    noScopes: {
-      github: 'None. A GitHub App has permissions instead: set them under Permissions, read-only.',
-      clickup: 'None. ClickUp apps get access to the workspaces the user picks.',
-      jira: 'None.',
-      linear: 'None.',
-    },
-    secret: 'Where the client id and secret go',
-    secretDeployed: 'In AWS Secrets Manager, in the stack’s region, as a secret named:',
-    secretJson: 'Its value is JSON with exactly these keys:',
-    githubSlug:
-      'Optionally add "appSlug" (the app’s name in its GitHub URL) so the install link opens your app.',
-    afterSecret: 'Within an hour of saving it (or after a restart), this card shows “Connect”.',
-    steps: {
-      github: {
-        s1: 'Choose Settings, Developer settings, GitHub Apps, New GitHub App.',
-        s2: 'Paste the callback URL below, tick “Request user authorization (OAuth) during installation”, and keep “Expire user authorization tokens” on.',
-        s3: 'Turn the webhook off. Under Permissions set Repository: Metadata and Pull requests to read-only, Issues to Read & write (used only when you create a to-do in GitHub), and Organization: Projects to read-only.',
-        s4: 'Let it be installed on any account, then copy the client id and generate a client secret.',
-      },
-      jira: {
-        s1: 'Choose Create, OAuth 2.0 integration.',
-        s2: 'Under Permissions add the Jira API and its scopes read:jira-work and read:jira-user, plus User identity API (read:me).',
-        s3: 'Under Authorization paste the callback URL below.',
-        s4: 'Under Distribution turn sharing on, so people outside your Atlassian organization can sign in. Copy the client id and secret from Settings.',
-      },
-      clickup: {
-        s1: 'Choose Create new app (ClickUp API).',
-        s2: 'Name it and paste the callback URL below as the redirect URL.',
-        s3: 'Copy the client id and client secret.',
-      },
-      linear: {
-        s1: 'Choose New OAuth application.',
-        s2: 'Name it, add a developer URL, and paste the callback URL below.',
-        s3: 'Copy the client id and client secret. A workspace admin may need to approve the app.',
-      },
-    },
   },
   resources: {
     save: 'Save',
@@ -231,7 +185,6 @@ export const connect = {
     },
   },
   oauth: {
-    connect: 'Connect Google Calendar',
     another: 'Connect another account',
     anotherTitle: 'Another Google account',
     anotherBody: 'Each Google account you connect syncs on its own.',

@@ -23,7 +23,6 @@ PROVIDER_LABELS = {
     "clickup": "ClickUp",
     "linear": "Linear",
     "moodle": "Moodle",
-    "google_drive": "Google Drive",
     "google_calendar": "Google Calendar",
     "github": "GitHub",
 }

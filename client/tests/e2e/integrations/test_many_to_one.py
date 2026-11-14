@@ -13,15 +13,20 @@ from tests.viewports import DESKTOP_VIEWPORT
 SITES = ["alpha-fake.atlassian.net", "beta-fake.atlassian.net"]
 
 
+def _open_token_form(scope) -> None:
+    scope.locator("[data-token-fallback] summary").click()
+    scope.locator("[data-use-token]").click()
+
+
 def _cards(page: Page):
     return page.locator("[data-integration-card=jira]")
 
 
 def _connect_jira(page: Page, site: str, first: bool) -> None:
     if first:
-        _cards(page).first.get_by_role("button", name="Use a token instead").click()
+        _open_token_form(_cards(page).first)
     else:
-        page.locator("[data-connect-another=jira]").get_by_role("button", name="Connect another").click()
+        _open_token_form(page.locator("[data-connect-another=jira]"))
     dialog = page.get_by_role("dialog")
     dialog.get_by_label("Site address").fill(f"https://{site}")
     dialog.get_by_label("Email").fill("fake@example.test")
@@ -87,7 +92,7 @@ def test_the_same_jira_site_twice_is_refused_with_a_clear_message(
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, "/en/integrations")
     _connect_jira(page, SITES[0], first=True)
-    page.locator("[data-connect-another=jira]").get_by_role("button", name="Connect another").click()
+    _open_token_form(page.locator("[data-connect-another=jira]"))
     dialog = page.get_by_role("dialog")
     dialog.get_by_label("Site address").fill(f"https://{SITES[0]}")
     dialog.get_by_label("Email").fill("fake@example.test")

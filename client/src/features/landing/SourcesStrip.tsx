@@ -1,16 +1,16 @@
 import { useTranslation } from 'react-i18next';
 import { sourceNameKey } from '@/components/items/sources';
+import { isComingSoon } from '@/features/integrations/providers';
 import { Container } from './layout';
 import { ProviderIcon, type IconName } from './ProviderIcon';
 
 const STRIP: readonly Exclude<IconName, 'mcp'>[] = [
-  'moodle',
-  'google_calendar',
   'jira',
   'clickup',
   'linear',
+  'google_calendar',
   'github',
-  'google_drive',
+  'moodle',
 ];
 
 /** The tools TodoList reads from, named with their marks in plain ink. */
@@ -33,7 +33,12 @@ export function SourcesStrip() {
               className="flex items-center gap-2.5 text-[15px] font-medium text-foreground"
             >
               <ProviderIcon name={source} className="size-[18px] text-muted-foreground" />
-              {t(sourceNameKey(source))}
+              <span>{t(sourceNameKey(source))}</span>
+              {isComingSoon(source) ? (
+                <span className="rounded-full border px-2 py-0.5 text-[12px] font-normal text-muted-foreground">
+                  {t('connect.signin.comingSoon')}
+                </span>
+              ) : null}
             </li>
           ))}
         </ul>

@@ -7,7 +7,7 @@ import { app } from './app';
 export const DEFAULT_METADATA = {
   title: 'TodoList',
   description:
-    'TodoList puts Moodle, Jira, ClickUp, Linear, GitHub, Google Calendar and Google Drive on one dashboard: what’s on now, what’s next and every deadline this week. Free for students who also work.',
+    'TodoList puts Jira, ClickUp, Linear, Google Calendar and GitHub on one dashboard: what’s on now, what’s next and every deadline this week. Free for students who also work.',
   keywords:
     'todo list, students, deadlines, calendar, moodle, jira, clickup, linear, github, dashboard',
   author: 'TodoList',

@@ -13,7 +13,7 @@ export const faq = {
   sources: {
     question: 'אילו כלים אפשר לחבר?',
     answer:
-      'את Moodle,\u200F Jira,\u200F ClickUp,\u200F Linear,\u200F GitHub, יומן Google ו-\u2060Google Drive. אפשר גם להוסיף משימות משלכם.',
+      'את Jira,\u200F ClickUp,\u200F Linear, יומן Google ו-\u2060GitHub, ו-Moodle בקרוב. אפשר גם להוסיף משימות משלכם.',
   },
   sharing: {
     question: 'חברים ללימודים יראו את המשימות שלי מהעבודה?',

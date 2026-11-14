@@ -51,7 +51,6 @@
   --color-source-jira: var(--chart-1);
   --color-source-moodle: var(--chart-2);
   --color-source-google-calendar: var(--chart-3);
-  --color-source-google-drive: var(--chart-4);
   --color-source-clickup: var(--chart-5);
   --color-source-github: var(--chart-6);
   --color-source-linear: var(--chart-7);
@@ -550,9 +549,6 @@
 }
 .todolist-calendar .fc .fc-src-google_calendar {
   --src: var(--color-source-google-calendar);
-}
-.todolist-calendar .fc .fc-src-google_drive {
-  --src: var(--color-source-google-drive);
 }
 .todolist-calendar .fc .fc-src-clickup {
   --src: var(--color-source-clickup);

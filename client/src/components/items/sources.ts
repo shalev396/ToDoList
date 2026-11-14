@@ -9,7 +9,6 @@ export const SOURCE_SLOT_ORDER: readonly Provider[] = [
   'jira',
   'moodle',
   'google_calendar',
-  'google_drive',
   'clickup',
   'github',
   'linear',
@@ -46,12 +45,6 @@ export const SOURCE_STYLES: Record<Provider, SourceStyle> = {
     fill: 'fill-source-google-calendar',
     wash: 'bg-source-google-calendar/15 dark:bg-source-google-calendar/25',
     edge: 'border-source-google-calendar',
-  },
-  google_drive: {
-    bg: 'bg-source-google-drive',
-    fill: 'fill-source-google-drive',
-    wash: 'bg-source-google-drive/15 dark:bg-source-google-drive/25',
-    edge: 'border-source-google-drive',
   },
   clickup: {
     bg: 'bg-source-clickup',

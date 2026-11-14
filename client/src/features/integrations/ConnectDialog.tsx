@@ -268,7 +268,6 @@ export function ConnectDialog({ workspaceId, provider, existingId, onClose }: Co
                   label={labelOf(field.name)}
                   hint={secretHint(field.name)}
                   required={field.required}
-                  multiline={field.multiline}
                   invalid={missing.includes(field.name)}
                   disabled={busy}
                 />

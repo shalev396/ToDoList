@@ -6,7 +6,6 @@ export const sources = {
   linear: 'Linear',
   moodle: 'Moodle',
   github: 'GitHub',
-  google_drive: 'Google Drive',
   slack: 'Slack',
   notion: 'Notion',
   local: 'המשימות שלכם',

@@ -1,22 +1,14 @@
 import { lazy } from 'react';
-import {
-  CalendarClock,
-  ChartPie,
-  FolderTree,
-  Hash,
-  List,
-  SquareKanban,
-  Table2,
-} from 'lucide-react';
+import { CalendarClock, ChartPie, Hash, List, SquareKanban, Table2 } from 'lucide-react';
 import type { BlockRegistryPart } from './types';
 
 /**
- * Data blocks: list, table, deadlines, counter, chart, kanban and file tree (plan T4.6, agent
+ * Data blocks: list, table, deadlines, counter, chart and kanban (plan T4.6, agent
  * group A). Each block is its own lazy chunk.
  */
 
 export const dataBlocks: BlockRegistryPart<
-  'list' | 'table' | 'deadlines' | 'counter' | 'chart' | 'kanban' | 'fileTree'
+  'list' | 'table' | 'deadlines' | 'counter' | 'chart' | 'kanban'
 > = {
   list: {
     component: lazy(() => import('../blocks/ListBlock')),
@@ -53,11 +45,5 @@ export const dataBlocks: BlockRegistryPart<
     icon: SquareKanban,
     defaultSize: { w: 12, h: 10 },
     minSize: { w: 4, h: 6 },
-  },
-  fileTree: {
-    component: lazy(() => import('../blocks/FileTreeBlock')),
-    icon: FolderTree,
-    defaultSize: { w: 6, h: 10 },
-    minSize: { w: 3, h: 4 },
   },
 };

@@ -72,7 +72,7 @@ def test_sources_strip(page: Page, app_url: str):
     page.goto(app_url, wait_until="domcontentloaded")
     page.wait_for_load_state("networkidle")
     strip = page.locator("section", has=page.get_by_role("heading", name=re.compile("Reads from")))
-    for name in ["Moodle", "Google Calendar", "Jira", "ClickUp", "Linear", "GitHub", "Google Drive"]:
+    for name in ["Jira", "ClickUp", "Linear", "Google Calendar", "GitHub", "Moodle"]:
         expect(strip.get_by_text(name, exact=True)).to_be_visible(timeout=NORMAL_TIMEOUT)
 
 

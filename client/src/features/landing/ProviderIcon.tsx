@@ -2,7 +2,6 @@ import {
   siClickup,
   siGithub,
   siGooglecalendar,
-  siGoogledrive,
   siJira,
   siLinear,
   siModelcontextprotocol,
@@ -22,7 +21,6 @@ const ICONS = {
   clickup: siClickup,
   linear: siLinear,
   github: siGithub,
-  google_drive: siGoogledrive,
   mcp: siModelcontextprotocol,
 } as const;
 

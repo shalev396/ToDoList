@@ -56,7 +56,7 @@ const PACKED: readonly Seed[] = [
     seed(day, 'linear', [19, 30], [21, 30], 'Portfolio site', 'אתר תיק עבודות'),
   ),
   seed(5, 'github', [10, 0], [13, 0], 'Open-source fixes', 'תיקונים בקוד פתוח'),
-  seed(5, 'google_drive', [14, 0], [17, 0], 'Thesis draft', 'טיוטת עבודת גמר'),
+  seed(5, 'google_calendar', [14, 0], [17, 0], 'Thesis draft', 'טיוטת עבודת גמר'),
   seed(6, 'clickup', [10, 0], [15, 0], 'Studio shift', 'משמרת בסטודיו'),
   seed(6, 'linear', [17, 0], [20, 0], 'Portfolio site', 'אתר תיק עבודות'),
 ];

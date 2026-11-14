@@ -2,11 +2,11 @@ export const landing = {
   meta: {
     title: 'TodoList: שיעורים, עבודה והגשות על שעון אחד',
     description:
-      'TodoList מרכז את Moodle,\u200F Jira,\u200F ClickUp,\u200F Linear,\u200F GitHub, יומן Google ו-\u2060Google Drive בלוח אחד: מה קורה עכשיו, מה הבא וכל תאריך יעד השבוע. חינם למי שלומד וגם עובד.',
+      'TodoList מרכז את Jira,\u200F ClickUp,\u200F Linear, יומן Google ו-\u2060GitHub בלוח אחד: מה קורה עכשיו, מה הבא וכל תאריך יעד השבוע. חינם למי שלומד וגם עובד.',
   },
   hero: {
     title: 'שיעורים, עבודה והגשות על שעון אחד',
-    lead: 'TodoList מביא את Moodle,\u200F Jira,\u200F ClickUp,\u200F Linear,\u200F GitHub, יומן Google ו-\u2060Google Drive ללוח אחד. רואים מה קורה עכשיו, מה הבא וכל מה שצריך להגיש השבוע, בלי לפתוח שש לשוניות.',
+    lead: 'TodoList מביא את Jira,\u200F ClickUp,\u200F Linear, יומן Google ו-\u2060GitHub ללוח אחד. רואים מה קורה עכשיו, מה הבא וכל מה שצריך להגיש השבוע, בלי לפתוח חמש לשוניות.',
     cta: 'יצירת מרחב עבודה',
     login: 'התחברות',
     note: 'חינם לכולם, בלי כרטיס אשראי.',

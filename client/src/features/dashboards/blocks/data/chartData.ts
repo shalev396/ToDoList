@@ -23,7 +23,6 @@ const PROVIDERS: ReadonlySet<string> = new Set([
   'linear',
   'moodle',
   'github',
-  'google_drive',
   'local',
 ]);
 

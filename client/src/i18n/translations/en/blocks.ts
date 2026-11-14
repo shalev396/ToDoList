@@ -16,7 +16,6 @@ export const blocks = {
     clock: 'Clock',
     counter: 'Counter',
     deadlines: 'Deadlines',
-    fileTree: 'Files',
     note: 'Note',
     filter: 'Filter',
     action: 'Action',

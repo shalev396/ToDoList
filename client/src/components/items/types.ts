@@ -11,5 +11,4 @@ export type Provider =
   | 'linear'
   | 'moodle'
   | 'github'
-  | 'google_drive'
   | 'local';

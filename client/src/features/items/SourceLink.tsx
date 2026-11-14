@@ -19,7 +19,6 @@ const NAMED: ReadonlySet<string> = new Set([
   'linear',
   'moodle',
   'github',
-  'google_drive',
   'local',
   'slack',
   'notion',

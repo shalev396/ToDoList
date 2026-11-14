@@ -8,15 +8,7 @@ import { expandOccurrences, type Occurrence, type TimeRow } from '../time/occurr
 /** An event without an end is drawn this long. */
 const DEFAULT_LENGTH_MS = 30 * 60_000;
 
-type Provider =
-  | 'google_calendar'
-  | 'jira'
-  | 'clickup'
-  | 'linear'
-  | 'moodle'
-  | 'github'
-  | 'google_drive'
-  | 'local';
+type Provider = 'google_calendar' | 'jira' | 'clickup' | 'linear' | 'moodle' | 'github' | 'local';
 
 const RING_PROVIDERS: ReadonlySet<string> = new Set<Provider>([
   'google_calendar',
@@ -25,7 +17,6 @@ const RING_PROVIDERS: ReadonlySet<string> = new Set<Provider>([
   'linear',
   'moodle',
   'github',
-  'google_drive',
   'local',
 ]);
 

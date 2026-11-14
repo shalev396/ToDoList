@@ -42,6 +42,9 @@ describe('provider registry', () => {
       ],
     );
   });
+  it('asks Google Calendar for nothing: it connects with Google sign-in only', () => {
+    assert.deepEqual(credentialFields('google_calendar'), []);
+  });
   it('builds a body without empty optional fields', () => {
     const specs = credentialFields('github');
     assert.deepEqual(bodyFrom(specs, { token: ' abc ', projectsToken: '' }), { token: 'abc' });

@@ -64,7 +64,7 @@ def test_pricing_plan_lists_the_shared_limits(page: Page, app_url: str):
     expect(plan.get_by_text("no feature limits", exact=True)).to_be_visible()
     included = plan.get_by_role("list")
     for line in [
-        "All 7 integrations",
+        "All 5 integrations",
         "MCP access for AI agents",
         "Unlimited to-dos",
         "Up to 5 workspaces",
@@ -74,5 +74,5 @@ def test_pricing_plan_lists_the_shared_limits(page: Page, app_url: str):
     ]:
         expect(included.get_by_text(line, exact=True)).to_be_visible()
     expect(included).to_contain_text(
-        "Jira, ClickUp, Linear, GitHub, Google Calendar, Google Drive and Moodle"
+        "Jira, ClickUp, Linear, Google Calendar and GitHub"
     )

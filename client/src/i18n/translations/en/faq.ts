@@ -13,7 +13,7 @@ export const faq = {
   sources: {
     question: 'Which tools can I connect?',
     answer:
-      'Moodle, Jira, ClickUp, Linear, GitHub, Google Calendar and Google Drive. You can also add to-dos of your own.',
+      'Jira, ClickUp, Linear, Google Calendar and GitHub, with Moodle coming soon. You can also add to-dos of your own.',
   },
   sharing: {
     question: 'Can classmates see my work tasks?',

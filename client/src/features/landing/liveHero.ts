@@ -96,7 +96,7 @@ export const LIVE_SCRIPT: readonly LiveStep[] = [
   ),
   deadline(
     'proposal',
-    'google_drive',
+    'clickup',
     text('Project proposal draft', 'טיוטת הצעת פרויקט'),
     text('Software studio', 'סדנת תוכנה'),
     [2, 12, 0],
@@ -147,7 +147,7 @@ export const LIVE_SCRIPT: readonly LiveStep[] = [
   ),
   deadline(
     'notes',
-    'google_drive',
+    'linear',
     text('Lecture notes, week 6', 'סיכום הרצאות, שבוע 6'),
     text('Linear algebra', 'אלגברה לינארית'),
     [2, 18, 0],

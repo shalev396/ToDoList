@@ -3,14 +3,14 @@
  * and credential field of the server's types (`@api-types/integrations`) has an entry, and the
  * mapped types make a missing or extra key a compile error (the parity test checks the rest).
  */
-import type {
-  ConnectableProvider,
-  GitHubCredential,
-  IntegrationConfigs,
-  JiraCredential,
-  LinearCredential,
-  ServiceAccountCredential,
-  TokenCredential,
+import {
+  COMING_SOON_PROVIDERS,
+  type ConnectableProvider,
+  type GitHubCredential,
+  type IntegrationConfigs,
+  type JiraCredential,
+  type LinearCredential,
+  type TokenCredential,
 } from '@api-types/integrations.ts';
 
 /** A non-secret setting. `managed`: set somewhere else (the Google Calendar picker, not a form). */
@@ -24,8 +24,6 @@ export interface ConfigFieldSpec {
 export interface CredentialFieldSpec {
   secret: boolean;
   required: boolean;
-  /** A PEM key spans lines, which a one-line password input would drop. */
-  multiline?: boolean;
 }
 
 interface CredentialOf {
@@ -33,8 +31,8 @@ interface CredentialOf {
   clickup: TokenCredential;
   linear: LinearCredential;
   moodle: TokenCredential;
-  google_drive: ServiceAccountCredential;
-  google_calendar: ServiceAccountCredential;
+  /** None: Google Calendar connects with Google sign-in only (`keyof undefined` is `never`). */
+  google_calendar: undefined;
   github: GitHubCredential;
 }
 
@@ -46,8 +44,7 @@ export interface ProviderSpec<P extends ConnectableProvider> {
   credential: Record<keyof CredentialOf[P] & string, CredentialFieldSpec>;
 }
 
-const secret = (required = true, multiline?: true): CredentialFieldSpec =>
-  multiline === undefined ? { secret: true, required } : { secret: true, required, multiline };
+const secret = (required = true): CredentialFieldSpec => ({ secret: true, required });
 const plain = (required = true): CredentialFieldSpec => ({ secret: false, required });
 const text = (required: boolean): ConfigFieldSpec => ({ input: 'text', required });
 const managed: ConfigFieldSpec = { input: 'managed', required: false };
@@ -78,12 +75,6 @@ export const PROVIDER_REGISTRY: { [P in ConnectableProvider]: ProviderSpec<P> } 
     config: { siteUrl: { input: 'url', required: true } },
     credential: { token: secret() },
   },
-  google_drive: {
-    icon: 'google_drive',
-    docsUrl: 'https://cloud.google.com/iam/docs/service-accounts-create',
-    config: { rootFolderId: text(true) },
-    credential: { clientEmail: plain(), privateKey: secret(true, true) },
-  },
   google_calendar: {
     icon: 'google_calendar',
     docsUrl: 'https://developers.google.com/calendar/api/guides/overview',
@@ -94,7 +85,7 @@ export const PROVIDER_REGISTRY: { [P in ConnectableProvider]: ProviderSpec<P> } 
       horizonDays: managed,
       maxOpsPerRun: managed,
     },
-    credential: { clientEmail: plain(), privateKey: secret(true, true) },
+    credential: {},
   },
   github: {
     icon: 'github',
@@ -111,16 +102,20 @@ export const PROVIDER_REGISTRY: { [P in ConnectableProvider]: ProviderSpec<P> } 
   },
 };
 
-/** The order the cards and the connect menu list them in. */
+/** The order the cards and the connect menu list them in. Moodle is last, shown as coming soon. */
 export const PROVIDER_ORDER: readonly ConnectableProvider[] = [
-  'github',
   'jira',
-  'moodle',
-  'google_calendar',
-  'google_drive',
   'clickup',
   'linear',
+  'google_calendar',
+  'github',
+  'moodle',
 ];
+
+/** Listed but not open yet: its card shows a "Coming soon" badge and no way to connect. */
+export function isComingSoon(provider: string): boolean {
+  return (COMING_SOON_PROVIDERS as readonly string[]).includes(provider);
+}
 
 type Values = Readonly<Record<string, string | undefined>>;
 

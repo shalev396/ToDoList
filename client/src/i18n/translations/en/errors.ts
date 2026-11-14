@@ -26,6 +26,7 @@ export const errors = {
       'Use a stronger password: at least 8 characters, with upper- and lowercase letters, a number and a symbol.',
     accountAlreadyConnected:
       'That account is already connected in this workspace. Connect a different one.',
+    providerComingSoon: 'This integration is coming soon and can’t be connected yet.',
     providerWritesOff: 'Creating items in your other tools is turned off on this server.',
     createRateLimited: 'You have created a lot of items there this hour. Try again later.',
     needsDueDate: 'A calendar event needs a due date.',

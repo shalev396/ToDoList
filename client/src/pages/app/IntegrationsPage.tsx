@@ -29,10 +29,16 @@ import {
   oauthFailure,
   oauthReturnOf,
 } from '@/features/integrations/oauthReturn';
+import { TokenFallback } from '@/features/integrations/TokenFallback';
 import { OAuthResourcePicker } from '@/features/integrations/OAuthResourcePicker';
-import { OAuthSetupGuide } from '@/features/integrations/OAuthSetupGuide';
-import { hasResourcePicker, isOAuthSignIn, oauthMode } from '@/features/integrations/oauthSetup';
-import { PROVIDER_ORDER } from '@/features/integrations/providers';
+import {
+  hasOAuthSignIn,
+  hasResourcePicker,
+  hasTokenFallback,
+  isOAuthSignIn,
+  oauthMode,
+} from '@/features/integrations/oauthSetup';
+import { isComingSoon, PROVIDER_ORDER } from '@/features/integrations/providers';
 import { latestRun } from '@/features/integrations/status';
 import { EmptyIcon, EmptyState } from '@/features/shell/EmptyState';
 import { PageContainer, PageHeader } from '@/features/shell/PageHeader';
@@ -46,7 +52,6 @@ import { CONNECTABLE_PROVIDERS } from '@api-types/integrations';
 type Dialog =
   | { kind: 'connect'; provider: ConnectableProvider; existingId?: string }
   | { kind: 'calendars'; integration: IntegrationStatusView }
-  | { kind: 'guide'; provider: ConnectableProvider }
   | { kind: 'resources'; integration: IntegrationStatusView };
 
 interface CardEntry {
@@ -70,6 +75,7 @@ function useConnectLink(
   workspace: WorkspaceView,
   canConnect: boolean,
   open: (dialog: Dialog) => void,
+  signIn: (provider: ConnectableProvider) => void,
 ): string | null {
   const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
@@ -109,7 +115,13 @@ function useConnectLink(
     consumeConnectLink(workspace.id, link, { suppressErrorToast: true })
       .then(({ data }) => {
         setMessage(null);
-        open({ kind: 'connect', provider: isConnectable(connect) ? connect : data.provider });
+        const provider = isConnectable(connect) ? connect : data.provider;
+        // A provider with no token form (Google Calendar) goes straight to its sign-in.
+        if (hasTokenFallback(provider)) {
+          open({ kind: 'connect', provider });
+        } else {
+          signIn(provider);
+        }
       })
       .catch((failure: unknown) => {
         const status = apiErrorStatus(failure);
@@ -124,7 +136,7 @@ function useConnectLink(
         );
       })
       .finally(clear);
-  }, [link, connect, refusal, workspace.id, open, setParams, t]);
+  }, [link, connect, refusal, workspace.id, open, signIn, setParams, t]);
 
   return refusal ?? message;
 }
@@ -182,21 +194,16 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
   const sharing = useIntegrationSharing(workspace.id);
   const runs = useIntegrationSyncRuns(workspace.id);
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const linkMessage = useConnectLink(workspace, canConnect, setDialog);
   const refresh = useRefreshIntegrations(workspace.id);
   const { language } = useLanguage();
   const [starting, setStarting] = useState(false);
   const oauthProviders = useOAuthProviders(workspace.id, true);
-  const stage = oauthProviders.data?.stage ?? 'prod';
   const infoOf = (provider: ConnectableProvider) =>
     oauthProviders.data?.providers.find((entry) => entry.provider === provider);
   const modeOf = (provider: ConnectableProvider) =>
-    isOAuthSignIn(provider) ? oauthMode(infoOf(provider), stage) : 'token';
-  const onConnected = useCallback(() => {
-    void refresh();
-  }, [refresh]);
-  useOAuthReturn(onConnected);
-
+    hasOAuthSignIn(provider)
+      ? oauthMode(infoOf(provider), oauthProviders.isPending)
+      : ('unavailable' as const);
   /**
    * Sign in with the provider: the server's authorize URL, then the browser goes there. Google
    * Calendar and GitHub, Jira, ClickUp and Linear share this one path.
@@ -214,6 +221,14 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
       toast.error(errorMessage(t, failure, 'connect.oauth.startFailed'));
     }
   };
+
+  const linkMessage = useConnectLink(workspace, canConnect, setDialog, (provider) => {
+    void startOAuth(provider);
+  });
+  const onConnected = useCallback(() => {
+    void refresh();
+  }, [refresh]);
+  useOAuthReturn(onConnected);
 
   if (integrations.data === undefined) {
     return integrations.isError ? (
@@ -248,7 +263,8 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
   const byProvider = (provider: ConnectableProvider) =>
     integrations.data.filter((entry) => entry.provider === provider);
   const cards = PROVIDER_ORDER.flatMap<CardEntry>((provider) => {
-    const connected = byProvider(provider);
+    // Coming soon (Moodle): one card with a badge, whatever a demo workspace holds.
+    const connected = isComingSoon(provider) ? [] : byProvider(provider);
     if (connected.length === 0) {
       return [{ provider, integration: undefined }];
     }
@@ -257,15 +273,10 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
     return canConnect ? [...entries, { provider, integration: undefined, another: true }] : entries;
   });
   const google = (provider: ConnectableProvider): boolean => provider === 'google_calendar';
-  /** What "connect" does: sign in, show the setup guide, or open the token form. */
-  const connect = (provider: ConnectableProvider, another = false) => {
-    const mode = modeOf(provider);
-    if (google(provider) || mode === 'connect') {
+  /** What "connect" does: sign in with the provider (OAuth is always the first way). */
+  const connect = (provider: ConnectableProvider) => {
+    if (modeOf(provider) === 'connect') {
       void startOAuth(provider);
-    } else if (mode === 'setup' && !another) {
-      setDialog({ kind: 'guide', provider });
-    } else {
-      setDialog({ kind: 'connect', provider });
     }
   };
   const anotherTitle = (provider: ConnectableProvider): string =>
@@ -322,13 +333,22 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
                   size="sm"
                   variant="outline"
                   className="max-md:h-11"
-                  disabled={starting}
+                  disabled={starting || modeOf(provider) !== 'connect'}
                   onClick={() => {
-                    connect(provider, true);
+                    connect(provider);
                   }}
                 >
                   {t(google(provider) ? 'connect.oauth.another' : 'connect.another.button')}
                 </Button>
+                {hasTokenFallback(provider) ? (
+                  <TokenFallback
+                    provider={provider}
+                    name={t(`sources.${provider}`)}
+                    onOpen={() => {
+                      setDialog({ kind: 'connect', provider });
+                    }}
+                  />
+                ) : null}
               </footer>
             </article>
           ) : (
@@ -348,20 +368,13 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
               onTokenConnect={() => {
                 setDialog({ kind: 'connect', provider });
               }}
-              signIn={
-                isOAuthSignIn(provider)
-                  ? {
-                      mode: modeOf(provider),
-                      onSetup: () => {
-                        setDialog({ kind: 'guide', provider });
-                      },
-                      onResources: (entry) => {
-                        setDialog({ kind: 'resources', integration: entry });
-                      },
-                      installUrl: infoOf(provider)?.installUrl ?? null,
-                    }
-                  : undefined
-              }
+              signIn={{
+                mode: modeOf(provider),
+                onResources: (entry) => {
+                  setDialog({ kind: 'resources', integration: entry });
+                },
+                installUrl: infoOf(provider)?.installUrl ?? null,
+              }}
               onReplace={replace}
               onCalendars={
                 google(provider)
@@ -384,19 +397,6 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
             setDialog(null);
           }}
         />
-      ) : dialog?.kind === 'guide' ? (
-        (() => {
-          const info = infoOf(dialog.provider);
-          return info === undefined ? null : (
-            <OAuthSetupGuide
-              info={info}
-              name={t(`sources.${dialog.provider}`)}
-              onClose={() => {
-                setDialog(null);
-              }}
-            />
-          );
-        })()
       ) : dialog?.kind === 'resources' ? (
         hasResourcePicker(dialog.integration.provider) ? (
           <OAuthResourcePicker

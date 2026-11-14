@@ -2,11 +2,11 @@ export const landing = {
   meta: {
     title: 'TodoList: classes, work and deadlines on one clock',
     description:
-      'TodoList puts Moodle, Jira, ClickUp, Linear, GitHub, Google Calendar and Google Drive on one dashboard: what’s on now, what’s next and every deadline this week. Free for students who also work.',
+      'TodoList puts Jira, ClickUp, Linear, Google Calendar and GitHub on one dashboard: what’s on now, what’s next and every deadline this week. Free for students who also work.',
   },
   hero: {
     title: 'Classes, work and deadlines on one clock',
-    lead: 'TodoList brings Moodle, Jira, ClickUp, Linear, GitHub, Google Calendar and Google Drive into one dashboard. See what’s on now, what’s next and everything due this week, without opening six tabs.',
+    lead: 'TodoList brings Jira, ClickUp, Linear, Google Calendar and GitHub into one dashboard. See what’s on now, what’s next and everything due this week, without opening five tabs.',
     cta: 'Create your workspace',
     login: 'Log in',
     note: 'Free for everyone. No card needed.',

@@ -44,9 +44,9 @@ def _jira_card(page: Page):
 
 
 def _connect_jira(page: Page) -> None:
-    page.locator("[data-integration-card=jira]").first.get_by_role(
-        "button", name="Use a token instead"
-    ).click()
+    card = page.locator("[data-integration-card=jira]").first
+    card.locator("[data-token-fallback] summary").click()
+    card.locator("[data-use-token]").click()
     dialog = page.get_by_role("dialog")
     dialog.get_by_label("Site address").fill(f"https://{SITE}")
     dialog.get_by_label("Email").fill("fake@example.test")

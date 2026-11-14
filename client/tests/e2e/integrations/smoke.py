@@ -26,6 +26,12 @@ def _card(page: Page, provider: str):
     return page.locator(f"[data-integration-card={provider}]")
 
 
+def _open_token_form(scope):
+    """Expands "Use an API token instead" inside a card or tile, then opens the token form."""
+    scope.locator("[data-token-fallback] summary").click()
+    scope.locator("[data-use-token]").click()
+
+
 def test_connect_github_keeps_the_token_in_one_request_body(
     page: Page, base_url: str, api_base_url: str, fresh_owner
 ):
@@ -40,7 +46,7 @@ def test_connect_github_keeps_the_token_in_one_request_body(
     github = _card(page, "github")
     expect(github).to_be_visible(timeout=NORMAL_TIMEOUT)
     expect(github.locator("[data-status-text]")).to_have_text("Not connected")
-    github.get_by_role("button", name="Use a token instead").click()
+    _open_token_form(github)
 
     dialog = page.get_by_role("dialog")
     dialog.get_by_label("Owner", exact=True).fill("shalev396")
@@ -104,7 +110,7 @@ def test_a_viewer_sees_the_cards_read_only(
     # PERMISSIONS-V2: viewers connect nothing; editors and owners connect their own.
     expect(page.locator("[data-integrations-read-only]")).to_contain_text("Viewers can’t connect accounts.")
     expect(page.get_by_role("button", name="Connect")).to_have_count(0)
-    expect(page.get_by_role("button", name="Use a token instead")).to_have_count(0)
+    expect(page.locator("[data-token-fallback]")).to_have_count(0)
 
 
 def test_agent_key_is_shown_once_and_can_be_revoked(
@@ -180,28 +186,35 @@ def test_template_gallery_creates_a_dashboard(page: Page, base_url: str, api_bas
     assert list_dashboards(api_base_url, user, workspace["id"], "work")
 
 
-def test_sync_to_calendar_dry_run_shows_counts_or_a_clear_error(
+def test_sync_to_calendar_waits_for_a_google_calendar_connection(
     page: Page, base_url: str, api_base_url: str, fresh_owner
 ):
+    """No calendar connected: the button is disabled. Google Calendar connects only with Google
+    sign-in (a handshake with Google, covered by the server tests), so the REST route refuses it."""
     import requests
 
     user, workspace = fresh_owner
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, "/en/integrations")
-    button = page.locator("[data-gcal-sync]")
-    expect(button).to_be_disabled(timeout=NORMAL_TIMEOUT)  # no calendar connected yet
+    expect(page.locator("[data-gcal-sync]")).to_be_disabled(timeout=NORMAL_TIMEOUT)
     response = requests.post(
         f"{api_base_url}/private/workspaces/{workspace['id']}/integrations",
         json={"provider": "google_calendar", "config": {"calendars": []}},
         headers={"Authorization": f"Bearer {user.id_token}"},
         timeout=15,
     )
-    assert response.status_code == 201
-    page.reload()
-    expect(button).to_be_enabled(timeout=NORMAL_TIMEOUT)
-    button.click()
-    dialog = page.get_by_role("dialog")
-    # With no connected calendar the server refuses: the message is ours, translated, not the
-    # server's English.
-    outcome = dialog.locator("[data-gcal-counts], [data-gcal-sync-error]")
-    expect(outcome).to_be_visible(timeout=NORMAL_TIMEOUT)
+    assert response.status_code == 400
+
+
+def test_moodle_cannot_be_connected_yet(page: Page, base_url: str, api_base_url: str, fresh_owner):
+    import requests
+
+    user, workspace = fresh_owner
+    response = requests.post(
+        f"{api_base_url}/private/workspaces/{workspace['id']}/integrations",
+        json={"provider": "moodle", "config": {"siteUrl": "https://moodle.example.ac.il"}},
+        headers={"Authorization": f"Bearer {user.id_token}"},
+        timeout=15,
+    )
+    assert response.status_code == 400
+    assert response.json()["code"] == "provider_coming_soon"

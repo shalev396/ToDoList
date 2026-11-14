@@ -83,7 +83,6 @@ describe('block registry', () => {
       'chart',
       'counter',
       'deadlines',
-      'fileTree',
       'kanban',
       'list',
       'table',

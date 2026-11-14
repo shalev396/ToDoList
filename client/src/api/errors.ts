@@ -33,6 +33,7 @@ export const ERROR_CODE_KEYS: Readonly<Record<ErrorCode, string>> = {
   code_expired: 'errors.codes.codeExpired',
   password_policy: 'errors.codes.passwordPolicy',
   account_already_connected: 'errors.codes.accountAlreadyConnected',
+  provider_coming_soon: 'errors.codes.providerComingSoon',
   provider_writes_off: 'errors.codes.providerWritesOff',
   create_rate_limited: 'errors.codes.createRateLimited',
   needs_due_date: 'errors.codes.needsDueDate',

@@ -16,7 +16,6 @@ export const blocks = {
     clock: 'שעון',
     counter: 'מונה',
     deadlines: 'תאריכי יעד',
-    fileTree: 'קבצים',
     note: 'הערה',
     filter: 'מסנן',
     action: 'פעולה',

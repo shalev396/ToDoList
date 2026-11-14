@@ -1,4 +1,8 @@
-import { CONNECTABLE_PROVIDERS, type ConnectableProvider } from '@api-types/integrations.ts';
+import {
+  COMING_SOON_PROVIDERS,
+  CONNECTABLE_PROVIDERS,
+  type ConnectableProvider,
+} from '@api-types/integrations.ts';
 import { limits, todosPerWorkspace } from './limits.ts';
 
 /**
@@ -9,9 +13,8 @@ const INTEGRATION_ORDER: readonly ConnectableProvider[] = [
   'jira',
   'clickup',
   'linear',
-  'github',
   'google_calendar',
-  'google_drive',
+  'github',
   'moodle',
 ];
 
@@ -20,10 +23,10 @@ function rank(provider: ConnectableProvider): number {
   return index === -1 ? INTEGRATION_ORDER.length : index;
 }
 
-/** Every integration a workspace can connect (the server's list), in the page's order. */
-export const supportedIntegrations: readonly ConnectableProvider[] = [
-  ...CONNECTABLE_PROVIDERS,
-].sort((a, b) => rank(a) - rank(b));
+/** Every integration a workspace can connect now (the server's list, minus the coming-soon ones), in the page's order. */
+export const supportedIntegrations: readonly ConnectableProvider[] = CONNECTABLE_PROVIDERS.filter(
+  (provider) => !(COMING_SOON_PROVIDERS as readonly string[]).includes(provider),
+).sort((a, b) => rank(a) - rank(b));
 
 /** An i18n key and its numbers; `count` also picks the plural form. */
 export interface PlanCopy {

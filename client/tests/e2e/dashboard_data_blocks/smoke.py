@@ -1,5 +1,5 @@
 """
-The data blocks (list, table, deadlines, counter, chart, kanban, file tree) on a dashboard over the
+The data blocks (list, table, deadlines, counter, chart, kanban) on a dashboard over the
 demo workspace's data: each renders, source links point at the rows' URLs, the chart's legend
 chip sets the page variable in the URL, a local card moves between board columns, a mirrored one
 cannot, titles that are long, Hebrew or emoji never overflow a phone, and axe is clean.
@@ -23,13 +23,12 @@ from tests.viewports import DESKTOP_VIEWPORT
 PHONE = {"width": 320, "height": 800}
 ITEMS = {"kind": "any"}
 
-LIST, TABLE, DEADLINES, COUNTER, BOARD, FILES = (
+LIST, TABLE, DEADLINES, COUNTER, BOARD = (
     "My list",
     "My table",
     "My deadlines",
     "My counter",
     "My board",
-    "My files",
 )
 CHART = "Open"
 MESSY = "שלום עולם 🎉 " + "very long mixed שורה ארוכה " * 12
@@ -80,17 +79,6 @@ def _blocks() -> list:
                 "limit": 50,
             },
             "viz": {"kind": "kanban"},
-        },
-        {
-            "type": "fileTree",
-            "title": FILES,
-            "query": {
-                "source": "items",
-                "where": {"combinator": "and", "rules": [_eq("kind", "file")]},
-                "sort": [{"field": "title", "dir": "asc"}],
-                "limit": 200,
-            },
-            "viz": {"kind": "fileTree"},
         },
     ]
 
@@ -169,7 +157,6 @@ def test_every_block_renders_with_source_links(page: Page, base_url: str, demo):
     expect(table.locator("tbody tr").first.locator("[data-source-link]")).to_have_count(1)
 
     expect(_block(page, DEADLINES).get_by_role("heading", level=3).first).to_be_visible()
-    expect(_block(page, FILES).get_by_role("tree")).to_be_visible()
     expect(_block(page, BOARD).get_by_role("heading", level=3)).to_have_count(4)
 
 
@@ -247,28 +234,6 @@ def test_only_local_cards_can_be_moved(page: Page, base_url: str, demo):
         page.mouse.up()
     assert sent.value.request.post_data_json == {"status": "done"}
     assert sent.value.status < 400
-
-
-def test_file_tree_keyboard_and_preview(page: Page, base_url: str, demo):
-    user, _ = demo
-    _open(page, base_url, user)
-    tree = _block(page, FILES).get_by_role("tree")
-    first = tree.get_by_role("treeitem").first
-    first.focus()
-    expect(first).to_have_attribute("aria-expanded", "true")
-    page.keyboard.press("ArrowLeft")
-    expect(first).to_have_attribute("aria-expanded", "false")
-    page.keyboard.press("ArrowRight")
-    expect(first).to_have_attribute("aria-expanded", "true")
-    page.keyboard.press("ArrowDown")
-    page.keyboard.press("Home")
-    expect(first).to_be_focused()
-    # Every file has "Open in Google Drive"; a PDF previews in a Sheet.
-    expect(_block(page, FILES).get_by_role("link", name=re.compile("in Google Drive")).first).to_be_visible()
-    _block(page, FILES).get_by_role("button", name=re.compile("^Preview “")).first.click()
-    expect(page.get_by_role("dialog").locator("iframe")).to_have_attribute(
-        "src", re.compile(r"^https://drive\.google\.com/file/d/")
-    )
 
 
 def test_messy_titles_never_overflow_a_phone(page: Page, base_url: str, api_base_url: str, demo):

@@ -36,9 +36,18 @@ describe('the pricing page reads the shared limits', () => {
     assert.equal(todosPerWorkspace, PLAN_LIMITS.todosPerWorkspace);
   });
 
-  it('names every integration the server can connect, work tools first', () => {
-    assert.deepEqual([...supportedIntegrations].sort(), [...CONNECTABLE_PROVIDERS].sort());
-    assert.deepEqual(supportedIntegrations.slice(0, 4), ['jira', 'clickup', 'linear', 'github']);
+  it('names every integration the server can connect now, work tools first; Moodle waits', () => {
+    assert.deepEqual(
+      [...supportedIntegrations].sort(),
+      CONNECTABLE_PROVIDERS.filter((provider) => provider !== 'moodle').sort(),
+    );
+    assert.deepEqual(supportedIntegrations, [
+      'jira',
+      'clickup',
+      'linear',
+      'google_calendar',
+      'github',
+    ]);
   });
 
   it('lists the plan in the agreed order', () => {

@@ -58,7 +58,7 @@ export const app = {
     title: 'Integrations',
     emptyTitle: 'Connections are coming here',
     emptyBody:
-      'Connect Moodle, Jira, ClickUp, Linear, GitHub, Google Calendar and Google Drive from this page. Only owners connect sources.',
+      'Connect Jira, ClickUp, Linear, Google Calendar and GitHub from this page. Only owners connect sources.',
   },
   templates: {
     title: 'Templates',
