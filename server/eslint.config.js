@@ -2,6 +2,11 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
 
+import { DB_ALLOWED, LEGACY_DB_IMPORTERS } from './legacy-db-importers.mjs';
+
+const DB_MESSAGE =
+  'Only classes reach the database (docs/design/CLASSES.md): use or add a method on a class in src/classes/.';
+
 export default tseslint.config(
   {
     files: ['**/*.{ts,js}'],
@@ -33,6 +38,28 @@ export default tseslint.config(
       'no-console': ['error', { allow: ['warn', 'error'] }],
       eqeqeq: ['error', 'always'],
       'no-debugger': 'error',
+    },
+  },
+  {
+    // The class boundary: outside the allowed places (and the shrinking legacy list), nothing
+    // loads the models or mongoose at run time. src/classes/classBoundary.test.ts holds the same
+    // line, and also sees dynamic imports and getters named outside an import.
+    files: ['src/**/*.ts'],
+    ignores: [...DB_ALLOWED, ...LEGACY_DB_IMPORTERS],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [{ name: 'mongoose', message: DB_MESSAGE, allowTypeImports: true }],
+          patterns: [
+            {
+              regex: '(^|/)models/(index(\.js)?|mongoose(/.*)?)$',
+              message: DB_MESSAGE,
+              allowTypeImports: true,
+            },
+          ],
+        },
+      ],
     },
   },
   {
