@@ -44,7 +44,7 @@ How the rule is enforced, with several independent layers (details in §7):
 
 - **One-way mirror.** Providers are the sources of truth: Google Calendar for events, Jira and ClickUp for work, Linear for personal, Moodle for college. Every provider flows **one way into the app**: the dashboard reads and upserts and never writes provider data back.
 - **The one sanctioned exception:** two-way sync with the user's **Google Calendar** through Google OAuth. Pushes, Google-side edits and deletes are tracked in `CalendarLinks`, and every write to Google is recorded in `AuditLogs` (`action: "gcal.write"`). Nothing else is ever written to a provider.
-- **Optional sources (read-only):** GitHub (issues/PRs), Google Drive (the Notability PDF backup, read-only file tree), Notion (legacy, optional import of to-dos only). **Slack is out of scope for the app**: AI agents use Slack through their own Slack MCP; the `slack` enum value is reserved only.
+- **Optional sources (read-only):** GitHub (issues/PRs), Notion (legacy, optional import of to-dos only). **Slack is out of scope for the app**: AI agents use Slack through their own Slack MCP; the `slack` enum value is reserved only.
 - **Local items.** Items created in the dashboard (`source.provider = "local"`) are fully editable. They are the only items the dashboard owns.
 - **Areas.** Every item and container has an `area` of `work` | `college` | `personal`. The integration sets the default (Jira/ClickUp → work, Moodle → college, Linear → personal). A container rule overrides it: projects whose name or key includes `shalev396` → personal.
 
@@ -124,7 +124,7 @@ There can be many per workspace, and several accounts per provider (for example,
 | Field | Type | Notes |
 |---|---|---|
 | `ownerUserId` | string → Users | PERMISSIONS-V2: the member it belongs to (set from `connectedBy`). Only they see its details and manage it; other members see its items only once it is a connector on some block. |
-| `provider` | enum | `google_calendar` `jira` `clickup` `linear` `moodle` `slack` `github` `notion` `google_drive` `local`. |
+| `provider` | enum | `google_calendar` `jira` `clickup` `linear` `moodle` `slack` `github` `notion` `local`. |
 | `accountId` | string | Stable account key on the provider side: Jira site host, ClickUp team id, Linear org id, Moodle site URL + userid, Google email, Slack team id, GitHub login, Notion workspace id. |
 | `authMethod` | enum | See §8. |
 | `mode` | `read` \| `read_write` | Defaults to `read`. Work providers are pinned to `read`. |
@@ -143,7 +143,7 @@ Unique on `(workspaceId, ownerUserId, provider, accountId)` among live ones: two
            "ciphertext": "<b64>", "aad": "w-1|i-jira-1|jira" },
   "expiresAt": "2027-11-01T00:00:00Z", "rotatedAt": null, "lastUsedAt": "…" }
 ```
-- The whole `enc` field has `select: false`. `ciphertext` holds a JSON blob of every secret the provider needs (Jira `{email, token}`, service account `{clientEmail, privateKey}`). App-level OAuth client secrets are the exception: they live in Secrets Manager.
+- The whole `enc` field has `select: false`. `ciphertext` holds a JSON blob of every secret the provider needs (Jira `{email, token}`). App-level OAuth client secrets are the exception: they live in Secrets Manager.
 - There is **no `hint` field** (no last-4, no prefix). `aad` binds the ciphertext to its workspace, integration and provider, so a ciphertext copied into another document fails to decrypt.
 - Only one function can read it:
   - `CredentialVault.decryptForSync(integrationId)`: outbound provider calls (sync jobs, "test connection", calendar pushes).
@@ -183,7 +183,6 @@ To-dos, issues, tasks, events, assignments, deadlines, files and messages all sh
 | clickup / task | `listId, folderId, spaceId, timeEstimateMs, customFields{}` |
 | linear / issue | `teamKey, cycle, estimate, projectId, stateType` |
 | moodle / assignment | `courseId, cmid, modname, submissionStatus, gradingDueAt, cutoffAt` |
-| google_drive / file (Notability backup) | `mimeType, path[], driveFileId, size, modifiedAt` |
 | slack / message | Reserved only. Slack is out of scope for the app (agents use Slack via MCP) |
 | github / pr, issue | `repo, number, state, draft, reviewDecision` |
 
@@ -197,7 +196,7 @@ To-dos, issues, tasks, events, assignments, deadlines, files and messages all sh
 |---|---|
 | `workspaceId`, `integrationId`, `area` | |
 | `type` | `project` `course` `list` `calendar` `folder` `repo`. |
-| `name`, `parentId`, `path[]` | Tree for Moodle sections and Notability folders. |
+| `name`, `parentId`, `path[]` | Tree for Moodle sections. |
 | `source` | Same shape as items. Unique the same way. |
 | `props` | course `{shortname, semester, moodleCourseId}`, project `{key, providerProjectId}`, calendar `{color, primary}`. |
 | `hidden` | User preference that hides the container from views. |
@@ -396,7 +395,7 @@ Elytra's `syncMongo()` is a no-op today. For these collections it should call `M
 
 | Provider | Auth method (`authMethod`) | Secret in `Credentials` | Expiry | Default mode | Item mapping |
 |---|---|---|---|---|---|
-| Google Calendar | **Google OAuth** (`oauth`; PKCE, refresh token sealed in the vault). Alternative: **service account** with the calendar shared to it (`service_account`) | OAuth refresh token, or `{clientEmail, privateKey}` | Refresh token: until revoked; SA key: until deleted | `read_write`: **the one sanctioned two-way sync** (every write audit-logged) | event → `kind: event`, `startAt/endAt/allDay`, `title=summary`, `source.externalId=event.id` (`+originalStartTime` for instances), `url=htmlLink`, `props.calendarId/location/meetLink` |
+| Google Calendar | **Google OAuth** (`oauth`; PKCE, refresh token sealed in the vault), the only way users connect it. A `service_account` method stays in the server for the demo workspace's fixture-mode calendar only | OAuth refresh token | Until revoked | `read_write`: **the one sanctioned two-way sync** (every write audit-logged) | event → `kind: event`, `startAt/endAt/allDay`, `title=summary`, `source.externalId=event.id` (`+originalStartTime` for instances), `url=htmlLink`, `props.calendarId/location/meetLink` |
 | Jira (Atlassian) | API token + email, basic auth (`api_token_basic`) | `{email, token}` | **≤ 365 days** (set at creation). Track `expiresAt` and remind 14 days ahead | read (work) | issue → `kind: issue`, `title=summary`, `status←statusCategory`, `dueAt=duedate`, `source.externalId=id`, `key`, `url=/browse/KEY`, `props.issueType/sprint/storyPoints` |
 | ClickUp | Personal token `pk_…` (`personal_token`) | `{token}` | No expiry. Regenerating it invalidates the old one | read (work) | task → `kind: task`, `title=name`, `status←status.type`, `dueAt=due_date`, `startAt=start_date`, `url`, `props.listId/folderId/spaceId/customFields` |
 | Linear | Personal API key (`personal_api_key`) | `{apiKey}` | No expiry (until revoked) | read (one-way mirror) | issue → `kind: issue`, `status←state.type`, `dueAt=dueDate`, `priority`, `key=identifier`, `url`, `props.teamKey/cycle/estimate` |
@@ -404,7 +403,6 @@ Elytra's `syncMongo()` is a no-op today. For these collections it should call `M
 | Slack | **Out of scope for the app.** AI agents use Slack through their own Slack MCP. No integration, card or block | n/a | n/a | n/a | n/a (enum value reserved) |
 | GitHub (optional) | Fine-grained PAT, read-only (`fine_grained_pat`) | `{token}` | User-set expiry. Track `expiresAt` | read only | issues/PRs → `kind: issue` or `pr`, `props.repo/number/state`. `shalev396/*` → area `personal` |
 | Notion (legacy, optional) | Internal integration token (`internal_integration`) | `{token}` | No expiry | read only | Optional one-way import of existing Notion to-dos as `local` seeds during migration. The app never writes to Notion |
-| Google Drive (Notability backup, optional) | Same service account, folder shared as **Viewer** (`service_account`) | `{clientEmail, privateKey}` | Until key deleted | read only | files → `kind: file`, `Containers{type: folder}` tree from `path[]`, `url=webViewLink` |
 | Local | none | none | n/a | read_write | Created in the dashboard. `source.provider: "local"` |
 
 ---

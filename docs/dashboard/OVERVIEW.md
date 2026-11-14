@@ -7,7 +7,7 @@ This is the map. The detail lives in the sibling docs; **on naming conflicts DAT
 
 ## 1. What it is, in one paragraph
 
-One dashboard over Shalev's whole life — **Work** (Jira, ClickUp), **College** (Moodle, Notability via its Google Drive backup), **Personal** (Linear, `shalev396/*` GitHub repos) and **time** (personal Google Calendar). Providers stay the sources of truth and flow **one way into the app**. The app stores everything in MongoDB as one polymorphic `Items` collection, renders it through **user-built dashboards** (Mixpanel-style blocks: source → filter → group → viz), and exposes the same data and the same builder to AI agents through an **MCP server**. Google Calendar is reached through Shalev's own **Apps Script web app** (no Google OAuth consent screens), which is also the **one sanctioned two-way sync**.
+One dashboard over Shalev's whole life — **Work** (Jira, ClickUp), **College** (Moodle, coming soon), **Personal** (Linear, `shalev396/*` GitHub repos) and **time** (personal Google Calendar). Providers stay the sources of truth and flow **one way into the app**. The app stores everything in MongoDB as one polymorphic `Items` collection, renders it through **user-built dashboards** (Mixpanel-style blocks: source → filter → group → viz), and exposes the same data and the same builder to AI agents through an **MCP server**. Google Calendar is reached through Shalev's own **Apps Script web app** (no Google OAuth consent screens), which is also the **one sanctioned two-way sync**.
 
 ---
 
@@ -40,7 +40,7 @@ flowchart LR
   DB[("MongoDB Atlas<br/>Items · Containers · Integrations · Credentials (encrypted)<br/>Dashboards · DashboardVersions · Views · AgentKeys<br/>CalendarLinks · ReplayNonces (single-use links) · SyncStates · SyncRuns · AuditLogs")]
 
   subgraph Providers["Providers (sources of truth)"]
-    JIRA["Jira"]; CU["ClickUp"]; LIN["Linear"]; MOO["Moodle (Braude)"]; DRV["Google Drive<br/>(Notability backup)"]; GH["GitHub (optional)"]
+    JIRA["Jira"]; CU["ClickUp"]; LIN["Linear"]; MOO["Moodle (Braude)"]; GH["GitHub (optional)"]
   end
   subgraph Google["Google"]
     GCAL["Google Calendar (OAuth)"]
@@ -53,7 +53,7 @@ flowchart LR
   API --> DB
   LB --> DB
   W --> DB
-  W -->|"GET only (one-way in)"| JIRA & CU & LIN & MOO & DRV & GH
+  W -->|"GET only (one-way in)"| JIRA & CU & LIN & MOO & GH
   API <-->|"Calendar API (OAuth)<br/>the ONE two-way sync"| GCAL
 ```
 
@@ -81,7 +81,7 @@ sequenceDiagram
   participant A as ApiFn
   participant J as The same function (async invoke)
   participant V as CredentialVault (KMS)
-  participant P as Provider API (Jira/ClickUp/Linear/Moodle/Drive)
+  participant P as Provider API (Jira/ClickUp/Linear/Moodle)
   participant M as MongoDB
   U->>A: Sync now {integrationId}
   A->>M: create a queued SyncRun
@@ -133,11 +133,11 @@ UI or agent → `POST /workspaces/:wid/query` with a **saved query id** (`savedQ
 |---|---|---|
 | 1 | **Minimal hard-coded text.** The only literal text is titles and filenames (which come from data). Labels, legends, empty states, counts and filter options are computed, come from `GET /facets`, or are i18n keys (`en` + `he`). | BUILDER lint (blocks MCP writes), FRONTEND §9, CODE-AGENT-GUIDE §6.4 text check |
 | 2 | **Dynamic content.** Topics, dashboards, blocks, templates and filters are data in MongoDB, never code. Adding a block type = one catalog entry + one registry entry. | BUILDER §4/§7, FRONTEND §5 |
-| 3 | **Every item links to its source** with an **"Open in <provider>"** button built from `source.url` (provider data only; never a constructed link — e.g. Notability items use the Drive backup link until a real share link exists). Blocks cannot turn it off. | DATA `Items.source`, FRONTEND `SourceLink`, MCP `openIn`, BUILDER lint |
+| 3 | **Every item links to its source** with an **"Open in <provider>"** button built from `source.url` (provider data only; never a constructed link). Blocks cannot turn it off. | DATA `Items.source`, FRONTEND `SourceLink`, MCP `openIn`, BUILDER lint |
 | 4 | **AutoDS is muted only in Remi's (assistant) messages.** It is **included** in all app views, data, API and MCP results. No provider/project exclusion anywhere in the app. | BACKEND §5 rule 6, MCP §6 (`muteSources` only on Remi's prompt), seed check |
-| 5 | **Personal vs Work by project name:** `shalev396/*` (and the shalev396 Linear workspace) = **Personal**; Jira/ClickUp = **Work**; **College** = Moodle courses/assignments/events (+ Notability folders). Rules are data in `Workspaces.settings.areaRules`. | DATA §2/§3.2, BACKEND `areaRules.ts` |
+| 5 | **Personal vs Work by project name:** `shalev396/*` (and the shalev396 Linear workspace) = **Personal**; Jira/ClickUp = **Work**; **College** = Moodle courses/assignments/events Rules are data in `Workspaces.settings.areaRules`. | DATA §2/§3.2, BACKEND `areaRules.ts` |
 | 6 | **One-way mirror.** Every provider flows one way into the app. **One sanctioned exception:** two-way sync with Google Calendar through OAuth, audit-logged (`gcal.write`). | DATA §2, BACKEND §5, MCP §5.7 |
-| 7 | **Google Calendar uses OAuth** with a separate Google app (closed beta on dev and qa, verification only for prod). The Apps Script bridge was removed; a calendar-shared service account is the fallback. | INTEGRATIONS-SETUP §1, DATA §8 |
+| 7 | **Google Calendar uses OAuth** with a separate Google app (closed beta on dev and qa, verification only for prod). The Apps Script bridge was removed; users connect only with Google sign-in. | INTEGRATIONS-SETUP §1, DATA §8 |
 | 8 | **Long-lived tokens preferred:** Linear personal API key (no expiry), ClickUp `pk_` token (no expiry), Jira API token (≤ 365 days, reminder 14 days ahead), Moodle web service token (admin-set expiry; mobile-app token or calendar export as fallback). GitHub fine-grained PAT optional. | DATA §8 |
 | 9 | **Tokens encrypted at rest** (KMS envelope + AES-256-GCM, AAD-bound) and **never returned** to the user, UI, logs, errors, exports or agents — **in any form** (no masked hint, last-4 or prefix). Status = provider, account label, `connected`/`expired`/`error`, `expiresAt`, `lastSyncAt`. One decrypt path only: `decryptForSync`. | DATA §0/§7, BACKEND §6, MCP §5, secret-leak test suite |
 | 10 | **Slack is out of scope for the app.** No Slack integration, card or block; AI agents use Slack through their own Slack MCP. | DATA §8, FRONTEND §8, MCP §5.8 |
@@ -178,5 +178,4 @@ UI or agent → `POST /workspaces/:wid/query` with a **saved query id** (`savedQ
 | 10 | Retention: `DashboardVersions` (last 50?) and `AuditLogs` (365 d) | MCP §14, DATA §9 | 50 versions; 365 days |
 | 11 | Should `AgentKeys` always expire (e.g. 365 d)? | DATA §9 | Yes, 365 d default |
 | 12 | Calendar path: Google OAuth (two-way) vs calendar-shared service account (no guest invites/Meet links) | DATA §8 | Google OAuth (decided; the Apps Script bridge is removed) |
-| 13 | Notability "Open in Notability" links: no API, Drive backup has none | Notion README, FRONTEND | "Open backup" (Drive) until Shalev supplies real share links |
 | 14 | Phase-2 UI ideas from the competitor pass: "Today" template, view tabs per block, auto-scheduling (out of scope) | CODE-AGENT-GUIDE §6 | Today template + view tabs in phase 2 |

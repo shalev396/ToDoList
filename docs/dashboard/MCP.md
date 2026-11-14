@@ -108,7 +108,7 @@ The wire format is JSON-RPC 2.0. The AI reads the tool list (name, description, 
 4. **Redaction:** every MCP response passes through the same response guard and `redact()` as DATA.md §0. That covers deny-listed keys and the `pk_*`/`lin_api_*`/`xox*`/`ghp_*`/`github_pat_*`/`ATATT*`/`elk_*`/JWT patterns. A hit in dev or qa throws; in prod it returns a 500 and raises an alert.
 5. **Scopes plus audit:** every call appends to DATA.md `AuditLogs` with `actorUserId`, **plus a new `actorAgentId`** field, `action: "mcp.<tool>"`, `targetType/targetId`, and `meta: {argsHash, resultStatus}`. Raw arguments are never stored.
 6. **Confirm destructive actions.** Tools with `destructiveHint: true` need `confirm: true`. Without it, the server returns a preview of the change, or an `input_required` confirmation if the client supports elicitation.
-7. **One-way mirror:** every provider flows one way into the app; Jira, ClickUp, Linear, Moodle, GitHub and Google Drive are read-only. The **one sanctioned exception** is the two-way sync with Shalev's personal Google Calendar through Google OAuth (the Apps Script bridge was removed); the agent-triggered provider writes are `sync_to_google_calendar` (behind `gcal:write`) and `create_todo` with `targets` (D19: creates one item in the user's own Jira, ClickUp, Linear, GitHub or Google Calendar; needs `confirm: true` and the `providers:create` scope), and every write is audit-logged. Edits to mirrored items return `isError` with an "Open in {provider}" link, matching BACKEND.md's 409.
+7. **One-way mirror:** every provider flows one way into the app; Jira, ClickUp, Linear, Moodle and GitHub are read-only. The **one sanctioned exception** is the two-way sync with Shalev's personal Google Calendar through Google OAuth (the Apps Script bridge was removed); the agent-triggered provider writes are `sync_to_google_calendar` (behind `gcal:write`) and `create_todo` with `targets` (D19: creates one item in the user's own Jira, ClickUp, Linear, GitHub or Google Calendar; needs `confirm: true` and the `providers:create` scope), and every write is audit-logged. Edits to mirrored items return `isError` with an "Open in {provider}" link, matching BACKEND.md's 409.
 8. **Slack is out of scope.** There are no Slack tools; agents use Slack's own MCP.
 9. **Untrusted input:** item titles and bodies may contain prompt injection. Tools return data, never instructions. Annotations are only hints, so the server enforces scopes itself. Results are size-capped, and inputs are validated against JSON Schema (draft 2020-12).
 
@@ -148,7 +148,7 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
   "properties": {
     "q": { "type": "string" },
     "area": { "type": "array", "items": { "enum": ["work", "college", "personal"] } },
-    "provider": { "type": "array", "items": { "enum": ["google_calendar","jira","clickup","linear","moodle","github","google_drive","local"] } },
+    "provider": { "type": "array", "items": { "enum": ["google_calendar","jira","clickup","linear","moodle","github","local"] } },
     "kind": { "type": "array", "items": { "enum": ["todo","issue","task","event","assignment","deadline","file","pr"] } },
     "status": { "type": "array", "items": { "enum": ["open","in_progress","done","cancelled"] } },
     "containerId": { "type": "string" },
@@ -252,7 +252,7 @@ Goal: an agent can do in Elytra what Remi did in Notion. That covers creating th
 ### 8.1 Model (from FRONTEND.md)
 - **Dashboard:** `{id, title, topic?, variables ($page.*), blocks[], version, publishedVersion}`. Stored in `Dashboards` + `DashboardVersions` (DATA.md §3.11–3.12); schema owned by BUILDER.md.
 - **Block:** `{id, type, title, gridPos{x,y,w,h}, query{source, where{combinator, rules[{field, operator, value}]}, dateRange, groupBy, aggregate, sort, limit}, rules[{if, then}], viz{kind,…}, listen[], savedViewId}`
-- **Block `type`:** `list | table | kanban | calendar | chart | clock | counter | deadlines | fileTree | note | filter | action`. `viz.kind` covers donut, bar, line, number, and calendar `week|month`, which defaults to **week**.
+- **Block `type`:** `list | table | kanban | calendar | chart | clock | counter | deadlines | note | filter | action`. `viz.kind` covers donut, bar, line, number, and calendar `week|month`, which defaults to **week**.
 - **Connections (cross-filters):** filter blocks and chart clicks set `$page.*` variables, and other blocks `listen` to them. For example, clicking a donut slice sets `$page.provider`, and the table and deadlines blocks filter.
 - **Caps** (FRONTEND.md): ≤10 rules, ≤3 group-bys per block, ≤40 blocks per dashboard. Validation is enforced server-side with the same shared schema.
 
@@ -320,7 +320,7 @@ Same shape as FRONTEND.md §4, served as `elytra://schema/query`:
     "block": {
       "type": "object", "required": ["type"],
       "properties": {
-        "type": { "enum": ["list","table","kanban","calendar","chart","clock","counter","deadlines","fileTree","note","filter","action"] },
+        "type": { "enum": ["list","table","kanban","calendar","chart","clock","counter","deadlines","note","filter","action"] },
         "title": { "type": "string", "maxLength": 80 },
         "gridPos": { "type": "object", "properties": { "x": {"type":"integer"}, "y": {"type":"integer"}, "w": {"type":"integer"}, "h": {"type":"integer"} } },
         "query": { "$ref": "elytra://schema/query" },

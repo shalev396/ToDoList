@@ -129,7 +129,7 @@ Collections: `Dashboards`, `DashboardVersions`, `Views` (DATA.md §3.11–3.13).
 
 | Provider | Auth (static) | Pulls | Area rule |
 |---|---|---|---|
-| Google Calendar (personal) | Google OAuth (alt: service account shared on calendar) | events in window | by calendar |
+| Google Calendar (personal) | Google OAuth | events in window | by calendar |
 | Jira | API token + email (basic) — expires ≤ 365 d | issues assigned/watched, JQL `updated >= lastCursor` | Work |
 | ClickUp | personal `pk_` token | tasks assigned, `date_updated_gt` | Work |
 | Linear | personal API key (read-only scope) | issues/projects, `updatedAt > cursor` | Personal |

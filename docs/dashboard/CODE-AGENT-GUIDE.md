@@ -53,9 +53,9 @@ cd ../client && npm run dev     # :5173
 
 `POST /private/workspaces {loadDemoData: true}` (dev and qa only; prod refuses) loads `server/src/seed/seedWorkspace.ts`:
 - A workspace with `timezone: Asia/Jerusalem`, `weekStart: sun` and areaRules `shalev396/* → personal`.
-- **Integrations** for jira, clickup, linear, moodle, google_calendar and google_drive, flagged `demo` (they never sync) with **fake** credentials.
+- **Integrations** for jira, clickup, linear, moodle and google_calendar, flagged `demo` (they never sync) with **fake** credentials.
 - About 60 `Items` covering every `kind`, with overdue, today, this-week and next-month dates. Each has a fake `source.url` (`https://example.invalid/<provider>/<id>`). The set includes **AutoDS-named projects** (to prove they show up in views) and a `shalev396/Elytra` project (to prove it's classified Personal).
-- `Containers`: 3 courses with sections, a Notability-style folder tree, 4 projects.
+- `Containers`: 3 courses with sections, 4 projects.
 - `Dashboards` from the BUILDER.md templates: Dashboard, Work, Personal, College.
 
 Demo data never reads real data from the box or anywhere else.

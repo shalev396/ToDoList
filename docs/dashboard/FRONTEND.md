@@ -49,7 +49,7 @@ Today the `DashboardPage` placeholder only renders `userId` and `message`. It ge
 | Page | Blocks (defaults mirror today's Notion setup) |
 |---|---|
 | **Dashboard** | 24h clock (personal Google Calendar, current-time needle, "where to be now/next") · donut of open to-dos by source, with Work/College/Personal chips + count · calendar (Week ⇄ Month, **defaults to Week**) · deadlines across all areas, soonest first |
-| **College** | Moodle-like course list (filters: semester, course, type) → course page = deadlines for that course + Notability folder tree (read-only mirror; each file has "Open in Notability" or a Drive preview) · weekly calendar on top · deadlines for all courses at the bottom |
+| **College** | Moodle-like course list (filters: semester, course, type) → course page = deadlines for that course · weekly calendar on top · deadlines for all courses at the bottom |
 | **Work** | Grouped by project · filters: project, provider (ClickUp, Jira, …) · week calendar · projects board · deadlines. AutoDS is **included** (the AutoDS mute only applies to Remi's messages) |
 | **Personal** | Same layout as Work. The source is Linear (one-way). Projects matching `shalev396/*` are classified Personal (the rule runs on the backend, see BACKEND.md) |
 
@@ -92,7 +92,7 @@ Each data block = **source → filters → group-by → aggregate → visualizat
 
 ```
 [Source]   Items (narrowed by kind: todo|issue|task|event|assignment|deadline|file|pr) · Containers
-           providers: clickup, jira, linear, google_calendar, moodle, google_drive (Notability backup), github, local
+           providers: clickup, jira, linear, google_calendar, moodle, github, local
 [Filter]   field op value  (AND/OR groups)  · date presets: today, tomorrow, this week, next 7d, overdue, this semester
 [Logic]    if <condition> then <style|hide|badge>    (e.g. if due < now → red; if status=done → hide)
 [Group]    by source.provider | area | containerId (project/course) | status | priority | kind | due bucket
@@ -105,7 +105,7 @@ Each data block = **source → filters → group-by → aggregate → visualizat
 ```jsonc
 {
   "id": "blk_…",
-  "type": "chart",                   // list|table|kanban|calendar|chart|clock|counter|deadlines|fileTree|note|filter|action
+  "type": "chart",                   // list|table|kanban|calendar|chart|clock|counter|deadlines|note|filter|action
   "title": "Open to-dos",            // the only free text
   "gridPos": { "x": 0, "y": 0, "w": 6, "h": 8 },   // per breakpoint: lg/md/sm
   "query": {
@@ -127,7 +127,7 @@ Each data block = **source → filters → group-by → aggregate → visualizat
 - **Page variables** (`$page.topic`, `$page.provider`, `$page.range`, `$page.course`) are set by **filter blocks** (chips, selects, date presets) or by clicking chart segments, so clicking a donut slice filters the rest of the page. Variables are mirrored in the URL search params, so any state can be shared and survives reload.
 - **Saved views** = named `query + viz` pairs stored server-side. A block either embeds its own query or references a `savedViewId`. (Stored in DATA.md `Views`, §3.13; dashboards in `Dashboards`, §3.11.)
 - **Actions** (button block or item menu): `open in provider`, `sync to Google Calendar`, `refresh source`. Actions call backend endpoints and never run inside a query.
-- **Templates** = dashboard JSON with variables unbound: Work (group by project, provider chips), Personal (Linear source), College (course list → course page with deadlines + file tree). "Use template" clones it into the user's workspace.
+- **Templates** = dashboard JSON with variables unbound: Work (group by project, provider chips), Personal (Linear source), College (course list → course page with deadlines). "Use template" clones it into the user's workspace.
 - **Validation:** the same zod-style schema lives in `@api-types` and runs on both the client (editor) and the Lambda (save).
 - **Caps** (like Mixpanel's): ≤10 filter rules and ≤3 group-bys per block, ≤40 blocks per dashboard. They keep queries cheap on Lambda + Mongo.
 
@@ -145,12 +145,12 @@ src/
       BlockEditorSheet.tsx         // 4-step pipeline form (source→filter→group→viz)
       registry.ts                  // type → { component, editor, defaultProps, icon }
       blocks/ ListBlock TableBlock KanbanBlock CalendarBlock ChartBlock ClockBlock
-              CounterBlock DeadlinesBlock FileTreeBlock NoteBlock FilterBlock ActionBlock
+              CounterBlock DeadlinesBlock NoteBlock FilterBlock ActionBlock
       variables/ PageVarsProvider.tsx useUrlVars.ts
     items/
       ItemSheet.tsx                // detail: fields rendered dynamically from item.props schema
       SourceLink.tsx               // "Open in {provider}" button + favicon, from item.sourceUrl
-      SourcePreview.tsx            // provider preview (title, status, due, snippet) or Drive file preview
+      SourcePreview.tsx            // provider preview (title, status, due, snippet)
     integrations/
       IntegrationsPage.tsx ConnectionCard.tsx SecretField.tsx SyncGCalButton.tsx SyncStatus.tsx
     templates/ TemplateGallery.tsx
@@ -199,7 +199,7 @@ src/
 ## 9. Design rules (enforced in review)
 
 - **Minimal hardcoded text.** The only literal strings are titles and filenames, which come from data. UI chrome strings come from i18n. Counts, labels, legends and empty states are computed.
-- **Every item links back to its source:** an "Open in {provider}" button, plus a hover/preview card when the provider gives one (title, status, due, assignee). Notability files open in Notability, with a Drive preview as fallback.
+- **Every item links back to its source:** an "Open in {provider}" button, plus a hover/preview card when the provider gives one (title, status, due, assignee).
 - **Calendars default to Week.** The Week ⇄ Month toggle is a shadcn `ToggleGroup`, and the choice is saved per block.
 - **Easy to scan:** a 12-col grid, `Card`-based blocks, one accent color per source (mapped to `--chart-*`), at most ~7 rows visible per list block with "show all" opening the full view, and relative + absolute dates ("in 2 days · Fri 13 Nov").
 - **AutoDS is included** in all views by default. Muting is a messaging concern only.
@@ -233,7 +233,7 @@ src/
 ## 13. Phasing
 
 1. Routes, the grid, the block registry, and the list/table/deadlines/calendar/donut/counter blocks. Dashboard + Work/Personal/College templates.
-2. Clock block, file-tree block (Notability via the Drive backup, read-only), filter blocks + page variables, saved views.
+2. Clock block, filter blocks + page variables, saved views.
 3. Sync-to-GCal button + status, Integrations page.
 4. Rules (if/then), the React Flow automations canvas, the note block (Plate), sharing (two-person workspace per DATA.md).
 

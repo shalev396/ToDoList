@@ -9,7 +9,7 @@
 1. **Build on the `dev` branch for Shalev's review.** Do not deploy anything: no `cdk deploy`, no `npm run deploy:*`, no `reset-db`/`sync-db` against a deployed stage, no changes in any AWS account.
 2. **No pushes, no PRs, no remote changes without Shalev's explicit approval, each time.** Work on the `dev` branch. Commit in small, reviewable steps.
 3. **Never print secrets.** Don't `cat` env files, `echo` keys, log request bodies on credential routes, or paste tokens into chat, screenshots or test snapshots. Use fake fixture tokens only (`FAKE-<provider>`). Real tokens are typed by Shalev into the running UI, which stores them encrypted.
-4. **Never write to providers** (Jira, ClickUp, Linear, Moodle, GitHub, Drive). The one exception is the Google Calendar OAuth two-way sync (audit-logged).
+4. **Never write to providers** (Jira, ClickUp, Linear, Moodle, GitHub). The one exception is the Google Calendar OAuth two-way sync (audit-logged).
 5. When a doc is ambiguous, pick the option the docs recommend, write it down in `docs/dashboard/DECISIONS.md`, and keep going. Stop and ask only for things that need Shalev (credentials, deploys, pushes, paid services).
 6. Reuse Elytra. Don't rebuild what exists (auth, layout, API envelope, CDK, tests, i18n, theme).
 
@@ -23,7 +23,7 @@ Shalev wants **one personal management dashboard** that covers his whole week:
 |---|---|
 | **Time** | Personal Google Calendar (plus the calendars it already aggregates) |
 | **Work** | Jira (AutoDS), ClickUp (Roonga, Parkbooker) |
-| **College** (Braude) | Moodle (courses, assignments, deadlines), Notability notes via their Google Drive PDF backup |
+| **College** (Braude) | Moodle (courses, assignments, deadlines; coming soon) |
 | **Personal** | Linear (personal workspace), GitHub `shalev396/*` repos (optional) |
 
 After login he lands on a **Dashboard** (24h clock, donut of open items by source, week calendar, deadlines soonest first) and can open topic dashboards (**Work**, **Personal**, **College**, or his own). He must be able to **build and rearrange these pages himself** from pre-built blocks with no code, and AI agents (Grok Bot "Remi", Claude, Cursor) must be able to read the data and **build pages for him conversationally** through MCP. A **"Sync to Google Calendar"** button pushes dated items to his personal calendar.
@@ -81,7 +81,7 @@ server/src/
   services/crypto/credentialVault.ts decryptForSync only
   services/logger.ts                 redacting logger
   services/areaRules.ts
-  sync/                              dispatcher worker (runs one job) http providers/{gcal,jira,clickup,linear,moodle,drive,github}
+  sync/                              dispatcher worker (runs one job) http providers/{gcal,jira,clickup,linear,moodle,github}
   gcal/                              Google Calendar OAuth push and pull
   mcp/                               index stdio registry auth/ middleware/ tools/ resources/ prompts/
 server/src/seed/                     demo data (loaded with loadDemoData on dev and qa)
@@ -106,14 +106,14 @@ server/infra/lib/constructs/         kms.ts (and the single function)
 | MongoDB | **Mongoose 8** (existing Elytra provider) |
 | MCP | **MCP TypeScript SDK** (`@modelcontextprotocol/sdk`), Streamable HTTP at `/api/mcp`; MCP Inspector for tests |
 | Crypto | AWS KMS (`@aws-sdk/client-kms`) + Node `crypto` AES-256-GCM; KMS only |
-| Provider clients | `@linear/sdk`, `jira.js` (or plain REST), plain REST for ClickUp/Moodle, Drive REST via service account |
+| Provider clients | `@linear/sdk`, `jira.js` (or plain REST), plain REST for ClickUp/Moodle |
 | Existing UI stack | shadcn/ui, Radix, Tailwind v4, lucide-react, sonner, i18next (`en`, `he` RTL) |
 
 ## 6. UI vision
 
 - **Notion-like, but truly customizable:** clean cards on a 12-column grid, generous whitespace, one accent color per source, light/dark parity, no clutter. It should look better than the Notion setup it replaces.
 - **Dashboard defaults** (from templates, all editable): **24h clock** ring of today's events with a **now-needle** and "now / next"; **donut of open items by source** with Work/College/Personal chips and a total; **calendar defaulting to Week** (Month toggle, saved per block); **deadlines, soonest first**, overdue on top.
-- **Topic pages:** Work (grouped by project, provider filter, AutoDS included), Personal (Linear + `shalev396/*`), College (course list → course page with deadlines + Notability file tree; all-course deadlines at the bottom).
+- **Topic pages:** Work (grouped by project, provider filter, AutoDS included), Personal (Linear + `shalev396/*`), College (course list → course page with deadlines; all-course deadlines at the bottom).
 - **Edit mode** toggle: drag/resize blocks, "Add block" opens the 4-step pipeline editor with a **live preview** (`POST /workspaces/:wid/query` with `draft` + `vars` + `preview:true`).
 - Cross-block filters: clicking a donut slice filters the calendar and deadlines (`$page.*` vars, mirrored in the URL).
 - Every row has **"Open in <provider>"**; mirrored items are read-only, local to-dos edit inline.
@@ -142,8 +142,8 @@ Work phase by phase. At the end of each phase: all tests green, a short report t
 | **0. Foundation** | Clone, `dev` branch, `.env.example` placeholders (the 8 variables), the secret scan in the pre-commit hook. | `npm run dev` (against a deployed stage) + client on :5173; `git grep` finds no secrets. |
 | **1. Data model** | All DATA.md collections (Mongoose, UUID ids), `sync-db` (indexes + `$jsonSchema`), `requireWorkspace` middleware, `CredentialVault` over KMS, demo data (fake data incl. AutoDS project and `shalev396/Elytra`). | Index list matches DATA.md §6; repository test proves every query is workspace-scoped; `JSON.stringify(credential)` has no `enc`. |
 | **2. Backend API + Logic Bridge** | Workspaces/members/invites, items (local CRUD, mirrored `409`), facets, dashboards/views/ops/versions, `POST /workspaces/:wid/query` (saved id **or** draft + `vars` + `preview`), integrations (status shape only) + write-only credential route, agent keys. | Postman/unit tests pass; **secret-leak suite** green (no token pattern in any response/log); `/query` rejects non-whitelisted fields and `$where`; version conflicts return `409`. |
-| **3. Sync (fixtures in tests)** | Sync job runner (an async self-invoke of the one function), provider mappers for Jira, ClickUp, Linear, Moodle, Drive (Notability), GitHub; area rules; `SyncStates`/`SyncRuns`. | Fixture sync upserts deterministically; second run is a no-op; deleted-at-source items get `deletedAt`; no non-GET requests leave a sync job; every item has `source.url`. |
-| **4. Frontend dashboards** | Routes, grid, block registry, blocks (list, table, deadlines, calendar, donut/chart, counter, clock, filter, fileTree, action), editor sheet with live preview, templates (Dashboard, Work, Personal, College), Integrations page. | CODE-AGENT-GUIDE §6.4 checklist passes: Week default, clock needle ±1°, donut totals and click-to-filter, "Open in <provider>" on every row, AutoDS visible, `shalev396/*` under Personal, text-rule check, no secrets in DOM/storage/network, axe clean, light/dark, lg/md/sm, `he` RTL. |
+| **3. Sync (fixtures in tests)** | Sync job runner (an async self-invoke of the one function), provider mappers for Jira, ClickUp, Linear, Moodle, GitHub; area rules; `SyncStates`/`SyncRuns`. | Fixture sync upserts deterministically; second run is a no-op; deleted-at-source items get `deletedAt`; no non-GET requests leave a sync job; every item has `source.url`. |
+| **4. Frontend dashboards** | Routes, grid, block registry, blocks (list, table, deadlines, calendar, donut/chart, counter, clock, filter, action), editor sheet with live preview, templates (Dashboard, Work, Personal, College), Integrations page. | CODE-AGENT-GUIDE §6.4 checklist passes: Week default, clock needle ±1°, donut totals and click-to-filter, "Open in <provider>" on every row, AutoDS visible, `shalev396/*` under Personal, text-rule check, no secrets in DOM/storage/network, axe clean, light/dark, lg/md/sm, `he` RTL. |
 | **5. Google Calendar** | OAuth connect (PKCE), `CalendarLinks`, LWW + tombstones, "Sync to Google Calendar" button with dry-run preview. | Against a mock Google in tests: echo skipped, 410 reset, idempotent re-run, `AuditLogs gcal.write` written. Real Google is **not** called. |
 | **6. MCP server** | `/api/mcp` + `/api/mcp/readonly`, agent-key auth, scopes ∩ role, tool catalog incl. builder tools (dry-run required before write), redaction + audit with `actorAgentId`. | MCP Inspector lists tools; contract tests pass; "MCP never imports the vault" test passes; red-team cases (prompt-injected titles, pasted tokens, cross-workspace ids, revoked keys) behave as MCP.md §12 says; an agent can build the College page end-to-end via preview → write. |
 | **7. Review pack** | Competitor UI comparison pass (CODE-AGENT-GUIDE §6), `DECISIONS.md`, `REPORT.md` with screenshots, a written deploy plan (CDK constructs, Atlas, KMS) **not executed**. | Shalev has everything to review. Nothing deployed, nothing pushed. |

@@ -84,7 +84,6 @@ items|containers   where (AND/OR), dateRange,       groupBy ≤3, aggregate     
 | `table` | TanStack table | any | columns come from `props` schema (dynamic) |
 | `list` | compact rows | any | at most 7 rows, then "show all" |
 | `counter` | one number with a delta | `aggregate` | e.g. open items this week |
-| `fileTree` | container tree (Moodle sections, Notability backup) | `source: containers` + `kind: file` | read-only, opens in the source app |
 | `filter` | chips, select or date presets that set `$page` vars | `sets: "$page.topic"` | options come from `GET /facets` (never hard-coded) |
 | `action` | button | `action` | e.g. "Sync to Google Calendar" (Google OAuth) |
 | `note` | rich text (phase 4) | n/a | the only block that holds free text, and it's user-authored |
@@ -165,7 +164,7 @@ The response is `{ valid, errors[], warnings[], preview: { blockId → first 20 
 | **Dashboard** (main) | clock · donut by source with area chips · calendar (week) · deadlines across all areas | all |
 | **Work** | filter (project, provider) · calendar (week) · kanban or table **grouped by project** (`containerId`) · deadlines | `area = work`. AutoDS is **included**, since the mute only applies to Remi's messages |
 | **Personal** | same as Work, with Linear as the source (one-way) | `area = personal`. Projects matching `shalev396/*` are personal (`settings.areaRules`, DATA.md §3.2) |
-| **College** | filter (semester, course, type) · calendar (week) · course list (Moodle-like) → course page = per-course deadlines + `fileTree` · all-courses deadlines at the bottom | `area = college` |
+| **College** | filter (semester, course, type) · calendar (week) · course list (Moodle-like) → course page = per-course deadlines · all-courses deadlines at the bottom | `area = college` |
 
 A template has `{key, version, dashboards[] with unbound $page vars}`, and `instantiate_template` clones it. Template upgrades are offered as a diff and never applied silently.
 

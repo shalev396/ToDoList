@@ -1,6 +1,6 @@
 ---
 name: todolist-sync
-description: Use when TodoList data looks stale or missing, when the user asks to refresh or sync Jira, ClickUp, Linear, Moodle, GitHub, Google Drive or Google Calendar, to check whether a sync worked, to connect or disconnect an integration, or to push items to Google Calendar. Uses sync_now, get_sync_status, integrations_list, integrations_start_connect.
+description: Use when TodoList data looks stale or missing, when the user asks to refresh or sync Jira, ClickUp, Linear, Moodle, GitHub or Google Calendar, to check whether a sync worked, to connect or disconnect an integration, or to push items to Google Calendar. Uses sync_now, get_sync_status, integrations_list, integrations_start_connect.
 ---
 
 # TodoList: syncing and connecting integrations

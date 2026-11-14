@@ -36,4 +36,4 @@ At most 10 rules per block, 3 group-bys per block, 40 blocks per dashboard, 200 
 
 ## Block types
 
-`list`, `table`, `kanban`, `calendar` (week by default, or month), `chart` (donut, bar, line, number), `clock`, `counter`, `deadlines`, `fileTree`, `note`, `filter`, `action`. Each block shows data from the connectors (providers) the workspace has; filter by `provider` in the query when a block should show one source only.
+`list`, `table`, `kanban`, `calendar` (week by default, or month), `chart` (donut, bar, line, number), `clock`, `counter`, `deadlines`, `note`, `filter`, `action`. Each block shows data from the connectors (providers) the workspace has; filter by `provider` in the query when a block should show one source only.

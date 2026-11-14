@@ -21,7 +21,7 @@ All of them accept a `topic` filter where it makes sense: the slugs of the works
 
 1. Respect topics. If the user named one ("my work day"), filter by it. Otherwise group the answer by topic so work and personal never blur together.
 2. Order: overdue first (say how late), then events in time order, then due today.
-3. Every item that comes from a provider (Jira, ClickUp, Linear, Moodle, GitHub, Google Calendar or Drive) gets its link: write `Open in <provider>` as a Markdown link to `openIn.url`. Local to-dos have no link; say they live in TodoList.
+3. Every item that comes from a provider (Jira, ClickUp, Linear, Moodle, GitHub or Google Calendar) gets its link: write `Open in <provider>` as a Markdown link to `openIn.url`. Local to-dos have no link; say they live in TodoList.
 4. Keep it short: title, topic, due time, link. Offer details only on request.
 5. Times: show them in the workspace time zone that `list_today` returns, not UTC.
 6. Empty results are an answer: say "nothing due today" instead of inventing items.
