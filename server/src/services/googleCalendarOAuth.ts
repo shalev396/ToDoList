@@ -47,9 +47,9 @@ import {
   OAUTH_LANGUAGES,
   OAuthFailure,
   oauthErrorLocation,
-  pkceChallenge,
   type OAuthErrorCode,
 } from './oauth/common.js';
+import { pkceChallenge } from './crypto/hashing.js';
 import { getWorkspaceContext } from './workspaceContext.js';
 
 export {

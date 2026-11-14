@@ -35,8 +35,8 @@ import {
   OAUTH_LANGUAGES,
   OAuthFailure,
   oauthErrorLocation,
-  pkceChallenge,
 } from './common.js';
+import { pkceChallenge } from '../crypto/hashing.js';
 import type {
   OAuthProviderInfo,
   OAuthProvidersResponse,

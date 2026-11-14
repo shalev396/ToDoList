@@ -14,8 +14,6 @@
  * title or token in the entry). Reading the item back and storing it as a mirrored copy come
  * after, best effort and under a short budget: they never change what is reported.
  */
-import { createHash } from 'node:crypto';
-
 import { LIMITS } from '../../config/limits.js';
 import { AppError } from '../../errors/AppError.js';
 import { CalendarApiError, type PlainEventBody } from '../../gcal/calendarApi.js';
@@ -49,6 +47,7 @@ import {
   type CreateTargetsResponseData,
 } from '../../types/providerCreate.js';
 import type { WorkspaceContext } from '../accessFilter.js';
+import { sha256Hex } from '../crypto/hashing.js';
 import { assertRole, type IntegrationActor } from '../integrations.js';
 import { findOwnIntegration, isOwnIntegration } from '../integrationOwnership.js';
 import { isIntegrationShared } from '../itemAccess.js';
@@ -444,8 +443,7 @@ function calendarEvent(
 }
 
 /** Google event ids are base32hex: a stable one per request makes a repeat the same event. */
-const eventIdFor = (requestId: string): string =>
-  `h5${createHash('sha256').update(requestId).digest('hex').slice(0, 40)}`;
+const eventIdFor = (requestId: string): string => `h5${sha256Hex(requestId).slice(0, 40)}`;
 
 /** `work`, or null when it is not done in `ms` or fails (it keeps running; its answer is dropped). */
 async function within<T>(work: Promise<T>, ms: number): Promise<T | null> {

@@ -11,13 +11,14 @@
  *   connect their own integrations, PERMISSIONS-V2): the page checks the signed-in user against
  *   the agent's principal (MCP elicitation, against phishing).
  */
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 import { environment } from '../config/environment.js';
 import { AppError } from '../errors/AppError.js';
 import { getAuditLogRepository, getReplayNonceRepository } from '../models/index.js';
 import { CONNECTABLE_PROVIDERS, type ConnectableProvider } from '../types/integrations.js';
 import type { WorkspaceContext } from './accessFilter.js';
+import { sha256Hex } from './crypto/hashing.js';
 import { assertProviderOpen } from './integrationConfig.js';
 import { assertRole, type IntegrationActor } from './integrations.js';
 
@@ -36,7 +37,7 @@ export interface ConnectLink {
 }
 
 export function hashConnectLink(rawLink: string): string {
-  return createHash('sha256').update(rawLink).digest('hex');
+  return sha256Hex(rawLink);
 }
 
 /** The client's Integrations page, opened on the provider's connect form. */

@@ -10,8 +10,6 @@
  *   layouts and filters). Its items stay, Unsorted (`topicId: null`): they live at their source,
  *   and local to-dos stay too.
  */
-import { createHash } from 'node:crypto';
-
 import { AppError } from '../errors/AppError.js';
 import {
   getAuditLogRepository,
@@ -37,6 +35,7 @@ import {
   type TopicIcon,
 } from '../types/topics.js';
 import type { WorkspaceContext } from './accessFilter.js';
+import { sha256Hex } from './crypto/hashing.js';
 
 export interface TopicActor {
   userId: string;
@@ -104,7 +103,7 @@ function assertEditor(ws: WorkspaceContext, action: string): void {
  * UUID-shaped (RFC 9562 version 8), so every writer agrees on it without reading first.
  */
 export function defaultTopicId(workspaceId: string, slug: DefaultTopicSlug): string {
-  const hex = createHash('sha256').update(`todolist:topic:${workspaceId}:${slug}`).digest('hex');
+  const hex = sha256Hex(`todolist:topic:${workspaceId}:${slug}`);
   const variant = ((Number.parseInt(hex.charAt(16), 16) & 0x3) | 0x8).toString(16);
   return [
     hex.slice(0, 8),

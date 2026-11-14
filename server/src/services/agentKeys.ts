@@ -1,5 +1,5 @@
 /** Agent keys (DATA.md §3.14): create (raw key once), list, revoke. Framework-free. */
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
 import { LIMITS } from '../config/limits.js';
 import { AppError } from '../errors/AppError.js';
@@ -8,13 +8,14 @@ import { getAgentKeyRepository, getAuditLogRepository } from '../models/index.js
 import type { AgentKeyView } from '../routes/private/agentKeys.js';
 import type { AgentScope } from '../types/domain.js';
 import type { WorkspaceContext } from './accessFilter.js';
+import { sha256Hex } from './crypto/hashing.js';
 
 export const KEY_PREFIX = 'elk_';
 export const DEFAULT_EXPIRY_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export function hashAgentKey(raw: string): string {
-  return createHash('sha256').update(raw).digest('hex');
+  return sha256Hex(raw);
 }
 
 function toView(key: AgentKeyData, withUser: boolean): AgentKeyView {

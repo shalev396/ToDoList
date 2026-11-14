@@ -2,8 +2,9 @@
  * Invite link tokens (DATA.md §3.3): 32 random bytes, base64url. The raw token travels once, in
  * the invite link; only its SHA-256 (hex) is stored, so the database alone can't accept invites.
  */
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
+import { sha256Hex } from './crypto/hashing.js';
 import { findSecrets } from './secretPatterns.js';
 
 export const INVITE_TOKEN_BYTES = 32;
@@ -13,7 +14,7 @@ export const INVITE_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 const MAX_DRAWS = 10;
 
 export function hashInviteToken(rawToken: string): string {
-  return createHash('sha256').update(rawToken, 'utf8').digest('hex');
+  return sha256Hex(rawToken);
 }
 
 /**

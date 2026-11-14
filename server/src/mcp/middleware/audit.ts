@@ -3,9 +3,8 @@
  * acted, `action: "mcp.<tool>"`, the target, and `meta: {argsHash, resultStatus}`. The arguments
  * themselves are never stored, only a hash of them.
  */
-import { createHash } from 'node:crypto';
-
 import { getAuditLogRepository } from '../../models/index.js';
+import { sha256Hex } from '../../services/crypto/hashing.js';
 import { logger } from '../../services/logger.js';
 import type { AgentPrincipal } from '../auth/principal.js';
 import type { AuditTarget } from '../tool.js';
@@ -32,9 +31,7 @@ function canonical(value: unknown): unknown {
 
 /** Hex SHA-256 of the canonical JSON of the arguments. */
 export function argsHash(args: unknown): string {
-  return createHash('sha256')
-    .update(JSON.stringify(canonical(args ?? {})))
-    .digest('hex');
+  return sha256Hex(JSON.stringify(canonical(args ?? {})));
 }
 
 /** Extra meta keys a tool may add: plain names, short string values, never the fixed two. */

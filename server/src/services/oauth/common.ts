@@ -3,7 +3,7 @@
  * the single-use 10-minute state bound to user, workspace and provider, the browser-binding
  * cookie, PKCE S256, and the callback's redirect to the fixed client page with a code only.
  */
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 
 import { environment } from '../../config/environment.js';
 import { assertUnderTest } from '../../config/testSwitches.js';
@@ -11,6 +11,7 @@ import { OAUTH_STATE_TTL_MS, type OAuthStateData } from '../../models/definition
 import { getOAuthStateRepository } from '../../models/index.js';
 import type { Provider } from '../../types/domain.js';
 import type { ErrorCode } from '../../types/errorCodes.js';
+import { sha256Hex } from '../crypto/hashing.js';
 
 /** The browser-binding cookie: HttpOnly, sent only to the OAuth callbacks. */
 export const OAUTH_COOKIE = 'todolist_oauth';
@@ -24,14 +25,7 @@ const LOOPBACK_ORIGIN = /^http:\/\/(?:localhost|127\.0\.0\.1):\d{2,5}$/;
 
 export type OAuthErrorCode = Extract<ErrorCode, `oauth_${string}`>;
 
-export const sha256Hex = (value: string): string =>
-  createHash('sha256').update(value).digest('hex');
 export const randomToken = (): string => randomBytes(32).toString('base64url');
-
-/** RFC 7636 S256: BASE64URL(SHA256(ASCII(code_verifier))). */
-export function pkceChallenge(verifier: string): string {
-  return createHash('sha256').update(verifier, 'ascii').digest('base64url');
-}
 
 function sameHash(a: string, b: string): boolean {
   const left = Buffer.from(a, 'hex');
