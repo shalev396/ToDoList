@@ -305,7 +305,7 @@ export async function listItems(
   // collide.
   const match: Doc = {
     $and: [
-      (await policyFor(ws, userId)).itemFilter(ws, filters),
+      await ItemPolicy.filterFor(Caller.fromContext(ws, Actor.user(userId)), filters),
       filters,
       ...(query.cursor === undefined ? [] : [afterCursor(decodeCursor(query.cursor))]),
     ],
