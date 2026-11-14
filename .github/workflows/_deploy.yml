@@ -1,0 +1,84 @@
+# Reusable workflow: deploy one stage. All logic lives in server/scripts; this file only runs it.
+#
+#   deploy-backend   npm run deploy:backend -- <stage>   CDK stack + database schema sync
+#   deploy-frontend  npm run deploy:frontend -- <stage>  build client, upload to S3, invalidate CloudFront
+#
+# Inputs (see server/.env.example): AWS_ACCOUNT_ID secret + AWS_ROLE_NAME variable build the OIDC role
+# ARN; CERTIFICATE_ARN (optional) and WAF_WEB_ACL_ARN (optional) repository secrets; DOMAIN_NAME and
+# WWW_ALIAS (optional) environment variables; DATABASE_URL environment secret; AWS_REGION (optional)
+# variable.
+# See docs/deployment.md.
+name: Deploy
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        description: 'Deployment stage (dev, qa, prod)'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.stage }}
+  cancel-in-progress: false
+
+env:
+  # Optional repository variable; the CDK app defaults to us-east-1 as well.
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend (${{ inputs.stage }})
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.stage }}
+    env:
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+      WWW_ALIAS: ${{ vars.WWW_ALIAS }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      CERTIFICATE_ARN: ${{ secrets.CERTIFICATE_ARN }}
+      WAF_WEB_ACL_ARN: ${{ secrets.WAF_WEB_ACL_ARN }}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_ROLE_NAME }}
+      - run: npm ci
+      - run: npm run deploy:backend -- ${{ inputs.stage }}
+
+  deploy-frontend:
+    name: Deploy Frontend (${{ inputs.stage }})
+    runs-on: ubuntu-latest
+    needs: deploy-backend
+    environment:
+      name: ${{ inputs.stage }}
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_ROLE_NAME }}
+      # The script builds the client, which imports API types from server/src: both need deps.
+      - run: npm ci
+      - run: npm ci
+        working-directory: client
+      - run: npm run deploy:frontend -- ${{ inputs.stage }}

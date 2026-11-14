@@ -1,0 +1,98 @@
+# Reusable workflow: Run tests against live QA environment
+# Tests run SEQUENTIALLY: backend first, then frontend
+# Uses qa environment to get DOMAIN_NAME (qa.elytra.shalev396.com)
+# The WAF gate asks for basic auth on every qa page but not on /api/: only the Playwright job gets
+# BASIC_AUTH_PASSWORD (qa environment secret; the username is DOMAIN_NAME). See docs/staging-access.md.
+# Each job first empties QA (DB, S3 user uploads, Cognito users) with `npm run reset:db -- qa`, a
+# direct Lambda invoke through the OIDC role: there is no HTTP reset route.
+name: Test QA
+
+on:
+  workflow_call:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+# Merging into qa starts the QA deploy (push-qa.yml) and, through the open qa -> main PR, this suite,
+# seconds apart. Sharing _deploy.yml's `deploy-${{ inputs.stage }}` group (deploy-qa for qa) makes
+# this run wait for a running QA deploy instead of testing a half-deployed stage. Keep the two
+# names equal, or the wait silently stops working. GitHub keeps only one pending run per group: a
+# newly queued run replaces an older pending one even with cancel-in-progress: false, so rapid
+# pushes to qa can drop a pending deploy or test run (re-run it). Don't move this suite into
+# push-qa.yml behind the deploy: it is the gate in front of prod.
+concurrency:
+  group: deploy-qa
+  cancel-in-progress: false
+
+jobs:
+  test-backend-qa:
+    name: Backend Tests (Postman vs QA)
+    runs-on: ubuntu-latest
+    environment:
+      name: qa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+        working-directory: server
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_ROLE_NAME }}
+      - name: Reset the qa stage
+        run: npm run reset:db -- qa
+        working-directory: server
+      - name: Run Postman against QA API
+        run: npm run test:qa
+        working-directory: server
+
+  test-frontend-qa:
+    name: Frontend Tests (Playwright vs QA)
+    runs-on: ubuntu-latest
+    needs: test-backend-qa
+    environment:
+      name: qa
+    env:
+      BASE_URL: https://${{ vars.DOMAIN_NAME }}
+      API_BASE_URL: https://${{ vars.DOMAIN_NAME }}/api
+      BASIC_AUTH_PASSWORD: ${{ secrets.BASIC_AUTH_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+        working-directory: client
+      - name: Install Playwright test dependencies
+        run: npm run test:install
+        working-directory: client
+      - run: npm ci
+        working-directory: server
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_ROLE_NAME }}
+      - name: Reset the qa stage
+        run: npm run reset:db -- qa
+        working-directory: server
+      - name: Run Playwright against QA
+        run: npm run test:qa
+        working-directory: client
+      - name: Upload Playwright test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-qa
+          path: client/artifacts/
+          retention-days: 7

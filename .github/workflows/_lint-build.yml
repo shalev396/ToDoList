@@ -1,0 +1,56 @@
+# Reusable workflow: Lint and build client + server (including infra tests and Lambda layers)
+name: Lint & Build
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  lint-build-client:
+    name: Lint & Build Client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install Client Dependencies
+        run: npm ci
+        working-directory: client
+
+      - name: Install Server Dependencies
+        run: npm ci
+        working-directory: server
+      - name: Lint Client
+        run: npm run lint
+        working-directory: client
+      - name: Build Client
+        run: npm run build
+        working-directory: client
+
+  lint-build-server:
+    name: Lint, Build & Test Server
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck (src + infra)
+        run: npm run build
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Infra tests (synth dev/qa/prod, cdk-nag, committed Composer drawing is current)
+        run: npm run test:infra
+      - name: Build Lambda layers
+        run: npm run build:layers
+      - name: Verify Lambda layers link
+        run: npm run verify:layers

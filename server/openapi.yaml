@@ -1,0 +1,887 @@
+openapi: 3.0.3
+
+info:
+  title: Elytra API
+  version: 1.0.0
+  description: |
+    REST API for the Elytra platform.
+
+    - `/public/auth/*`: public authentication flows (sign-up, login, password reset, token refresh).
+    - `/private/*`: requires `Authorization: Bearer <idToken>` from login or refresh.
+
+    All paths are relative to the server base URL (e.g. `/api/public/auth/login`).
+
+    **Envelope.** A success response is `{ "data": … }`; an error response is `{ "message": "…" }`.
+    There is no `success` field; use the HTTP status code.
+
+    **Files never travel through the API.** Anything sent to `/api` is capped by the Lambda
+    payload limit (6,291,556 bytes, about 4.7 MB of file after base64) and API Gateway's 30 s
+    timeout. Uploads go straight to S3 with a presigned POST (`/private/uploads/presign`), and
+    downloads come from S3 through a presigned GET (`/private/me/export`).
+
+servers:
+  - url: http://localhost:3000/api
+    description: Local development
+  - url: https://{domain}/api
+    description: Deployed environment
+    variables:
+      domain:
+        default: elytra.shalev396.com
+
+tags:
+  - name: Auth
+    description: Public authentication endpoints (signup, confirmation, login, password reset, token refresh). Rate limited to 100 requests per 15 minutes per IP.
+  - name: User
+    description: Authenticated account endpoints (profile, profile update, test email, export, account deletion, dashboard)
+  - name: Uploads
+    description: Presigned browser uploads straight to S3
+
+security: []
+
+paths:
+  # ── Auth ──────────────────────────────────────────────────────────────────────
+
+  /public/auth/signup:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: Creates a Cognito user and sends a verification email. The user must confirm their email before logging in.
+      operationId: signup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequestBody'
+            example:
+              email: user@example.com
+              password: P@ssw0rd!
+              name: Jane Doe
+      responses:
+        '200':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignupResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /public/auth/confirm:
+    post:
+      tags: [Auth]
+      summary: Confirm email verification
+      description: Verifies the user's email address with the code sent during signup.
+      operationId: confirmSignup
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmSignupRequestBody'
+            example:
+              email: user@example.com
+              code: '123456'
+      responses:
+        '200':
+          description: Email confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptySuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /public/auth/resend-confirmation:
+    post:
+      tags: [Auth]
+      summary: Resend the email verification code
+      description: Sends a new verification code to an unconfirmed user. Also answers 200 for an unknown email, so the endpoint doesn't reveal which emails are registered.
+      operationId: resendConfirmation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResendConfirmationRequestBody'
+            example:
+              email: user@example.com
+      responses:
+        '200':
+          description: Code sent (or silently ignored if the user does not exist)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptySuccessResponse'
+        '400':
+          description: Missing email, or the email is already verified
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                message: This email is already verified. You can sign in with your password.
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /public/auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate a user
+      description: |
+        Validates credentials against Cognito and returns the user and JWT tokens (id, refresh).
+        `data.user.id` is the user's **Cognito sub**, not the database id that `GET /private/me`
+        returns as `id`.
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequestBody'
+            example:
+              email: user@example.com
+              password: P@ssw0rd!
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The email address has not been verified yet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                message: Please verify your email before signing in.
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  /public/auth/forgot-password:
+    post:
+      tags: [Auth]
+      summary: Request a password reset code
+      description: Sends a password reset code to the user's email. Also answers 200 for an unknown email, so the endpoint doesn't reveal which emails are registered.
+      operationId: forgotPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequestBody'
+            example:
+              email: user@example.com
+      responses:
+        '200':
+          description: Reset code sent (or silently ignored if the user does not exist)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptySuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /public/auth/reset-password:
+    post:
+      tags: [Auth]
+      summary: Reset password with verification code
+      description: Sets a new password using the code from the forgot-password flow.
+      operationId: resetPassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResetPasswordRequestBody'
+            example:
+              email: user@example.com
+              code: '123456'
+              password: N3wP@ssw0rd!
+      responses:
+        '200':
+          description: Password reset
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptySuccessResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /public/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh the id token
+      description: Exchanges a valid refresh token for a new id token.
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenRequestBody'
+            example:
+              refreshToken: eyJjdHkiOiJKV1QiLCJlbmMiOiJBMjU2R0NNIiwiYWxnIjoiUlNBLU9BRVAifQ...
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefreshTokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  # ── User ──────────────────────────────────────────────────────────────────────
+
+  /private/me:
+    get:
+      tags: [User]
+      summary: Get current user profile
+      description: Returns the authenticated user's profile.
+      operationId: getMe
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+    put:
+      tags: [User]
+      summary: Update current user profile
+      description: |
+        Updates the name and/or photo. A new photo is first uploaded to S3 through
+        `POST /private/uploads/presign` (purpose `account-photo`) and then referenced here by its
+        `stagingKey`. The server checks the staged object's owner, size, type and magic bytes,
+        strips its metadata, and only then replaces the current photo; a rejected upload leaves
+        the current photo untouched. The staged object is consumed, so replaying the same
+        `stagingKey` returns 404.
+
+        `removePhoto: true` deletes the current photo without a replacement. A body that changes
+        nothing returns 400 "No changes provided".
+      operationId: updateMe
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateMeRequestBody'
+            examples:
+              name:
+                summary: Change the name
+                value:
+                  name: Jane Doe
+              photo:
+                summary: Replace the photo with a staged upload
+                value:
+                  photo:
+                    stagingKey: tmp/staging/2b5d0a52-4bd0-4f1a-9a2e-6c1f0e7b6f10/7f1c1d64-1f0e-4a3a-9c6f-2f4b8d0a1b23.png
+                    fileName: me.png
+              removePhoto:
+                summary: Remove the photo
+                value:
+                  removePhoto: true
+      responses:
+        '200':
+          description: Updated user profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '400':
+          description: Invalid body, no changes, invalid staging key, disallowed type, or content that doesn't match its type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                message: No changes provided
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: User not found, or the staged upload does not exist (expired, never uploaded, or already consumed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                message: Staged upload not found. Request a new upload URL.
+        '413':
+          description: The staged file is larger than the purpose allows
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                message: File too large. Maximum is 5 MB.
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /private/me/test-email:
+    post:
+      tags: [User]
+      summary: Send a test email
+      description: Sends a test email to the authenticated user's address through SES.
+      operationId: sendTestEmail
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Test email sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TestEmailResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /private/me/export:
+    get:
+      tags: [User]
+      summary: Export account data
+      description: |
+        Builds a ZIP of the user's data (`user-data.csv` plus uploaded files under `assets/`),
+        stores it in S3 and returns a presigned download URL, valid for 15 minutes. The object
+        is deleted automatically after a day. The download sets
+        `Content-Disposition: attachment; filename="<filename>"`.
+      operationId: exportMyData
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Presigned download URL for the export ZIP
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportMyDataResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /private/delete:
+    delete:
+      tags: [User]
+      summary: Delete user account
+      description: Permanently deletes the user's uploads, database records and Cognito user.
+      operationId: deleteAccount
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Account deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteUserResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /private/dashboard:
+    get:
+      tags: [User]
+      summary: Get dashboard data
+      description: Placeholder endpoint for dashboard data.
+      operationId: getDashboard
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Dashboard data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+
+  # ── Uploads ───────────────────────────────────────────────────────────────────
+
+  /private/uploads/presign:
+    post:
+      tags: [Uploads]
+      summary: Create a presigned S3 upload
+      description: |
+        Returns a presigned POST for a new object in the caller's staging folder
+        (`tmp/staging/<userId>/`, never publicly served, deleted after a day if unused).
+
+        1. Send `multipart/form-data` to `uploadUrl`: every entry of `fields`, then the file as
+           the **last** field, named `file`. No `Authorization` header. S3 answers 204.
+        2. Pass `stagingKey` to the endpoint that consumes it (e.g. `PUT /private/me`).
+
+        S3 itself enforces the policy: the file must be 1 to `maxBytes` bytes and its
+        Content-Type must equal `mimeType`.
+
+        | purpose | maxBytes | mimeType |
+        | --- | --- | --- |
+        | `account-photo` | 5 MiB | `image/jpeg`, `image/png`, `image/webp`, `image/gif` |
+      operationId: presignUpload
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PresignUploadRequestBody'
+            example:
+              purpose: account-photo
+              fileName: me.png
+              mimeType: image/png
+      responses:
+        '200':
+          description: Presigned upload form
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PresignUploadResponse'
+        '400':
+          description: Unknown purpose, disallowed MIME type, or missing file name
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiErrorResponse'
+              example:
+                message: 'Unsupported file type: image/svg+xml. Allowed: image/jpeg, image/png, image/webp, image/gif'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+components:
+  # ── Security ────────────────────────────────────────────────────────────────
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Cognito-issued JWT id token (from login or refresh)
+
+  # ── Reusable Responses ──────────────────────────────────────────────────────
+
+  responses:
+    BadRequest:
+      description: Invalid or missing request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            message: 'Email, password, and name are required'
+
+    Unauthorized:
+      description: Authentication required or credentials invalid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            message: No authorization header provided
+
+    NotFound:
+      description: Requested resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            message: User not found
+
+    TooManyRequests:
+      description: Rate limit exceeded (per IP, 15-minute window; `RateLimit-*` headers describe the budget)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            message: Too many requests. Please try again later.
+
+    InternalError:
+      description: Unexpected server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorResponse'
+          example:
+            message: An unexpected error occurred
+
+  # ── Schemas ─────────────────────────────────────────────────────────────────
+
+  schemas:
+    # ── Envelope ──────────────────────────────────────────────────────────────
+
+    ApiErrorResponse:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+
+    EmptySuccessResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          additionalProperties: false
+          example: {}
+
+    # ── Auth request bodies ───────────────────────────────────────────────────
+
+    SignupRequestBody:
+      type: object
+      required: [email, password, name]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+        name:
+          type: string
+
+    ConfirmSignupRequestBody:
+      type: object
+      required: [email, code]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+
+    ResendConfirmationRequestBody:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    LoginRequestBody:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    ForgotPasswordRequestBody:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+
+    ResetPasswordRequestBody:
+      type: object
+      required: [email, code, password]
+      properties:
+        email:
+          type: string
+          format: email
+        code:
+          type: string
+        password:
+          type: string
+          format: password
+          minLength: 8
+
+    RefreshTokenRequestBody:
+      type: object
+      required: [refreshToken]
+      properties:
+        refreshToken:
+          type: string
+
+    # ── Auth responses ────────────────────────────────────────────────────────
+
+    SignupResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [userSub, userConfirmed]
+          properties:
+            userSub:
+              type: string
+            userConfirmed:
+              type: boolean
+
+    LoginUserPayload:
+      type: object
+      required: [id, email, name]
+      properties:
+        id:
+          type: string
+          description: The user's Cognito sub (not the database id returned by GET /private/me)
+        email:
+          type: string
+        name:
+          type: string
+
+    LoginResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [user, tokens]
+          properties:
+            user:
+              $ref: '#/components/schemas/LoginUserPayload'
+            tokens:
+              type: object
+              required: [idToken, refreshToken, expiresIn]
+              properties:
+                idToken:
+                  type: string
+                refreshToken:
+                  type: string
+                expiresIn:
+                  type: integer
+                  description: Seconds until the id token expires
+
+    RefreshTokenResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [idToken, expiresIn]
+          properties:
+            idToken:
+              type: string
+            expiresIn:
+              type: integer
+
+    # ── User ──────────────────────────────────────────────────────────────────
+
+    MeResponseData:
+      type: object
+      required: [id, cognitoSub, email, name, photoUrl, lastLoginAt, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Database id
+        cognitoSub:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        photoUrl:
+          type: string
+          format: uri
+          nullable: true
+        lastLoginAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    MeResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/MeResponseData'
+
+    StagedFileReference:
+      type: object
+      required: [stagingKey, fileName]
+      properties:
+        stagingKey:
+          type: string
+          description: From POST /private/uploads/presign
+        fileName:
+          type: string
+          description: Original file name, kept on the media record and used in the export
+
+    UpdateMeRequestBody:
+      type: object
+      properties:
+        name:
+          type: string
+        removePhoto:
+          type: boolean
+          description: Delete the current photo without a replacement. Ignored when `photo` is present.
+        photo:
+          $ref: '#/components/schemas/StagedFileReference'
+
+    TestEmailResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [message]
+          properties:
+            message:
+              type: string
+
+    ExportMyDataResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [downloadUrl, filename]
+          properties:
+            downloadUrl:
+              type: string
+              format: uri
+              description: Presigned S3 GET, valid for 15 minutes
+            filename:
+              type: string
+              example: user-export-1789867358634.zip
+
+    DashboardResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [userId, message]
+          properties:
+            userId:
+              type: string
+            message:
+              type: string
+
+    DeleteUserResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [message]
+          properties:
+            message:
+              type: string
+
+    # ── Uploads ───────────────────────────────────────────────────────────────
+
+    UploadPurpose:
+      type: string
+      enum: [account-photo]
+
+    PresignUploadRequestBody:
+      type: object
+      required: [purpose, fileName, mimeType]
+      properties:
+        purpose:
+          $ref: '#/components/schemas/UploadPurpose'
+        fileName:
+          type: string
+          maxLength: 255
+          description: The file's name. The object key is chosen by the server.
+        mimeType:
+          type: string
+          description: Must be allowed for the purpose. S3 only accepts the upload with exactly this Content-Type.
+
+    PresignUploadResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [stagingKey, uploadUrl, fields, expiresIn, maxBytes]
+          properties:
+            stagingKey:
+              type: string
+              example: tmp/staging/2b5d0a52-4bd0-4f1a-9a2e-6c1f0e7b6f10/7f1c1d64-1f0e-4a3a-9c6f-2f4b8d0a1b23.png
+            uploadUrl:
+              type: string
+              format: uri
+              example: https://elytra-dev-assets.s3.us-east-1.amazonaws.com/
+            fields:
+              type: object
+              additionalProperties:
+                type: string
+              description: Form fields to send before `file`, verbatim (key, Content-Type, Policy, signature fields).
+            expiresIn:
+              type: integer
+              description: Seconds until the form expires
+              example: 900
+            maxBytes:
+              type: integer
+              example: 5242880

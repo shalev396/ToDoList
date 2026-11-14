@@ -1,0 +1,130 @@
+# Reusable workflow: run tests against the local API (tsx) + Vite, backed by a deployed stage.
+# Tests run SEQUENTIALLY: backend first, then frontend.
+# The local API reads Cognito/S3 wiring from the stage stack outputs, so it needs
+# AWS credentials plus the stage's DOMAIN_NAME and DATABASE_URL — nothing else.
+# Each job first empties the stage (DB, S3 user uploads, Cognito users) with `npm run reset:db`,
+# a direct Lambda invoke: there is no HTTP reset route.
+name: Test Local
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        description: 'Stage whose stack and secrets the local API uses (default: qa)'
+        required: false
+        type: string
+        default: qa
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+jobs:
+  test-backend:
+    name: Backend Tests (Postman)
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}
+    env:
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_ROLE_NAME }}
+      - run: npm ci
+        working-directory: server
+      - name: Reset the ${{ inputs.environment }} stage
+        run: npm run reset:db -- ${{ inputs.environment }}
+        working-directory: server
+      - name: Start local API and run Postman
+        run: |
+          npm run start:local -- --stage ${{ inputs.environment }} &
+          SERVER_PID=$!
+          for i in $(seq 1 60); do
+            if curl -s -o /dev/null --connect-timeout 2 http://localhost:3000/api; then
+              echo "API ready on port 3000"
+              npm run test:local
+              TEST_EXIT=$?
+              kill $SERVER_PID 2>/dev/null || true
+              exit $TEST_EXIT
+            fi
+            sleep 2
+          done
+          echo "API failed to start"
+          kill $SERVER_PID 2>/dev/null || true
+          exit 1
+        working-directory: server
+
+  test-frontend:
+    name: Frontend Tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: test-backend
+    environment:
+      name: ${{ inputs.environment }}
+    env:
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BASE_URL: http://localhost:5173
+      API_BASE_URL: http://localhost:3000/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+        working-directory: client
+      - run: npm ci
+        working-directory: server
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/${{ vars.AWS_ROLE_NAME }}
+      - name: Install Playwright test dependencies
+        run: npm run test:install
+        working-directory: client
+      - name: Reset the ${{ inputs.environment }} stage
+        run: npm run reset:db -- ${{ inputs.environment }}
+        working-directory: server
+      - name: Start local API and Vite, run Playwright
+        run: |
+          (cd ../server && npm run start:local -- --stage ${{ inputs.environment }}) &
+          SERVER_PID=$!
+          npm run dev &
+          VITE_PID=$!
+          echo "Waiting for servers to start..."
+          for i in $(seq 1 60); do
+            if curl -s -o /dev/null --connect-timeout 2 http://localhost:3000/api && \
+               curl -s -o /dev/null --connect-timeout 2 http://localhost:5173; then
+              echo "Backend (3000) and Vite (5173) ready"
+              npm run test
+              TEST_EXIT=$?
+              kill $SERVER_PID $VITE_PID 2>/dev/null || true
+              exit $TEST_EXIT
+            fi
+            sleep 2
+          done
+          echo "Servers failed to start"
+          kill $SERVER_PID $VITE_PID 2>/dev/null || true
+          exit 1
+        working-directory: client
+      - name: Upload Playwright test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: client/artifacts/
+          retention-days: 7

@@ -1,0 +1,4 @@
+# Prettier also skips everything in .gitignore (and node_modules) by default.
+# List only committed files it must not reformat.
+*package-lock.json
+server/infra/composer
