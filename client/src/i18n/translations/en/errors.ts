@@ -27,6 +27,8 @@ export const errors = {
     accountAlreadyConnected:
       'That account is already connected in this workspace. Connect a different one.',
     providerComingSoon: 'This integration is coming soon and can’t be connected yet.',
+    integrationReadOnly:
+      'This connection is read-only, so nothing is changed in that tool. Its owner can switch it to Read & write.',
     providerWritesOff: 'Creating items in your other tools is turned off on this server.',
     createRateLimited: 'You have created a lot of items there this hour. Try again later.',
     needsDueDate: 'A calendar event needs a due date.',

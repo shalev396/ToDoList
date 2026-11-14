@@ -7,16 +7,19 @@ import { ERROR_CODE_PATTERN, type ErrorCode } from '../types/errorCodes.js';
  * `code` is a machine code from types/errorCodes.ts that the client translates; the message stays
  * generic English and never quotes the request.
  */
+/** What an AppError may carry besides its status and message. */
+export interface AppErrorOptions {
+  cause?: unknown;
+  details?: Record<string, unknown>;
+  code?: ErrorCode;
+}
+
 export class AppError extends Error {
   readonly statusCode: number;
   readonly details: Record<string, unknown> | undefined;
   readonly code: ErrorCode | undefined;
 
-  constructor(
-    statusCode: number,
-    message: string,
-    options: { cause?: unknown; details?: Record<string, unknown>; code?: ErrorCode } = {},
-  ) {
+  constructor(statusCode: number, message: string, options: AppErrorOptions = {}) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     if (options.code !== undefined && !ERROR_CODE_PATTERN.test(options.code)) {
       throw new Error(`Invalid error code "${options.code}": use lowercase snake case`);

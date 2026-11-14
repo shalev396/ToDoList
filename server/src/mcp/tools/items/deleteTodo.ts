@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { deleteItem, getItem, ItemMirroredResponse } from '../../../services/items.js';
+import { MirroredItemError } from '../../../errors/MirroredItemError.js';
+import { deleteItem, getItem } from '../../../services/items.js';
 import { confirmField } from '../../middleware/confirm.js';
 import { defineTool, type ToolContext } from '../../tool.js';
 import { ItemId, ItemSummaryView, toItemSummaryView } from '../itemViews.js';
@@ -12,7 +13,7 @@ import { ItemId, ItemSummaryView, toItemSummaryView } from '../itemViews.js';
 async function localItem(ctx: ToolContext, id: string): Promise<ItemSummaryView> {
   const item = await getItem(ctx.workspace, ctx.principal.userId, id);
   if (item.source.provider !== 'local') {
-    throw new ItemMirroredResponse(item.source.provider, item.source.url);
+    throw new MirroredItemError(item.source.provider, item.source.url);
   }
   return toItemSummaryView(item);
 }

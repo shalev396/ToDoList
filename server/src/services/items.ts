@@ -6,8 +6,9 @@
  * too (PERMISSIONS-V2 ruling 14). Text goes out redacted, like `/query`.
  */
 import { AppError } from '../errors/AppError.js';
+import { MirroredItemError } from '../errors/MirroredItemError.js';
 import { effectiveCopyStatus, type ItemData } from '../models/definitions/Item.js';
-import { MirroredItemError } from '../models/errors.js';
+import { MirroredItemError as StoredMirroredItemError } from '../models/errors.js';
 import { getContainerRepository, getItemRepository } from '../models/index.js';
 import type {
   FacetContainer,
@@ -173,19 +174,13 @@ async function loadVisible(ws: WorkspaceContext, access: ItemAccess, id: string)
   return doc;
 }
 
-export class ItemMirroredResponse extends Error {
-  readonly openIn: { provider: Provider; url: string };
-  constructor(provider: Provider, url: string) {
-    super('This item is mirrored from its source: edit it there');
-    this.name = 'ItemMirroredResponse';
-    this.openIn = { provider, url };
-  }
-}
+/** The 409 a mirrored item answers (errors/MirroredItemError.ts), under the name callers know. */
+export { MirroredItemError as ItemMirroredResponse };
 
 function assertLocal(doc: Doc): void {
   const source = record(doc['source']);
   if (source['provider'] !== 'local') {
-    throw new ItemMirroredResponse(source['provider'] as Provider, text(source['url']) ?? '');
+    throw new MirroredItemError(source['provider'] as Provider, text(source['url']) ?? '');
   }
 }
 
@@ -454,8 +449,8 @@ async function updateLocal(
     if (updated === null) throw new AppError(404, 'Not found');
     return toDetail(dataToDoc(updated));
   } catch (error) {
-    if (error instanceof MirroredItemError) {
-      throw new ItemMirroredResponse(error.provider, error.url);
+    if (error instanceof StoredMirroredItemError) {
+      throw new MirroredItemError(error.provider, error.url);
     }
     throw error;
   }

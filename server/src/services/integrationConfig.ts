@@ -17,6 +17,7 @@ import { QueryValidationError } from '../builder/errors.js';
 import { validationContext } from '../builder/validate.js';
 import { loopbackAllowedForTests } from '../config/testSwitches.js';
 import { AppError } from '../errors/AppError.js';
+import { ProviderComingSoonError } from '../errors/ProviderComingSoonError.js';
 import { PENDING_ACCOUNT_PREFIX, type IntegrationData } from '../models/definitions/Integration.js';
 import { AUTH_METHODS, type AuthMethod, type IntegrationMode } from '../types/domain.js';
 import type { DefaultTopicSlug } from '../types/topics.js';
@@ -357,9 +358,7 @@ export function isConnectableProvider(provider: string): provider is Connectable
 /** A provider that is listed but not open yet (Moodle): 400 `provider_coming_soon`. */
 export function assertProviderOpen(provider: ConnectableProvider): void {
   if ((COMING_SOON_PROVIDERS as readonly string[]).includes(provider)) {
-    throw new AppError(400, `${provider} is coming soon and can't be connected yet`, {
-      code: 'provider_coming_soon',
-    });
+    throw new ProviderComingSoonError(provider);
   }
 }
 

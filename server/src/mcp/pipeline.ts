@@ -12,8 +12,8 @@ import { issueText } from '../utils/validation.js';
 import { QueryValidationError } from '../builder/errors.js';
 import { AppError } from '../errors/AppError.js';
 import { ConflictError } from '../errors/ConflictError.js';
-import { MirroredItemError } from '../models/errors.js';
-import { ItemMirroredResponse } from '../services/items.js';
+import { MirroredItemError } from '../errors/MirroredItemError.js';
+import { MirroredItemError as StoredMirroredItemError } from '../models/errors.js';
 import { logger } from '../services/logger.js';
 import { redactString } from '../services/secretPatterns.js';
 import { canCall } from './auth/scopes.js';
@@ -81,8 +81,8 @@ function mirrored(provider: string, url: string): ToolCall {
 }
 
 function failure(tool: string, error: unknown): ToolCall {
-  if (error instanceof MirroredItemError) return mirrored(error.provider, error.url);
-  if (error instanceof ItemMirroredResponse) {
+  if (error instanceof StoredMirroredItemError) return mirrored(error.provider, error.url);
+  if (error instanceof MirroredItemError) {
     return mirrored(error.openIn.provider, error.openIn.url);
   }
   if (error instanceof ConflictError) {

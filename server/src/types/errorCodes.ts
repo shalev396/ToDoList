@@ -34,6 +34,8 @@ export const ERROR_CODES = [
   'account_already_connected',
   /** A provider that is listed but cannot be connected yet (Moodle). */
   'provider_coming_soon',
+  /** A change at the provider through an integration in read-only mode (its owner can switch it). */
+  'integration_read_only',
   // Creating a to-do in a provider too (H5)
   'provider_writes_off',
   'create_rate_limited',

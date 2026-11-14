@@ -1,5 +1,6 @@
 import { type RequestHandler } from 'express';
 
+import { MirroredItemError } from '../errors/MirroredItemError.js';
 import type {
   CompleteItemResponseData,
   CreateItemResponseData,
@@ -23,7 +24,6 @@ import {
   deleteItem,
   getFacets,
   getItem,
-  ItemMirroredResponse,
   listItems,
   updateItem,
   updateOverlay,
@@ -38,7 +38,7 @@ function withMirrored(handler: RequestHandler): RequestHandler {
     try {
       await handler(req, res, next);
     } catch (error) {
-      if (error instanceof ItemMirroredResponse) {
+      if (error instanceof MirroredItemError) {
         // Raw json, not res.error: the body carries `openIn` next to the message.
         res.status(409).json({ message: redactString(error.message), openIn: error.openIn });
         return;
