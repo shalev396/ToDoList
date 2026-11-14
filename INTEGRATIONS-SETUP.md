@@ -262,9 +262,9 @@ Per stage:
 
 After storing a secret:
 
-1. Open the Integrations page of the stage and sign in. A configured provider shows **Connect with <Provider>**. The server reports this in `GET /api/private/workspaces/:wid/integrations/oauth/providers`: per provider, `configured` is `true` when the secret exists and is valid. The response also shows the exact `callbackUrl`, `scopes`, `consoleUrl` and `secretName` the server expects (no secret). Compare the `callbackUrl` with what you registered, character for character.
+1. Open the Integrations page of the stage and sign in. A configured provider shows **Connect with <Provider>**. The server reports this in `GET /api/private/workspaces/:wid/integrations/oauth/providers`: per provider, `configured` is `true` when the secret exists and is valid. It lists GitHub, Jira, ClickUp, Linear and Google Calendar, and carries only `provider`, `configured` and `installUrl` (no setup details, no secret). A secret that cannot be read or has the wrong shape shows as `configured: false` for that provider only. Compare the `callbackUrl` with what you registered, character for character.
 2. Click **Connect with <Provider>**, finish the consent, and you land back on `/<lng>/integrations?connected=...`. `?oauth_error=<code>` means it failed (for example `oauth_denied`, `oauth_scope_missing`, `oauth_failed`).
-3. **Google Calendar** is not in the providers list. It is verified by clicking Connect: a missing secret answers 409 `oauth_unavailable`.
+3. A provider whose secret is missing shows **Signing in with <Provider> isn't available yet** and a disabled button; clicking Connect would answer 409 `oauth_unavailable`.
 4. Then check the sync once (Jira: pick a site; ClickUp: the Workspaces).
 
 **Redeploy or wait?** (`server/src/services/appSecrets.ts`)
@@ -289,11 +289,9 @@ Nothing blocks three apps per provider. What you handle yourself:
 
 ## 9. Code follow-ups (not changed here)
 
-1. **A malformed secret breaks the whole providers list.** `oauthAppCredentials` (`server/src/services/oauth/client.ts`) returns "not configured" only for a **missing** secret. An existing secret that fails the shape check (`invalid`) or cannot be read (`unavailable`) throws, so `GET .../integrations/oauth/providers` fails for every provider. A typo in one secret (for example `client_id`) makes the page error. Consider reporting `configured: false` per provider for these.
-2. **Google is not in the providers list**, so the UI cannot show "not configured" for it before the click (409 `oauth_unavailable` only after).
-3. **Section numbers in code comments.** `appSecrets.ts` and `providers.ts` refer to "INTEGRATIONS-SETUP.md section 1 and sections 3 to 6". This file keeps those numbers (Google 1, GitHub 3, Jira 4, ClickUp 5, Linear 6). Section 2 is now Moodle. Update the comments if you renumber.
-4. **Google verification.** `calendar.events` needs a production review (about 10 days). If a narrower scope would do, use it; the code requires both calendar scopes today (`REQUIRED_CALENDAR_SCOPES`).
-5. **Jira write consent.** `write:jira-work` is requested later by re-consent; it must already be enabled under the app's Permissions or the consent fails. It is in step 2 of section 4.
-6. **GitHub write.** The Issues write permission is set at the app level. Changing it later makes GitHub ask each installation to accept the new permission.
-7. **Moodle** is listed as a provider in the plan but has no OAuth code or secret name. Correct: nothing to add.
-8. **Drive** is no longer documented here. The `google-drive*` secret names, if any exist in AWS from the earlier runbook, are unused and can be deleted.
+1. **Section numbers in code comments.** `appSecrets.ts` and `providers.ts` refer to "INTEGRATIONS-SETUP.md section 1 and sections 3 to 6". This file keeps those numbers (Google 1, GitHub 3, Jira 4, ClickUp 5, Linear 6). Section 2 is now Moodle. Update the comments if you renumber.
+2. **Google verification.** `calendar.events` needs a production review (about 10 days). If a narrower scope would do, use it; the code requires both calendar scopes today (`REQUIRED_CALENDAR_SCOPES`).
+3. **Jira write consent.** `write:jira-work` is requested later by re-consent; it must already be enabled under the app's Permissions or the consent fails. It is in step 2 of section 4.
+4. **GitHub write.** The Issues write permission is set at the app level. Changing it later makes GitHub ask each installation to accept the new permission.
+5. **Moodle** is listed as a provider in the plan but has no OAuth code or secret name. Correct: nothing to add.
+6. **Drive** is no longer documented here. The `google-drive*` secret names, if any exist in AWS from the earlier runbook, are unused and can be deleted.

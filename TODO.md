@@ -47,7 +47,6 @@ All work lives on the `dev` branch. Nothing is deployed yet. The architecture is
   - Jira (Atlassian OAuth 2.0 3LO);
   - ClickUp OAuth;
   - Linear OAuth;
-  - Google Drive OAuth (`drive.file` + Picker to avoid a restricted scope);
   - Moodle (no OAuth: a per-site token).
 - [x] B4. The Integrations page is complete and polished: cards, connect flows, status, sync, "connect another". Done: one card per connection (label, status, last sync, Test, Sync now, Disconnect) with "Connect another" on every provider; localized errors.
 
