@@ -154,7 +154,6 @@ export const connect = {
     useToken: 'Use an API token instead',
     tokenOpen: 'Enter an API token',
     tokenNote: 'Only if you can’t sign in: paste a token you made at {{name}}.',
-    unavailable: 'Signing in with {{name}} isn’t available yet.',
     consent: {
       github:
         'You’ll be asked to allow read access to issues, pull requests and Projects on the repositories you choose.',

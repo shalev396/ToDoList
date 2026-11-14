@@ -299,18 +299,17 @@ export function IntegrationCard({
                 size="sm"
                 className="max-md:h-11"
                 data-oauth-connect={provider}
+                data-oauth-mode={signIn.mode}
                 disabled={signIn.mode !== 'connect'}
                 onClick={onConnect}
               >
-                {t('connect.signin.connect', { name })}
+                {signIn.mode === 'unavailable'
+                  ? t('connect.signin.comingSoon')
+                  : t('connect.signin.connect', { name })}
               </Button>
               {signIn.mode === 'connect' ? (
                 <p className="basis-full text-[13px] text-muted-foreground" data-oauth-consent>
                   {t(`connect.signin.consent.${provider}`)}
-                </p>
-              ) : signIn.mode === 'unavailable' ? (
-                <p className="basis-full text-[13px] text-muted-foreground" data-oauth-unavailable>
-                  {t('connect.signin.unavailable', { name })}
                 </p>
               ) : null}
               {hasTokenFallback(provider) && onTokenConnect !== undefined ? (

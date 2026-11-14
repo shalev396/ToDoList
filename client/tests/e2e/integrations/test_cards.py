@@ -44,7 +44,11 @@ def test_google_calendar_connects_with_google_only(page: Page, base_url: str, fr
 def test_every_open_provider_leads_with_oauth_and_hides_the_token_option(
     page: Page, base_url: str, fresh_owner
 ):
-    """Connect with <Provider> is the primary action; the API token is a collapsed fallback."""
+    """Sign-in is the primary action; the API token is a collapsed fallback.
+
+    The button says "Connect with <Provider>" when the stage has that provider's OAuth app, and
+    "Coming soon" (disabled) when it has none.
+    """
     user, _workspace = fresh_owner
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, "/en/integrations")
@@ -55,9 +59,14 @@ def test_every_open_provider_leads_with_oauth_and_hides_the_token_option(
         ("github", "GitHub"),
     ):
         card = page.locator(f"[data-integration-card={provider}]").first
-        expect(card.get_by_role("button", name=f"Connect with {name}")).to_be_visible(
-            timeout=NORMAL_TIMEOUT
-        )
+        button = card.locator(f"[data-oauth-connect={provider}]")
+        expect(button).not_to_have_attribute("data-oauth-mode", "checking", timeout=NORMAL_TIMEOUT)
+        if button.get_attribute("data-oauth-mode") == "connect":
+            expect(button).to_have_text(f"Connect with {name}")
+            expect(button).to_be_enabled()
+        else:
+            expect(button).to_have_text("Coming soon")
+            expect(button).to_be_disabled()
         fallback = card.locator("[data-token-fallback]")
         expect(fallback.locator("summary")).to_have_text("Use an API token instead")
         expect(fallback).not_to_have_attribute("open", "")

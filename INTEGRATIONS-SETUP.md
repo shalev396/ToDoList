@@ -146,7 +146,7 @@ Everything but the video and the submission is done (2026-11-15). Until it passe
 - [x] **Homepage** says what the app does (the hero names Google Calendar), links to the privacy policy in the footer, and its FAQ answers "What does TodoList do with my Google Calendar?" (`faq.googleCalendar`).
 - [x] **Same name everywhere**: "TodoList" on the consent screen and the site. Keep it that way; renaming either starts a new review.
 - [x] **Privacy policy** (`client/src/i18n/translations/{en,he}/legal.ts`): section "Google user data" (what is read and why, when the app writes, storage, no sale, ads or AI training, who sees it, revoke and delete) and section "Google API Services User Data Policy" with Google's Limited Use statement word for word, linked to the policy.
-- [ ] Optional: a 120x120 PNG logo for the consent screen (prod only; it becomes part of the review). Skipped for now.
+- [x] Logo on the prod consent screen (2026-11-15): 120x120 PNG made from `client/public/icon-512.png`. dev and qa have none (a logo is reviewed; they stay in Testing). Changing it later starts a new review.
 - [ ] Before submitting, re-read the "Google user data" section against the code: it promises disconnect revokes at Google (it does: `gcal/oauthCalendar.ts`) and that purged copies follow "How long we keep things", whose 30-day purge needs the `purge` action to actually run (no schedule exists yet).
 
 **Submit (Google Cloud console, project `todolist-prod-514721`)**

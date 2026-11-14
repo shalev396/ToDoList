@@ -1,6 +1,6 @@
 /**
  * What the Integrations page does about a provider's OAuth sign-in, from what this stage reports
- * (`GET …/integrations/oauth/providers`): connect with it, or say it isn't available yet. The page
+ * (`GET …/integrations/oauth/providers`): connect with it, or show it as coming soon. The page
  * never tells a user to register an app: that is the operator's work (INTEGRATIONS-SETUP.md). Pure,
  * so it is unit tested.
  */
@@ -12,7 +12,8 @@ import {
 
 /**
  * - `connect`: the stage has the OAuth app; the card offers "Connect with <provider>".
- * - `unavailable`: it has none (or the answer failed): the card says sign-in isn't available yet.
+ * - `unavailable`: it has none (or the answer failed): the button is disabled and says "Coming soon";
+ *   the API-token fallback stays available.
  * - `checking`: the answer hasn't arrived: the button waits, disabled.
  */
 export type OAuthMode = 'connect' | 'unavailable' | 'checking';
