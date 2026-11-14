@@ -26,7 +26,7 @@ import {
   startKit,
   TIME_ZONE,
   type Kit,
-} from './trackerTestKit.js';
+} from '../../testing/trackerTestKit.js';
 
 const SITE = 'https://example.invalid/moodle';
 const FAKE_TOKEN = 'FAKE0123456789abcdef0123456789ab';

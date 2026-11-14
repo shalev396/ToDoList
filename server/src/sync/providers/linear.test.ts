@@ -24,7 +24,7 @@ import {
   startKit,
   TIME_ZONE,
   type Kit,
-} from './trackerTestKit.js';
+} from '../../testing/trackerTestKit.js';
 
 const VIEWER = 'b6a1c7d2-0000-4000-8000-000000000001';
 

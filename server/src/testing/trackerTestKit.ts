@@ -6,25 +6,25 @@
  */
 import assert from 'node:assert/strict';
 
-import type { ContainerData } from '../../models/definitions/Container.js';
-import type { IntegrationData } from '../../models/definitions/Integration.js';
-import type { ItemData } from '../../models/definitions/Item.js';
-import { ContainerMongoModel } from '../../models/mongoose/Container.js';
-import { ItemMongoModel } from '../../models/mongoose/Item.js';
-import { installOutboundGuard, type OutboundGuard } from '../../testing/outboundGuard.js';
-import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
-import type { Clock, Transport } from '../http.js';
-import { registerAdapter, unregisterAdapter } from '../registry.js';
-import type { Provider } from '../../types/domain.js';
-import { fixtureSetDir } from '../fixtureSets.js';
-import type { SyncRunOptions } from '../runSync.js';
+import type { ContainerData } from '../models/definitions/Container.js';
+import type { IntegrationData } from '../models/definitions/Integration.js';
+import type { ItemData } from '../models/definitions/Item.js';
+import { ContainerMongoModel } from '../models/mongoose/Container.js';
+import { ItemMongoModel } from '../models/mongoose/Item.js';
+import { installOutboundGuard, type OutboundGuard } from './outboundGuard.js';
+import { startTestDatabase, type TestDatabase } from './testDatabase.js';
+import type { Clock, Transport } from '../sync/http.js';
+import { registerAdapter, unregisterAdapter } from '../sync/registry.js';
+import type { Provider } from '../types/domain.js';
+import { fixtureSetDir } from '../sync/fixtureSets.js';
+import type { SyncRunOptions } from '../sync/runSync.js';
 import {
   fixtureTransport,
   loadFixtureSet,
   type FixtureEntry,
   type FixtureTransport,
-} from '../transports/fixtures.js';
-import type { ProviderAdapter, SyncCounts, SyncRunSummary } from '../types.js';
+} from '../sync/transports/fixtures.js';
+import type { ProviderAdapter, SyncCounts, SyncRunSummary } from '../sync/types.js';
 
 export const HOUR = 60 * 60 * 1000;
 /** The instant every fixture token resolves against (a Thursday, 11:00 in Asia/Jerusalem). */
@@ -63,7 +63,7 @@ let kits = 0;
 export async function startKit(dbName: string): Promise<Kit> {
   const db: TestDatabase = await startTestDatabase(dbName);
   const guard = installOutboundGuard();
-  const m = await import('../../models/index.js');
+  const m = await import('../models/index.js');
   const workspaces = await m.getWorkspaceRepository();
   const integrations = await m.getIntegrationRepository();
   const kit: Kit = {
@@ -88,7 +88,7 @@ export async function startKit(dbName: string): Promise<Kit> {
       return { workspaceId: workspace.id, integration };
     },
     async run(s, adapter, options = {}) {
-      const { runIntegrationSync } = await import('../runSync.js');
+      const { runIntegrationSync } = await import('../sync/runSync.js');
       const transport: Transport =
         options.transport ??
         fixtureTransport(await loadFixtureSet(fixtureSetDir(adapter, options.set ?? 'v1')), {

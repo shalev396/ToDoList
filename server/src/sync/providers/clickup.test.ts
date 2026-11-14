@@ -22,7 +22,7 @@ import {
   startKit,
   TIME_ZONE,
   type Kit,
-} from './trackerTestKit.js';
+} from '../../testing/trackerTestKit.js';
 
 const API = 'https://api.clickup.com/api/v2';
 

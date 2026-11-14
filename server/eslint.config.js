@@ -2,10 +2,62 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import globals from 'globals';
 
-import { DB_ALLOWED, LEGACY_DB_IMPORTERS } from './legacy-db-importers.mjs';
+import {
+  DB_ALLOWED,
+  DB_BOOTSTRAP,
+  DB_CONNECTION,
+  DB_MODULES,
+  DB_PACKAGES,
+  LEGACY_DB_IMPORTERS,
+  TEST_FILES,
+} from './legacy-db-importers.mjs';
 
 const DB_MESSAGE =
   'Only classes reach the database (docs/design/CLASSES.md): use or add a method on a class in src/classes/.';
+const TEST_HELPER_MESSAGE =
+  'Production code never loads test helpers (src/testing/, __tests__/); only tests do.';
+
+const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * A module of legacy-db-importers.mjs as a regex over the import specifiers that name it:
+ * `src/models/mongoose/**` matches `../models/mongoose/Item.js`; `src/models/index.ts` matches
+ * `../../models/index.js`. ESLint sees specifiers as written; the boundary test resolves them.
+ */
+function specifierPattern(module) {
+  const path = module.replace(/^src\//, '');
+  if (path.endsWith('/**')) return `(^|/)${escapeRegex(path.slice(0, -3))}(/|$)`;
+  return `(^|/)${escapeRegex(path.replace(/\.ts$/, ''))}(\\.[jt]s)?$`;
+}
+
+const testHelperPattern = {
+  regex: '(^|/)(testing|__tests__)/',
+  message: TEST_HELPER_MESSAGE,
+  allowTypeImports: true,
+};
+
+/** no-restricted-imports options: the database packages and these modules, and test helpers. */
+function boundaryRule(modules) {
+  return [
+    'error',
+    {
+      paths: DB_PACKAGES.map((name) => ({ name, message: DB_MESSAGE, allowTypeImports: true })),
+      patterns: [
+        testHelperPattern,
+        {
+          regex: `^(${DB_PACKAGES.map(escapeRegex).join('|')})/`,
+          message: DB_MESSAGE,
+          allowTypeImports: true,
+        },
+        ...modules.map((module) => ({
+          regex: specifierPattern(module),
+          message: DB_MESSAGE,
+          allowTypeImports: true,
+        })),
+      ],
+    },
+  ];
+}
 
 export default tseslint.config(
   {
@@ -40,26 +92,30 @@ export default tseslint.config(
       'no-debugger': 'error',
     },
   },
+  // The class boundary (legacy-db-importers.mjs). src/classes/classBoundary.test.ts holds the same
+  // line, and also resolves paths, sees dynamic imports and getters named outside an import.
+  // A later block's options replace an earlier one's for the files both match.
   {
-    // The class boundary: outside the allowed places (and the shrinking legacy list), nothing
-    // loads the models or mongoose at run time. src/classes/classBoundary.test.ts holds the same
-    // line, and also sees dynamic imports and getters named outside an import.
+    // Production code never loads test helpers.
+    files: ['src/**/*.ts'],
+    ignores: TEST_FILES,
+    rules: {
+      '@typescript-eslint/no-restricted-imports': ['error', { patterns: [testHelperPattern] }],
+    },
+  },
+  {
+    // Outside the allowed places (and the shrinking legacy list), nothing loads the database.
     files: ['src/**/*.ts'],
     ignores: [...DB_ALLOWED, ...LEGACY_DB_IMPORTERS],
+    rules: { '@typescript-eslint/no-restricted-imports': boundaryRule(DB_MODULES) },
+  },
+  {
+    // The entry points and jobs open the connection, and load nothing else of the database.
+    files: DB_BOOTSTRAP,
     rules: {
-      '@typescript-eslint/no-restricted-imports': [
-        'error',
-        {
-          paths: [{ name: 'mongoose', message: DB_MESSAGE, allowTypeImports: true }],
-          patterns: [
-            {
-              regex: '(^|/)models/(index(\.js)?|mongoose(/.*)?)$',
-              message: DB_MESSAGE,
-              allowTypeImports: true,
-            },
-          ],
-        },
-      ],
+      '@typescript-eslint/no-restricted-imports': boundaryRule(
+        DB_MODULES.filter((module) => module !== DB_CONNECTION),
+      ),
     },
   },
   {

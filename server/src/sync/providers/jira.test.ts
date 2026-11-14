@@ -21,7 +21,7 @@ import {
   startKit,
   TIME_ZONE,
   type Kit,
-} from './trackerTestKit.js';
+} from '../../testing/trackerTestKit.js';
 
 const BASE = 'https://example.invalid/jira';
 const ME = 'FAKE-jira-account-001';
