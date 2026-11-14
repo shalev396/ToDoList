@@ -11,8 +11,14 @@ const ConsumeConnectLinkBody = z.strictObject({ link: z.string().min(16).max(128
 
 const consume: RequestHandler = async (req, res): Promise<void> => {
   const { link } = parseOr400(ConsumeConnectLinkBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
-  const { provider, expiresAt } = await consumeConnectLink(workspace, user.id, link);
+  const { workspace, user, caller } = req as WorkspaceRequest;
+  const { provider, expiresAt } = await consumeConnectLink(
+    workspace,
+    user.id,
+    link,
+    new Date(),
+    caller.actor,
+  );
   const data: ConsumeConnectLinkResponseData = { provider, expiresAt: expiresAt.toISOString() };
   res.success(data);
 };

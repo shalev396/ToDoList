@@ -4,7 +4,7 @@
  * bound to workspace|integration|provider) and stored; nothing here can decrypt. Reading a secret
  * back is credentialVault.ts, which only an allow-list of modules may import.
  */
-import { Actor } from '../../classes/base/Actor.js';
+import { Actor, type ActorRef } from '../../classes/base/Actor.js';
 import { AuditTarget } from '../../classes/base/AuditTarget.js';
 import { AuditLog } from '../../classes/AuditLog.js';
 import { AppError } from '../../errors/AppError.js';
@@ -29,10 +29,13 @@ export interface StoreCredentialInput {
 /**
  * Seals and stores the integration's credential, replacing the one it has (`rotatedAt` is then
  * set), and links it as `Integration.credentialId`. Audited as `integration.connect` (the first
- * credential) or `credential.rotate` (a replacement), by `ownerUserId`. 404 for an unknown
- * integration.
+ * credential) or `credential.rotate` (a replacement), by `ownerUserId`, from `actor`'s request
+ * (its address and user agent; none for a seed or a test). 404 for an unknown integration.
  */
-export async function storeCredential(input: StoreCredentialInput): Promise<void> {
+export async function storeCredential(
+  input: StoreCredentialInput,
+  actor?: ActorRef,
+): Promise<void> {
   const { workspaceId, integrationId, provider } = input;
   const integrations = await getIntegrationRepository();
   const integration = await integrations.findById(workspaceId, integrationId);
@@ -67,7 +70,10 @@ export async function storeCredential(input: StoreCredentialInput): Promise<void
   }
   // No secret data (DATA.md §3.10): the credential is referenced by its id only.
   await AuditLog.record(
-    { workspaceId, actor: Actor.user(input.ownerUserId) },
+    {
+      workspaceId,
+      actor: Actor.user(input.ownerUserId, { ip: actor?.ip, userAgent: actor?.userAgent }),
+    },
     replacing ? 'credential.rotate' : 'integration.connect',
     AuditTarget.integration(integrationId),
     { credentialId: stored.id, provider, kind: input.kind },

@@ -18,16 +18,21 @@ const list: RequestHandler = async (req, res): Promise<void> => {
 
 const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateAgentKeyBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
-  const data: CreateAgentKeyResponseData = await createAgentKey(workspace, user.id, body);
+  const { workspace, user, caller } = req as WorkspaceRequest;
+  const data: CreateAgentKeyResponseData = await createAgentKey(
+    workspace,
+    user.id,
+    body,
+    caller.actor,
+  );
   // The one response that shows the raw key.
   allowSecretKinds(res, 'agent_key');
   res.success(data, 201);
 };
 
 const revoke: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
-  await revokeAgentKey(workspace, user.id, routeParam(req, 'id'));
+  const { workspace, user, caller } = req as WorkspaceRequest;
+  await revokeAgentKey(workspace, user.id, routeParam(req, 'id'), caller.actor);
   res.status(204).end();
 };
 

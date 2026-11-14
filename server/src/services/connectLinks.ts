@@ -88,6 +88,7 @@ export async function consumeConnectLink(
   userId: string,
   rawLink: string,
   now: Date = new Date(),
+  actor?: Actor,
 ): Promise<{ provider: ConnectableProvider; expiresAt: Date }> {
   Caller.fromContext(ctx, Actor.user(userId)).require('editor');
   const linkHash = hashConnectLink(rawLink);
@@ -109,7 +110,10 @@ export async function consumeConnectLink(
   ).insert(ctx.id, NONCE_SCOPE, `${NONCE_PREFIX}${linkHash}`, expiresAt);
   if (!fresh) throw new AppError(410, 'This link was already used');
   await AuditLog.record(
-    { workspaceId: ctx.id, actor: Actor.user(userId) },
+    {
+      workspaceId: ctx.id,
+      actor: Actor.user(userId, { ip: actor?.ip, userAgent: actor?.userAgent }),
+    },
     CONSUMED_ACTION,
     AuditTarget.workspace(ctx.id),
     { provider, requestedByAgentId: entry.actorAgentId ?? '' },

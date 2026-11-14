@@ -1,4 +1,5 @@
 import { type RequestHandler } from 'express';
+import { Actor } from '../classes/base/Actor.js';
 import type { WorkspaceData } from '../models/index.js';
 import type {
   CreateWorkspaceResponseData,
@@ -62,7 +63,12 @@ const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateWorkspaceBody, req.body);
   const user = await requireUser((req as AuthenticatedRequest).user.id);
   // `loadDemoData` fills the new workspace with seedWorkspace's demo data (dev and qa only).
-  const workspace = await createWorkspace({ id: user.id, email: user.email }, body);
+  const workspace = await createWorkspace(
+    { id: user.id, email: user.email },
+    body,
+    {},
+    Actor.user(user.id, Actor.originOf(req)),
+  );
   const data: CreateWorkspaceResponseData = toWorkspaceView(workspace);
   res.success(data, 201);
 };
@@ -75,16 +81,16 @@ const get: RequestHandler = async (req, res): Promise<void> => {
 
 const update: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(UpdateWorkspaceBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
+  const { workspace, user, caller } = req as WorkspaceRequest;
   const data: UpdateWorkspaceResponseData = toWorkspaceView(
-    await updateWorkspace(workspace, user.id, body),
+    await updateWorkspace(workspace, user.id, body, caller.actor),
   );
   res.success(data);
 };
 
 const remove: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
-  await deleteWorkspace(workspace, user.id);
+  const { workspace, user, caller } = req as WorkspaceRequest;
+  await deleteWorkspace(workspace, user.id, caller.actor);
   res.status(204).end();
 };
 

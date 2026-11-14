@@ -47,16 +47,16 @@ const list: RequestHandler = async (req, res): Promise<void> => {
 };
 
 const leave: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
-  await leaveWorkspace(workspace, user.id);
+  const { workspace, user, caller } = req as WorkspaceRequest;
+  await leaveWorkspace(workspace, user.id, caller.actor);
   res.status(204).end();
 };
 
 const update: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(UpdateMemberBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
+  const { workspace, user, caller } = req as WorkspaceRequest;
   const memberId = routeParam(req, 'uid');
-  const membership = await updateMember(workspace, user.id, memberId, body);
+  const membership = await updateMember(workspace, user.id, memberId, body, null, caller.actor);
   const person = await findUser(memberId);
   const data: UpdateMemberResponseData = toMemberView(
     { membership, name: person?.name ?? null, email: person?.email ?? null },
@@ -66,8 +66,8 @@ const update: RequestHandler = async (req, res): Promise<void> => {
 };
 
 const remove: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
-  await removeMember(workspace, user.id, routeParam(req, 'uid'));
+  const { workspace, user, caller } = req as WorkspaceRequest;
+  await removeMember(workspace, user.id, routeParam(req, 'uid'), null, caller.actor);
   res.status(204).end();
 };
 
@@ -78,9 +78,9 @@ const formerTodos: RequestHandler = async (req, res): Promise<void> => {
 };
 
 const deleteFormerTodos: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
+  const { workspace, user, caller } = req as WorkspaceRequest;
   const data: DeleteFormerMemberTodosResponseData = {
-    deleted: await deleteFormerMembersTodos(workspace, user.id),
+    deleted: await deleteFormerMembersTodos(workspace, user.id, caller.actor),
   };
   res.success(data);
 };

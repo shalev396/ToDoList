@@ -1,7 +1,7 @@
 /** Agent keys (DATA.md §3.14): create (raw key once), list, revoke. Framework-free. */
 import { randomBytes } from 'node:crypto';
 
-import { Actor } from '../classes/base/Actor.js';
+import { Actor, type ActorOrigin } from '../classes/base/Actor.js';
 import { AuditTarget } from '../classes/base/AuditTarget.js';
 import { AuditLog } from '../classes/AuditLog.js';
 import { LIMITS } from '../config/limits.js';
@@ -12,6 +12,11 @@ import type { AgentKeyView } from '../routes/private/agentKeys.js';
 import type { AgentScope } from '../types/domain.js';
 import type { WorkspaceContext } from './accessFilter.js';
 import { sha256Hex } from './crypto/hashing.js';
+
+/** The request's address and user agent, from its actor (none for a test or a job). */
+function originOf(actor: Actor | undefined): ActorOrigin {
+  return { ip: actor?.ip, userAgent: actor?.userAgent };
+}
 
 export const KEY_PREFIX = 'elk_';
 export const DEFAULT_EXPIRY_DAYS = 365;
@@ -45,6 +50,7 @@ export async function createAgentKey(
   ws: WorkspaceContext,
   userId: string,
   input: { name: string; scopes: AgentScope[]; expiresInDays?: number | undefined },
+  actor?: Actor,
 ): Promise<AgentKeyView & { key: string }> {
   if (ws.role !== 'owner') throw new AppError(403, 'Only an owner can create agent keys');
   const keys = await getAgentKeyRepository();
@@ -65,7 +71,7 @@ export async function createAgentKey(
     expiresAt: new Date(Date.now() + days * DAY_MS),
   });
   await AuditLog.record(
-    { workspaceId: ws.id, actor: Actor.user(userId) },
+    { workspaceId: ws.id, actor: Actor.user(userId, originOf(actor)) },
     'agent_key.create',
     AuditTarget.of('agent_key', created.id),
     {
@@ -80,6 +86,7 @@ export async function revokeAgentKey(
   ws: WorkspaceContext,
   userId: string,
   id: string,
+  actor?: Actor,
 ): Promise<void> {
   const keys = await getAgentKeyRepository();
   const key = await keys.findById(ws.id, id);
@@ -88,7 +95,7 @@ export async function revokeAgentKey(
   }
   if (!(await keys.revoke(ws.id, id))) throw new AppError(404, 'Not found');
   await AuditLog.record(
-    { workspaceId: ws.id, actor: Actor.user(userId) },
+    { workspaceId: ws.id, actor: Actor.user(userId, originOf(actor)) },
     'agent_key.revoke',
     AuditTarget.of('agent_key', id),
     { name: key.name },

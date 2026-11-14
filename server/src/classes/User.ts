@@ -4,6 +4,7 @@ import {
   AdminDeleteUserCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { environment } from '../config/environment.js';
+import type { Actor } from './base/Actor.js';
 import { deleteAccountCascade } from '../services/workspaces.js';
 
 const cognitoClient = new CognitoIdentityProviderClient({
@@ -119,7 +120,8 @@ export class User {
     return new User(updated);
   }
 
-  static async deleteAccount(userId: string, cognitoSub: string): Promise<void> {
+  /** `actor`: the request's actor, whose address and user agent the cascade's audit entries get. */
+  static async deleteAccount(userId: string, cognitoSub: string, actor?: Actor): Promise<void> {
     const repo = await getUserRepository();
     const user = await repo.findByCognitoSub(cognitoSub);
 
@@ -130,7 +132,7 @@ export class User {
     // Workspaces first: the ones this user solely owns are deleted, every other membership
     // and agent key is revoked. If this fails, the account (Cognito and the row) is still there
     // and the request can be retried.
-    await deleteAccountCascade(userId);
+    await deleteAccountCascade(userId, actor);
 
     try {
       const userPoolId = environment.cognitoUserPoolId;

@@ -21,7 +21,7 @@ import { oauthEndpoints } from '../../sync/providers/oauthEndpoints.js';
 import type { WorkspaceContext } from '../accessFilter.js';
 import { connectOAuthIntegration } from '../integrationConnect.js';
 import { findOwnIntegration } from '../integrationOwnership.js';
-import { Actor } from '../../classes/base/Actor.js';
+import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
 import { Caller } from '../../classes/base/Caller.js';
 import type { IntegrationActor } from '../integrations.js';
 import { googleOAuthCredentials } from '../googleOAuthClient.js';
@@ -147,9 +147,12 @@ async function connect(
   },
   code: string,
   now: Date,
+  origin: ActorOrigin,
 ): Promise<string> {
+  // The member who started the flow, from the callback request (the audit log's address).
+  const actor = Actor.user(record.userId, origin);
   // Still a member; the role (a new integration needs an editor) is connectOAuthIntegration's.
-  const ctx = (await Caller.enter(record.workspaceId, Actor.user(record.userId)))?.context ?? null;
+  const ctx = (await Caller.enter(record.workspaceId, actor))?.context ?? null;
   if (ctx === null) throw new OAuthFailure('oauth_not_editor');
   const credentials = await oauthAppCredentials(def.id);
   if (credentials === null) throw new OAuthFailure('oauth_failed');
@@ -169,7 +172,6 @@ async function connect(
   }
   const identity = await def.identify(client, grant.accessToken);
   const scopes = (grant.scope ?? '').split(/[\s,]+/).filter((scope) => scope !== '');
-  const actor: IntegrationActor = { userId: record.userId, agentId: null };
   const { integration } = await connectOAuthIntegration(ctx, actor, {
     provider: def.id,
     accountId: identity.accountId,
@@ -188,13 +190,15 @@ async function connect(
 /**
  * The public callback: always a redirect to `/<lng>/integrations` (relative: the page's own
  * origin), with `connected` or an `oauth_error` code. `browserNonce` is the binding cookie's
- * value (null when the browser sent none).
+ * value (null when the browser sent none); `origin`, the callback request's address and user
+ * agent, for the audit log.
  */
 export async function completeProviderOAuth(
   provider: OAuthProviderId,
   query: Readonly<Record<string, unknown>>,
   browserNonce: string | null,
   now: Date = new Date(),
+  origin: ActorOrigin = {},
 ): Promise<string> {
   // GitHub, after an install with "Request user authorization during installation": it starts the
   // web flow itself, with a code and no state of ours. Nothing is exchanged; the user lands back
@@ -211,7 +215,10 @@ export async function completeProviderOAuth(
   const { record, code } = claimed;
   const { lng } = record;
   try {
-    return connectedLocation(lng, await connect(OAUTH_PROVIDER_DEFS[provider], record, code, now));
+    return connectedLocation(
+      lng,
+      await connect(OAUTH_PROVIDER_DEFS[provider], record, code, now, origin),
+    );
   } catch (error) {
     if (error instanceof OAuthFailure) return oauthErrorLocation(lng, error.code);
     // A name and a status at most: provider answers, codes and tokens never reach the log.

@@ -1,5 +1,6 @@
 import { type Request, type RequestHandler } from 'express';
 
+import { Actor } from '../classes/base/Actor.js';
 import { OAUTH_STATE_TTL_MS } from '../models/definitions/OAuthState.js';
 import type {
   ListGoogleCalendarsResponseData,
@@ -49,7 +50,12 @@ const start: RequestHandler = async (req, res): Promise<void> => {
 
 /** Public: Google's redirect lands here; always a 302 to the fixed client page. */
 const callback: RequestHandler = async (req, res): Promise<void> => {
-  const location = await completeGoogleCalendarOAuth(req.query, browserNonceOf(req));
+  const location = await completeGoogleCalendarOAuth(
+    req.query,
+    browserNonceOf(req),
+    new Date(),
+    Actor.originOf(req),
+  );
   res.clearCookie(OAUTH_COOKIE, cookieOptions());
   res.set('Cache-Control', 'no-store');
   // The callback URL carries the code: the next page never sees it as a referrer.

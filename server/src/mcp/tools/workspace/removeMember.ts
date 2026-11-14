@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { removeMember } from '../../../services/workspaces.js';
 import { confirmField } from '../../middleware/confirm.js';
+import { toolCaller } from '../../auth/principal.js';
 import { defineTool } from '../../tool.js';
 import { findMemberView, MemberUserId, MemberView } from './views.js';
 
@@ -41,7 +42,13 @@ export const workspaceRemoveMember = defineTool({
   },
   async handler(ctx, input) {
     const member = await findMemberView(ctx.workspace, input.userId);
-    await removeMember(ctx.workspace, ctx.principal.userId, member.userId, ctx.principal.agentId);
+    await removeMember(
+      ctx.workspace,
+      ctx.principal.userId,
+      member.userId,
+      ctx.principal.agentId,
+      toolCaller(ctx).actor,
+    );
     return {
       output: { applied: true, member, summary: 'The member was removed.' },
       target: { type: 'user', id: member.userId },

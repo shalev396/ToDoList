@@ -20,7 +20,7 @@
  */
 import { z } from 'zod';
 
-import { Actor } from '../classes/base/Actor.js';
+import { Actor, type ActorOrigin } from '../classes/base/Actor.js';
 import { Caller } from '../classes/base/Caller.js';
 
 import { AppError } from '../errors/AppError.js';
@@ -189,9 +189,11 @@ async function revokeQuietly(client: ReadOnlyClient, token: string): Promise<voi
 }
 
 /** Code → tokens → account → integration and sealed credential. Returns the integration id. */
-async function connect(record: OAuthStateData, code: string): Promise<string> {
+async function connect(record: OAuthStateData, code: string, origin: ActorOrigin): Promise<string> {
+  // The member who started the flow, from the callback request (the audit log's address).
+  const actor = Actor.user(record.userId, origin);
   // Still a member; the role (a new integration needs an editor) is connectOAuthIntegration's.
-  const ctx = (await Caller.enter(record.workspaceId, Actor.user(record.userId)))?.context ?? null;
+  const ctx = (await Caller.enter(record.workspaceId, actor))?.context ?? null;
   if (ctx === null) throw new OAuthFailure('oauth_not_editor');
   const credentials = await googleOAuthCredentials();
   if (credentials === null) throw new OAuthFailure('oauth_failed');
@@ -219,7 +221,6 @@ async function connect(record: OAuthStateData, code: string): Promise<string> {
       ? { calendars: [] }
       : { calendars: [{ id: primary, mode: 'two_way' }], targetCalendarId: primary };
 
-  const actor: IntegrationActor = { userId: record.userId, agentId: null };
   const { integration } = await connectOAuthIntegration(ctx, actor, {
     provider: PROVIDER,
     accountId: account.sub,
@@ -237,19 +238,21 @@ async function connect(record: OAuthStateData, code: string): Promise<string> {
 /**
  * The public callback: always a redirect to `/<lng>/integrations` (relative: the page's own
  * origin), with `connected` or an `oauth_error` code. `browserNonce` is the binding cookie's
- * value (null when the browser sent none).
+ * value (null when the browser sent none); `origin`, the callback request's address and user
+ * agent, for the audit log.
  */
 export async function completeGoogleCalendarOAuth(
   query: Readonly<Record<string, unknown>>,
   browserNonce: string | null,
   now: Date = new Date(),
+  origin: ActorOrigin = {},
 ): Promise<string> {
   const claimed = await claimCallback(PROVIDER, query, browserNonce, now);
   if (!claimed.ok) return claimed.location;
   const { record, code } = claimed;
   const { lng } = record;
   try {
-    return connectedLocation(lng, await connect(record, code));
+    return connectedLocation(lng, await connect(record, code, origin));
   } catch (error) {
     if (error instanceof OAuthFailure) return oauthErrorLocation(lng, error.code);
     // A name and a status at most: provider answers and tokens never reach the log.

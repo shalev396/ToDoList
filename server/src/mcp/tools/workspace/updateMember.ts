@@ -5,6 +5,7 @@ import { updateMember } from '../../../services/workspaces.js';
 import { providersByMember } from '../../../services/integrations.js';
 import { findUser } from '../../../services/users.js';
 import { confirmField } from '../../middleware/confirm.js';
+import { toolCaller } from '../../auth/principal.js';
 import { defineTool } from '../../tool.js';
 import { findMemberView, MemberUserId, MemberView, toMemberView } from './views.js';
 
@@ -63,6 +64,7 @@ export const workspaceUpdateMember = defineTool({
       input.userId,
       change,
       ctx.principal.agentId,
+      toolCaller(ctx).actor,
     );
     const person = await findUser(membership.userId);
     return {

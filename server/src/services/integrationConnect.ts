@@ -139,15 +139,18 @@ export async function connectOAuthIntegration(
 ): Promise<ConnectedIntegration> {
   const result = await upsertIntegration(ctx, actor, conn);
   const { integration } = result;
-  await storeCredential({
-    workspaceId: ctx.id,
-    integrationId: integration.id,
-    provider: conn.provider,
-    ownerUserId: actor.userId,
-    kind: 'oauth',
-    scopes: conn.scopes,
-    secret: conn.secret,
-  });
+  await storeCredential(
+    {
+      workspaceId: ctx.id,
+      integrationId: integration.id,
+      provider: conn.provider,
+      ownerUserId: actor.userId,
+      kind: 'oauth',
+      scopes: conn.scopes,
+      secret: conn.secret,
+    },
+    actor,
+  );
   // Connected (again): failed runs start from 0, the account's name is its label.
   await (
     await getSyncStateRepository()

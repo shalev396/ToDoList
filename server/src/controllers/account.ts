@@ -1,4 +1,5 @@
 import { type RequestHandler } from 'express';
+import { Actor } from '../classes/base/Actor.js';
 import { User, Media } from '../classes/index.js';
 import type { AuthenticatedRequest } from '../types/express.js';
 import type {
@@ -195,7 +196,7 @@ const deleteAccount: RequestHandler = async (req, res): Promise<void> => {
     await deleteAllEntityMedia(userId);
 
     // Runs the workspace cascade (deleteAccountCascade) before Cognito and the user row go.
-    await User.deleteAccount(userId, cognitoSub);
+    await User.deleteAccount(userId, cognitoSub, Actor.user(userId, Actor.originOf(req)));
 
     const data: DeleteUserResponseData = {
       message: 'All user data has been permanently deleted',

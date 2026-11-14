@@ -36,14 +36,17 @@ export async function saveIntegrationCredential(
   const secret = parseCredential(integration.authMethod, body);
   const rotating =
     (await (await getCredentialRepository()).findMeta(ctx.id, integrationId)) !== null;
-  await storeCredential({
-    workspaceId: ctx.id,
-    integrationId,
-    provider: integration.provider,
-    ownerUserId: actor.userId,
-    kind: integration.authMethod,
-    secret,
-  });
+  await storeCredential(
+    {
+      workspaceId: ctx.id,
+      integrationId,
+      provider: integration.provider,
+      ownerUserId: actor.userId,
+      kind: integration.authMethod,
+      secret,
+    },
+    actor,
+  );
   // Reconnected: failed runs in a row start again from 0, and the status they left is cleared,
   // with the old token's expiry when this one replaces it (one update).
   await (

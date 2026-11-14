@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { emailInvite, inviteUrl } from '../../../services/inviteDelivery.js';
 import { CreateInviteBody } from '../../../services/workspaceSchemas.js';
 import { createInvite } from '../../../services/workspaces.js';
+import { toolCaller } from '../../auth/principal.js';
 import { defineTool } from '../../tool.js';
 import { InviteView, toInviteView } from './views.js';
 
@@ -34,6 +35,7 @@ export const workspaceInvite = defineTool({
       ctx.principal.userId,
       invitation,
       ctx.principal.agentId,
+      toolCaller(ctx).actor,
     );
     // The link goes to the invitee by email, as REST sends it, and never to the agent.
     await emailInvite(ctx.workspace, ctx.principal.userId, invite, inviteUrl(rawToken), {

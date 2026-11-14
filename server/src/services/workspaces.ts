@@ -178,15 +178,26 @@ function assertOwnerStanding(ctx: WorkspaceContext): void {
 }
 
 /**
- * Who a change is audited as: the user, through the agent key a change came through (an MCP
- * tool), or the app (`actorAgentId` null; the REST routes never pass one).
+ * Who acts: the user, through the agent key a change came through (an MCP tool), or the app
+ * (`actorAgentId` null; the REST routes never pass one). `via` is the request's actor (a
+ * controller's `req.caller.actor`, an MCP tool's caller): its address and user agent go into the
+ * audit log. Without it (a test, a job) they are null.
  */
+function actorFor(actorUserId: string, actorAgentId: string | null, via?: Actor): Actor {
+  const origin = { ip: via?.ip, userAgent: via?.userAgent };
+  return actorAgentId === null
+    ? Actor.user(actorUserId, origin)
+    : Actor.agent(actorUserId, actorAgentId, origin);
+}
+
+/** Who a change is audited as, in which workspace (see actorFor). */
 function auditScope(
   workspaceId: string,
   actorUserId: string,
   actorAgentId: string | null = null,
+  via?: Actor,
 ): { workspaceId: string; actor: Actor } {
-  return { workspaceId, actor: Actor.from({ userId: actorUserId, agentId: actorAgentId }) };
+  return { workspaceId, actor: actorFor(actorUserId, actorAgentId, via) };
 }
 
 function normalizeName(name: string): string {
@@ -388,6 +399,7 @@ export async function createWorkspace(
   user: WorkspaceUser,
   input: CreateWorkspaceInput,
   deps: CreateWorkspaceDeps = {},
+  actor?: Actor,
 ): Promise<WorkspaceData> {
   const name = normalizeName(input.name);
   const slug =
@@ -428,7 +440,7 @@ export async function createWorkspace(
   await memberships.create(workspace.id, { userId: user.id, role: 'owner' });
   await (await getUserRepository()).setDefaultWorkspace(user.id, workspace.id);
   await AuditLog.record(
-    auditScope(workspace.id, user.id),
+    auditScope(workspace.id, user.id, null, actor),
     'workspace.create',
     AuditTarget.of('workspace', workspace.id),
     {
@@ -508,6 +520,7 @@ export async function updateWorkspace(
   ctx: WorkspaceContext,
   actorUserId: string,
   input: UpdateWorkspaceInput,
+  actor?: Actor,
 ): Promise<WorkspaceData> {
   assertOwner(callerOf(ctx, actorUserId));
   const patch: WorkspacePatch = {};
@@ -524,7 +537,7 @@ export async function updateWorkspace(
   const updated = await (await getWorkspaceRepository()).update(ctx.id, patch);
   if (updated === null) throw new AppError(404, 'Workspace not found');
   await AuditLog.record(
-    auditScope(ctx.id, actorUserId),
+    auditScope(ctx.id, actorUserId, null, actor),
     'workspace.update',
     AuditTarget.of('workspace', ctx.id),
     { changed },
@@ -586,6 +599,7 @@ export async function createInvite(
   inviterUserId: string,
   input: CreateInviteInput,
   actorAgentId: string | null = null,
+  actor?: Actor,
 ): Promise<CreatedInvite> {
   assertOwner(callerOf(ctx, inviterUserId, actorAgentId));
   assertInvitableRole(input.role);
@@ -625,7 +639,7 @@ export async function createInvite(
   for (const old of replaced) await invites.revoke(ctx.id, old.id);
   // Never the token or its hash.
   await AuditLog.record(
-    auditScope(ctx.id, inviterUserId, actorAgentId),
+    auditScope(ctx.id, inviterUserId, actorAgentId, actor),
     'member.invite',
     AuditTarget.of('invite', invite.id),
     {
@@ -648,13 +662,14 @@ export async function revokeInvite(
   ctx: WorkspaceContext,
   actorUserId: string,
   inviteId: string,
+  actor?: Actor,
 ): Promise<void> {
   assertOwner(callerOf(ctx, actorUserId));
   if (!(await (await getInviteRepository()).revoke(ctx.id, inviteId))) {
     throw new AppError(404, 'Pending invite not found');
   }
   await AuditLog.record(
-    auditScope(ctx.id, actorUserId),
+    auditScope(ctx.id, actorUserId, null, actor),
     'invite.revoke',
     AuditTarget.of('invite', inviteId),
   );
@@ -673,6 +688,7 @@ export async function revokeInvite(
 export async function acceptInvite(
   user: WorkspaceUser,
   rawToken: string,
+  actor?: Actor,
 ): Promise<{ workspaceId: string }> {
   const notFound = new AppError(404, 'Invite not found');
   if (!INVITE_TOKEN_PATTERN.test(rawToken)) throw notFound;
@@ -716,7 +732,7 @@ export async function acceptInvite(
     invitedBy: invite.invitedBy,
   });
   await AuditLog.record(
-    auditScope(invite.workspaceId, user.id),
+    auditScope(invite.workspaceId, user.id, null, actor),
     'member.join',
     AuditTarget.of('user', user.id),
     { inviteId: invite.id, role: invite.role },
@@ -800,6 +816,7 @@ export async function setJoinLink(
   ctx: WorkspaceContext,
   actorUserId: string,
   input: SetJoinLinkInput,
+  actor?: Actor,
 ): Promise<JoinLinkState> {
   assertOwner(callerOf(ctx, actorUserId));
   if (input.role !== undefined) assertInvitableRole(input.role);
@@ -824,7 +841,7 @@ export async function setJoinLink(
     }
   }
   await AuditLog.record(
-    auditScope(ctx.id, actorUserId),
+    auditScope(ctx.id, actorUserId, null, actor),
     'workspace.link_update',
     AuditTarget.of('workspace', ctx.id),
     { enabled: state.enabled, role: state.role },
@@ -836,6 +853,7 @@ export async function setJoinLink(
 export async function resetJoinLink(
   ctx: WorkspaceContext,
   actorUserId: string,
+  actor?: Actor,
 ): Promise<JoinLinkState> {
   assertOwner(callerOf(ctx, actorUserId));
   const existing = await (await getWorkspaceRepository()).getJoinLink(ctx.id);
@@ -844,7 +862,7 @@ export async function resetJoinLink(
   }
   const state = await storeNewJoinLink(ctx.id, existing.role);
   await AuditLog.record(
-    auditScope(ctx.id, actorUserId),
+    auditScope(ctx.id, actorUserId, null, actor),
     'workspace.link_update',
     AuditTarget.of('workspace', ctx.id),
     { enabled: true, role: state.role, reset: true },
@@ -860,6 +878,7 @@ export async function resetJoinLink(
 export async function acceptJoinLink(
   user: WorkspaceUser,
   rawToken: string,
+  actor?: Actor,
 ): Promise<{ workspaceId: string }> {
   const notFound = new AppError(404, 'Link not found');
   if (!INVITE_TOKEN_PATTERN.test(rawToken)) throw notFound;
@@ -881,7 +900,7 @@ export async function acceptJoinLink(
   }
   await memberships.create(workspace.id, { userId: user.id, role: link.role });
   await AuditLog.record(
-    auditScope(workspace.id, user.id),
+    auditScope(workspace.id, user.id, null, actor),
     'member.join_link',
     AuditTarget.of('user', user.id),
     { role: link.role },
@@ -946,6 +965,7 @@ export async function updateMember(
   userId: string,
   input: UpdateMemberInput,
   actorAgentId: string | null = null,
+  actor?: Actor,
 ): Promise<MembershipData> {
   assertOwner(callerOf(ctx, actorUserId, actorAgentId));
   if (input.role === 'owner') {
@@ -963,7 +983,7 @@ export async function updateMember(
   const updated = await (await getMembershipRepository()).update(ctx.id, userId, patch);
   if (updated === null) throw new AppError(404, 'Member not found');
   await AuditLog.record(
-    auditScope(ctx.id, actorUserId, actorAgentId),
+    auditScope(ctx.id, actorUserId, actorAgentId, actor),
     'member.update',
     AuditTarget.of('user', userId),
     { ...patch },
@@ -982,6 +1002,7 @@ export async function removeMember(
   actorUserId: string,
   userId: string,
   actorAgentId: string | null = null,
+  actor?: Actor,
 ): Promise<void> {
   assertOwner(callerOf(ctx, actorUserId, actorAgentId));
   const member = await (await getMembershipRepository()).find(ctx.id, userId);
@@ -995,9 +1016,9 @@ export async function removeMember(
     return;
   }
   await assertNotLastOwner(member, 'The last owner cannot be removed');
-  await endMembership(ctx.id, userId, { userId: actorUserId, agentId: actorAgentId });
+  await endMembership(ctx.id, userId, actorFor(actorUserId, actorAgentId, actor));
   await AuditLog.record(
-    auditScope(ctx.id, actorUserId, actorAgentId),
+    auditScope(ctx.id, actorUserId, actorAgentId, actor),
     'member.remove',
     AuditTarget.of('user', userId),
     { role: member.role },
@@ -1030,13 +1051,14 @@ export async function countFormerMembersTodos(ctx: WorkspaceContext): Promise<nu
 export async function deleteFormerMembersTodos(
   ctx: WorkspaceContext,
   actorUserId: string,
+  actor?: Actor,
 ): Promise<number> {
   assertOwner(callerOf(ctx, actorUserId));
   const deleted = await (
     await getItemRepository()
   ).softDeletePrivateLocalOfFormerMembers(ctx.id, await memberIds(ctx.id));
   await AuditLog.record(
-    auditScope(ctx.id, actorUserId),
+    auditScope(ctx.id, actorUserId, null, actor),
     'member.former_todos_delete',
     AuditTarget.of('workspace', ctx.id),
     { count: deleted },
@@ -1045,12 +1067,16 @@ export async function deleteFormerMembersTodos(
 }
 
 /** Any member leaves (and their agent keys here are revoked), except the last owner. */
-export async function leaveWorkspace(ctx: WorkspaceContext, userId: string): Promise<void> {
+export async function leaveWorkspace(
+  ctx: WorkspaceContext,
+  userId: string,
+  actor?: Actor,
+): Promise<void> {
   const member = await findMember(ctx.id, userId);
   await assertNotLastOwner(member, 'You are the only owner: delete the workspace instead');
-  await endMembership(ctx.id, userId, { userId, agentId: null });
+  await endMembership(ctx.id, userId, actorFor(userId, null, actor));
   await AuditLog.record(
-    auditScope(ctx.id, userId),
+    auditScope(ctx.id, userId, null, actor),
     'member.leave',
     AuditTarget.of('user', userId),
     { role: member.role },
@@ -1071,6 +1097,7 @@ async function cascadeDeleteWorkspace(
   workspaceId: string,
   actorUserId: string,
   meta: Record<string, unknown>,
+  actor?: Actor,
 ): Promise<void> {
   const integrations = await getIntegrationRepository();
   const credentials = await getCredentialRepository();
@@ -1094,10 +1121,10 @@ async function cascadeDeleteWorkspace(
     if (invite.status === 'pending') await invites.revoke(workspaceId, invite.id);
   }
   for (const member of await (await getMembershipRepository()).listMembers(workspaceId)) {
-    await endMembership(workspaceId, member.userId, { userId: actorUserId, agentId: null });
+    await endMembership(workspaceId, member.userId, actorFor(actorUserId, null, actor));
   }
   await AuditLog.record(
-    auditScope(workspaceId, actorUserId),
+    auditScope(workspaceId, actorUserId, null, actor),
     'workspace.delete',
     AuditTarget.of('workspace', workspaceId),
     meta,
@@ -1114,25 +1141,29 @@ async function cascadeDeleteWorkspace(
 }
 
 /** Owner only: deletes the workspace and everything in it (see cascadeDeleteWorkspace). */
-export async function deleteWorkspace(ctx: WorkspaceContext, actorUserId: string): Promise<void> {
+export async function deleteWorkspace(
+  ctx: WorkspaceContext,
+  actorUserId: string,
+  actor?: Actor,
+): Promise<void> {
   assertOwner(callerOf(ctx, actorUserId));
-  await cascadeDeleteWorkspace(ctx.id, actorUserId, {});
+  await cascadeDeleteWorkspace(ctx.id, actorUserId, {}, actor);
 }
 
 /**
  * Runs before an account is deleted: workspaces the user solely owns are deleted with all
  * their data; the user's other memberships end; their agent keys are revoked with them.
  */
-export async function deleteAccountCascade(userId: string): Promise<void> {
+export async function deleteAccountCascade(userId: string, actor?: Actor): Promise<void> {
   const memberships = await getMembershipRepository();
   for (const membership of await memberships.findForUser(userId)) {
     const { workspaceId, role } = membership;
     if (role === 'owner' && (await memberships.countOwners(workspaceId)) <= 1) {
-      await cascadeDeleteWorkspace(workspaceId, userId, { reason: 'account_deleted' });
+      await cascadeDeleteWorkspace(workspaceId, userId, { reason: 'account_deleted' }, actor);
     } else {
-      await endMembership(workspaceId, userId, { userId, agentId: null });
+      await endMembership(workspaceId, userId, actorFor(userId, null, actor));
       await AuditLog.record(
-        auditScope(workspaceId, userId),
+        auditScope(workspaceId, userId, null, actor),
         'member.leave',
         AuditTarget.of('user', userId),
         {

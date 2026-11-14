@@ -1,4 +1,5 @@
 import { type RequestHandler } from 'express';
+import { Actor } from '../classes/base/Actor.js';
 import { AppError } from '../errors/AppError.js';
 import type { InviteData } from '../models/index.js';
 import type {
@@ -58,9 +59,15 @@ const list: RequestHandler = async (req, res): Promise<void> => {
 
 const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateInviteBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
+  const { workspace, user, caller } = req as WorkspaceRequest;
   const { message, language, ...invitation } = body;
-  const { invite, rawToken } = await createInvite(workspace, user.id, invitation);
+  const { invite, rawToken } = await createInvite(
+    workspace,
+    user.id,
+    invitation,
+    null,
+    caller.actor,
+  );
   const url = inviteUrl(rawToken);
   await emailInvite(workspace, user.id, invite, url, { message, language });
   // The raw token's only appearance. `inviteUrl` is not a deny-listed key, and the token is drawn
@@ -70,8 +77,8 @@ const create: RequestHandler = async (req, res): Promise<void> => {
 };
 
 const revoke: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
-  await revokeInvite(workspace, user.id, routeParam(req, 'id'));
+  const { workspace, user, caller } = req as WorkspaceRequest;
+  await revokeInvite(workspace, user.id, routeParam(req, 'id'), caller.actor);
   res.status(204).end();
 };
 
@@ -95,6 +102,7 @@ const accept: RequestHandler = async (req, res): Promise<void> => {
     const data: AcceptInviteResponseData = await acceptInvite(
       { id: user.id, email: user.email },
       routeParam(req, 'token'),
+      Actor.user(user.id, Actor.originOf(req)),
     );
     res.success(data);
   } catch (error) {
@@ -123,13 +131,13 @@ const getJoin: RequestHandler = async (req, res): Promise<void> => {
 
 const setJoin: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(SetJoinLinkBody, req.body);
-  const { workspace, user } = req as WorkspaceRequest;
-  res.success(toJoinLinkView(await setJoinLink(workspace, user.id, body)));
+  const { workspace, user, caller } = req as WorkspaceRequest;
+  res.success(toJoinLinkView(await setJoinLink(workspace, user.id, body, caller.actor)));
 };
 
 const resetJoin: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
-  res.success(toJoinLinkView(await resetJoinLink(workspace, user.id)));
+  const { workspace, user, caller } = req as WorkspaceRequest;
+  res.success(toJoinLinkView(await resetJoinLink(workspace, user.id, caller.actor)));
 };
 
 const acceptJoin: RequestHandler = async (req, res): Promise<void> => {
@@ -138,6 +146,7 @@ const acceptJoin: RequestHandler = async (req, res): Promise<void> => {
   const data: AcceptJoinLinkResponseData = await acceptJoinLink(
     { id: user.id, email: user.email },
     body.token,
+    Actor.user(user.id, Actor.originOf(req)),
   );
   res.success(data);
 };
