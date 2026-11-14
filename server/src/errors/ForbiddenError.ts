@@ -13,8 +13,11 @@ export class ForbiddenError extends AppError {
    * "Only an editor can …" for anything below it.
    */
   static forRole(minRole: RoleName, action = 'do this'): ForbiddenError {
-    return new ForbiddenError(
-      `Only ${minRole === 'owner' ? 'an owner' : 'an editor'} can ${action}`,
-    );
+    return new ForbiddenError(ForbiddenError.roleMessage(minRole, action));
+  }
+
+  /** The text of `forRole`. */
+  static roleMessage(minRole: RoleName, action = 'do this'): string {
+    return `Only ${minRole === 'owner' ? 'an owner' : 'an editor'} can ${action}`;
   }
 }
