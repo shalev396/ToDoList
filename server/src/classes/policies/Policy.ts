@@ -1,7 +1,8 @@
 /**
  * Permission rules as objects (PERMISSIONS-V2): one policy per kind of thing, each deciding read,
  * edit and manage for a caller, and naming the refusal a denied action answers. Callers ask
- * through `caller.authorize(policy, action, entity)`; the rules live only in the policies.
+ * through `caller.authorize(policy, action, entity)`. The rules that still live in a service
+ * until their phase moves them are listed in docs/design/CLASSES.md.
  */
 import type { AppError } from '../../errors/AppError.js';
 import { ForbiddenError } from '../../errors/ForbiddenError.js';

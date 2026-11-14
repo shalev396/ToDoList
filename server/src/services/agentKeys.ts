@@ -4,6 +4,8 @@ import { randomBytes } from 'node:crypto';
 import { Actor, type ActorOrigin } from '../classes/base/Actor.js';
 import { AuditTarget } from '../classes/base/AuditTarget.js';
 import { AuditLog } from '../classes/AuditLog.js';
+import { Role } from '../classes/base/Role.js';
+import { WorkspacePolicy } from '../classes/policies/WorkspacePolicy.js';
 import { LIMITS } from '../config/limits.js';
 import { AppError } from '../errors/AppError.js';
 import type { AgentKeyData } from '../models/definitions/AgentKey.js';
@@ -41,7 +43,8 @@ function toView(key: AgentKeyData, withUser: boolean): AgentKeyView {
 
 export async function listAgentKeys(ws: WorkspaceContext, userId: string): Promise<AgentKeyView[]> {
   const keys = await getAgentKeyRepository();
-  const isOwner = ws.role === 'owner';
+  // An owner manages every key of the workspace; anyone else sees their own.
+  const isOwner = WorkspacePolicy.roleMay(Role.of(ws.role), 'manage');
   const rows = await keys.listForWorkspace(ws.id, isOwner ? null : userId);
   return rows.map((row) => toView(row, isOwner));
 }
@@ -52,7 +55,7 @@ export async function createAgentKey(
   input: { name: string; scopes: AgentScope[]; expiresInDays?: number | undefined },
   actor?: Actor,
 ): Promise<AgentKeyView & { key: string }> {
-  if (ws.role !== 'owner') throw new AppError(403, 'Only an owner can create agent keys');
+  WorkspacePolicy.requireRole(ws.role, 'manage', 'create agent keys');
   const keys = await getAgentKeyRepository();
   if ((await keys.countForUser(ws.id, userId)) >= LIMITS.agentKeysPerUser) {
     throw new AppError(
@@ -90,7 +93,10 @@ export async function revokeAgentKey(
 ): Promise<void> {
   const keys = await getAgentKeyRepository();
   const key = await keys.findById(ws.id, id);
-  if (key === null || (ws.role !== 'owner' && key.userId !== userId)) {
+  if (
+    key === null ||
+    (!WorkspacePolicy.roleMay(Role.of(ws.role), 'manage') && key.userId !== userId)
+  ) {
     throw new AppError(404, 'Not found');
   }
   if (!(await keys.revoke(ws.id, id))) throw new AppError(404, 'Not found');

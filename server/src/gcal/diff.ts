@@ -10,8 +10,8 @@
  *   reads back (`parseOpId`);
  * - at most `maxOps` ops per run, at most `maxCreates` creates (what is left of the daily cap).
  */
-import { createHash } from 'node:crypto';
 
+import { sha256Hex } from '../services/crypto/hashing.js';
 import { stableStringify } from '../sync/hash.js';
 
 export const ORIGIN = 'todolist';
@@ -221,7 +221,7 @@ export function projectEvent(
 
 /** 16 hex characters of SHA-256 over the projected event. */
 export function hashEvent(event: EventBody): string {
-  return createHash('sha256').update(stableStringify(event)).digest('hex').slice(0, 16);
+  return sha256Hex(stableStringify(event)).slice(0, 16);
 }
 
 /** The instants an event covers (all-day dates at noon UTC), for the window check. */
