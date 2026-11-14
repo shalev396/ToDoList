@@ -14,6 +14,7 @@ import { SourcesStrip } from '@/features/landing/SourcesStrip';
 
 const LANDING_FAQ = [
   'sources',
+  'googleCalendar',
   'sharing',
   'tokens',
   'agents',

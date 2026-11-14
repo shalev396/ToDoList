@@ -15,6 +15,11 @@ export const faq = {
     answer:
       'Jira, ClickUp, Linear, Google Calendar and GitHub, with Moodle coming soon. You can also add to-dos of your own.',
   },
+  googleCalendar: {
+    question: 'What does TodoList do with my Google Calendar?',
+    answer:
+      'It reads the calendars you pick and shows their events next to your to-dos. It creates or updates an event only when you set up a push, for the to-dos you choose. Your Google data is never sold, used for ads or used to train AI, and disconnecting revokes TodoList’s access at Google. The privacy policy has the details.',
+  },
   sharing: {
     question: 'Can classmates see my work tasks?',
     answer:

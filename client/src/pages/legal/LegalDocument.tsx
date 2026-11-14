@@ -7,7 +7,7 @@ import { app } from '@/data';
 import { pageTitle } from '@/data/pageTitles';
 
 /** The date the legal text was last changed. Update it with the text. */
-const LAST_UPDATED = new Date(2026, 10, 13);
+const LAST_UPDATED = new Date(2026, 10, 15);
 
 export interface LegalDocumentProps {
   doc: 'privacy' | 'terms';
@@ -16,6 +16,13 @@ export interface LegalDocumentProps {
   /** The other legal page, linked at the end. */
   other: { to: string; label: string };
 }
+
+/** Sections whose one-paragraph body carries links (<email>, <repo>, <policy>). */
+const TRANS_SECTIONS: ReadonlySet<string> = new Set(['contact', 'openSource', 'googleLimitedUse']);
+
+/** Google's policy that the Limited Use statement (privacy, googleLimitedUse) links to. */
+const GOOGLE_USER_DATA_POLICY_URL =
+  'https://developers.google.com/terms/api-services-user-data-policy';
 
 const inlineLink =
   'rounded-sm text-foreground underline decoration-border underline-offset-4 hover:decoration-current focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none';
@@ -90,7 +97,7 @@ export function LegalDocument({ doc, sections, other }: LegalDocumentProps) {
               >
                 {t(`legal.${doc}.sections.${id}.title`)}
               </h2>
-              {id === 'contact' || id === 'openSource' ? (
+              {TRANS_SECTIONS.has(id) ? (
                 <p className="mt-3 leading-relaxed text-muted-foreground">
                   <Trans
                     i18nKey={`legal.${doc}.sections.${id}.body`}
@@ -100,6 +107,14 @@ export function LegalDocument({ doc, sections, other }: LegalDocumentProps) {
                       repo: (
                         <a
                           href={app.repositoryUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className={inlineLink}
+                        />
+                      ),
+                      policy: (
+                        <a
+                          href={GOOGLE_USER_DATA_POLICY_URL}
                           target="_blank"
                           rel="noopener noreferrer"
                           className={inlineLink}

@@ -7,6 +7,8 @@ const SECTIONS = [
   'summary',
   'accounts',
   'sources',
+  'google',
+  'googleLimitedUse',
   'secrets',
   'agents',
   'sharing',

@@ -13,6 +13,7 @@ export type FaqKey =
   | 'free'
   | 'limits'
   | 'sources'
+  | 'googleCalendar'
   | 'sharing'
   | 'tokens'
   | 'agents'
