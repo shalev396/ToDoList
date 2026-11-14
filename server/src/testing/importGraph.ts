@@ -315,16 +315,27 @@ function closingParen(masked: string, open: number): number {
   return -1;
 }
 
+/** The first parameter of a method signature: a name with a type annotation (`minRole: Role`). */
+const ANNOTATED_PARAMETER = /^\s*(?:\.\.\.)?[A-Za-z_$][\w$]*\??\s*:/;
+
 /**
  * A class method named `require` or `import` (`require(minRole: Role): void {`) is a declaration,
- * not a call: it starts its line (after modifiers) and its parameter list is followed by a return
- * type or a body. A call is followed by anything else (`;`, `)`, `.`, an operator, a new line).
+ * not a call. All of these must hold:
+ * - it starts its line (after modifiers);
+ * - its parameter list is empty, or opens with an annotated name (strict TypeScript annotates
+ *   every method parameter; a call's argument is a string, a template, a name or an expression,
+ *   never `name: Type`);
+ * - a body or a return type follows the list.
+ * `flag ?\n  import('./x.js') : y` and `import(name) : y` are calls: a literal or a bare name.
  */
 function isMethodDeclaration(masked: string, at: number, open: number): boolean {
   const lineStart = masked.lastIndexOf('\n', at - 1) + 1;
   if (!MEMBER_PREFIX.test(masked.slice(lineStart, at))) return false;
   const close = closingParen(masked, open);
-  return close !== -1 && /^\s*[:{]/.test(masked.slice(close));
+  if (close === -1) return false;
+  const parameters = masked.slice(open + 1, close - 1);
+  if (parameters.trim() !== '' && !ANNOTATED_PARAMETER.test(parameters)) return false;
+  return /^\s*[:{]/.test(masked.slice(close));
 }
 
 export function importsIn({ code, masked }: Scan): ImportRef[] {

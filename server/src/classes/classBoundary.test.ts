@@ -192,6 +192,23 @@ describe('the class boundary, on synthetic trees', () => {
       [['dynamic', './x.js']],
     );
   });
+
+  it('a dynamic import that starts a line is still a dynamic import (a ternary, a computed name)', () => {
+    assert.deepEqual(
+      flagged({
+        'services/ternary.ts': `export const load = (flag: boolean) =>\n  flag ?\n    import('../models/mongoose/Item.js') : undefined;`,
+        'services/block.ts': `export async function load(): Promise<void> {\n  import('../models/index.js')\n  {\n  }\n}`,
+      }),
+      ['src/services/block.ts', 'src/services/ternary.ts'],
+    );
+    assert.deepEqual(
+      importsIn(scan(`const m = flag ?\n  import(name) : undefined;`)).map((ref) => [
+        ref.kind,
+        ref.specifier,
+      ]),
+      [['dynamic', null]],
+    );
+  });
 });
 
 describe('the class boundary of server/src', () => {

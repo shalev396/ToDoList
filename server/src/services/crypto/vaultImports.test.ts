@@ -411,6 +411,24 @@ describe('the import rules, on synthetic trees (one per known bypass)', () => {
     );
   });
 
+  it('a dynamic import that starts a line is still seen: a ternary, a computed name, a block after it', () => {
+    assert.deepEqual(
+      importsOf(`const m = flag ?\n  import('../models/mongoose/Item.js') : undefined;`).map(
+        (ref) => [ref.kind, ref.specifier],
+      ),
+      [['dynamic', '../models/mongoose/Item.js']],
+    );
+    assert.deepEqual(
+      flagged({
+        'services/ternary.ts': `export const load = (flag: boolean) =>\n  flag ?\n    import('./crypto/envelope.js') : undefined;`,
+        'services/computed.ts': `export const load = (flag: boolean, name: string) =>\n  flag ?\n    import(name) : undefined;`,
+        'services/block.ts': `export async function load(): Promise<void> {\n  import('./crypto/envelope.js')\n  {\n  }\n}`,
+        'services/method.ts': `export class Caller {\n  require(minRole: string, message?: string): void {\n    void [minRole, message];\n  }\n}`,
+      }),
+      ['services/block.ts', 'services/computed.ts', 'services/ternary.ts'],
+    );
+  });
+
   it('naming the vault outside the allow-list counts as importing it', () => {
     assert.deepEqual(
       flagged({
