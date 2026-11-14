@@ -88,6 +88,7 @@ With any method, the app never edits, closes or comments on anything at the prov
 
   Or in the console: Secrets Manager, the secret, Retrieve secret value, Edit, add the rows, Save.
 
+- **Old names.** Until 2026-11-15 each app secret was its own secret, `todolist/<stage>/<name>`. Their values were moved into `todolist-<stage>-app-secrets`, and the old secrets are scheduled for deletion (restorable until 2026-12-15). A local backup exists outside the repo.
 - **Tokens of users** are sealed in the credential vault, never in this secret. The stage Lambda can read only `todolist-<stage>-app-secrets`.
 - **Adding a new secret name** (code change first): `docs/dashboard/DEPLOY-PLAN.md`, "App secrets in Secrets Manager".
 - **Fallback.** If you skip a provider on a stage, its "Connect with" button shows as not configured and the user can still paste their own token.
