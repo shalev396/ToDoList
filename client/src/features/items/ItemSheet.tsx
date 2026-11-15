@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMembers } from '@/api/queries/members';
 import { ownerOf } from './owner';
@@ -30,7 +30,13 @@ import { CopyChips } from './CopyChips';
 import { SourcePreview } from './SourcePreview';
 import { describeProps, type ItemField } from './itemFields';
 import { useItemParam } from './useItemParam';
-import { formatPlannedAt, isCommittable, parsePlannedAt } from './plannedAt';
+import {
+  createLatestWins,
+  formatPlannedAt,
+  isCommittable,
+  isPickerChange,
+  parsePlannedAt,
+} from './plannedAt';
 import { dateInZone, noonInZone } from './zonedDate';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
@@ -506,21 +512,26 @@ function OverlayControls({
       setPlannedDraft(planned);
       return;
     }
-    if (next !== (item.overlay.plannedAt ?? null)) {
-      save({ plannedAt: next });
+    // While a save is in flight the stored value is not known yet: the newest value is queued.
+    if (plannedQueue.isBusy() || next !== (item.overlay.plannedAt ?? null)) {
+      plannedQueue.push(next);
     }
   };
 
   const save = (body: Parameters<typeof overlay.mutate>[0]) => {
-    overlay.mutate(body, {
-      onError: (error) => {
-        const openIn = apiOpenIn(error);
-        if (openIn !== null) {
-          onRefused(openIn);
-        }
-      },
-    });
+    overlay.mutate(body, { onError: refused });
   };
+  const refused = (error: unknown) => {
+    const openIn = apiOpenIn(error);
+    if (openIn !== null) {
+      onRefused(openIn);
+    }
+  };
+  // "Planned for" saves one at a time, the latest value last (two PATCHes could land out of order).
+  const [plannedQueue] = useState(() => createLatestWins<string | null>(() => Promise.resolve()));
+  useEffect(() => {
+    plannedQueue.use((plannedAt) => overlay.mutateAsync({ plannedAt }).catch(refused));
+  });
 
   return (
     <section aria-labelledby="item-overlay" className="flex flex-col gap-4">
@@ -590,7 +601,8 @@ function OverlayControls({
             onChange={(event) => {
               const draft = { date: event.target.value, time: plannedDraft.time };
               setPlannedDraft(draft);
-              if (isCommittable(draft)) {
+              // Typed segments wait for blur or Enter; only a pick from the picker saves now.
+              if (isPickerChange(event.nativeEvent) && isCommittable(draft)) {
                 commitPlanned(draft);
               }
             }}
@@ -616,7 +628,11 @@ function OverlayControls({
             onChange={(event) => {
               const draft = { date: planned.date, time: event.target.value };
               setPlannedDraft(draft);
-              if (event.target.value !== '' && isCommittable(draft)) {
+              if (
+                isPickerChange(event.nativeEvent) &&
+                event.target.value !== '' &&
+                isCommittable(draft)
+              ) {
                 commitPlanned(draft);
               }
             }}
@@ -640,7 +656,7 @@ function OverlayControls({
               className="max-md:h-11"
               disabled={overlay.isPending}
               onClick={() => {
-                save({ plannedAt: null });
+                plannedQueue.push(null);
               }}
             >
               {t('items.sheet.plannedClear')}

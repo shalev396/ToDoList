@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   formatPlannedAt,
+  createLatestWins,
   isCommittable,
+  isPickerChange,
   isPlannedTime,
   isRealDate,
   parsePlannedAt,
@@ -53,5 +55,65 @@ describe('plannedAt', () => {
     for (const value of ['2026-12-31', '2026-12-31T23:59', '2024-02-29T00:00']) {
       assert.equal(formatPlannedAt(parsePlannedAt(value)), value);
     }
+  });
+});
+
+describe('isPickerChange', () => {
+  it('is false for keyboard typing and true for a pick', () => {
+    assert.equal(isPickerChange({ inputType: 'insertText' } as unknown as Event), false);
+    assert.equal(isPickerChange({ inputType: 'deleteContentBackward' } as unknown as Event), false);
+    assert.equal(isPickerChange({} as Event), true);
+    assert.equal(isPickerChange({ inputType: '' } as unknown as Event), true);
+  });
+});
+
+describe('createLatestWins', () => {
+  const gate = () => {
+    let open: () => void = () => undefined;
+    const promise = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    return { promise, open };
+  };
+  it('sends at once when idle', () => {
+    const sent: string[] = [];
+    const queue = createLatestWins((value: string) => {
+      sent.push(value);
+      return Promise.resolve();
+    });
+    queue.push('a');
+    assert.deepEqual(sent, ['a']);
+  });
+  it('holds newer values while one is in flight; only the latest is sent after it', async () => {
+    const sent: string[] = [];
+    const first = gate();
+    const queue = createLatestWins((value: string) => {
+      sent.push(value);
+      return value === 'a' ? first.promise : Promise.resolve();
+    });
+    queue.push('a');
+    queue.push('b');
+    queue.push('c');
+    assert.deepEqual(sent, ['a']);
+    assert.equal(queue.isBusy(), true);
+    first.open();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(sent, ['a', 'c']);
+    assert.equal(queue.isBusy(), false);
+  });
+  it('goes on after a failed send', async () => {
+    const sent: string[] = [];
+    const first = gate();
+    const queue = createLatestWins((value: string) => {
+      sent.push(value);
+      return value === 'a'
+        ? first.promise.then(() => Promise.reject(new Error('no')))
+        : Promise.resolve();
+    });
+    queue.push('a');
+    queue.push('b');
+    first.open();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(sent, ['a', 'b']);
   });
 });
