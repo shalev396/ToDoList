@@ -223,6 +223,10 @@ export type {
 export type {
   OpenIn,
   ItemOverlayView,
+  ItemOverridesView,
+  ItemEditingView,
+  OverridableField,
+  WriteBackErrorDetails,
   ItemSummary,
   ItemDetail,
   GetItemResponseData,
