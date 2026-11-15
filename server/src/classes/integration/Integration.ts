@@ -214,6 +214,11 @@ export abstract class Integration<
     return data === null ? null : Integration.from(data);
   }
 
+  /** Global, by id: whether it is still connected (not deleted), without making its class. */
+  static async isConnected(integrationId: string): Promise<boolean> {
+    return (await (await getIntegrationRepository()).findByIdForWorker(integrationId)) !== null;
+  }
+
   /** What the sync dispatchers schedule (IIntegrationRepository.listActiveForDispatch). */
   static async listForDispatch(): Promise<Integration[]> {
     return (await (await getIntegrationRepository()).listActiveForDispatch()).map((data) =>

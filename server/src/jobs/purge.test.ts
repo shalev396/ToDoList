@@ -196,4 +196,65 @@ describe('purgeDeleted: runs still running', () => {
 
     assert.equal((await purgeDeleted(NOW)).timedOutRuns, 0, 'each run is ended once');
   });
+
+  it('one run at a time: a re-delete that throws leaves every later run for the next purge', async (t) => {
+    const m = await import('../models/index.js');
+    const runs = await m.getSyncRunRepository();
+    const integrations = await m.getIntegrationRepository();
+    const items = await m.getItemRepository();
+    const goneWith = async (workspaceId: string, minutes: number): Promise<SyncRunData> => {
+      const accountId = `${workspaceId}.example.invalid`;
+      const { id } = await integrations.create(workspaceId, {
+        connectedBy: 'u-owner',
+        provider: 'jira',
+        accountId,
+        label: 'Jira',
+        authMethod: 'api_token_basic',
+        topicId: 'work',
+      });
+      const run = await runs.create(workspaceId, {
+        integrationId: id,
+        trigger: 'schedule',
+        status: 'running',
+        startedAt: minutesAgo(minutes),
+      });
+      await items.bulkUpsert(workspaceId, [
+        {
+          integrationId: id,
+          kind: 'issue',
+          topicId: 'work',
+          title: 'Revived',
+          status: 'open',
+          source: { ...source('revived-2'), accountId },
+        },
+      ]);
+      await integrations.softDelete(workspaceId, id);
+      return run;
+    };
+    const first = await goneWith('w-stale-first', 50);
+    const second = await goneWith('w-stale-second', 30);
+    const revived = async (workspaceId: string): Promise<Date | null | undefined> =>
+      (
+        await ItemMongoModel.findOne({ workspaceId, 'source.externalId': 'revived-2' }).lean<{
+          deletedAt: Date | null;
+        }>()
+      )?.deletedAt;
+
+    // The first run's re-delete fails (a database blip): the purge stops there.
+    const updateMany = t.mock.method(ItemMongoModel, 'updateMany');
+    updateMany.mock.mockImplementationOnce(() => {
+      throw new Error('database blip');
+    });
+    const { purgeDeleted } = await import('./purge.js');
+    await assert.rejects(purgeDeleted(NOW), /database blip/);
+    assert.equal((await runs.findById('w-stale-first', first.id))?.status, 'failed');
+    // The later run was not touched: still running, so the next purge reaps it and re-deletes.
+    assert.equal((await runs.findById('w-stale-second', second.id))?.status, 'running');
+    assert.equal(await revived('w-stale-second'), null);
+
+    updateMany.mock.restore();
+    assert.equal((await purgeDeleted(NOW)).timedOutRuns, 1);
+    assert.equal((await runs.findById('w-stale-second', second.id))?.status, 'failed');
+    assert.deepEqual(await revived('w-stale-second'), NOW, 'deleted again by the next purge');
+  });
 });

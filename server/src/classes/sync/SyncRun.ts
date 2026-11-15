@@ -283,17 +283,26 @@ export class SyncRun
 
   /**
    * The reaper: every run still `running` `staleAfterMs` after it started is dead (its job timed
-   * out): ended `failed` with `timeout`, unless it finished meanwhile (cancel). At most `limit`
-   * per call; returns the runs it ended.
+   * out): ended `failed` with `timeout`, unless it finished meanwhile (cancel). One run at a time:
+   * `onReaped` (the purge's clean-up of that run) runs right after the run is ended, before the
+   * next one is touched, so a throw there stops the reaper with every later run still `running`
+   * (the next call reaps it). At most `limit` per call; returns the runs it ended.
    */
-  static async reapStuck(now: Date, staleAfterMs: number, limit: number): Promise<SyncRun[]> {
+  static async reapStuck(
+    now: Date,
+    staleAfterMs: number,
+    limit: number,
+    onReaped: (run: SyncRun) => Promise<void> = () => Promise.resolve(),
+  ): Promise<SyncRun[]> {
     const stale = await SyncRun.listRunningStartedBefore(
       new Date(now.getTime() - staleAfterMs),
       limit,
     );
     const reaped: SyncRun[] = [];
     for (const run of stale) {
-      if (await run.cancel(SyncRun.error('timeout'), now)) reaped.push(run);
+      if (!(await run.cancel(SyncRun.error('timeout'), now))) continue;
+      reaped.push(run);
+      await onReaped(run);
     }
     return reaped;
   }

@@ -36,17 +36,22 @@ export interface PurgeResult {
 
 /**
  * Ends the runs still `running` STALE_RUN_AFTER_MS after they started (SyncRun.reapStuck: a
- * conditional write, so a run that finishes meanwhile keeps its own outcome). When such a run's
- * integration was disconnected, what the dead run wrote or revived after the disconnect is
- * deleted again. Returns how many runs it ended.
+ * conditional write, so a run that finishes meanwhile keeps its own outcome), one at a time: when
+ * a run's integration was disconnected, what the dead run wrote or revived after the disconnect is
+ * deleted again before the next run is reaped. A throw stops the purge with every later run still
+ * `running`, so the next purge does both for them. Returns how many runs it ended.
  */
 async function endStaleRuns(now: Date): Promise<number> {
-  const reaped = await SyncRun.reapStuck(now, STALE_RUN_AFTER_MS, STALE_RUNS_PER_PURGE);
-  for (const run of reaped) {
-    if ((await Integration.forWorker(run.integrationId)) !== null) continue;
-    // Disconnected: what the dead run wrote or revived after the disconnect is deleted again.
-    await SyncEngine.deleteWritesOf({ id: run.integrationId, workspaceId: run.workspaceId }, now);
-  }
+  const reaped = await SyncRun.reapStuck(
+    now,
+    STALE_RUN_AFTER_MS,
+    STALE_RUNS_PER_PURGE,
+    async (run) => {
+      if (await Integration.isConnected(run.integrationId)) return;
+      // Disconnected: what the dead run wrote or revived after the disconnect is deleted again.
+      await SyncEngine.deleteWritesOf({ id: run.integrationId, workspaceId: run.workspaceId }, now);
+    },
+  );
   if (reaped.length > 0) logger.warn('sync runs timed out', { count: reaped.length });
   return reaped.length;
 }
