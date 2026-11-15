@@ -42,6 +42,10 @@ export const errors = {
     providerPartialWrite:
       'Only part of the change was made in that tool. Check the item there, then try the rest again.',
     providerItemMissing: 'This item no longer exists in that tool.',
+    providerNoAnswer:
+      'No answer from that tool: the change may have been made there. Check it before trying again.',
+    providerRefused:
+      'That tool refused this change for your account. If it keeps happening, reconnect it.',
     eventHasGuests: 'This event has other guests. Choose whether to notify them, then try again.',
     integrationNotOwner:
       'Only the person who connected that tool can change this there. You can still keep your own value in TodoList where the tool has none.',

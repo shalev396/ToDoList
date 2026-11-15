@@ -46,6 +46,13 @@ export const ERROR_CODES = [
   'provider_partial_write',
   /** Write-back: the item no longer exists at the provider. */
   'provider_item_missing',
+  /**
+   * A write (a write-back or a create) the provider did not answer (no answer, a timeout, a 5xx):
+   * the change may have been made there, so the caller checks before trying again.
+   */
+  'provider_no_answer',
+  /** A write the provider refused for this connection's account (its auth, or a permission). */
+  'provider_refused',
   /** A calendar event with other guests: the caller must say whether to notify them. */
   'event_has_guests',
   /**
