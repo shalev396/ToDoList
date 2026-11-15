@@ -12,6 +12,8 @@ export const ROUTES = {
   EDIT_PROFILE: 'profile/edit',
   EDIT_PROFILE_SEGMENT: 'edit',
   ONBOARDING: 'onboarding',
+  /** The consent page of an agent signing in; takes `?request=<id>`. */
+  AUTHORIZE_AGENT: 'authorize-agent',
   /** Route pattern; build links with invitePath(). */
   INVITE: 'invites/:token',
   /** Route pattern of a join link ("anyone with the link"); build links with joinPath(). */

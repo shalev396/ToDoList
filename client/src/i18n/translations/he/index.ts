@@ -16,6 +16,7 @@ import { items } from './items.js';
 import { faq } from './faq.js';
 import { onboarding } from './onboarding.js';
 import { invites } from './invites.js';
+import { agentAuth } from './agentAuth.js';
 import { settings } from './settings.js';
 import { members } from './members.js';
 import { commandPalette, shortcuts } from './commandPalette.js';
@@ -45,6 +46,7 @@ export const he = {
   faq,
   onboarding,
   invites,
+  agentAuth,
   settings,
   members,
   commandPalette,

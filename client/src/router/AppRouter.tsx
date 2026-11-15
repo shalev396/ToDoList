@@ -20,6 +20,7 @@ const AgentKeysPage = lazy(() => import('@/pages/settings/AgentKeysPage'));
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
 const EditProfilePage = lazy(() => import('@/pages/EditProfilePage'));
 const OnboardingPage = lazy(() => import('@/pages/onboarding/OnboardingPage'));
+const AuthorizeAgentPage = lazy(() => import('@/pages/agents/AuthorizeAgentPage'));
 const InviteAcceptPage = lazy(() => import('@/pages/invites/InviteAcceptPage'));
 const JoinLinkPage = lazy(() => import('@/pages/invites/JoinLinkPage'));
 
@@ -55,6 +56,7 @@ export const appRoutes = (
       }
     >
       <Route path={ROUTES.ONBOARDING} element={<OnboardingPage />} />
+      <Route path={ROUTES.AUTHORIZE_AGENT} element={<AuthorizeAgentPage />} />
       <Route path={ROUTES.INVITE} element={<InviteAcceptPage />} />
       <Route path={ROUTES.JOIN} element={<JoinLinkPage />} />
     </Route>
