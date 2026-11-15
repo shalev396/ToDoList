@@ -13,7 +13,7 @@
  */
 import type { WeekStart } from '../models/definitions/Workspace.js';
 import type { WorkspaceContext } from '../classes/base/Caller.js';
-import { ItemPolicy, type ItemAccess } from '../classes/policies/ItemPolicy.js';
+import { ItemAccessFilter, type ItemAccess } from '../classes/policies/ItemAccessFilter.js';
 import {
   CAPS,
   DATE_PRESETS,
@@ -58,7 +58,7 @@ type Filter = Record<string, unknown>;
 export interface CompileContext {
   ws: Pick<WorkspaceContext, 'id' | 'onlyTopics'>;
   userId: string;
-  /** What the caller may see (ItemPolicy): the first stage's base filter. */
+  /** What the caller may see (ItemAccessFilter): the first stage's base filter. */
   access: ItemAccess;
   /**
    * A block's connectors: only items of these integrations (and local to-dos when `local` is one
@@ -805,9 +805,8 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
 
   const filter = combine(filters, '$and');
   // A block filtered by provider (not `local`) shows a provider copy: its to-do does not match.
-  const policy = ItemPolicy.of(ctx.access);
-  const base =
-    source === 'items' ? policy.itemFilter(ctx.ws, filter) : policy.containerFilter(ctx.ws);
+  const access = new ItemAccessFilter(ctx.access);
+  const base = source === 'items' ? access.items(ctx.ws, filter) : access.containers(ctx.ws);
   const computed: Filter = {};
   if (compilation.usesImportance) {
     Object.assign(computed, importanceFields(ctx.importance, ctx.attributes ?? [], ctx.now));

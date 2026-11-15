@@ -25,6 +25,7 @@ import {
   type FixtureTransport,
 } from '../sync/transports/fixtures.js';
 import type { ProviderAdapter, SyncCounts, SyncRunSummary } from '../sync/types.js';
+import { definitionOf } from '../classes/integration/definitions/index.js';
 
 export const HOUR = 60 * 60 * 1000;
 /** The instant every fixture token resolves against (a Thursday, 11:00 in Asia/Jerusalem). */
@@ -77,8 +78,7 @@ export async function startKit(dbName: string): Promise<Kit> {
         settings: { topicRules: [] },
       });
       // Connected with the provider's key, as a user's token connection is: its strategy builds
-      // the headers (loaded here, once the database has started: the definitions read the stage).
-      const { definitionOf } = await import('../classes/integration/definitions/index.js');
+      // the headers.
       const integration = await integrations.create(workspace.id, {
         connectedBy: OWNER,
         provider,

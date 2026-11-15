@@ -43,6 +43,15 @@ describe('Environment', () => {
     );
   });
 
+  it('reads each value when it is asked for, never when it is built (imports fix nothing)', () => {
+    const environment = build({});
+    assert.equal(environment.databaseUrl, undefined);
+    Object.assign(process.env, { DATABASE_URL: 'mongodb://127.0.0.1/late', ENV: 'qa' });
+    assert.equal(environment.databaseUrl, 'mongodb://127.0.0.1/late');
+    assert.equal(environment.databaseProvider, 'mongoose');
+    assert.equal(environment.env, 'qa');
+  });
+
   it('keeps the rate limits on unless a test turns them off', () => {
     assert.equal(build({ ENV: 'prod' }).rateLimitEnabled, true);
     setRateLimitsOffForTests(true);

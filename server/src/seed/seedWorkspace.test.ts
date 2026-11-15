@@ -17,15 +17,13 @@ import type * as Seed from './seedWorkspace.js';
 import type * as DemoData from './demoData.js';
 import type { SeedSummary } from './seedWorkspace.js';
 import type { Transport } from '../sync/http.js';
-import type * as Fake from './fakeCredentials.js';
+import { fakeCredential } from './fakeCredentials.js';
 import { findSecrets } from '../services/secretPatterns.js';
 
 /** The instant every fixture resolves against: Thursday 2026-11-12, 11:00 in Asia/Jerusalem. */
 const NOW = new Date('2026-11-12T09:00:00.000Z');
 const TIME_ZONE = 'Asia/Jerusalem';
 
-/** Loaded after the database starts: the provider definitions behind it read the stage's configuration. */
-let fakeCredential: typeof Fake.fakeCredential;
 let db: TestDatabase;
 let guard: OutboundGuard;
 let models: typeof Models;
@@ -40,7 +38,6 @@ before(async () => {
   models = await import('../models/index.js');
   workspaces = await import('../services/workspaces.js');
   seed = await import('./seedWorkspace.js');
-  ({ fakeCredential } = await import('./fakeCredentials.js'));
   demo = await import('./demoData.js');
   guard = installOutboundGuard();
 });
