@@ -12,6 +12,18 @@ export interface AgentKeyData {
   /** "elk_" + 4 characters, for the key list only. */
   prefix: string;
   scopes: AgentScope[];
+  /** A key made in the app, or a sign-in grant (OAuth) made by an MCP client. */
+  kind: 'key' | 'oauth';
+  /** Grants only: the OAuth client's id and display name. */
+  clientId: string | null;
+  clientName: string | null;
+  /** Grants only: the MCP resource (audience) the tokens were issued for. */
+  resource: string | null;
+  /** A grant's current access token stops working here. */
+  accessExpiresAt: Date | null;
+  /** A grant's current refresh token stops working here. */
+  refreshExpiresAt: Date | null;
+  /** A key's expiry; for a grant the hard cap (365 days after sign-in). */
   expiresAt: Date | null;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
@@ -26,6 +38,47 @@ export interface CreateAgentKeyInput {
   prefix: string;
   scopes: AgentScope[];
   expiresAt?: Date | null;
+}
+
+/** A new grant. The hashes are SHA-256 of the raw tokens, which are never stored. */
+export interface CreateGrantInput {
+  userId: string;
+  name: string;
+  scopes: AgentScope[];
+  clientId: string;
+  clientName: string;
+  resource: string;
+  /** The current access token's hash. */
+  keyHash: string;
+  accessExpiresAt: Date;
+  refreshHash: string;
+  refreshExpiresAt: Date;
+  expiresAt: Date;
+  /** The authorization request that made the grant. */
+  sourceRequestId: string;
+}
+
+/** The state a refresh moves a grant to. */
+export interface GrantRotation {
+  keyHash: string;
+  accessExpiresAt: Date;
+  refreshHash: string;
+  refreshExpiresAt: Date;
+  prevRefreshHash: string;
+  prevRotatedAt: Date;
+  /** When the last `agent_key.oauth_refresh` audit entry was written; unchanged when omitted. */
+  refreshAuditedAt?: Date;
+}
+
+/** A grant found by a presented refresh token. */
+export interface GrantByRefresh {
+  key: AgentKeyData;
+  /** Which refresh token of the grant was presented: the current one or the one before it. */
+  match: 'current' | 'previous';
+  prevRotatedAt: Date | null;
+  /** The grant's current refresh hash: what a rotation expects. */
+  currentRefreshHash: string;
+  refreshAuditedAt: Date | null;
 }
 
 export interface IAgentKeyRepository {
@@ -45,10 +98,21 @@ export interface IAgentKeyRepository {
   revokeForUser(workspaceId: string, userId: string): Promise<number>;
   /** Records a use (`lastUsedAt`) without touching `updatedAt`. */
   touch(workspaceId: string, id: string, at: Date): Promise<void>;
-  /** Keys that are not revoked: the per-user cap counts these. */
+  /** Usable keys and grants (not revoked, not past `expiresAt`): the per-user cap counts these. */
   countForUser(workspaceId: string, userId: string): Promise<number>;
   /** Global: the key behind a presented hash, revoked or expired too (the caller checks). */
   findByHash(keyHash: string): Promise<AgentKeyData | null>;
+  createGrant(workspaceId: string, input: CreateGrantInput): Promise<AgentKeyData>;
+  /** Global: the grant behind a presented refresh hash, its current or its previous one. */
+  findByRefreshHash(hash: string): Promise<GrantByRefresh | null>;
+  /**
+   * Atomic: moves the grant to `next` only while its current refresh hash is still
+   * `expectedRefreshHash` and it is not revoked. False when it no longer is (a concurrent refresh
+   * won, or the grant was revoked).
+   */
+  rotateGrant(id: string, expectedRefreshHash: string, next: GrantRotation): Promise<boolean>;
+  /** The grant an authorization request made, if any. */
+  findBySourceRequest(requestId: string): Promise<AgentKeyData | null>;
 }
 
 export const AGENT_KEY_TABLE_NAME = 'AgentKeys';

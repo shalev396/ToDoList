@@ -29,6 +29,8 @@ export interface AuthenticatedAgent {
   workspace: WorkspaceContext;
   /** The agent key, acting for its user in the key's workspace, from this request's origin. */
   caller: Caller;
+  /** The MCP resource a sign-in grant was issued for; null for an agent key. */
+  resource: string | null;
 }
 
 /**
@@ -52,6 +54,7 @@ export async function resolvePrincipal(
     },
     workspace,
     caller,
+    resource: key.resource,
   };
 }
 

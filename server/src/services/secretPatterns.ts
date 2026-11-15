@@ -31,7 +31,7 @@ const VALUE_PATTERNS: readonly ValuePattern[] = [
   { kind: 'atlassian_token', re: /\bATATT[A-Za-z0-9_\-=]{16,}/g },
   { kind: 'slack_token', re: /\b(?:xox[abposr]-[A-Za-z0-9-]{10,}|xoxe[.-][A-Za-z0-9.-]{10,})/g },
   { kind: 'github_token', re: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/g },
-  { kind: 'agent_key', re: /\belk_[A-Za-z0-9_-]{16,}/g },
+  { kind: 'agent_key', re: /\bel[kocr]_[A-Za-z0-9_-]{16,}/g },
   { kind: 'database_credentials', re: /\bmongodb(?:\+srv)?:\/\/[^\s:/@]+:[^\s@/]+@/g },
   { kind: 'private_key', re: /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/g },
   { kind: 'bearer', re: /\bBearer\s+[A-Za-z0-9._~+/-]{16,}=*/g },

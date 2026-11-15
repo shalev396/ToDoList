@@ -7,13 +7,10 @@
  */
 import type { Request, RequestHandler, Response } from 'express';
 
-import { AgentKey } from '../../classes/AgentKey.js';
+import { AGENT_BEARER_PATTERN, AgentKey } from '../../classes/AgentKey.js';
 import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
 import { jsonRpcError, JSON_RPC, requestIdOf } from '../jsonRpc.js';
 import { setRequestAgent, type AuthenticatedAgent } from './principal.js';
-
-/** `elk_` + 32 random bytes in base64url: the only shape of a key. */
-const AGENT_KEY_PATTERN = /^elk_[A-Za-z0-9_-]{43}$/;
 
 const REALM = 'todolist-mcp';
 
@@ -31,7 +28,7 @@ export function bearerKey(authorization: string | undefined): {
   const candidate = /^Bearer\s+(\S+)$/i.exec(header)?.[1];
   return {
     presented: true,
-    key: candidate !== undefined && AGENT_KEY_PATTERN.test(candidate) ? candidate : null,
+    key: candidate !== undefined && AGENT_BEARER_PATTERN.test(candidate) ? candidate : null,
   };
 }
 

@@ -2,6 +2,12 @@
  * An agent key for MCP clients (DATA.md §3.14). The raw key is shown once, when it is created;
  * only its SHA-256 hash is stored, so the database alone can't act as an agent.
  *
+ * A sign-in grant (kind 'oauth') is the same row made by an OAuth client: an hour-long access
+ * token `elo_...` and a rotating refresh token `elr_...`, both stored as hashes only. A refresh
+ * issues both anew; the refresh token it replaces still works for 30 seconds (a lost response),
+ * and shown later than that it proves a leak, so the grant is revoked. A grant lives at most 365
+ * days (`expiresAt`), and a refresh token 90 days from its last use.
+ *
  * Any member creates keys for themselves, limited to the scopes their role permits
  * (ROLE_SCOPES) and to LIMITS.agentKeysPerUser live keys (409). An owner lists and revokes
  * everyone's keys; anyone else sees and revokes their own (another's is a 404).
@@ -18,7 +24,8 @@ import { getAgentKeyRepository } from '../models/index.js';
 import type { AgentKeyView } from '../routes/private/agentKeys.js';
 import { sha256Hex } from '../services/crypto/hashing.js';
 import type { AgentScope } from '../types/domain.js';
-import type { ActorOrigin } from './base/Actor.js';
+import { OAuthError } from '../errors/OAuthError.js';
+import { Actor, type ActorOrigin } from './base/Actor.js';
 import { AuditTarget } from './base/AuditTarget.js';
 import type { Caller } from './base/Caller.js';
 import type { Auditable, Expirable, Revocable } from './base/contracts.js';
@@ -27,17 +34,59 @@ import { WorkspacePolicy } from './policies/WorkspacePolicy.js';
 import { AuditLog } from './AuditLog.js';
 
 export const KEY_PREFIX = 'elk_';
+const ACCESS_PREFIX = 'elo_';
+const REFRESH_PREFIX = 'elr_';
 export const DEFAULT_EXPIRY_DAYS = 365;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** `elk_` + 32 random bytes in base64url: the only shape of a key. */
-const AGENT_KEY_PATTERN = /^elk_[A-Za-z0-9_-]{43}$/;
+/** What a bearer may present: `elk_` (a key) or `elo_` (an access token) + 32 random bytes in base64url. */
+export const AGENT_BEARER_PATTERN = /^el[ko]_[A-Za-z0-9_-]{43}$/;
+const REFRESH_TOKEN_PATTERN = /^elr_[A-Za-z0-9_-]{43}$/;
+
+const ACCESS_TTL_SECONDS = 3600;
+const REFRESH_TTL_MS = 90 * DAY_MS;
+/** A grant's hard cap, however often it is refreshed. */
+const GRANT_MAX_MS = 365 * DAY_MS;
+/** A refresh token rotated away still works this long: the client may not have got the answer. */
+const REFRESH_GRACE_MS = 30_000;
+/** `agent_key.oauth_refresh` is audited at most this often per grant. */
+const REFRESH_AUDIT_INTERVAL_MS = 60 * 60 * 1000;
 
 /** A use is written to `lastUsedAt` at most once a minute per key, not on every call. */
 const TOUCH_INTERVAL_MS = 60_000;
 
 export function hashAgentKey(raw: string): string {
   return sha256Hex(raw);
+}
+
+/** What the token endpoint answers (RFC 6749 section 5.1, without `token_type`). */
+export interface IssuedTokens {
+  accessToken: string;
+  refreshToken: string;
+  /** Seconds the access token lives. */
+  expiresIn: number;
+  /** The granted scopes, space-separated. */
+  scope: string;
+}
+
+export interface IssueGrantInput {
+  workspaceId: string;
+  userId: string;
+  name: string;
+  scopes: AgentScope[];
+  clientId: string;
+  clientName: string;
+  resource: string;
+  /** The authorization request that made the grant (`revokeBySource`). */
+  sourceRequestId: string;
+}
+
+function newToken(prefix: string): string {
+  return prefix + randomBytes(32).toString('base64url');
+}
+
+function invalidGrant(): OAuthError {
+  return new OAuthError('invalid_grant', 'The refresh token is invalid or expired');
 }
 
 export interface CreateAgentKeyInput {
@@ -83,11 +132,15 @@ export class AgentKey
     return this.data.revokedAt;
   }
 
-  /** A key; sign-in grants (kind 'oauth') come in a later task. */
-  readonly kind: 'key' | 'oauth' = 'key';
+  /** A key made in the app, or a sign-in grant made by an OAuth client. */
+  get kind(): 'key' | 'oauth' {
+    return this.data.kind;
+  }
 
   /** The OAuth client's name; a key has none. */
-  readonly clientName: string | null = null;
+  get clientName(): string | null {
+    return this.data.clientName;
+  }
 
   isExpired(now: Date): boolean {
     return this.data.expiresAt !== null && this.data.expiresAt.getTime() <= now.getTime();
@@ -193,7 +246,7 @@ export class AgentKey
   // ─── MCP authentication ──────────────────────────────────────────────────
 
   /**
-   * The agent behind a raw key, or null when the key is malformed, unknown, revoked or expired, or
+   * The agent behind a raw key or access token, or null when it is malformed, unknown, revoked or expired, or
    * its user is no longer an active member of the key's workspace. Records the use (`lastUsedAt`).
    * `origin`: the request's address and user agent, for the audit log.
    */
@@ -202,12 +255,15 @@ export class AgentKey
     now: Date,
     origin: ActorOrigin,
   ): Promise<AuthenticatedAgent | null> {
-    if (!AGENT_KEY_PATTERN.test(raw)) return null;
+    if (!AGENT_BEARER_PATTERN.test(raw)) return null;
     const keys = await getAgentKeyRepository();
     const data = await keys.findByHash(hashAgentKey(raw));
     if (data === null) return null;
     const key = new AgentKey(data);
     if (!key.isUsable(now)) return null;
+    if (data.accessExpiresAt !== null && data.accessExpiresAt.getTime() <= now.getTime()) {
+      return null;
+    }
     const agent = await resolvePrincipal(data, origin);
     if (agent === null) return null;
     const lastUsed = key.lastUsedAt?.getTime() ?? null;
@@ -215,5 +271,145 @@ export class AgentKey
       await keys.touch(key.workspaceId, key.id, now);
     }
     return agent;
+  }
+
+  // --- OAuth grants -----------------------------------------------------------
+
+  /**
+   * A sign-in grant for an OAuth client: the user approved it, `actor` is who approved. The raw
+   * tokens leave only in the result; scopes are the caller's to have checked against the role.
+   */
+  static async issueGrant(
+    input: IssueGrantInput,
+    actor: Actor,
+    now: Date = new Date(),
+  ): Promise<IssuedTokens> {
+    const accessToken = newToken(ACCESS_PREFIX);
+    const refreshToken = newToken(REFRESH_PREFIX);
+    const scopes = [...new Set(input.scopes)];
+    const data = await (
+      await getAgentKeyRepository()
+    ).createGrant(input.workspaceId, {
+      userId: input.userId,
+      name: input.name,
+      scopes,
+      clientId: input.clientId,
+      clientName: input.clientName,
+      resource: input.resource,
+      keyHash: hashAgentKey(accessToken),
+      accessExpiresAt: new Date(now.getTime() + ACCESS_TTL_SECONDS * 1000),
+      refreshHash: hashAgentKey(refreshToken),
+      refreshExpiresAt: new Date(now.getTime() + REFRESH_TTL_MS),
+      expiresAt: new Date(now.getTime() + GRANT_MAX_MS),
+      sourceRequestId: input.sourceRequestId,
+    });
+    const grant = new AgentKey(data);
+    await AuditLog.record(
+      { workspaceId: grant.workspaceId, actor },
+      'agent_key.oauth_grant',
+      grant.auditTarget(),
+      { clientName: input.clientName, scopes },
+    );
+    return { accessToken, refreshToken, expiresIn: ACCESS_TTL_SECONDS, scope: scopes.join(' ') };
+  }
+
+  /**
+   * Trades a refresh token for new access and refresh tokens. `invalid_grant` when the token is
+   * unknown, expired, revoked, or the client's is another. The token it replaced still works for
+   * REFRESH_GRACE_MS; presented later it is a leak, and the grant is revoked.
+   */
+  static async refresh(
+    rawRefresh: string,
+    clientId: string,
+    now: Date = new Date(),
+  ): Promise<IssuedTokens> {
+    if (!REFRESH_TOKEN_PATTERN.test(rawRefresh)) throw invalidGrant();
+    const keys = await getAgentKeyRepository();
+    const presented = hashAgentKey(rawRefresh);
+    // A second look when a concurrent refresh won the rotation: the loser is then a retry.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const found = await keys.findByRefreshHash(presented);
+      if (found === null) throw invalidGrant();
+      const data = found.key;
+      const grant = new AgentKey(data);
+      const refreshExpiry = data.refreshExpiresAt?.getTime() ?? 0;
+      if (
+        data.kind !== 'oauth' ||
+        data.clientId !== clientId ||
+        !grant.isUsable(now) ||
+        refreshExpiry <= now.getTime()
+      ) {
+        throw invalidGrant();
+      }
+      const actor = Actor.agent(data.userId, data.id);
+      if (found.match === 'previous') {
+        const rotatedAt = found.prevRotatedAt?.getTime() ?? 0;
+        if (now.getTime() - rotatedAt > REFRESH_GRACE_MS) {
+          await keys.revoke(data.workspaceId, data.id);
+          await AuditLog.record(
+            { workspaceId: data.workspaceId, actor },
+            'agent_key.oauth_reuse',
+            grant.auditTarget(),
+            { clientName: data.clientName },
+          );
+          throw invalidGrant();
+        }
+      }
+      const accessToken = newToken(ACCESS_PREFIX);
+      const refreshToken = newToken(REFRESH_PREFIX);
+      const capMs = data.expiresAt?.getTime() ?? now.getTime() + GRANT_MAX_MS;
+      const audit =
+        found.refreshAuditedAt === null ||
+        now.getTime() - found.refreshAuditedAt.getTime() >= REFRESH_AUDIT_INTERVAL_MS;
+      const rotated = await keys.rotateGrant(data.id, found.currentRefreshHash, {
+        keyHash: hashAgentKey(accessToken),
+        accessExpiresAt: new Date(now.getTime() + ACCESS_TTL_SECONDS * 1000),
+        refreshHash: hashAgentKey(refreshToken),
+        refreshExpiresAt: new Date(Math.min(now.getTime() + REFRESH_TTL_MS, capMs)),
+        prevRefreshHash: found.currentRefreshHash,
+        prevRotatedAt: now,
+        ...(audit ? { refreshAuditedAt: now } : {}),
+      });
+      if (!rotated) continue;
+      if (audit) {
+        await AuditLog.record(
+          { workspaceId: data.workspaceId, actor },
+          'agent_key.oauth_refresh',
+          grant.auditTarget(),
+          { clientName: data.clientName },
+        );
+      }
+      return {
+        accessToken,
+        refreshToken,
+        expiresIn: ACCESS_TTL_SECONDS,
+        scope: grant.scopes.join(' '),
+      };
+    }
+    throw invalidGrant();
+  }
+
+  /** Ends the grant an authorization request made (its code was used twice); none is a no-op. */
+  static async revokeBySource(requestId: string): Promise<void> {
+    const keys = await getAgentKeyRepository();
+    const data = await keys.findBySourceRequest(requestId);
+    if (data !== null) await keys.revoke(data.workspaceId, data.id);
+  }
+
+  /**
+   * RFC 7009: ends the grant behind an access or refresh token of this client. An unknown or
+   * malformed token, or another client's, is a silent no-op.
+   */
+  static async revokeByToken(rawToken: string, clientId: string): Promise<void> {
+    const keys = await getAgentKeyRepository();
+    const hash = hashAgentKey(rawToken);
+    let data: AgentKeyData | null = null;
+    if (REFRESH_TOKEN_PATTERN.test(rawToken)) {
+      data = (await keys.findByRefreshHash(hash))?.key ?? null;
+    } else if (AGENT_BEARER_PATTERN.test(rawToken)) {
+      data = await keys.findByHash(hash);
+    }
+    if (data?.kind !== 'oauth' || data.clientId !== clientId) return;
+    await keys.revoke(data.workspaceId, data.id);
   }
 }
