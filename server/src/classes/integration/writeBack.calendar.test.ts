@@ -357,6 +357,40 @@ describe('Google Calendar writes once read & write', () => {
     });
   });
 
+  it('Google took an edit and its audit fails: logged, and the edit still answers and is stored', async () => {
+    const { item } = await pulled('Audit down');
+    Reflect.set(
+      alice,
+      'recordWrite',
+      (): Promise<never> => Promise.reject(new Error('audit down')),
+    );
+    try {
+      await alice.updateEvent(caller, item, { title: 'Audit down (moved)' });
+    } finally {
+      Reflect.deleteProperty(alice, 'recordWrite');
+    }
+    const after = await (await models.getItemRepository()).findById(wid, item.id);
+    assert.equal(after?.title, 'Audit down (moved)');
+  });
+
+  it('Google took an edit and the item can’t be stored: 409 provider_written_not_stored', async () => {
+    const { item } = await pulled('Store down');
+    const repository = await models.getItemRepository();
+    const updateMirrored = repository.updateMirrored.bind(repository);
+    repository.updateMirrored = (): Promise<never> =>
+      Promise.reject(new Error('the database went away'));
+    try {
+      await assert.rejects(
+        alice.updateEvent(caller, item, { title: 'Store down (moved)' }),
+        (error: unknown) =>
+          hasCode(409, 'provider_written_not_stored')(error) &&
+          (error as { written?: string[] }).written?.join() === 'title',
+      );
+    } finally {
+      repository.updateMirrored = updateMirrored;
+    }
+  });
+
   it('an edit or delete Google gives no answer to (a 5xx) is audited as unknown, then 502', async () => {
     const { item } = await pulled('Flaky');
     mock.failNextWrite(503);

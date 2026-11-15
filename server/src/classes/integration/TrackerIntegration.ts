@@ -278,8 +278,10 @@ export abstract class TrackerIntegration<
       );
     }
     // 3 and 4. The provider's part, inside the write session; each call audited as it lands.
+    // Each call that went through is audited at once; an audit that fails is logged and the write
+    // goes on (the provider has it: the answer must say so).
     const ledger = new WriteLedger((fields) =>
-      this.recordWrite(caller, {
+      this.#auditAfterWrite(caller, {
         operation: 'task.update',
         itemId: stored.id,
         fields: [...fields],
@@ -295,7 +297,7 @@ export abstract class TrackerIntegration<
       if (ledger.isEmpty) {
         // Sent, with no answer: it may have landed, so it is audited as such.
         if (unknown) {
-          await this.recordWrite(caller, {
+          await this.#auditAfterWrite(caller, {
             operation: 'task.update',
             itemId: stored.id,
             fields: [...changes.fields],
@@ -393,7 +395,7 @@ export abstract class TrackerIntegration<
     }
     const written = ledger.fields;
     const rest = asked.filter((field) => !written.includes(field));
-    await this.recordWrite(caller, {
+    await this.#auditAfterWrite(caller, {
       operation: 'task.update',
       itemId: stored.id,
       fields: [...written],
@@ -403,6 +405,21 @@ export abstract class TrackerIntegration<
     return unknown
       ? new ProviderPartialWriteError(this.provider, written, [], rest)
       : new ProviderPartialWriteError(this.provider, written, rest);
+  }
+
+  /**
+   * The audit of a write the provider took, or may have: a failure here (the database gone) is
+   * logged, never answered, so the answer still says what happened at the provider.
+   */
+  async #auditAfterWrite(caller: Caller, meta: Record<string, unknown>): Promise<void> {
+    try {
+      await this.recordWrite(caller, meta);
+    } catch (error) {
+      logger.error('A provider write could not be audited', {
+        integrationId: this.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
   }
 
   /** The scopes its OAuth grant needs to write (none for a key or token). */

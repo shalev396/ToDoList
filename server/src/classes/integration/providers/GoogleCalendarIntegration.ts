@@ -520,7 +520,15 @@ export class GoogleCalendarIntegration
     const updated = await this.#calendarWrite(caller, meta, (writer) =>
       writer.update(event.calendarId, event.eventId, edit.changes, sendUpdates),
     );
-    await this.recordWrite(caller, meta);
+    // Google took it: an audit that fails now is logged, never a bare 500 that says it didn't.
+    try {
+      await this.recordWrite(caller, meta);
+    } catch (error) {
+      logger.error('A Google Calendar write could not be audited', {
+        integrationId: this.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
     try {
       await this.#refreshItem(event, updated.record, timeZone);
     } catch (error) {

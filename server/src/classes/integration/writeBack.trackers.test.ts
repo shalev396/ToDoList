@@ -411,6 +411,52 @@ describe('Jira', () => {
     assert.equal((await stored(item.id))?.title, 'Write the report');
   });
 
+  it('Jira took it all and the store after it fails: 409 provider_written_not_stored', async () => {
+    const jira = await connect('jira', { baseUrl: JIRA_SITE });
+    const item = await issue(jira);
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('PUT', ISSUE, json(204));
+    const repository = await models.getItemRepository();
+    const updateMirrored = repository.updateMirrored.bind(repository);
+    repository.updateMirrored = (): Promise<never> =>
+      Promise.reject(new Error('the database went away'));
+    try {
+      await assert.rejects(
+        jira.updateTask(caller, item, { title: 'Ship it now' }),
+        (error: unknown) =>
+          hasCode(409, 'provider_written_not_stored')(error) &&
+          (error as { written?: string[] }).written?.join() === 'title',
+      );
+    } finally {
+      repository.updateMirrored = updateMirrored;
+    }
+  });
+
+  it('audits that fail after Jira took a write never turn the answer into a bare 500', async () => {
+    const jira = await connect('jira', { baseUrl: JIRA_SITE });
+    const item = await issue(jira);
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('GET', TRANSITIONS, json(200, LISTED));
+    on('PUT', ISSUE, json(204));
+    on('POST', `${ISSUE}/transitions`, json(400, { errorMessages: ['A validator failed'] }));
+    Reflect.set(jira, 'recordWrite', (): Promise<never> => Promise.reject(new Error('audit down')));
+    try {
+      await assert.rejects(
+        jira.updateTask(caller, item, { title: 'Audited or not', status: 'in_progress' }),
+        (error: unknown) =>
+          hasCode(409, 'provider_partial_write')(error) &&
+          (error as { written?: string[] }).written?.join() === 'title' &&
+          (error as { refused?: string[] }).refused?.join() === 'status',
+      );
+      // A whole write whose audits fail is still saved and answered.
+      on('PUT', ISSUE, json(204));
+      const saved = await jira.updateTask(caller, item, { title: 'Audited, maybe' });
+      assert.equal(saved.title, 'Audited, maybe');
+    } finally {
+      Reflect.deleteProperty(jira, 'recordWrite');
+    }
+  });
+
   it('the fields land and the transition gets no answer: "may or may not have", audited as uncertain', async () => {
     const jira = await connect('jira', { baseUrl: JIRA_SITE });
     const item = await issue(jira);
