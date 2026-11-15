@@ -84,11 +84,25 @@ export interface ICalendarLinkRepository {
     integrationId: string,
     key: CalendarLinkKey,
   ): Promise<CalendarLinkData | null>;
+  /**
+   * Tombstones a live link. With `calendarId`, only while the link is still on that calendar (a
+   * push that moved it meanwhile keeps it live).
+   */
   tombstone(
     workspaceId: string,
     id: string,
     deletedBy: CalendarLinkDeletedBy,
+    calendarId?: string,
   ): Promise<CalendarLinkData | null>;
+  /**
+   * One tracker per event: the OTHER integrations' live links of the workspace to the same event
+   * (`key`) are removed, rows only, once `integrationId` created or adopted it. Returns how many.
+   */
+  removeOthersForEvent(
+    workspaceId: string,
+    integrationId: string,
+    key: CalendarLinkKey,
+  ): Promise<number>;
   /**
    * Every link of the integration, tombstoned or not, removed (what TodoList added was taken back
    * before a disconnect). Returns how many.

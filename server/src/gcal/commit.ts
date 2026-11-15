@@ -2,7 +2,8 @@
  * The commit of one calendar push + pull (OAuth Calendar API): the op results and the Google
  * changes the pull listed.
  *
- * - op results: a created or updated event gets its link (etag, hash, times), a delete its
+ * - op results: a created or updated event gets its link (etag, hash, times), and another
+ *   integration's live link to that same event goes (one tracker per event); a delete gets its
  *   tombstone; a create went to the workspace's primary calendar (its link moves there when the
  *   primary calendar changed), an update to its link's calendar; every write is audited
  *   (`gcal.write`); a 412 is a conflict, settled by the next pull;
@@ -188,6 +189,13 @@ async function applyOpResult(run: Run, result: z.infer<typeof OpResult>): Promis
       deletedBy: null,
     },
   );
+  // One tracker per event: another integration of the workspace that pushed this same event (the
+  // ids are per item, so a create adopts it) no longer tracks it, so its pull or clean-up can never
+  // read our later delete or move as its own (rows only; nothing is sent to Google).
+  await links.removeOthersForEvent(workspaceId, run.integration.id, {
+    calendarId,
+    googleEventId: eventId,
+  });
   if (op.type === 'create') run.counts.created += 1;
   else run.counts.updated += 1;
   await AuditLog.record(

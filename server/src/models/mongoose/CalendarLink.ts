@@ -152,14 +152,30 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
     return doc ? toCalendarLinkData(doc) : null;
   },
 
-  async tombstone(workspaceId, id, deletedBy) {
+  async tombstone(workspaceId, id, deletedBy, calendarId) {
     // Live links only: the first tombstone keeps its time (the 30-day retention runs from it).
     const doc = await CalendarLinkMongoModel.findOneAndUpdate(
-      { _id: id, workspaceId, tombstonedAt: null },
+      {
+        _id: id,
+        workspaceId,
+        tombstonedAt: null,
+        ...(calendarId === undefined ? {} : { calendarId }),
+      },
       { $set: { tombstonedAt: new Date(), deletedBy } },
       { new: true, runValidators: true },
     ).lean<CalendarLinkFields>();
     return doc ? toCalendarLinkData(doc) : null;
+  },
+
+  async removeOthersForEvent(workspaceId, integrationId, key) {
+    const result = await CalendarLinkMongoModel.deleteMany({
+      workspaceId,
+      integrationId: { $ne: integrationId },
+      calendarId: key.calendarId,
+      googleEventId: key.googleEventId,
+      tombstonedAt: null,
+    });
+    return result.deletedCount;
   },
 
   async removeForIntegration(workspaceId, integrationId) {
