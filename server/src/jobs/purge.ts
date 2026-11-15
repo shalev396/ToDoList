@@ -4,13 +4,16 @@
  *   timeout is 5, the function's): `failed` with `timeout`. When such a run's integration was
  *   disconnected, the rows the dead run wrote or revived after the disconnect are deleted again;
  * - hard-deletes Items and Containers soft-deleted more than 30 days ago (swept by a sync, deleted
- *   at the source, or deleted by a user), in every workspace.
+ *   at the source, or deleted by a user), in every workspace;
+ * - removes the dashboards, versions and views of workspaces that are gone or deleted
+ *   (Dashboard.removeOrphans: what a request in flight wrote after its workspace's cascade).
  *
  * Global maintenance on purpose: it runs from the `purge` direct-invoke action only (lambda.ts),
  * through the classes' explicitly global reads and writes: SyncRun.reapStuck (the reaper) and
  * SyncedRows.purgeDeletedBefore (internal to the sync: only this job may name it). Dashboard
  * versions are pruned where they always are, on each save, not here.
  */
+import { Dashboard } from '../classes/dashboard/Dashboard.js';
 import { Integration } from '../classes/integration/index.js';
 import { SyncedRows } from '../classes/sync/SyncedRows.js';
 import { SyncRun } from '../classes/sync/SyncRun.js';
@@ -31,6 +34,8 @@ export interface PurgeResult {
   containers: number;
   /** Runs still `running` long after they started, now `failed` with `timeout`. */
   timedOutRuns: number;
+  /** What deleted workspaces had left: dashboards (deleted ones too), versions, views. */
+  orphanedDashboards: { dashboards: number; versions: number; views: number };
 }
 
 /**
@@ -61,5 +66,6 @@ export async function purgeDeleted(now: Date = new Date()): Promise<PurgeResult>
   const timedOutRuns = await endStaleRuns(now);
   const before = new Date(now.getTime() - PURGE_AFTER_DAYS * DAY_MS);
   const { items, containers } = await SyncedRows.purgeDeletedBefore(before);
-  return { before, items, containers, timedOutRuns };
+  const orphanedDashboards = await Dashboard.removeOrphans();
+  return { before, items, containers, timedOutRuns, orphanedDashboards };
 }

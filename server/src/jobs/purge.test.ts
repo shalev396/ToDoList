@@ -9,6 +9,8 @@ import { ItemMongoModel } from '../models/mongoose/Item.js';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 
 const DAY = 24 * 60 * 60 * 1000;
+/** A purge that found nothing a deleted workspace left of its dashboards. */
+const NO_ORPHANS = { dashboards: 0, versions: 0, views: 0 };
 const NOW = new Date('2026-11-12T03:00:00Z');
 const daysAgo = (days: number): Date => new Date(NOW.getTime() - days * DAY);
 
@@ -100,7 +102,13 @@ describe('purgeDeleted', () => {
     const { purgeDeleted } = await import('./purge.js');
     const result = await purgeDeleted(NOW);
 
-    assert.deepEqual(result, { before: daysAgo(30), items: 6, containers: 4, timedOutRuns: 0 });
+    assert.deepEqual(result, {
+      before: daysAgo(30),
+      items: 6,
+      containers: 4,
+      timedOutRuns: 0,
+      orphanedDashboards: NO_ORPHANS,
+    });
     for (const workspaceId of ['w-purge-a', 'w-purge-b']) {
       const kept = ['deleted-29d', 'deleted-30d', 'live'];
       assert.deepEqual(await remaining('Items', workspaceId), kept, workspaceId);
@@ -113,7 +121,62 @@ describe('purgeDeleted', () => {
       items: 0,
       containers: 0,
       timedOutRuns: 0,
+      orphanedDashboards: NO_ORPHANS,
     });
+  });
+});
+
+describe('purgeDeleted: what deleted workspaces left of their dashboards', () => {
+  it('removes a dashboard written after its workspace was deleted, and nothing of a live one', async () => {
+    const m = await import('../models/index.js');
+    const workspaces = await m.getWorkspaceRepository();
+    const dashboards = await m.getDashboardRepository();
+    const versions = await m.getDashboardVersionRepository();
+    const views = await m.getViewRepository();
+    const gone = await workspaces.create({ name: 'Gone', slug: 'purge-gone', ownerId: 'u-owner' });
+    const live = await workspaces.create({ name: 'Live', slug: 'purge-live', ownerId: 'u-owner' });
+    await workspaces.softDelete(gone.id);
+    // A request that passed requireWorkspace before the deletion lands after its cascade ran.
+    for (const workspaceId of [gone.id, live.id]) {
+      const page = await dashboards.create(workspaceId, { ownerUserId: 'u-owner', title: 'Late' });
+      await versions.append(workspaceId, {
+        dashboardId: page.id,
+        version: 1,
+        patch: [],
+        inverse: [],
+        actorUserId: 'u-owner',
+      });
+      await views.create(workspaceId, {
+        ownerUserId: 'u-owner',
+        title: 'Late view',
+        query: { source: 'items' },
+        viz: { kind: 'list' },
+      });
+    }
+    // A version whose dashboard is gone, in a workspace that no longer exists at all.
+    await versions.append('w-never-existed', {
+      dashboardId: 'd-gone',
+      version: 1,
+      patch: [],
+      inverse: [],
+      actorUserId: 'u-owner',
+    });
+
+    const { purgeDeleted } = await import('./purge.js');
+    assert.deepEqual((await purgeDeleted(NOW)).orphanedDashboards, {
+      dashboards: 1,
+      versions: 2,
+      views: 1,
+    });
+    assert.deepEqual(await dashboards.list(gone.id, {}), []);
+    assert.deepEqual(await views.list(gone.id), []);
+    assert.equal((await dashboards.list(live.id, {})).length, 1);
+    assert.equal((await views.list(live.id)).length, 1);
+    assert.equal(
+      (await versions.list(live.id, (await dashboards.list(live.id, {}))[0]?.id ?? '', 5)).length,
+      1,
+    );
+    assert.deepEqual((await purgeDeleted(NOW)).orphanedDashboards, NO_ORPHANS);
   });
 });
 

@@ -247,6 +247,11 @@ export class History<TDoc> {
     return (await getDashboardVersionRepository()).deleteForWorkspace(workspaceId);
   }
 
+  /** Every workspace id a history names (the purge's orphan sweep). Global. */
+  static async workspaceIds(): Promise<string[]> {
+    return (await getDashboardVersionRepository()).listWorkspaceIds();
+  }
+
   /** Prunes to the last KEEP_VERSIONS plus `keepVersions` (the published one). */
   async prune(keepVersions: readonly number[]): Promise<void> {
     await (

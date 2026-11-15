@@ -235,4 +235,8 @@ export const DashboardRepository: IDashboardRepository = {
   async deleteForWorkspace(workspaceId) {
     return (await DashboardMongoModel.deleteMany({ workspaceId })).deletedCount;
   },
+
+  async listWorkspaceIds() {
+    return (await DashboardMongoModel.distinct('workspaceId')).map(String);
+  },
 };

@@ -114,4 +114,8 @@ export const DashboardVersionRepository: IDashboardVersionRepository = {
   async deleteForWorkspace(workspaceId) {
     return (await DashboardVersionMongoModel.deleteMany({ workspaceId })).deletedCount;
   },
+
+  async listWorkspaceIds() {
+    return (await DashboardVersionMongoModel.distinct('workspaceId')).map(String);
+  },
 };

@@ -970,12 +970,43 @@ export class Dashboard
 
   /**
    * The workspace was deleted (Workspace#delete, an account's end): every dashboard of it goes,
-   * soft-deleted ones too, with their histories. Hard deletes; safe to run again. Counts only.
+   * soft-deleted ones too, then their histories (dashboards first: a write racing the removal then
+   * leaves at most a version, which the purge sweeps). Hard deletes; safe to run again. Counts
+   * only.
    */
   static async removeAllIn(workspaceId: string): Promise<{ dashboards: number; versions: number }> {
-    const versions = await History.removeAllIn(workspaceId);
     const dashboards = await (await getDashboardRepository()).deleteForWorkspace(workspaceId);
+    const versions = await History.removeAllIn(workspaceId);
     return { dashboards, versions };
+  }
+
+  /**
+   * The purge's sweep, the 2026-11-15-orphaned-dashboards migration's rule run nightly: the
+   * dashboards (deleted ones too), versions and views of every workspace that is gone or
+   * soft-deleted. It catches what a request in flight wrote after its workspace's cascade ran.
+   * Global maintenance: only the purge calls it (dashboardInternals.test.ts). Counts only.
+   */
+  static async removeOrphans(): Promise<{ dashboards: number; versions: number; views: number }> {
+    const [{ Workspace }, { View }] = await Promise.all([
+      import('../workspace/Workspace.js'),
+      import('./View.js'),
+    ]);
+    const referenced = [
+      ...new Set([
+        ...(await (await getDashboardRepository()).listWorkspaceIds()),
+        ...(await History.workspaceIds()),
+        ...(await View.workspaceIds()),
+      ]),
+    ];
+    const live = await Workspace.liveAmong(referenced);
+    const counts = { dashboards: 0, versions: 0, views: 0 };
+    for (const workspaceId of referenced.filter((id) => !live.has(id))) {
+      const removed = await Dashboard.removeAllIn(workspaceId);
+      counts.dashboards += removed.dashboards;
+      counts.versions += removed.versions;
+      counts.views += await View.removeAllIn(workspaceId);
+    }
+    return counts;
   }
 
   /**

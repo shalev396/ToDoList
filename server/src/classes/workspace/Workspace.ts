@@ -315,6 +315,12 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
     return (await (await getWorkspaceRepository()).findById(workspaceId))?.ownerId ?? null;
   }
 
+  /** Those of `ids` that are live workspaces (neither missing nor deleted). A job's read. */
+  static async liveAmong(ids: readonly string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    return new Set((await (await getWorkspaceRepository()).listByIds(ids)).map(({ id }) => id));
+  }
+
   /** The workspace the caller acts in. */
   static async load(caller: Caller): Promise<Workspace> {
     const data = await (await getWorkspaceRepository()).findById(caller.workspaceId);

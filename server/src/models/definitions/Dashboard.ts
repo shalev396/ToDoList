@@ -144,6 +144,8 @@ export interface IDashboardRepository {
    * Returns how many.
    */
   deleteForWorkspace(workspaceId: string): Promise<number>;
+  /** Every workspace id a dashboard (deleted ones too) names: the purge's orphan sweep. Global. */
+  listWorkspaceIds(): Promise<string[]>;
 }
 
 export const DASHBOARD_TABLE_NAME = 'Dashboards';

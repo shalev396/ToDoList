@@ -230,4 +230,9 @@ export class View
   static async removeAllIn(workspaceId: string): Promise<number> {
     return (await getViewRepository()).deleteForWorkspace(workspaceId);
   }
+
+  /** Every workspace id a view names (the purge's orphan sweep). Global. */
+  static async workspaceIds(): Promise<string[]> {
+    return (await getViewRepository()).listWorkspaceIds();
+  }
 }

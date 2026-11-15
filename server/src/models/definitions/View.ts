@@ -39,6 +39,8 @@ export interface IViewRepository {
   delete(workspaceId: string, id: string): Promise<boolean>;
   /** The workspace was deleted: removes every view of it. Returns how many. */
   deleteForWorkspace(workspaceId: string): Promise<number>;
+  /** Every workspace id a view names: the purge's orphan sweep. Global. */
+  listWorkspaceIds(): Promise<string[]>;
 }
 
 export const VIEW_TABLE_NAME = 'Views';

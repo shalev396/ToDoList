@@ -37,6 +37,10 @@ const GLOBAL_METHODS = new Set([
   'ContainerRepository.purgeDeletedBefore',
   // The same job ends the runs still `running` long after they started.
   'SyncRunRepository.listRunningStartedBefore',
+  // And it sweeps the dashboards, versions and views of workspaces that are gone (orphans).
+  'DashboardRepository.listWorkspaceIds',
+  'DashboardVersionRepository.listWorkspaceIds',
+  'ViewRepository.listWorkspaceIds',
 ]);
 
 /** Per-user collections from the Elytra template; DATA.md §3: every collection but Users has a workspaceId. */

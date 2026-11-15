@@ -6,7 +6,8 @@
  * soft-deleted, is removed for good, deleted dashboards too.
  *
  * Counts only, never a value. Idempotent: what it removes is gone, and a live workspace's
- * documents are never touched.
+ * documents are never touched. The purge runs the same rule nightly (Dashboard.removeOrphans), for
+ * what a request in flight writes after its workspace's cascade.
  */
 import { DASHBOARD_TABLE_NAME } from '../models/definitions/Dashboard.js';
 import { DASHBOARD_VERSION_TABLE_NAME } from '../models/definitions/DashboardVersion.js';
@@ -43,8 +44,9 @@ export const orphanedDashboards: Migration = {
     const counts = { dashboards: 0, versions: 0, views: 0 };
     if (gone.length === 0) return counts;
     const ofGone = { workspaceId: { $in: gone } };
-    counts.versions = (await versions.deleteMany(ofGone)).deletedCount;
+    // Dashboards before their versions, as the cascade and the purge's sweep remove them.
     counts.dashboards = (await dashboards.deleteMany(ofGone)).deletedCount;
+    counts.versions = (await versions.deleteMany(ofGone)).deletedCount;
     counts.views = (await views.deleteMany(ofGone)).deletedCount;
     return counts;
   },

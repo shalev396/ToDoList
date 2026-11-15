@@ -55,6 +55,8 @@ export interface IDashboardVersionRepository {
   ): Promise<number>;
   /** The workspace was deleted: removes every version of its dashboards. Returns how many. */
   deleteForWorkspace(workspaceId: string): Promise<number>;
+  /** Every workspace id a version names: the purge's orphan sweep. Global. */
+  listWorkspaceIds(): Promise<string[]>;
 }
 
 export const DASHBOARD_VERSION_TABLE_NAME = 'DashboardVersions';
