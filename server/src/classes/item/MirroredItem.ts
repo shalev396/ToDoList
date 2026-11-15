@@ -134,7 +134,7 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
 
   async edit(caller: Caller, edit: ItemEdit): Promise<Item> {
     // 1–3. Checked and split; nothing written yet.
-    const { provider, overrides } = await this.#plan(caller, edit);
+    const { provider, overrides, asked } = await this.#plan(caller, edit);
     // 4. The provider's half: its owner's, through the integration's write-back.
     const written = Object.keys(provider);
     if (written.length > 0) {
@@ -144,7 +144,9 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
       } catch (error) {
         // Part of it reached the provider (and is kept): the local half is kept too, then the
         // caller is told. A refusal or no answer wrote nothing, so nothing is kept.
-        if (error instanceof ProviderPartialWriteError) await this.#keepLocal(error, overrides);
+        if (error instanceof ProviderPartialWriteError) {
+          await this.#keepLocal(error, overrides, asked);
+        }
         throw error;
       }
       this.#clearStale(overrides, written);
@@ -169,14 +171,21 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
 
   /**
    * After a partial write: the stale overrides of what was written are cleared, the rest are kept,
-   * and `error.kept` names what is stored. A store that fails never hides the partial error:
+   * and `error.kept` names what is stored of the edit's own override fields (`asked`; a cleared
+   * one too: `null` is what was asked). Never a stale override the write cleared, nor `allDay`,
+   * which only rides along with a due date. A store that fails never hides the partial error:
    * nothing was kept then.
    */
-  async #keepLocal(error: ProviderPartialWriteError, overrides: MutableOverrides): Promise<void> {
+  async #keepLocal(
+    error: ProviderPartialWriteError,
+    overrides: MutableOverrides,
+    asked: readonly string[],
+  ): Promise<void> {
     this.#clearStale(overrides, error.written);
-    // Every override the store carries counts, a cleared one too (`null` is what was asked).
-    const names = Object.keys(overrides);
-    if (names.length === 0) return;
+    if (Object.keys(overrides).length === 0) return;
+    const names = Object.keys(overrides).filter(
+      (field) => field !== 'allDay' && asked.includes(field),
+    );
     try {
       await this.storeOverlay({ overrides, editedAt: new Date() });
       error.kept = names;
@@ -204,7 +213,7 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
   async #plan(
     caller: Caller,
     edit: ItemEdit,
-  ): Promise<{ provider: ProviderHalf; overrides: MutableOverrides }> {
+  ): Promise<{ provider: ProviderHalf; overrides: MutableOverrides; asked: string[] }> {
     this.assertIn(caller);
     (await ItemPolicy.for(caller)).assertCanOverride(caller, this.facts);
     const split = edit.split(this.providerFields);
@@ -220,7 +229,7 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
       overrides,
       Object.keys(split.provider).filter((field) => !(field in provider)),
     );
-    return { provider, overrides };
+    return { provider, overrides, asked: Object.keys(split.overrides) };
   }
 
   /** Whether it has a start once the edit's overrides apply (an event always keeps its time). */

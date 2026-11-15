@@ -439,6 +439,23 @@ describe('the provider half: its integration’s owner, read & write', () => {
     assert.deepEqual((cleared.body['details'] as Json)['kept'], ['startAt']);
     const again = data(await call('owner', 'GET', `/items/${jiraItemId}`));
     assert.equal(again['startAt'], null, 'the start override was cleared');
+
+    // `kept` names the edit's own local fields only: a stale title override the written title
+    // clears is stored as cleared, never reported as "kept in TodoList".
+    await (
+      await models.getItemRepository()
+    ).setOverlay(wid, jiraItemId, { overrides: { title: 'A stale local title' } });
+    const stale = await call('owner', 'PATCH', `/items/${jiraItemId}`, {
+      title: 'Ship the report, four times',
+      status: 'done',
+      startAt: LATER,
+    });
+    assert.equal(stale.body?.['code'], 'provider_partial_write');
+    assert.deepEqual((stale.body['details'] as Json)['kept'], ['startAt']);
+    const cleaned = data(await call('owner', 'GET', `/items/${jiraItemId}`));
+    assert.equal(cleaned['title'], 'Ship the report, four times', 'the stale override is gone');
+    assert.equal((cleaned['overlay'] as Json)['overrides'] === undefined, false);
+    assert.equal(((cleaned['overlay'] as Json)['overrides'] as Json)['title'], null);
   });
 });
 
