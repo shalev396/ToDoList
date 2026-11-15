@@ -212,12 +212,23 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
    * Sign in with the provider: the server's authorize URL, then the browser goes there. Google
    * Calendar and GitHub, Jira, ClickUp and Linear share this one path.
    */
-  const startOAuth = async (provider: ConnectableProvider, integrationId?: string) => {
+  const startOAuth = async (
+    provider: ConnectableProvider,
+    integrationId?: string,
+    includeWrite = false,
+  ) => {
     setStarting(true);
     try {
       const body = { lng: language, ...(integrationId === undefined ? {} : { integrationId }) };
+      // A read & write connection asks for the write scope again (Jira, Linear), so its grant can
+      // write back; Google Calendar's sign-in always asks for its scopes.
       const { data } = isOAuthSignIn(provider)
-        ? await startProviderOAuth(workspace.id, provider, body, { suppressErrorToast: true })
+        ? await startProviderOAuth(
+            workspace.id,
+            provider,
+            { ...body, ...(includeWrite ? { includeWrite } : {}) },
+            { suppressErrorToast: true },
+          )
         : await startGoogleCalendarOAuth(workspace.id, body, { suppressErrorToast: true });
       window.location.assign(data.authorizeUrl);
     } catch (failure) {
@@ -388,7 +399,9 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
                     }
                   : undefined
               }
-              onReconnect={(entry) => void startOAuth(provider, entry.id)}
+              onReconnect={(entry) =>
+                void startOAuth(provider, entry.id, entry.mode === 'read_write')
+              }
             />
           ),
         )}

@@ -29,6 +29,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { ProviderIcon } from '@/features/landing/ProviderIcon';
 import { useLanguage } from '@/hooks/useLanguage';
+import { cn } from '@/lib/utils';
 import { integrationAnchor } from './anchor';
 import type { IntegrationStatusView } from '@api-types/api-contracts';
 import type { IntegrationMode } from '@api-types/domain';
@@ -135,6 +136,8 @@ export function IntegrationCard({
   const { hash } = useLocation();
   const card = useRef<HTMLElement>(null);
   const anchor = integration === undefined ? undefined : integrationAnchor(integration.id);
+  // The card the link named is marked (a mouse click gives programmatic focus no visible ring).
+  const named = anchor !== undefined && hash === `#${anchor}`;
   useEffect(() => {
     if (anchor === undefined || hash !== `#${anchor}`) {
       return;
@@ -273,7 +276,11 @@ export function IntegrationCard({
       data-status={status ?? 'none'}
       data-coming-soon={comingSoon ? 'true' : undefined}
       aria-label={name}
-      className="flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      data-named={named ? '' : undefined}
+      className={cn(
+        'flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4 outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        named && 'ring-2 ring-ring',
+      )}
     >
       <header className="flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sunken">
