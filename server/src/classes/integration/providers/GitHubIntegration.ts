@@ -9,7 +9,7 @@ import { asDate, asObject, asString } from '../../../sync/providers/trackerCommo
 import type { ItemStatus } from '../../../types/domain.js';
 import { topicIdBySlug } from '../../../services/topics.js';
 import { TOPIC_RULES_MAX } from '../../../services/workspaces.js';
-import type { GitHubConfig } from '../../../types/integrations.js';
+import type { GitHubConfig, WritableField } from '../../../types/integrations.js';
 import type { CreateTarget } from '../../../types/providerCreate.js';
 import type { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
 import type { OAuthAuth } from '../auth/OAuthAuth.js';
@@ -21,6 +21,7 @@ import {
   type PreparedCreate,
   type ProviderPatch,
   type TrackerWriteSession,
+  type WriteLedger,
 } from '../TrackerIntegration.js';
 import {
   githubIssueBody,
@@ -107,15 +108,29 @@ export class GitHubIntegration
   protected override readonly learnedCapabilities = { boards: 'boardsEnabled' } as const;
 
   /**
+   * GitHub's own rule besides the reachable statuses: an open issue its board column marks "in
+   * progress" reads as in progress; setting it to open would change nothing at GitHub and flip
+   * back at the next sync (status_not_available).
+   */
+  protected override checkUpdate(item: ItemData, patch: ProviderPatch): void {
+    super.checkUpdate(item, patch);
+    const state = asString(asObject(item.props['github'])?.['state']);
+    if (patch.status === 'open' && item.status === 'in_progress' && state === 'open') {
+      throw new StatusNotAvailableError('github', patch.status);
+    }
+  }
+
+  /**
    * A GitHub issue's write-back: one PATCH of its title and state (open; closed as completed or
-   * not planned). "In progress" is a board column: StatusNotAvailableError. GitHub answers with
-   * the issue: its title, state and when it closed are what it confirms.
+   * not planned), confirmed to the ledger. GitHub answers with the issue: its title, state and
+   * when it closed are what it confirms.
    */
   protected async applyUpdate(
     session: TrackerWriteSession,
     item: ItemData,
     patch: ProviderPatch,
-  ): Promise<MirroredItemPatch> {
+    ledger: WriteLedger,
+  ): Promise<void> {
     const github = asObject(item.props['github']);
     const { owner, name } = splitRepo(github?.['repo'], 'item');
     const number = checkedId('githubNumber', String(github?.['number']), 'item');
@@ -133,15 +148,20 @@ export class GitHubIntegration
       ),
     );
     const confirmed: MirroredItemPatch = {};
-    if (patch.title !== undefined) confirmed.title = asString(record?.['title']) ?? patch.title;
+    const fields: WritableField[] = [];
+    if (patch.title !== undefined) {
+      confirmed.title = asString(record?.['title']) ?? patch.title;
+      fields.push('title');
+    }
     if (patch.status !== undefined && state !== undefined) {
       const status = (record === null ? null : statusOfIssue(record)) ?? patch.status;
       const closed = status === 'done' || status === 'cancelled';
       Object.assign(confirmed, this.confirmedStatus(status, closed ? 'closed' : 'open'));
       const closedAt = asDate(record?.['closed_at']);
       if (closed && closedAt !== null) confirmed.closedAt = closedAt;
+      fields.push('status');
     }
-    return confirmed;
+    await ledger.confirm(fields, confirmed);
   }
 
   protected async prepare(

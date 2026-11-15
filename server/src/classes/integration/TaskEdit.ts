@@ -1,24 +1,26 @@
 /**
- * One edit of a mirrored item (plan Addendum A1), validated: a value object (immutable, compared
- * by value). It holds two kinds of field:
- * - the item's own fields a provider may hold too: title, status, due date (with `allDay`), start
- *   and priority;
- * - TodoList's own (the overlay): note, pin, hidden, topic override, custom attributes.
+ * One edit of a mirrored item's provider fields (plan Addendum A1), validated: a value object
+ * (immutable, compared by value). It names only the item fields a provider may hold: title,
+ * status, due date (with `allDay`), start and priority. TodoList's own fields (note, pin, hidden,
+ * topic, custom attributes, `calendarSync`, and Phase 4's planned date and local overrides) are
+ * not part of it: they go through the item's overlay path, under the item policy.
  *
- * `split` sorts them for one item: the fields its provider takes (its definition's
- * `writableFields`, for the item's kind) and that change become the provider patch, written there
- * first; everything else (TodoList's own fields, and the item fields the provider lacks) stays
- * here. Pure: no database, no provider.
+ * `against(item, writable)` compares it with one item:
+ * - a field set to what the item already has is dropped (it is no write, and no write gate);
+ * - a changed field the provider doesn't take for the item's kind is refused before anything is
+ *   opened (FieldNotWritableError, 422 `field_not_writable`);
+ * - the rest is what the provider is sent. Nothing changed: null.
+ * Pure: no database, no provider.
  */
 import { z } from 'zod';
 
-import type { ItemData, ItemOverlay, MirroredItemPatch } from '../../models/definitions/Item.js';
-import { AttrValues } from '../../services/itemSchemas.js';
+import { FieldNotWritableError } from '../../errors/FieldNotWritableError.js';
+import type { ItemData } from '../../models/definitions/Item.js';
 import { TITLE_MAX } from '../../services/providerCreate/fields.js';
 import { ITEM_STATUSES, type ItemStatus } from '../../types/domain.js';
 import type { WritableField } from '../../types/integrations.js';
 import { parseOr400 } from '../../utils/validation.js';
-import type { DueChange, UpdateFields } from './writers/trackerWriter.js';
+import type { DueChange, ProviderPatch } from './writeBack.js';
 
 /** An edit as callers give it: every field optional, at least one. */
 export interface TaskPatch {
@@ -32,34 +34,39 @@ export interface TaskPatch {
   startAt?: Date | null;
   /** 0 (lowest) … 4 (highest); null: none. */
   priority?: number | null;
-  note?: string | null;
-  pinned?: boolean | null;
-  hidden?: boolean | null;
-  /** A topic of the workspace; null: the item's own. */
-  topicOverride?: string | null;
-  /** Custom attribute values by key; null clears one (types/attributes.ts). */
-  attrs?: Record<string, unknown>;
 }
 
-/** The item fields a provider may hold, as a patch names them. */
-const TASK_FIELDS = ['title', 'status', 'dueAt', 'startAt', 'priority'] as const;
-type TaskField = (typeof TASK_FIELDS)[number];
+/** A changed set of provider fields for one item: what is sent, and the names of what changes. */
+export interface ProviderEdit {
+  readonly patch: ProviderPatch;
+  readonly fields: readonly WritableField[];
+}
+
+/** A control character (below U+0020, or DEL) anywhere in the text. */
+export const hasControlCharacter = (text: string): boolean =>
+  Array.from(text).some((char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return code < 32 || code === 127;
+  });
+
+/** A title as a write-back sends it: one line, trimmed, 1–255 characters. */
+export const OneLineTitle = z
+  .string()
+  .trim()
+  .min(1)
+  .max(TITLE_MAX)
+  .refine((title) => !hasControlCharacter(title), 'Must be one line of text');
 
 const Instant = z.date().refine((date) => !Number.isNaN(date.getTime()), 'Must be a valid date');
 
 const Patch = z
   .strictObject({
-    title: z.string().trim().min(1).max(TITLE_MAX).optional(),
+    title: OneLineTitle.optional(),
     status: z.enum(ITEM_STATUSES).optional(),
     dueAt: Instant.nullable().optional(),
     allDay: z.boolean().optional(),
     startAt: Instant.nullable().optional(),
     priority: z.int().min(0).max(4).nullable().optional(),
-    note: z.string().max(5000).nullable().optional(),
-    pinned: z.boolean().nullable().optional(),
-    hidden: z.boolean().nullable().optional(),
-    topicOverride: z.string().min(1).max(100).nullable().optional(),
-    attrs: AttrValues.optional(),
   })
   .refine((patch) => Object.keys(patch).length > 0, 'At least one change is required')
   .refine((patch) => patch.allDay === undefined || (patch.dueAt ?? null) !== null, {
@@ -67,35 +74,10 @@ const Patch = z
     path: ['allDay'],
   });
 
-/** What a provider is sent: the changed fields it takes, and the status it is asked for. */
-export interface ProviderPatch extends UpdateFields {
-  readonly status?: ItemStatus;
-}
-
-/**
- * What stays in TodoList: item fields the provider lacks, and TodoList's own fields (the custom
- * attribute values travel apart: `attrs`, checked against the workspace first).
- */
-export interface LocalChanges {
-  readonly columns: Readonly<MirroredItemPatch>;
-  readonly overlay: Readonly<Partial<Omit<ItemOverlay, 'attrs'>>>;
-}
-
-/** One edit, split for one item: what its provider is sent, and what stays here. */
-export interface SplitEdit {
-  /** Null: nothing for the provider (no write session is opened). */
-  readonly provider: ProviderPatch | null;
-  /** The provider fields being sent, by name (the audit's `fields`). */
-  readonly providerFields: readonly WritableField[];
-  readonly local: LocalChanges;
-}
-
 type ParsedPatch = z.output<typeof Patch>;
 
 const sameInstant = (a: Date | null, b: Date | null): boolean =>
   a === null || b === null ? a === b : a.getTime() === b.getTime();
-
-const OVERLAY_FIELDS = ['note', 'pinned', 'hidden', 'topicOverride'] as const;
 
 export class TaskEdit {
   readonly #patch: Readonly<ParsedPatch>;
@@ -110,49 +92,36 @@ export class TaskEdit {
     return new TaskEdit(parseOr400(Patch, patch));
   }
 
-  /** The item fields it changes that a provider may hold (before looking at any one item). */
-  get taskFields(): readonly TaskField[] {
-    return TASK_FIELDS.filter((field) => this.#patch[field] !== undefined);
-  }
-
-  /** Whether it changes any of `writable` (a provider's fields): then it may need a write session. */
-  touches(writable: readonly WritableField[]): boolean {
-    return this.taskFields.some((field) => writable.includes(field));
-  }
-
-  /** The topic it files the item under, when it names one (checked against the workspace). */
-  get topicOverride(): string | null | undefined {
-    return this.#patch.topicOverride;
-  }
-
-  /** The custom attribute values it sets, when any (checked against the workspace). */
-  get attrs(): Readonly<Record<string, unknown>> | undefined {
-    return this.#patch.attrs;
+  /** The fields it names (changed or not). */
+  get fields(): readonly WritableField[] {
+    const fields: WritableField[] = [];
+    if (this.#patch.title !== undefined) fields.push('title');
+    if (this.#patch.status !== undefined) fields.push('status');
+    if (this.#patch.dueAt !== undefined) fields.push('dueAt');
+    if (this.#patch.startAt !== undefined) fields.push('startAt');
+    if (this.#patch.priority !== undefined) fields.push('priority');
+    return fields;
   }
 
   /**
-   * The edit for `item`: each item field its provider takes (`writable`) and that differs from
-   * the item now goes to the provider; an item field the provider lacks, and TodoList's own
-   * fields, stay here. A field set to what the item already has is dropped.
+   * The edit for `item`, whose provider takes `writable` for its kind: the changed fields, or null
+   * when nothing changes. A changed field the provider doesn't take: FieldNotWritableError.
    */
-  split(item: ItemData, writable: readonly WritableField[], timeZone: string): SplitEdit {
+  against(
+    item: ItemData,
+    writable: readonly WritableField[],
+    timeZone: string,
+  ): ProviderEdit | null {
     const patch = this.#patch;
-    const provider: { -readonly [K in keyof ProviderPatch]: ProviderPatch[K] } = { timeZone };
-    const columns: MirroredItemPatch = {};
-    const sent: WritableField[] = [];
-    const takes = (field: TaskField): boolean => writable.includes(field);
-
+    const sent: { -readonly [K in keyof ProviderPatch]: ProviderPatch[K] } = { timeZone };
+    const changed: WritableField[] = [];
     if (patch.title !== undefined && patch.title !== item.title) {
-      if (takes('title')) {
-        provider.title = patch.title;
-        sent.push('title');
-      } else columns.title = patch.title;
+      sent.title = patch.title;
+      changed.push('title');
     }
     if (patch.status !== undefined && patch.status !== item.status) {
-      if (takes('status')) {
-        provider.status = patch.status;
-        sent.push('status');
-      } else columns.status = patch.status;
+      sent.status = patch.status;
+      changed.push('status');
     }
     if (patch.dueAt !== undefined) {
       const due: DueChange | null =
@@ -162,38 +131,25 @@ export class TaskEdit {
           ? item.dueAt === null
           : sameInstant(due.at, item.dueAt) && due.allDay === item.allDay;
       if (!unchanged) {
-        if (takes('dueAt')) {
-          provider.due = due;
-          sent.push('dueAt');
-        } else {
-          columns.dueAt = due?.at ?? null;
-          if (due !== null) columns.allDay = due.allDay;
-        }
+        sent.due = due;
+        changed.push('dueAt');
       }
     }
     if (patch.startAt !== undefined && !sameInstant(patch.startAt, item.startAt)) {
-      if (takes('startAt')) {
-        provider.startAt = patch.startAt;
-        sent.push('startAt');
-      } else columns.startAt = patch.startAt;
+      sent.startAt = patch.startAt;
+      changed.push('startAt');
     }
     if (patch.priority !== undefined && patch.priority !== item.priority) {
-      if (takes('priority')) {
-        provider.priority = patch.priority;
-        sent.push('priority');
-      } else columns.priority = patch.priority;
+      sent.priority = patch.priority;
+      changed.push('priority');
     }
-
-    const overlay: LocalChanges['overlay'] = Object.fromEntries(
-      OVERLAY_FIELDS.flatMap((field) =>
-        patch[field] === undefined ? [] : [[field, patch[field]]],
-      ),
-    );
-    return Object.freeze({
-      provider: sent.length === 0 ? null : Object.freeze(provider),
-      providerFields: Object.freeze(sent),
-      local: Object.freeze({ columns: Object.freeze(columns), overlay: Object.freeze(overlay) }),
-    });
+    const refused = changed.filter((field) => !writable.includes(field));
+    if (refused.length > 0) {
+      const { provider, url } = item.source;
+      throw new FieldNotWritableError(provider, refused, { provider, url });
+    }
+    if (changed.length === 0) return null;
+    return Object.freeze({ patch: Object.freeze(sent), fields: Object.freeze(changed) });
   }
 
   /** The same edit (by value). */

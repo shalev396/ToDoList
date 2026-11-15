@@ -20,9 +20,14 @@
  *     Linear   POST /graphql carrying exactly the named `issueCreate` or `issueUpdate` document
  *     GitHub   POST  /repos/{owner}/{repo}/issues          (create)
  *              PATCH /repos/{owner}/{repo}/issues/{number} (title, state)
- *   Anything else, a GET included, is refused before it reaches the network. The lookups an
- *   update needs (Jira transitions, a ClickUp list's statuses, a Linear team's states) are reads,
- *   through the read client.
+ *   Anything else, a GET included, is refused before it reaches the network. An update's BODY is
+ *   checked too, per endpoint: only the keys its typed builder sends (Jira `fields.summary`,
+ *   `fields.duedate`, `fields.priority.id`; `transition.id`; ClickUp `name`, `status`, `due_date`,
+ *   `due_date_time`, `start_date`, `start_date_time`, `priority`; GitHub `title`, `state`,
+ *   `state_reason`; Linear `{id, input}` with `title`, `stateId`, `dueDate`, `priority`), so a
+ *   trash, an archive, a body, assignees or a project move never pass. The lookups an update needs
+ *   (Jira transitions and edit metadata, a ClickUp list's statuses, a Linear team's states) are
+ *   reads, through the read client.
  * - The transport is the live one (netGuard: public https only, no redirect followed on a write;
  *   in a test it may be rewritten to the provider stand-in). One try, never retried:
  *   a request that was sent and got no answer is `unknown` (it may have happened), never repeated.
@@ -36,6 +41,8 @@ import {
 } from '../../../sync/http.js';
 import { checkedId, splitRepo } from '../../../services/providerCreate/ids.js';
 import { localDateString } from '../../../sync/providers/trackerCommon.js';
+import { zonedTime } from '../../../sync/transports/fixtureDates.js';
+import type { UpdateFields } from '../writeBack.js';
 import { cleanTitle, TITLE_MAX } from '../../../services/providerCreate/fields.js';
 import type { JiraSiteBase } from '../../../services/providerCreate/jiraSites.js';
 
@@ -80,8 +87,14 @@ export interface CreatedRecord {
   url: string | null;
 }
 
-/** Why a provider said no (or the request never left). */
-export type RefusalReason = 'auth' | 'forbidden' | 'rate_limited' | 'rejected' | 'unreachable';
+/** Why a provider said no (or the request never left); `not_found`: an update's item is gone. */
+export type RefusalReason =
+  | 'auth'
+  | 'forbidden'
+  | 'rate_limited'
+  | 'rejected'
+  | 'unreachable'
+  | 'not_found';
 
 /** A write that did not happen, or may have: what a create and an update share. */
 export type WriteFailure =
@@ -142,6 +155,71 @@ function isRealRepo(url: string): boolean {
   return repo !== '.' && repo !== '..';
 }
 
+/** The request's JSON body as an object, or null. */
+function bodyOf(request: HttpRequest): Record<string, unknown> | null {
+  try {
+    const body = JSON.parse(request.body ?? '') as unknown;
+    return typeof body === 'object' && body !== null && !Array.isArray(body)
+      ? (body as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** An object whose keys are all among `allowed` (and at least one when `nonEmpty`). */
+function onlyKeys(value: unknown, allowed: readonly string[], nonEmpty = true): boolean {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  return (!nonEmpty || keys.length > 0) && keys.every((key) => allowed.includes(key));
+}
+
+/** The update bodies each endpoint takes (the typed builders' keys, nothing more). */
+const JIRA_FIELDS = ['summary', 'duedate', 'priority'] as const;
+const CLICKUP_KEYS = [
+  'name',
+  'status',
+  'due_date',
+  'due_date_time',
+  'start_date',
+  'start_date_time',
+  'priority',
+] as const;
+const GITHUB_KEYS = ['title', 'state', 'state_reason'] as const;
+const LINEAR_INPUT = ['title', 'stateId', 'dueDate', 'priority'] as const;
+
+/** Jira `PUT …/issue/{id}`: exactly `{fields}`, its keys the builder's, a priority by `{id}` only. */
+function isJiraFieldsBody(request: HttpRequest): boolean {
+  const body = bodyOf(request);
+  if (body === null || !onlyKeys(body, ['fields'])) return false;
+  const fields = body['fields'];
+  if (!onlyKeys(fields, JIRA_FIELDS)) return false;
+  const priority = (fields as Record<string, unknown>)['priority'];
+  return (
+    priority === undefined ||
+    (onlyKeys(priority, ['id']) && typeof (priority as Record<string, unknown>)['id'] === 'string')
+  );
+}
+
+/** Jira `POST …/transitions`: exactly `{transition: {id}}`. */
+function isJiraTransitionBody(request: HttpRequest): boolean {
+  const body = bodyOf(request);
+  return (
+    body !== null &&
+    onlyKeys(body, ['transition']) &&
+    onlyKeys(body['transition'], ['id']) &&
+    typeof (body['transition'] as Record<string, unknown>)['id'] === 'string'
+  );
+}
+
+/** Linear `issueUpdate`: variables exactly `{id, input}`, the input's keys the builder's. */
+function isLinearUpdateBody(request: HttpRequest): boolean {
+  const variables = bodyOf(request)?.['variables'];
+  if (!onlyKeys(variables, ['id', 'input'])) return false;
+  const { id, input } = variables as Record<string, unknown>;
+  return typeof id === 'string' && onlyKeys(input, LINEAR_INPUT);
+}
+
 /** `path` (one of the patterns above) under one of the integration's own Jira site bases. */
 function isJiraPath(url: string, jiraBases: readonly string[], path: RegExp): boolean {
   return jiraBases.some((base) => {
@@ -176,13 +254,19 @@ export function isAllowedUpdate(request: HttpRequest, jiraBases: readonly string
   if (url.includes('?') || url.includes('#')) return false;
   switch (method) {
     case 'PUT':
-      return isJiraPath(url, jiraBases, JIRA_ISSUE) || CLICKUP_TASK_UPDATE.test(url);
+      return (
+        (isJiraPath(url, jiraBases, JIRA_ISSUE) && isJiraFieldsBody(request)) ||
+        (CLICKUP_TASK_UPDATE.test(url) && onlyKeys(bodyOf(request), CLICKUP_KEYS))
+      );
     case 'PATCH':
-      return GITHUB_ISSUE_UPDATE.test(url) && isRealRepo(url);
+      return (
+        GITHUB_ISSUE_UPDATE.test(url) && isRealRepo(url) && onlyKeys(bodyOf(request), GITHUB_KEYS)
+      );
     case 'POST':
       return (
-        isJiraPath(url, jiraBases, JIRA_TRANSITIONS) ||
-        isLinearDocument(request, LINEAR_ISSUE_UPDATE_DOCUMENT, LINEAR_ISSUE_UPDATE_OPERATION)
+        (isJiraPath(url, jiraBases, JIRA_TRANSITIONS) && isJiraTransitionBody(request)) ||
+        (isLinearDocument(request, LINEAR_ISSUE_UPDATE_DOCUMENT, LINEAR_ISSUE_UPDATE_OPERATION) &&
+          isLinearUpdateBody(request))
       );
     default:
       return false;
@@ -340,28 +424,6 @@ export function githubIssueBody(
 
 // ─── update bodies (typed fields only; write-back, plan Addendum A1) ─────────
 
-/** A due date as a write-back sends it: the instant, and whether it has no time of day. */
-export interface DueChange {
-  readonly at: Date;
-  readonly allDay: boolean;
-}
-
-/**
- * The fields of one write-back the update bodies are built from (each present only when it
- * changes); the status travels apart, as what the provider named (a transition, a status, a state).
- */
-export interface UpdateFields {
-  readonly title?: string;
-  /** null clears it. */
-  readonly due?: DueChange | null;
-  /** null clears it. */
-  readonly startAt?: Date | null;
-  /** 0 (lowest) … 4 (highest) on the dashboard's scale; null for none. */
-  readonly priority?: number | null;
-  /** The workspace's: a date-only due date is the day the instant falls on there. */
-  readonly timeZone: string;
-}
-
 const titleOf = (fields: UpdateFields): string | undefined => {
   if (fields.title === undefined) return undefined;
   const title = cleanTitle(fields.title);
@@ -382,18 +444,35 @@ export function jiraPriorityName(priority: number | null): string | null {
   return priority === null ? null : (JIRA_PRIORITY_NAMES[priority] ?? null);
 }
 
-/** `PUT …/issue/{id}`: `{fields: {summary, duedate, priority}}`; null when none of them changes. */
-export function jiraUpdateBody(fields: UpdateFields): Record<string, unknown> | null {
+/**
+ * `PUT …/issue/{id}`: `{fields: {summary, duedate, priority: {id}}}`, the priority by the id the
+ * issue's edit metadata allows (`priorityId`); null when none of them changes.
+ */
+export function jiraUpdateBody(
+  fields: UpdateFields,
+  priorityId?: string,
+): Record<string, unknown> | null {
   const issue: Record<string, unknown> = {};
   const title = titleOf(fields);
   if (title !== undefined) issue['summary'] = title;
   if (fields.due !== undefined) issue['duedate'] = dueDateOf(fields);
   if (fields.priority !== undefined) {
-    const name = jiraPriorityName(fields.priority);
-    if (name === null) throw new WriteRefusedError();
-    issue['priority'] = { name };
+    if (priorityId === undefined) throw new WriteRefusedError();
+    issue['priority'] = { id: checkedId('opaque', priorityId, 'priority') };
   }
   return Object.keys(issue).length === 0 ? null : { fields: issue };
+}
+
+/**
+ * A date-only due date as ClickUp stores it: noon of that day in the workspace's zone, so the
+ * day doesn't move in a ClickUp user's own zone.
+ */
+function clickupDay(at: Date, timeZone: string): number {
+  const [year, month, day] = localDateString(at, timeZone).split('-').map(Number);
+  return zonedTime(
+    { year: year ?? 1970, month: month ?? 1, day: day ?? 1, hour: 12, minute: 0 },
+    timeZone,
+  ).getTime();
 }
 
 /** `POST …/issue/{id}/transitions`: the one transition, by the id Jira listed. */
@@ -413,8 +492,10 @@ export function clickupUpdateBody(fields: UpdateFields, status?: string): Record
     body['status'] = status;
   }
   if (fields.due !== undefined) {
-    body['due_date'] = fields.due === null ? null : fields.due.at.getTime();
-    if (fields.due !== null) body['due_date_time'] = !fields.due.allDay;
+    const { due } = fields;
+    body['due_date'] =
+      due === null ? null : due.allDay ? clickupDay(due.at, fields.timeZone) : due.at.getTime();
+    if (due !== null) body['due_date_time'] = !due.allDay;
   }
   if (fields.startAt !== undefined) {
     body['start_date'] = fields.startAt === null ? null : fields.startAt.getTime();
@@ -478,9 +559,13 @@ function parseJson(response: HttpResponse): unknown {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** A non-2xx answer: what it says about whether anything was written. */
-function failureOf(response: HttpResponse): WriteFailure {
+/**
+ * A non-2xx answer: what it says about whether anything was written. For an update (`gone`), a
+ * 404 or 410 says the item is gone at the provider; a create keeps reading it as rejected.
+ */
+function failureOf(response: HttpResponse, gone = false): WriteFailure {
   const { status } = response;
+  if (gone && (status === 404 || status === 410)) return { kind: 'refused', reason: 'not_found' };
   if (status === 401) return { kind: 'refused', reason: 'auth' };
   if (status === 429) return { kind: 'refused', reason: 'rate_limited' };
   if (status === 403) {
@@ -714,7 +799,7 @@ export function createWriteClient(
       if (isResult(answer)) return answer;
       return answer.status === 204 || answer.status === 200
         ? { kind: 'updated', record: null }
-        : failureOf(answer);
+        : failureOf(answer, true);
     },
 
     async transitionJiraIssue(site, issueId, headers, body): Promise<UpdateResult> {
@@ -732,7 +817,7 @@ export function createWriteClient(
       if (isResult(answer)) return answer;
       return answer.status === 204 || answer.status === 200
         ? { kind: 'updated', record: null }
-        : failureOf(answer);
+        : failureOf(answer, true);
     },
 
     async updateClickupTask(taskId, headers, body): Promise<UpdateResult> {
@@ -748,7 +833,7 @@ export function createWriteClient(
         jiraBases,
       );
       if (isResult(answer)) return answer;
-      return answer.status === 200 ? updated(answer) : failureOf(answer);
+      return answer.status === 200 ? updated(answer) : failureOf(answer, true);
     },
 
     async updateLinearIssue(headers, issueId, input): Promise<UpdateResult> {
@@ -766,7 +851,7 @@ export function createWriteClient(
         jiraBases,
       );
       if (isResult(answer)) return answer;
-      if (answer.status !== 200) return failureOf(answer);
+      if (answer.status !== 200) return failureOf(answer, true);
       const data = parseJson(answer);
       if (!isRecord(data)) return { kind: 'unknown' };
       const result = isRecord(data['data']) ? data['data']['issueUpdate'] : undefined;
@@ -793,7 +878,7 @@ export function createWriteClient(
         jiraBases,
       );
       if (isResult(answer)) return answer;
-      return answer.status === 200 ? updated(answer) : failureOf(answer);
+      return answer.status === 200 ? updated(answer) : failureOf(answer, true);
     },
   };
 }

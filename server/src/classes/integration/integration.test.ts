@@ -364,11 +364,8 @@ describe('every provider class, read-only: refused before anything is sent', () 
           readOnly,
         );
         assert.deepEqual(settled, []);
-        // A write-back of a field the provider holds: refused before the item is even read.
-        await assert.rejects(
-          integration.updateTask(caller(), { id: 'it-1' }, { title: 'Renamed', note: 'mine' }),
-          readOnly,
-        );
+        // updateTask reads its item first (the gate waits for what changes): the write-back
+        // tests hold it with a database.
       } else if (isCalendarProvider(integration)) {
         await assert.rejects(integration.createOptions(caller(), { step: 'calendar' }), readOnly);
         await assert.rejects(

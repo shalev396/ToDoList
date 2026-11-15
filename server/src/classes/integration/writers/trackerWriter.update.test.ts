@@ -1,12 +1,14 @@
 /**
  * The write client's updates (write-back, plan Addendum A1): the update bodies per provider (typed
- * fields only), the allow-list (exactly the update endpoints, each with its own method; Linear only
- * the named issueUpdate document), the exact requests sent, and how an answer maps to a result.
+ * fields only), the allow-list (exactly the update endpoints, each with its own method, and each
+ * BODY only the keys its builder sends; Linear only the named issueUpdate document), the exact
+ * requests sent, and how an answer maps to a result.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { HttpRequest, HttpResponse, Transport } from '../../../sync/http.js';
+import type { UpdateFields } from '../writeBack.js';
 import {
   LINEAR_ISSUE_CREATE_DOCUMENT,
   LINEAR_ISSUE_UPDATE_DOCUMENT,
@@ -22,7 +24,6 @@ import {
   jiraUpdateBody,
   linearUpdateInput,
   WriteRefusedError,
-  type UpdateFields,
 } from './trackerWriter.js';
 
 const TZ = 'Asia/Jerusalem';
@@ -34,6 +35,8 @@ const LINEAR_ID = '11111111-2222-4333-8444-555555555555';
 const HEADERS = { authorization: 'Bearer FAKE-token-update' };
 /** 20 Nov 2026, 10:00 UTC: 12:00 in Jerusalem. */
 const DUE = new Date('2026-11-20T10:00:00Z');
+/** 20 Nov 2026, 23:30 in Jerusalem (21:30 UTC): still the 20th there. */
+const LATE = new Date('2026-11-20T21:30:00Z');
 const START = new Date('2026-11-18T07:30:00Z');
 
 function respond(status: number, body: unknown = ''): HttpResponse {
@@ -57,10 +60,13 @@ const fields = (over: Omit<UpdateFields, 'timeZone'>): UpdateFields => ({ timeZo
 const sentBody = (request: HttpRequest | undefined): unknown => JSON.parse(request?.body ?? 'null');
 
 describe('update bodies (typed fields only)', () => {
-  it('Jira: summary, the due date as the workspace’s day, the priority by its default name', () => {
+  it('Jira: summary, the due date as the workspace’s day, the priority by the id Jira allows', () => {
     assert.deepEqual(
-      jiraUpdateBody(fields({ title: 'Ship it', due: { at: DUE, allDay: false }, priority: 3 })),
-      { fields: { summary: 'Ship it', duedate: '2026-11-20', priority: { name: 'High' } } },
+      jiraUpdateBody(
+        fields({ title: 'Ship it', due: { at: DUE, allDay: false }, priority: 3 }),
+        '2',
+      ),
+      { fields: { summary: 'Ship it', duedate: '2026-11-20', priority: { id: '2' } } },
     );
     assert.deepEqual(jiraUpdateBody(fields({ due: null })), { fields: { duedate: null } });
     assert.equal(jiraUpdateBody(fields({})), null);
@@ -68,27 +74,34 @@ describe('update bodies (typed fields only)', () => {
       [0, 1, 2, 3, 4, null].map((priority) => jiraPriorityName(priority)),
       ['Lowest', 'Low', 'Medium', 'High', 'Highest', null],
     );
-    assert.throws(() => jiraUpdateBody(fields({ priority: null })), WriteRefusedError);
+    // A priority is only ever sent by an allowed id.
+    assert.throws(() => jiraUpdateBody(fields({ priority: 3 })), WriteRefusedError);
+    assert.throws(() => jiraUpdateBody(fields({ priority: 3 }), '2/../1'));
     assert.deepEqual(jiraTransitionBody('31'), { transition: { id: '31' } });
     assert.throws(() => jiraTransitionBody('31/../1'));
   });
 
-  it('ClickUp: name, status by name, dates in milliseconds with their time flag, priority', () => {
+  it('ClickUp: name, status by name, dates in milliseconds (a day at its noon), priority', () => {
     assert.deepEqual(
       clickupUpdateBody(
-        fields({ title: 'Ship it', due: { at: DUE, allDay: true }, startAt: START, priority: 4 }),
+        fields({ title: 'Ship it', due: { at: LATE, allDay: true }, startAt: START, priority: 4 }),
         'in review',
       ),
       {
         name: 'Ship it',
         status: 'in review',
-        due_date: DUE.getTime(),
+        // The 20th at noon in the workspace's zone: the same day wherever ClickUp shows it.
+        due_date: new Date('2026-11-20T10:00:00Z').getTime(),
         due_date_time: false,
         start_date: START.getTime(),
         start_date_time: true,
         priority: 1,
       },
     );
+    assert.deepEqual(clickupUpdateBody(fields({ due: { at: LATE, allDay: false } })), {
+      due_date: LATE.getTime(),
+      due_date_time: true,
+    });
     assert.deepEqual(clickupUpdateBody(fields({ due: null, startAt: null, priority: null })), {
       due_date: null,
       start_date: null,
@@ -128,104 +141,193 @@ describe('update bodies (typed fields only)', () => {
   });
 });
 
-describe('the allow-list: exactly the update endpoints', () => {
-  const request = (
-    method: HttpRequest['method'],
-    url: string,
-    extra: Partial<HttpRequest> = {},
-  ): HttpRequest => ({ method, url, headers: {}, ...extra });
-  const linear = (document: string, operation: string, extra: object = {}): HttpRequest =>
-    request('POST', 'https://api.linear.app/graphql', {
-      body: JSON.stringify({ query: document, variables: {}, ...extra }),
-      graphqlOperation: operation,
-    });
+describe('the allow-list: exactly the update endpoints and bodies', () => {
+  const request = (method: HttpRequest['method'], url: string, body?: unknown): HttpRequest => ({
+    method,
+    url,
+    headers: {},
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  const linear = (
+    document: string,
+    operation: string,
+    variables: unknown = { id: LINEAR_ID, input: { title: 'x' } },
+    extra: object = {},
+  ): HttpRequest => ({
+    method: 'POST',
+    url: 'https://api.linear.app/graphql',
+    headers: {},
+    body: JSON.stringify({ query: document, variables, ...extra }),
+    graphqlOperation: operation,
+  });
+  const JIRA_ISSUE = `${JIRA_BASE}/rest/api/3/issue/10500`;
+  const CLICKUP_TASK = 'https://api.clickup.com/api/v2/task/86b0xyz9';
+  const GITHUB_ISSUE = 'https://api.github.com/repos/octo/hello/issues/12';
 
-  it('allows each update with its own method, Jira only at the integration’s own sites', () => {
+  it('allows each update with its own method and its builder’s body, Jira only at its own sites', () => {
     for (const allowed of [
-      request('PUT', `${JIRA_BASE}/rest/api/3/issue/10500`),
-      request('PUT', 'https://mysite.atlassian.net/rest/api/3/issue/7'),
-      request('POST', `${JIRA_BASE}/rest/api/3/issue/10500/transitions`),
-      request('PUT', 'https://api.clickup.com/api/v2/task/86b0xyz9'),
-      request('PATCH', 'https://api.github.com/repos/octo/hello/issues/12'),
-      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate'),
+      request('PUT', JIRA_ISSUE, {
+        fields: { summary: 'x', duedate: '2026-11-20', priority: { id: '2' } },
+      }),
+      request('PUT', 'https://mysite.atlassian.net/rest/api/3/issue/7', {
+        fields: { duedate: null },
+      }),
+      request('POST', `${JIRA_ISSUE}/transitions`, { transition: { id: '31' } }),
+      request('PUT', CLICKUP_TASK, {
+        name: 'x',
+        status: 'done',
+        due_date: 1,
+        due_date_time: false,
+        start_date: null,
+        start_date_time: true,
+        priority: null,
+      }),
+      request('PATCH', GITHUB_ISSUE, { title: 'x', state: 'closed', state_reason: 'completed' }),
+      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', {
+        id: LINEAR_ID,
+        input: { title: 'x', stateId: LINEAR_ID, dueDate: null, priority: 0 },
+      }),
     ]) {
       assert.equal(isAllowedUpdate(allowed, JIRA_BASES), true, `${allowed.method} ${allowed.url}`);
       assert.equal(isAllowedWrite(allowed, JIRA_BASES), true);
     }
   });
 
+  it('refuses a body with any key its builder never sends: trash, archive, body, assignees, a move', () => {
+    for (const refused of [
+      // Linear: trashed, a team move, an assignee, an extra variable.
+      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', {
+        id: LINEAR_ID,
+        input: { trashed: true },
+      }),
+      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', {
+        id: LINEAR_ID,
+        input: { title: 'x', teamId: LINEAR_ID },
+      }),
+      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', {
+        id: LINEAR_ID,
+        input: { assigneeId: LINEAR_ID },
+      }),
+      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', {
+        id: LINEAR_ID,
+        input: { title: 'x' },
+        extra: 1,
+      }),
+      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', { id: LINEAR_ID, input: {} }),
+      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', { input: { title: 'x' } }),
+      // ClickUp: archived, assignees, a parent move, an empty body.
+      request('PUT', CLICKUP_TASK, { archived: true }),
+      request('PUT', CLICKUP_TASK, { name: 'x', assignees: { add: [1] } }),
+      request('PUT', CLICKUP_TASK, { parent: 'abc' }),
+      request('PUT', CLICKUP_TASK, {}),
+      request('PUT', CLICKUP_TASK),
+      // GitHub: the body, assignees, labels, a milestone, the lock.
+      request('PATCH', GITHUB_ISSUE, { title: 'x', body: '' }),
+      request('PATCH', GITHUB_ISSUE, { assignees: [], labels: [], milestone: null }),
+      request('PATCH', GITHUB_ISSUE, { state: 'closed', locked: true }),
+      // Jira: a project move, an issue type, an `update` operation, a priority by name, a property.
+      request('PUT', JIRA_ISSUE, { fields: { project: { id: '1' }, issuetype: { id: '2' } } }),
+      request('PUT', JIRA_ISSUE, { fields: { summary: 'x' }, update: { labels: [{ set: [] }] } }),
+      request('PUT', JIRA_ISSUE, { fields: { priority: { name: 'High' } } }),
+      request('PUT', JIRA_ISSUE, { fields: { summary: 'x', labels: [] } }),
+      request('PUT', JIRA_ISSUE, { fields: {}, properties: [] }),
+      request('PUT', JIRA_ISSUE, { fields: {} }),
+      // A transition with fields, an update, or a comment.
+      request('POST', `${JIRA_ISSUE}/transitions`, {
+        transition: { id: '31' },
+        fields: { resolution: { name: 'Done' } },
+      }),
+      request('POST', `${JIRA_ISSUE}/transitions`, { transition: { id: '31', looped: true } }),
+      request('POST', `${JIRA_ISSUE}/transitions`, { transition: { id: 31 } }),
+      request('POST', `${JIRA_ISSUE}/transitions`, 'not json'),
+    ]) {
+      assert.equal(
+        isAllowedWrite(refused, JIRA_BASES),
+        false,
+        `${refused.method} ${refused.body ?? ''}`,
+      );
+    }
+  });
+
   it('refuses off-list paths, methods, queries and hosts', () => {
+    const body = { fields: { summary: 'x' } };
     for (const refused of [
       // Another site, or a host that only starts like one.
-      request('PUT', 'https://other.atlassian.net/rest/api/3/issue/7'),
-      request('PUT', 'https://mysite.atlassian.net.evil.example/rest/api/3/issue/7'),
-      // Other Jira writes: comments, links, a delete, a transition by key, a query.
-      request('PUT', `${JIRA_BASE}/rest/api/3/issue/10500/comment`),
-      request('POST', `${JIRA_BASE}/rest/api/3/issue/10500/remotelink`),
-      request('POST', `${JIRA_BASE}/rest/api/3/issue/ABC-1/transitions`),
-      request('PUT', `${JIRA_BASE}/rest/api/3/issue/10500?notifyUsers=false`),
-      request('PATCH', `${JIRA_BASE}/rest/api/3/issue/10500`),
-      request('GET', `${JIRA_BASE}/rest/api/3/issue/10500/transitions`),
-      // ClickUp: a list, a custom task id, a POST to a task, a sub-path.
-      request('PUT', 'https://api.clickup.com/api/v2/list/901'),
-      request('PUT', 'https://api.clickup.com/api/v2/task/DEV-12'),
-      request('POST', 'https://api.clickup.com/api/v2/task/86b0xyz9'),
-      request('PUT', 'https://api.clickup.com/api/v2/task/86b0xyz9/tag/x'),
-      request('PUT', 'https://api.clickup.com/api/v2/task/86b0xyz9?custom_task_ids=true'),
-      // GitHub: comments, a pull request, the repository, a PUT, `..`.
-      request('PATCH', 'https://api.github.com/repos/octo/hello/issues/12/comments'),
-      request('PATCH', 'https://api.github.com/repos/octo/hello/pulls/12'),
-      request('PATCH', 'https://api.github.com/repos/octo/hello'),
-      request('PUT', 'https://api.github.com/repos/octo/hello/issues/12'),
-      request('PATCH', 'https://api.github.com/repos/octo/../issues/12'),
-      request('PATCH', 'https://api.github.com/repos/octo/hello/issues/0'),
-      request('PATCH', 'https://evil.example/repos/octo/hello/issues/12'),
+      request('PUT', 'https://other.atlassian.net/rest/api/3/issue/7', body),
+      request('PUT', 'https://mysite.atlassian.net.evil.example/rest/api/3/issue/7', body),
+      // Other Jira writes: comments, links, a transition by key, a query, another method.
+      request('PUT', `${JIRA_ISSUE}/comment`, body),
+      request('POST', `${JIRA_ISSUE}/remotelink`, body),
+      request('POST', `${JIRA_BASE}/rest/api/3/issue/ABC-1/transitions`, {
+        transition: { id: '31' },
+      }),
+      request('PUT', `${JIRA_ISSUE}?notifyUsers=false`, body),
+      request('PATCH', JIRA_ISSUE, body),
+      request('GET', `${JIRA_ISSUE}/transitions`),
+      // ClickUp: a list, a custom task id, a POST to a task, a sub-path, a query.
+      request('PUT', 'https://api.clickup.com/api/v2/list/901', { name: 'x' }),
+      request('PUT', 'https://api.clickup.com/api/v2/task/DEV-12', { name: 'x' }),
+      request('POST', CLICKUP_TASK, { name: 'x' }),
+      request('PUT', `${CLICKUP_TASK}/tag/x`, { name: 'x' }),
+      request('PUT', `${CLICKUP_TASK}?custom_task_ids=true`, { name: 'x' }),
+      // GitHub: comments, a pull request, the repository, a PUT, `..`, number 0, another host.
+      request('PATCH', `${GITHUB_ISSUE}/comments`, { title: 'x' }),
+      request('PATCH', 'https://api.github.com/repos/octo/hello/pulls/12', { title: 'x' }),
+      request('PATCH', 'https://api.github.com/repos/octo/hello', { title: 'x' }),
+      request('PUT', GITHUB_ISSUE, { title: 'x' }),
+      request('PATCH', 'https://api.github.com/repos/octo/../issues/12', { title: 'x' }),
+      request('PATCH', 'https://api.github.com/repos/octo/hello/issues/0', { title: 'x' }),
+      request('PATCH', 'https://evil.example/repos/octo/hello/issues/12', { title: 'x' }),
     ]) {
-      assert.equal(isAllowedUpdate(refused, JIRA_BASES), false, `${refused.method} ${refused.url}`);
       assert.equal(isAllowedWrite(refused, JIRA_BASES), false, `${refused.method} ${refused.url}`);
     }
     // Jira's own issue paths are refused without the integration's sites.
-    assert.equal(isAllowedUpdate(request('PUT', `${JIRA_BASE}/rest/api/3/issue/1`)), false);
+    assert.equal(isAllowedUpdate(request('PUT', `${JIRA_BASE}/rest/api/3/issue/1`, body)), false);
   });
 
   it('Linear: a mutation other than issueUpdate (and issueCreate) is refused', () => {
+    const issueDelete = 'mutation IssueDelete($id: String!) { issueDelete(id: $id) { success } }';
     for (const refused of [
-      linear(
-        'mutation IssueDelete($id: String!) { issueDelete(id: $id) { success } }',
-        'IssueDelete',
-      ),
-      linear(
-        'mutation IssueDelete($id: String!) { issueDelete(id: $id) { success } }',
-        'IssueUpdate',
-      ),
+      linear(issueDelete, 'IssueDelete'),
+      linear(issueDelete, 'IssueUpdate'),
       linear(
         `${LINEAR_ISSUE_UPDATE_DOCUMENT}\nmutation X { issueDelete(id: "1") { success } }`,
         'IssueUpdate',
       ),
       linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueCreate'),
-      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', { operationName: 'IssueDelete' }),
-      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', { extensions: {} }),
-      request('POST', 'https://api.linear.app/graphql', {
+      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', undefined, {
+        operationName: 'IssueDelete',
+      }),
+      linear(LINEAR_ISSUE_UPDATE_DOCUMENT, 'IssueUpdate', undefined, { extensions: {} }),
+      {
+        method: 'POST' as const,
+        url: 'https://api.linear.app/graphql',
+        headers: {},
         body: 'not json',
         graphqlOperation: 'IssueUpdate',
-      }),
+      },
     ]) {
       assert.equal(isAllowedWrite(refused, JIRA_BASES), false, refused.body);
     }
     // The create is still the create, and only as a create.
-    assert.equal(isAllowedCreate(linear(LINEAR_ISSUE_CREATE_DOCUMENT, 'IssueCreate')), true);
-    assert.equal(isAllowedUpdate(linear(LINEAR_ISSUE_CREATE_DOCUMENT, 'IssueCreate')), false);
+    const create = linear(LINEAR_ISSUE_CREATE_DOCUMENT, 'IssueCreate', {});
+    assert.equal(isAllowedCreate(create), true);
+    assert.equal(isAllowedUpdate(create), false);
   });
 
   it('the guarded transport sends an allowed update once and never an off-list one', async () => {
     const { transport, sent } = recorder(respond(204));
     const guarded = guardedTransport(transport, JIRA_BASES);
     await assert.rejects(
-      guarded.send(request('PUT', `${JIRA_BASE}/rest/api/3/issue/1/comment`)),
+      guarded.send(request('PUT', `${JIRA_ISSUE}/comment`, { fields: { summary: 'x' } })),
+      WriteRefusedError,
+    );
+    await assert.rejects(
+      guarded.send(request('PUT', JIRA_ISSUE, { fields: { project: { id: '1' } } })),
       WriteRefusedError,
     );
     assert.equal(sent.length, 0);
-    await guarded.send(request('PUT', `${JIRA_BASE}/rest/api/3/issue/1`));
+    await guarded.send(request('PUT', JIRA_ISSUE, { fields: { summary: 'x' } }));
     assert.equal(sent.length, 1);
     assert.equal(guarded.maxRetries, 0);
   });
@@ -294,11 +396,13 @@ describe('sending an update', () => {
     );
   });
 
-  it('classifies the answers: refused (4xx, a GraphQL error), unknown (5xx, no answer)', async () => {
+  it('classifies the answers: gone (404, 410), refused (4xx, a GraphQL error), unknown (5xx, none)', async () => {
     const run = (answer: HttpResponse | Error): Promise<unknown> =>
       createWriteClient(recorder(answer).transport).updateGithubIssue('octo/hello', '12', HEADERS, {
         title: 'x',
       });
+    assert.deepEqual(await run(respond(404)), { kind: 'refused', reason: 'not_found' });
+    assert.deepEqual(await run(respond(410)), { kind: 'refused', reason: 'not_found' });
     assert.deepEqual(await run(respond(401)), { kind: 'refused', reason: 'auth' });
     assert.deepEqual(await run(respond(403)), { kind: 'refused', reason: 'forbidden' });
     assert.deepEqual(await run(respond(422)), { kind: 'refused', reason: 'rejected' });
@@ -306,8 +410,15 @@ describe('sending an update', () => {
     assert.deepEqual(await run(new Error('timeout')), { kind: 'unknown' });
     const linear = await createWriteClient(
       recorder(respond(200, { errors: [{ message: 'nope' }] })).transport,
-    ).updateLinearIssue(HEADERS, LINEAR_ID, {});
+    ).updateLinearIssue(HEADERS, LINEAR_ID, { title: 'x' });
     assert.deepEqual(linear, { kind: 'refused', reason: 'rejected' });
+    // A create still reads a 404 as rejected (its answers are unchanged).
+    const created = await createWriteClient(recorder(respond(404)).transport).createGithubIssue(
+      'octo/hello',
+      HEADERS,
+      { title: 'x' },
+    );
+    assert.deepEqual(created, { kind: 'refused', reason: 'rejected' });
   });
 
   it('a path id that is not one is refused before anything is sent', async () => {

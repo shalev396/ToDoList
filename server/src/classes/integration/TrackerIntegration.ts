@@ -10,25 +10,28 @@
  *   is the exact create and update endpoints. It runs inside the write session, so a read-only
  *   integration (or demo data, or a fixtures stage) never reaches the provider. The created item
  *   is read back best effort, under a short budget.
- * - `updateTask` (write-back, plan Addendum A1): a template method. The edit is validated and
- *   split; the fields the provider takes are sent by the provider class (`applyUpdate`: its
- *   lookups through the read client, then its exact update requests through the write client)
- *   inside the write session; what the provider confirmed and the fields that stay here are then
- *   saved on the item. An edit with nothing for the provider never opens a write session.
+ * - `updateTask` (write-back, plan Addendum A1): a template method over a mirrored item's provider
+ *   fields only. The edit is validated against the item (unchanged fields dropped, a field the
+ *   provider doesn't take refused), the provider's static rules checked (`checkUpdate`), then the
+ *   provider class sends it (`applyUpdate`: its lookups through the read client, then its exact
+ *   update requests through the write client) inside the write session, each call that goes
+ *   through audited at once (WriteLedger); what the provider confirmed is saved on the item. An
+ *   edit that changes nothing never opens a write session. TodoList's own fields (the overlay)
+ *   are not this method's: they go through the item's overlay path.
  *
  * Nothing here keeps, logs or returns a secret: the credential refuses a result that carries one
  * and redacts what is thrown.
  */
 import type { Caller } from '../base/Caller.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
-import type { ItemData, ItemOverlay, MirroredItemPatch } from '../../models/definitions/Item.js';
+import type { ItemData, MirroredItemPatch } from '../../models/definitions/Item.js';
 import { getItemRepository } from '../../models/index.js';
-import { prepareAttributeValues } from '../../services/attributes.js';
 import { cachedCreateOptions } from '../../services/providerCreate/funnel.js';
-import { assertTopicOf } from '../../services/topics.js';
 import { AppError } from '../../errors/AppError.js';
-import { MirroredItemError } from '../../errors/MirroredItemError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
+import { ProviderItemMissingError } from '../../errors/ProviderItemMissingError.js';
+import { ProviderPartialWriteError } from '../../errors/ProviderPartialWriteError.js';
+import { StatusNotAvailableError } from '../../errors/StatusNotAvailableError.js';
 import { fixtureSetDir } from '../../sync/fixtureSets.js';
 import {
   createReadOnlyClient,
@@ -45,6 +48,7 @@ import type {
   CreateTarget,
 } from '../../types/providerCreate.js';
 import type { ItemStatus } from '../../types/domain.js';
+import type { WritableField } from '../../types/integrations.js';
 import type { AuthKind, SecretJson } from './auth/AuthStrategy.js';
 import type {
   CreatedTask,
@@ -56,7 +60,9 @@ import type {
 import type { TestableAdapter } from './connectionTest.js';
 import type { CreateRules } from './definitions/IntegrationDefinition.js';
 import { Integration } from './Integration.js';
-import { TaskEdit, type ProviderPatch, type SplitEdit } from './TaskEdit.js';
+import { TaskEdit } from './TaskEdit.js';
+import type { ProviderPatch } from './writeBack.js';
+import { WriteLedger } from './WriteLedger.js';
 import {
   createWriteClient,
   type CreatedRecord,
@@ -67,7 +73,7 @@ import {
   type WriteResult,
 } from './writers/trackerWriter.js';
 
-export type { ProviderPatch };
+export type { ProviderPatch, WriteLedger };
 
 /** The recorded fixture set the funnel reads in the fixtures sync mode, unless the definition names one. */
 export const FIXTURE_SET = 'create-options';
@@ -129,6 +135,8 @@ function writeFailure(provider: string, failure: WriteFailure): AppError {
       return new AppError(422, `${provider} rejected this change`);
     case 'unreachable':
       return new AppError(502, `${provider} could not be reached. Try again in a moment.`);
+    case 'not_found':
+      return new ProviderItemMissingError(provider);
   }
 }
 
@@ -140,7 +148,7 @@ function lookupFailure(error: ProviderHttpError): AppError {
       return new AppError(409, `${provider} refused the connection: reconnect it`);
     case 'not_found':
     case 'gone':
-      return new AppError(404, `This item no longer exists at ${provider}`);
+      return new ProviderItemMissingError(provider);
     case 'rate_limited':
       return new AppError(429, `${provider} is busy. Try again in a moment.`);
     default:
@@ -212,65 +220,84 @@ export abstract class TrackerIntegration<
   }
 
   /**
-   * One edit of a mirrored item of this integration, its owner's (plan Addendum A1). A template
+   * One edit of a mirrored item's provider fields, its owner's (plan Addendum A1). A template
    * method:
-   * 1. validate: the edit (TaskEdit: 400 naming the field), then, when it changes a field this
-   *    provider takes, the write gate's checks (a read-only integration: 409, before anything is
-   *    read), then the overlay's topic and custom attributes against the workspace;
-   * 2. split: the item is read (this integration's live mirrored item: 404 otherwise) and the
-   *    edit sorted into the changed fields its provider takes (`writableFields`, for the item's
-   *    kind) and what stays here; a kind that takes no write-back (a pull request) refuses an edit
-   *    of a field its provider holds (409 with its link);
-   * 3. the write session, only when the provider has something to take;
-   * 4. `applyUpdate`: the provider class sends it and says what the provider confirmed;
-   * 5. save: the confirmed fields (the item's `source.hash` is cleared, so the next sync writes
-   *    what the provider holds) and the local ones; the write is audited as `integration.write`
-   *    with the field names only.
-   * A failure at the provider saves nothing here. The item as now stored.
+   * 1. validate: the edit (TaskEdit: 400 naming the field), then the item (this integration's live
+   *    mirrored item: 404 otherwise);
+   * 2. split against the item: a field set to what the item has is dropped (an edit that changes
+   *    nothing returns the item: no write, no write gate); a changed field the provider doesn't
+   *    take for the item's kind is 422 `field_not_writable`; then `checkUpdate`, the provider's
+   *    static rules (a status it can't set: 422 `status_not_available`), and the write gate's
+   *    checks (read-only: 409), all before anything is opened;
+   * 3. the write session;
+   * 4. `applyUpdate`: the provider class looks up what it needs, then sends; each call that goes
+   *    through is confirmed to the WriteLedger, which audits it at once (`integration.write`);
+   * 5. save what the provider confirmed (`source.hash` cleared, so the next sync rewrites what
+   *    the provider holds).
+   * When a later call fails after an earlier one went through, what went through is saved and
+   * audited (`partial: true`) and the answer is ProviderPartialWriteError (409
+   * `provider_partial_write`); when nothing went through, nothing is saved. The item as now stored.
    */
   async updateTask(caller: Caller, item: ItemRef, patch: TaskPatch): Promise<ItemData> {
     // 1. Validate.
     this.assertOwner(caller);
     const edit = TaskEdit.parse(patch);
-    const providerFields = this.definition?.writableFields ?? [];
-    if (edit.touches(providerFields)) this.assertWritable(caller);
-    const attrs = await this.#checkedOverlay(caller, edit);
-    // 2. Split.
     const stored = await this.#mirroredItem(item.id);
-    const writable = this.writableFieldsFor(stored.kind);
-    if (writable.length === 0 && edit.touches(providerFields)) {
-      throw new MirroredItemError(stored.source.provider, stored.source.url);
+    // 2. Split against the item, then the static rules and the gate.
+    const changes = edit.against(
+      stored,
+      this.writableFieldsFor(stored.kind),
+      caller.settings.timezone,
+    );
+    if (changes === null) return stored;
+    this.checkUpdate(stored, changes.patch);
+    this.assertWritable(caller);
+    // 3 and 4. The provider's part, inside the write session; each call audited as it lands.
+    const ledger = new WriteLedger((fields) =>
+      this.recordWrite(caller, {
+        operation: 'task.update',
+        itemId: stored.id,
+        fields: [...fields],
+      }),
+    );
+    try {
+      await this.withWriteSession(caller, ({ writer }) =>
+        this.applyUpdate(writer, stored, changes.patch, ledger),
+      );
+    } catch (error) {
+      const failure = error instanceof ProviderHttpError ? lookupFailure(error) : error;
+      if (ledger.isEmpty) throw failure;
+      throw await this.#partial(caller, stored, changes.fields, ledger);
     }
-    const split = edit.split(stored, writable, caller.settings.timezone);
-    // 3 and 4. The provider's part, inside the write session.
-    let confirmed: MirroredItemPatch = {};
-    const sending = split.provider;
-    if (sending !== null) {
-      try {
-        confirmed = await this.withWriteSession(caller, ({ writer }) =>
-          this.applyUpdate(writer, stored, sending),
-        );
-      } catch (error) {
-        if (error instanceof ProviderHttpError) throw lookupFailure(error);
-        throw error;
-      }
-    }
-    // 5. Save.
-    return this.#save(caller, stored, split, confirmed, attrs);
+    // 5. Save what the provider confirmed.
+    return this.#save(stored, ledger.values);
   }
 
   /**
-   * Sends one write-back (the fields of `patch` that changed, each one the provider takes) and
-   * says what the provider confirmed, as the item's fields. Its lookups (a status to reach) go
-   * through `session.read` before anything is written; a status the provider can't reach for
-   * this item is StatusNotAvailableError (422), a value it can't hold a 400, both before anything
-   * is sent. A refusal or no answer is an AppError (answerOf).
+   * The provider's static rules for `patch` on `item`, checked before the write gate and the
+   * credential (no I/O): the status must be one the provider can set (`reachableStatuses`).
+   * A provider class adds its own value rules (calling this first).
+   */
+  protected checkUpdate(_item: ItemData, patch: ProviderPatch): void {
+    if (patch.status !== undefined && !this.reachableStatuses.includes(patch.status)) {
+      throw new StatusNotAvailableError(this.provider, patch.status);
+    }
+  }
+
+  /**
+   * Sends one write-back (the changed fields of `patch`, each one the provider takes): its lookups
+   * (a status to reach, what the edit screen takes) go through `session.read` first, then its
+   * update requests through `session.write`. Each call that goes through is confirmed to `ledger`
+   * at once, with what the provider confirmed as the item's fields. A status the provider can't
+   * reach for this item is StatusNotAvailableError, a field it won't take FieldNotWritableError
+   * (both 422, before anything is sent); a refusal or no answer is an AppError (answerOf).
    */
   protected abstract applyUpdate(
     session: TrackerWriteSession,
     item: ItemData,
     patch: ProviderPatch,
-  ): Promise<MirroredItemPatch>;
+    ledger: WriteLedger,
+  ): Promise<void>;
 
   /** An update's answer: the record it carried (or null) when done; otherwise its AppError. */
   protected answerOf(result: UpdateResult): Record<string, unknown> | null {
@@ -284,59 +311,41 @@ export abstract class TrackerIntegration<
     return { status, statusRaw: raw, closedAt: closed ? new Date() : null };
   }
 
-  /**
-   * Step 5: the provider-confirmed fields and the item fields kept here (`source.hash` cleared
-   * when the provider took something), then TodoList's own fields; the provider write audited.
-   */
-  async #save(
-    caller: Caller,
-    stored: ItemData,
-    split: SplitEdit,
-    confirmed: MirroredItemPatch,
-    attrs: Record<string, unknown> | undefined,
-  ): Promise<ItemData> {
-    const items = await getItemRepository();
-    const sent = split.provider !== null;
-    let saved = stored;
-    const columns = { ...split.local.columns, ...confirmed };
-    if (sent || Object.keys(columns).length > 0) {
-      const updated = await items.updateMirrored(this.workspaceId, this.id, stored.id, columns, {
-        resync: sent,
-      });
-      if (updated === null) throw new NotFoundError();
-      saved = updated;
-    }
-    const overlay: Partial<ItemOverlay> = {
-      ...split.local.overlay,
-      ...(attrs === undefined ? {} : { attrs }),
-    };
-    if (Object.keys(overlay).length > 0) {
-      const updated = await items.setOverlay(this.workspaceId, stored.id, {
-        ...overlay,
-        editedAt: new Date(),
-      });
-      if (updated === null) throw new NotFoundError();
-      saved = updated;
-    }
-    if (sent) {
-      await this.recordWrite(caller, {
-        operation: 'task.update',
-        itemId: stored.id,
-        fields: [...split.providerFields],
-      });
-    }
-    return saved;
+  /** Step 5: what the provider confirmed, saved (`source.hash` cleared for the next sync). */
+  async #save(stored: ItemData, confirmed: Readonly<MirroredItemPatch>): Promise<ItemData> {
+    const updated = await (
+      await getItemRepository()
+    ).updateMirrored(this.workspaceId, this.id, stored.id, confirmed, { resync: true });
+    if (updated === null) throw new NotFoundError();
+    return updated;
   }
 
-  /** The overlay's topic exists here and its attribute values fit the workspace's (400 otherwise). */
-  async #checkedOverlay(
+  /**
+   * A write-back that stopped part-way: what reached the provider is saved (best effort: the item
+   * may be gone) and audited as the edit's outcome (`partial: true`, with what was refused); the
+   * error to answer.
+   */
+  async #partial(
     caller: Caller,
-    edit: TaskEdit,
-  ): Promise<Record<string, unknown> | undefined> {
-    const topic = edit.topicOverride;
-    if (topic !== undefined && topic !== null) await assertTopicOf(this.workspaceId, topic);
-    const attrs = edit.attrs;
-    return attrs === undefined ? undefined : prepareAttributeValues(caller.context, attrs);
+    stored: ItemData,
+    asked: readonly WritableField[],
+    ledger: WriteLedger,
+  ): Promise<ProviderPartialWriteError> {
+    try {
+      await this.#save(stored, ledger.values);
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) throw error;
+    }
+    const written = ledger.fields;
+    const refused = asked.filter((field) => !written.includes(field));
+    await this.recordWrite(caller, {
+      operation: 'task.update',
+      itemId: stored.id,
+      fields: [...written],
+      refused,
+      partial: true,
+    });
+    return new ProviderPartialWriteError(this.provider, written, refused);
   }
 
   /** This integration's live mirrored item (404 for any other, a local one included). */

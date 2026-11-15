@@ -1,11 +1,13 @@
 /**
  * Write-back (plan Addendum A1) through TaskProvider#updateTask, per tracker, against a recording
  * transport that stands in for the provider: the exact requests a status, title and date change
- * sends (the lookups as reads, then the allow-listed writes), that a field the provider lacks and
- * TodoList's own fields stay here and are never sent, what the item holds afterwards (what the
- * provider confirmed; its source hash cleared for the next sync), and every refusal before
- * anything is written: a read-only integration (zero requests), a status the provider can't reach
- * (`status_not_available`), a pull request, a value the provider can't hold, someone else's item.
+ * sends (the lookups as reads, then the allow-listed writes), what the item holds afterwards (what
+ * the provider confirmed; its source hash cleared for the next sync), each provider call audited
+ * as it lands, a Jira edit that stops part-way (`provider_partial_write`, what landed kept), and
+ * every refusal before anything is opened or written: a field the provider doesn't take
+ * (`field_not_writable`), a status it can't reach (`status_not_available`), a value it can't hold,
+ * a read-only integration (zero requests; an unchanged field is no write and no refusal), a pull
+ * request, someone else's item.
  */
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,7 +41,6 @@ let caller: Caller;
 let otherCaller: Caller;
 let wid: string;
 let ownerId: string;
-let personalTopic: string;
 let accounts = 0;
 
 /** What the stand-in was sent, and how it answers: routes by method and URL (or operation). */
@@ -95,7 +96,7 @@ before(async () => {
   const memberships = await models.getMembershipRepository();
   await memberships.create(wid, { userId: ownerId, role: 'owner' });
   await memberships.create(wid, { userId: other.id, role: 'editor' });
-  personalTopic = (await addDefaultTopics(wid)).personal;
+  await addDefaultTopics(wid);
   caller = CallerClass.fromContext(await contextFor(wid, ownerId), Actor.user(ownerId));
   otherCaller = CallerClass.fromContext(await contextFor(wid, other.id), Actor.user(other.id));
 });
@@ -187,13 +188,33 @@ async function mirror(
 const stored = async (id: string): Promise<ItemData | null> =>
   (await models.getItemRepository()).findById(wid, id);
 
+/** The item's `integration.write` rows (their meta), in a stable order. */
 const writes = async (itemId: string): Promise<unknown[]> =>
   (await (await models.getAuditLogRepository()).list(wid, { action: 'integration.write' }, 50))
     .filter((entry) => (entry.meta as { itemId?: string }).itemId === itemId)
-    .map((entry) => entry.meta);
+    .map((entry) => entry.meta)
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+
+/** When the integration's credential was last opened (to show nothing was opened). */
+const lastOpened = async (integration: Classes.TrackerIntegration): Promise<number | null> =>
+  (
+    await (await models.getCredentialRepository()).findMeta(wid, integration.id)
+  )?.lastUsedAt?.getTime() ?? null;
 
 describe('Jira', () => {
-  const transitions = `${JIRA_SITE}/rest/api/3/issue/10500/transitions`;
+  const ISSUE = `${JIRA_SITE}/rest/api/3/issue/10500`;
+  const EDITMETA = `${ISSUE}/editmeta`;
+  const TRANSITIONS = `${ISSUE}/transitions?expand=transitions.fields`;
+  const PRIORITIES = [
+    { id: '1', name: 'Highest' },
+    { id: '2', name: 'High' },
+    { id: '3', name: 'Medium' },
+    { id: '4', name: 'Low' },
+    { id: '5', name: 'Lowest' },
+  ];
+  const EDITABLE = {
+    fields: { summary: {}, duedate: {}, priority: { allowedValues: PRIORITIES } },
+  };
   const LISTED = {
     transitions: [
       { id: '11', name: 'Back to do', to: { name: 'To Do', statusCategory: { key: 'new' } } },
@@ -201,10 +222,17 @@ describe('Jira', () => {
         id: '21',
         name: 'Start (with a form)',
         hasScreen: true,
+        fields: { assignee: { required: false } },
         to: { name: 'In Progress', statusCategory: { key: 'indeterminate' } },
       },
       {
         id: '41',
+        name: 'Resolve (asks for a resolution)',
+        fields: { resolution: { required: true, hasDefaultValue: false } },
+        to: { name: 'Resolved', statusCategory: { key: 'done' } },
+      },
+      {
+        id: '51',
         name: 'Unavailable',
         isAvailable: false,
         to: { statusCategory: { key: 'done' } },
@@ -225,31 +253,30 @@ describe('Jira', () => {
       key: 'ABC-7',
     });
 
-  it('status, title and due date: the transitions read, one PUT, one transition; the rest stays here', async () => {
+  it('status, title and due date: the edit screen and transitions read, one PUT, one transition', async () => {
     const jira = await connect('jira', { baseUrl: JIRA_SITE });
     const item = await issue(jira);
-    on('GET', transitions, json(200, LISTED));
-    on('PUT', `${JIRA_SITE}/rest/api/3/issue/10500`, json(204));
-    on('POST', transitions, json(204));
-    const start = new Date('2026-11-18T07:00:00Z');
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('GET', TRANSITIONS, json(200, LISTED));
+    on('PUT', ISSUE, json(204));
+    on('POST', `${ISSUE}/transitions`, json(204));
     const saved = await jira.updateTask(caller, item, {
       title: 'Ship the report',
       status: 'done',
       dueAt: new Date('2026-11-25T10:00:00Z'),
-      startAt: start,
-      note: 'Only mine',
-      pinned: true,
-      topicOverride: personalTopic,
+      priority: 2,
     });
+    // The lookups first (nothing is written unless every part can be), then the two writes.
     assert.deepEqual(lines(), [
-      `GET ${transitions}`,
-      `PUT ${JIRA_SITE}/rest/api/3/issue/10500`,
-      `POST ${transitions}`,
+      `GET ${EDITMETA}`,
+      `GET ${TRANSITIONS}`,
+      `PUT ${ISSUE}`,
+      `POST ${ISSUE}/transitions`,
     ]);
-    // Jira has no start date; TodoList's own fields are never sent.
-    assert.deepEqual(bodyOf(1), { fields: { summary: 'Ship the report', duedate: '2026-11-25' } });
-    assert.deepEqual(bodyOf(2), { transition: { id: '31' } });
-    assert.equal(sent[1]?.headers['authorization']?.startsWith('Basic '), true);
+    // The priority is unchanged: not sent. The resolution transition needs a field: skipped.
+    assert.deepEqual(bodyOf(2), { fields: { summary: 'Ship the report', duedate: '2026-11-25' } });
+    assert.deepEqual(bodyOf(3), { transition: { id: '31' } });
+    assert.equal(sent[2]?.headers['authorization']?.startsWith('Basic '), true);
     assert.equal(saved.title, 'Ship the report');
     assert.equal(saved.status, 'done');
     assert.equal(saved.statusRaw, 'Done');
@@ -257,70 +284,139 @@ describe('Jira', () => {
     // A Jira due date is a day: its end, in the workspace's zone, all day.
     assert.equal(saved.dueAt?.toISOString(), '2026-11-25T21:59:00.000Z');
     assert.equal(saved.allDay, true);
-    assert.equal(saved.startAt?.toISOString(), start.toISOString());
-    assert.equal(saved.overlay.note, 'Only mine');
-    assert.equal(saved.overlay.pinned, true);
-    assert.equal(saved.overlay.topicOverride, personalTopic);
     assert.equal(saved.source.hash, null, 'the next sync rewrites what Jira holds');
+    // One row per provider call, each recorded as it landed.
     assert.deepEqual(await writes(item.id), [
-      { operation: 'task.update', itemId: item.id, fields: ['title', 'status', 'dueAt'] },
+      { operation: 'task.update', itemId: item.id, fields: ['status'] },
+      { operation: 'task.update', itemId: item.id, fields: ['title', 'dueAt'] },
     ]);
   });
 
-  it('prefers a transition without a screen; none into the category: 422, nothing written', async () => {
+  it('a priority goes by the id the issue allows for its name; a name the scheme lacks is 422', async () => {
     const jira = await connect('jira', { baseUrl: JIRA_SITE });
     const item = await issue(jira);
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('PUT', ISSUE, json(204));
+    const saved = await jira.updateTask(caller, item, { priority: 4 });
+    assert.deepEqual(bodyOf(1), { fields: { priority: { id: '1' } } });
+    assert.equal(saved.priority, 4);
+    sent.length = 0;
+    routes = [];
     on(
       'GET',
-      transitions,
-      json(200, { transitions: [LISTED.transitions[0], LISTED.transitions[2]] }),
+      EDITMETA,
+      json(200, { fields: { priority: { allowedValues: [{ id: '9', name: 'P1' }] } } }),
+    );
+    await assert.rejects(jira.updateTask(caller, item, { priority: 0 }), (error: unknown) =>
+      hasCode(422, 'field_not_writable')(error),
+    );
+    assert.deepEqual(lines(), [`GET ${EDITMETA}`], 'nothing written');
+  });
+
+  it('a field not on the edit screen, or no transition without a form: 422 before any write', async () => {
+    const jira = await connect('jira', { baseUrl: JIRA_SITE });
+    const item = await issue(jira);
+    on('GET', EDITMETA, json(200, { fields: { summary: {} } }));
+    await assert.rejects(
+      jira.updateTask(caller, item, { title: 'Renamed', dueAt: new Date('2026-11-25T10:00:00Z') }),
+      (error: unknown) =>
+        hasCode(422, 'field_not_writable')(error) &&
+        (error as { fields?: string[] }).fields?.join() === 'dueAt',
+    );
+    assert.deepEqual(lines(), [`GET ${EDITMETA}`]);
+    sent.length = 0;
+    routes = [];
+    on('GET', EDITMETA, json(200, EDITABLE));
+    // Into "done": only the transition that asks for a resolution, and an unavailable one.
+    on(
+      'GET',
+      TRANSITIONS,
+      json(200, {
+        transitions: [LISTED.transitions[0], LISTED.transitions[2], LISTED.transitions[3]],
+      }),
     );
     await assert.rejects(
       jira.updateTask(caller, item, { status: 'done', title: 'Renamed' }),
       hasCode(422, 'status_not_available'),
     );
-    assert.deepEqual(lines(), [`GET ${transitions}`]);
-    assert.equal((await stored(item.id))?.title, 'Write the report');
-    assert.equal((await stored(item.id))?.source.hash, 'h-synced');
-    // In progress: only the transition with a screen leads there, so that one.
-    sent.length = 0;
-    routes = [];
-    on('GET', transitions, json(200, LISTED));
-    on('POST', transitions, json(204));
-    const started = await jira.updateTask(caller, item, { status: 'in_progress' });
-    assert.deepEqual(bodyOf(1), { transition: { id: '21' } });
-    assert.equal(started.status, 'in_progress');
-    assert.equal(started.statusRaw, 'In Progress');
-    assert.equal(started.closedAt, null);
+    assert.deepEqual(lines(), [`GET ${EDITMETA}`, `GET ${TRANSITIONS}`]);
+    const after = await stored(item.id);
+    assert.equal(after?.title, 'Write the report');
+    assert.equal(after.source.hash, 'h-synced');
+    assert.deepEqual(await writes(item.id), []);
   });
 
-  it('cancelled has no Jira category, and a null priority no Jira value: refused before any request', async () => {
+  it('the fields land and the transition is refused: 409 provider_partial_write, what landed kept', async () => {
     const jira = await connect('jira', { baseUrl: JIRA_SITE });
     const item = await issue(jira);
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('GET', TRANSITIONS, json(200, LISTED));
+    on('PUT', ISSUE, json(204));
+    on('POST', `${ISSUE}/transitions`, json(400, { errorMessages: ['A validator failed'] }));
+    await assert.rejects(
+      jira.updateTask(caller, item, { title: 'Ship the report', status: 'in_progress' }),
+      (error: unknown) =>
+        hasCode(409, 'provider_partial_write')(error) &&
+        (error as { written?: string[] }).written?.join() === 'title' &&
+        (error as { refused?: string[] }).refused?.join() === 'status',
+    );
+    const after = await stored(item.id);
+    assert.equal(after?.title, 'Ship the report', 'what Jira took is kept');
+    assert.equal(after.status, 'open');
+    assert.equal(after.source.hash, null);
+    assert.deepEqual(await writes(item.id), [
+      {
+        operation: 'task.update',
+        itemId: item.id,
+        fields: ['title'],
+        refused: ['status'],
+        partial: true,
+      },
+      { operation: 'task.update', itemId: item.id, fields: ['title'] },
+    ]);
+  });
+
+  it('refused before the credential opens: cancelled, a null priority, a start date', async () => {
+    const jira = await connect('jira', { baseUrl: JIRA_SITE });
+    const item = await issue(jira);
+    const opened = await lastOpened(jira);
     await assert.rejects(
       jira.updateTask(caller, item, { status: 'cancelled' }),
       hasCode(422, 'status_not_available'),
     );
     await assert.rejects(jira.updateTask(caller, item, { priority: null }), hasStatus(400));
+    await assert.rejects(
+      jira.updateTask(caller, item, { startAt: new Date('2026-11-18T07:00:00Z') }),
+      hasCode(422, 'field_not_writable'),
+    );
     assert.deepEqual(sent, []);
+    assert.equal(await lastOpened(jira), opened, 'the credential was never opened');
   });
 
-  it('a refusal at Jira is an error and saves nothing here', async () => {
+  it('a refusal before anything landed saves nothing; a gone issue is 404 provider_item_missing', async () => {
     const jira = await connect('jira', { baseUrl: JIRA_SITE });
     const item = await issue(jira);
-    on(
-      'PUT',
-      `${JIRA_SITE}/rest/api/3/issue/10500`,
-      json(401, { errorMessages: ['FAKE-jira-key'] }),
-    );
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('PUT', ISSUE, json(401, { errorMessages: ['FAKE-jira-key'] }));
     await assert.rejects(
-      jira.updateTask(caller, item, { title: 'Renamed', note: 'x' }),
+      jira.updateTask(caller, item, { title: 'Renamed' }),
       (error: unknown) => hasStatus(409)(error) && !(error as Error).message.includes('FAKE'),
     );
-    const after = await stored(item.id);
-    assert.equal(after?.title, 'Write the report');
-    assert.equal(after.overlay.note, null);
+    assert.equal((await stored(item.id))?.title, 'Write the report');
     assert.deepEqual(await writes(item.id), []);
+    routes = [];
+    on('GET', EDITMETA, json(404, {}));
+    await assert.rejects(
+      jira.updateTask(caller, item, { title: 'Renamed' }),
+      hasCode(404, 'provider_item_missing'),
+    );
+    routes = [];
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('PUT', ISSUE, json(404, {}));
+    await assert.rejects(
+      jira.updateTask(caller, item, { title: 'Renamed' }),
+      hasCode(404, 'provider_item_missing'),
+    );
   });
 });
 
@@ -338,7 +434,7 @@ describe('ClickUp', () => {
       props: { listId: '901' },
     });
 
-  it('status, dates and priority: the list’s statuses read, one PUT; ClickUp’s answer confirms the status', async () => {
+  it('status, dates and priority: the list’s statuses read, one PUT; a day due at its noon', async () => {
     const clickup = await connect('clickup');
     const item = await task(clickup);
     on(
@@ -362,15 +458,14 @@ describe('ClickUp', () => {
         status: { status: 'in progress', type: 'custom' },
       }),
     );
-    const due = new Date('2026-11-27T15:00:00Z');
     const start = new Date('2026-11-24T08:00:00Z');
     const saved = await clickup.updateTask(caller, item, {
       status: 'in_progress',
-      dueAt: due,
-      allDay: false,
+      // 27 Nov, 23:30 in Jerusalem: still the 27th there.
+      dueAt: new Date('2026-11-27T21:30:00Z'),
+      allDay: true,
       startAt: start,
       priority: 3,
-      hidden: true,
     });
     assert.deepEqual(lines(), [
       'GET https://api.clickup.com/api/v2/list/901',
@@ -378,8 +473,8 @@ describe('ClickUp', () => {
     ]);
     assert.deepEqual(bodyOf(1), {
       status: 'in progress',
-      due_date: due.getTime(),
-      due_date_time: true,
+      due_date: new Date('2026-11-27T10:00:00Z').getTime(),
+      due_date_time: false,
       start_date: start.getTime(),
       start_date_time: true,
       priority: 2,
@@ -387,23 +482,37 @@ describe('ClickUp', () => {
     assert.equal(sent[1]?.headers['authorization'], 'FAKE-clickup-key');
     assert.equal(saved.status, 'in_progress');
     assert.equal(saved.statusRaw, 'in progress');
-    assert.equal(saved.dueAt?.toISOString(), due.toISOString());
-    assert.equal(saved.allDay, false);
+    assert.equal(saved.dueAt?.toISOString(), '2026-11-27T21:59:00.000Z');
+    assert.equal(saved.allDay, true);
     assert.equal(saved.startAt?.toISOString(), start.toISOString());
     assert.equal(saved.priority, 3);
-    assert.equal(saved.overlay.hidden, true);
     assert.equal(saved.source.hash, null);
+    assert.deepEqual(await writes(item.id), [
+      {
+        operation: 'task.update',
+        itemId: item.id,
+        fields: ['status', 'dueAt', 'startAt', 'priority'],
+      },
+    ]);
+    // A cleared due date is no all-day either.
+    routes = [];
+    on('PUT', 'https://api.clickup.com/api/v2/task/86b0xyz9', json(200, { id: '86b0xyz9' }));
+    const cleared = await clickup.updateTask(caller, saved, { dueAt: null });
+    assert.equal(cleared.dueAt, null);
+    assert.equal(cleared.allDay, false);
   });
 
-  it('cancelled (no such type in ClickUp) and priority 0 (no lowest): refused before any request', async () => {
+  it('cancelled (no such type) and priority 0 (no lowest): refused before the credential opens', async () => {
     const clickup = await connect('clickup');
     const item = await task(clickup);
+    const opened = await lastOpened(clickup);
     await assert.rejects(
       clickup.updateTask(caller, item, { status: 'cancelled' }),
       hasCode(422, 'status_not_available'),
     );
     await assert.rejects(clickup.updateTask(caller, item, { priority: 0 }), hasStatus(400));
     assert.deepEqual(sent, []);
+    assert.equal(await lastOpened(clickup), opened);
   });
 });
 
@@ -491,9 +600,9 @@ describe('Linear', () => {
 });
 
 describe('GitHub', () => {
-  const props = { github: { repo: 'octo/hello', number: 12 } };
+  const props = { github: { repo: 'octo/hello', number: 12, state: 'open' } };
 
-  it('closing an issue as done: one PATCH of title and state; a due date stays here, unsent', async () => {
+  it('closing an issue as done: one PATCH of title and state; a due date is not GitHub’s to take', async () => {
     const github = await connect('github', { owner: 'octo', ownerType: 'user' });
     const item = await mirror(github, {
       kind: 'issue',
@@ -507,6 +616,11 @@ describe('GitHub', () => {
       key: 'octo/hello#12',
       props,
     });
+    await assert.rejects(
+      github.updateTask(caller, item, { title: 'x', dueAt: new Date('2026-11-30T10:00:00Z') }),
+      hasCode(422, 'field_not_writable'),
+    );
+    assert.equal(sent.length, 0);
     on(
       'PATCH',
       'https://api.github.com/repos/octo/hello/issues/12',
@@ -518,11 +632,9 @@ describe('GitHub', () => {
         closed_at: '2026-11-15T10:00:00Z',
       }),
     );
-    const due = new Date('2026-11-30T10:00:00Z');
     const saved = await github.updateTask(caller, item, {
       title: 'Crash on start (fixed)',
       status: 'done',
-      dueAt: due,
     });
     assert.deepEqual(lines(), ['PATCH https://api.github.com/repos/octo/hello/issues/12']);
     assert.deepEqual(bodyOf(0), {
@@ -534,13 +646,12 @@ describe('GitHub', () => {
     assert.equal(saved.status, 'done');
     assert.equal(saved.statusRaw, 'closed');
     assert.equal(saved.closedAt?.toISOString(), '2026-11-15T10:00:00.000Z');
-    assert.equal(saved.dueAt?.toISOString(), due.toISOString(), 'kept here');
     assert.deepEqual(await writes(item.id), [
       { operation: 'task.update', itemId: item.id, fields: ['title', 'status'] },
     ]);
   });
 
-  it('"in progress" is a board column: 422; a pull request takes no write-back: 409 with its link', async () => {
+  it('"in progress" is a board column (422 both ways); a pull request takes no write-back (422 with its link)', async () => {
     const github = await connect('github', { owner: 'octo', ownerType: 'user' });
     const issueItem = await mirror(github, {
       kind: 'issue',
@@ -548,10 +659,23 @@ describe('GitHub', () => {
       status: 'open',
       statusRaw: 'open',
       externalId: 'I_kwDOissue13',
-      props: { github: { repo: 'octo/hello', number: 13 } },
+      props: { github: { repo: 'octo/hello', number: 13, state: 'open' } },
     });
     await assert.rejects(
       github.updateTask(caller, issueItem, { status: 'in_progress' }),
+      hasCode(422, 'status_not_available'),
+    );
+    // Open, but its board column says in progress: "open" would change nothing and flip back.
+    const onBoard = await mirror(github, {
+      kind: 'issue',
+      title: 'On the board',
+      status: 'in_progress',
+      statusRaw: 'In Progress',
+      externalId: 'I_kwDOissue15',
+      props: { github: { repo: 'octo/hello', number: 15, state: 'open' } },
+    });
+    await assert.rejects(
+      github.updateTask(caller, onBoard, { status: 'open' }),
       hasCode(422, 'status_not_available'),
     );
     const pr = await mirror(github, {
@@ -565,40 +689,45 @@ describe('GitHub', () => {
     await assert.rejects(
       github.updateTask(caller, pr, { title: 'Renamed' }),
       (error: unknown) =>
-        hasStatus(409)(error) &&
+        hasCode(422, 'field_not_writable')(error) &&
         (error as { openIn?: { url: string } }).openIn?.url === 'https://example.test/PR_kwDOpr14',
     );
-    // Its TodoList fields are its own: they save, with no write session.
-    const pinned = await github.updateTask(caller, pr, { pinned: true });
-    assert.equal(pinned.overlay.pinned, true);
     assert.deepEqual(sent, []);
   });
 });
 
 describe('every tracker', () => {
-  it('read-only: a provider field is 409 integration_read_only with zero requests; local fields still save', async () => {
+  it('read-only: a changed field is 409 with zero requests; resending what the item has is no write', async () => {
     const readOnly = await connect('clickup', {}, 'read');
     const item = await mirror(readOnly, {
       kind: 'task',
       title: 'Read only',
       status: 'open',
+      priority: 2,
       externalId: 'ro86b0x',
       props: { listId: '901' },
     });
+    const opened = await lastOpened(readOnly);
     for (const patch of [
       { title: 'Renamed' },
       { status: 'done' as const },
-      { dueAt: null, note: 'x' },
+      { dueAt: new Date() },
     ]) {
       await assert.rejects(
         readOnly.updateTask(caller, item, patch),
         hasCode(409, 'integration_read_only'),
       );
     }
-    const noted = await readOnly.updateTask(caller, item, { note: 'Only mine', hidden: true });
-    assert.equal(noted.overlay.note, 'Only mine');
-    assert.equal(noted.source.hash, 'h-synced', 'nothing for the provider: untouched');
+    // An ItemSheet that resends the form as it is: nothing changes, so nothing is refused.
+    const same = await readOnly.updateTask(caller, item, {
+      title: 'Read only',
+      status: 'open',
+      priority: 2,
+      dueAt: null,
+    });
+    assert.equal(same.source.hash, 'h-synced', 'untouched');
     assert.deepEqual(sent, [], 'zero requests of any kind');
+    assert.equal(await lastOpened(readOnly), opened, 'the credential was never opened');
     assert.deepEqual(await writes(item.id), []);
   });
 
@@ -624,22 +753,17 @@ describe('every tracker', () => {
       title: 'A local to-do',
       topicId: null,
     });
-    await assert.rejects(linear.updateTask(otherCaller, item, { note: 'x' }), hasStatus(404));
-    await assert.rejects(linear.updateTask(caller, theirs, { note: 'x' }), hasStatus(404));
-    await assert.rejects(linear.updateTask(caller, local, { note: 'x' }), hasStatus(404));
+    await assert.rejects(linear.updateTask(otherCaller, item, { title: 'x' }), hasStatus(404));
+    await assert.rejects(linear.updateTask(caller, theirs, { title: 'x' }), hasStatus(404));
+    await assert.rejects(linear.updateTask(caller, local, { title: 'x' }), hasStatus(404));
     await assert.rejects(
-      linear.updateTask(caller, { id: 'missing' }, { note: 'x' }),
+      linear.updateTask(caller, { id: 'missing' }, { title: 'x' }),
       hasStatus(404),
     );
     await assert.rejects(linear.updateTask(caller, item, {}), hasStatus(400));
-    await assert.rejects(
-      linear.updateTask(caller, item, { topicOverride: 'no-such-topic' }),
-      hasStatus(400),
-    );
-    await assert.rejects(
-      linear.updateTask(caller, item, { labels: ['x'] } as never),
-      hasStatus(400),
-    );
+    await assert.rejects(linear.updateTask(caller, item, { title: 'A\nB' }), hasStatus(400));
+    // TodoList's own fields are the overlay path's, never this method's.
+    await assert.rejects(linear.updateTask(caller, item, { note: 'x' } as never), hasStatus(400));
     assert.deepEqual(sent, []);
   });
 });

@@ -1,4 +1,5 @@
 import { AppError } from '../../../errors/AppError.js';
+import { FieldNotWritableError } from '../../../errors/FieldNotWritableError.js';
 import { StatusNotAvailableError } from '../../../errors/StatusNotAvailableError.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
@@ -35,9 +36,11 @@ import {
   type PreparedCreate,
   type ProviderPatch,
   type TrackerWriteSession,
+  type WriteLedger,
 } from '../TrackerIntegration.js';
 import {
   jiraIssueBody,
+  jiraPriorityName,
   jiraTransitionBody,
   jiraUpdateBody,
   type CreateFields,
@@ -52,6 +55,10 @@ const CATEGORY_OF: Readonly<Partial<Record<ItemStatus, string>>> = {
   done: 'done',
 };
 
+/** The Jira fields a write-back PUTs, by our names: what the issue's edit screen must have. */
+const JIRA_FIELD = { title: 'summary', dueAt: 'duedate', priority: 'priority' } as const;
+type PutField = keyof typeof JIRA_FIELD;
+
 /** One transition Jira lists for an issue, as a write-back reads it. */
 interface JiraTransition {
   id: string;
@@ -59,6 +66,8 @@ interface JiraTransition {
   to: string | null;
   category: string | null;
   hasScreen: boolean;
+  /** Its screen has a required field with no default: it can't be made without filling it in. */
+  needsInput: boolean;
 }
 
 function transitionOf(raw: unknown): JiraTransition[] {
@@ -67,12 +76,16 @@ function transitionOf(raw: unknown): JiraTransition[] {
   if (transition === null || id === null || !/^\d{1,20}$/.test(id)) return [];
   if (transition['isAvailable'] === false) return [];
   const to = asObject(transition['to']);
+  const fields = Object.values(asObject(transition['fields']) ?? {}).map(asObject);
   return [
     {
       id,
       to: asString(to?.['name']),
       category: asString(asObject(to?.['statusCategory'])?.['key']),
       hasScreen: transition['hasScreen'] === true,
+      needsInput: fields.some(
+        (field) => field?.['required'] === true && field['hasDefaultValue'] !== true,
+      ),
     },
   ];
 }
@@ -171,28 +184,46 @@ export class JiraIntegration
     return jiraSitesOf(this.data).map((site) => site.base);
   }
 
+  /** Jira's own rule besides the reachable statuses: an issue always has a priority. */
+  protected override checkUpdate(item: ItemData, patch: ProviderPatch): void {
+    super.checkUpdate(item, patch);
+    if (patch.priority === null) throw new ValidationError('priority: a Jira issue always has one');
+  }
+
   /**
-   * A Jira issue's write-back: the transition into the asked status's category is looked up first
-   * (GET …/transitions; none: StatusNotAvailableError), then the summary, due date and priority
-   * are PUT, then the transition is POSTed. Jira answers 204: what was sent is what it holds, read
-   * as the sync reads it (a due date is that day, all day).
+   * A Jira issue's write-back. Both lookups come first, so nothing is written unless every part
+   * can be: the issue's edit metadata (GET …/editmeta: each field on its edit screen, else
+   * FieldNotWritableError; the priority's allowed id by its default name) and its transitions
+   * with their fields (GET …/transitions?expand=transitions.fields: into the status's category,
+   * one with no required field left to fill in, a screen-less one first; none:
+   * StatusNotAvailableError). Then the fields are PUT and the transition is POSTed, each
+   * confirmed to the ledger as it lands. Jira answers 204: what was sent is what it holds, read as
+   * the sync reads it (a due date is that day, all day).
    */
   protected async applyUpdate(
     session: TrackerWriteSession,
     item: ItemData,
     patch: ProviderPatch,
-  ): Promise<MirroredItemPatch> {
+    ledger: WriteLedger,
+  ): Promise<void> {
     const { site, issueId } = this.#issueOf(item);
-    if (patch.priority === null) throw new ValidationError('priority: a Jira issue always has one');
-    // The lookup comes first: nothing is written when the status can't be reached.
+    const putFields = (['title', 'dueAt', 'priority'] as const).filter(
+      (field) =>
+        (field === 'title' ? patch.title : field === 'dueAt' ? patch.due : patch.priority) !==
+        undefined,
+    );
+    const priorityId =
+      putFields.length === 0
+        ? undefined
+        : await this.#editable(session, site, issueId, item, patch, putFields);
     const transition =
       patch.status === undefined
         ? null
         : await this.#transitionInto(session, site, issueId, patch.status);
-    const confirmed: MirroredItemPatch = {};
-    const body = jiraUpdateBody(patch);
+    const body = jiraUpdateBody(patch, priorityId);
     if (body !== null) {
       this.answerOf(await session.write.updateJiraIssue(site, issueId, session.headers, body));
+      const confirmed: MirroredItemPatch = {};
       if (patch.title !== undefined) confirmed.title = patch.title;
       if (patch.due !== undefined) {
         const due =
@@ -203,6 +234,7 @@ export class JiraIntegration
         confirmed.allDay = due !== null;
       }
       if (patch.priority !== undefined) confirmed.priority = patch.priority;
+      await ledger.confirm(putFields, confirmed);
     }
     if (transition !== null) {
       this.answerOf(
@@ -214,9 +246,42 @@ export class JiraIntegration
         ),
       );
       const status = jiraStatus(transition.category) ?? patch.status ?? 'open';
-      Object.assign(confirmed, this.confirmedStatus(status, transition.to));
+      await ledger.confirm(['status'], this.confirmedStatus(status, transition.to));
     }
-    return confirmed;
+  }
+
+  /**
+   * The issue's edit metadata: each field to PUT must be on its edit screen (FieldNotWritableError
+   * naming ours otherwise), and a priority is sent by the id the issue allows for its default
+   * name (none of that name: FieldNotWritableError). The priority's id, when one is sent.
+   */
+  async #editable(
+    session: TrackerWriteSession,
+    site: JiraSiteChoice,
+    issueId: string,
+    item: ItemData,
+    patch: ProviderPatch,
+    putFields: readonly PutField[],
+  ): Promise<string | undefined> {
+    const { data } = await session.read.getJson<{ fields?: unknown }>(
+      `${site.base}/rest/api/3/issue/${issueId}/editmeta`,
+      session.headers,
+    );
+    const onScreen = asObject(data.fields) ?? {};
+    const openIn = { provider: item.source.provider, url: item.source.url };
+    const missing = putFields.filter((field) => asObject(onScreen[JIRA_FIELD[field]]) === null);
+    if (missing.length > 0) throw new FieldNotWritableError('jira', missing, openIn);
+    if (patch.priority === undefined || patch.priority === null) return undefined;
+    const name = jiraPriorityName(patch.priority)?.toLowerCase();
+    const allowed = asObject(onScreen['priority'])?.['allowedValues'];
+    const match = (Array.isArray(allowed) ? (allowed as unknown[]) : [])
+      .map(asObject)
+      .find((value) => asString(value?.['name'])?.toLowerCase() === name);
+    const id = asString(match?.['id']);
+    if (id === null || !/^[A-Za-z0-9:_-]{1,128}$/.test(id)) {
+      throw new FieldNotWritableError('jira', ['priority'], openIn);
+    }
+    return id;
   }
 
   /**
@@ -238,9 +303,9 @@ export class JiraIntegration
   }
 
   /**
-   * The transition that moves the issue into `status`'s category: those Jira lists as available,
-   * one without a screen (no fields to fill in) first, in Jira's order. StatusNotAvailableError
-   * when there is none (or Jira has no such category: "cancelled").
+   * The transition that moves the issue into `status`'s category: those Jira lists as available
+   * whose screen has no required field left to fill in, one without a screen first, in Jira's
+   * order. StatusNotAvailableError when there is none (or Jira has no such category).
    */
   async #transitionInto(
     session: TrackerWriteSession,
@@ -251,11 +316,13 @@ export class JiraIntegration
     const category = CATEGORY_OF[status];
     if (category === undefined) throw new StatusNotAvailableError('jira', status);
     const { data } = await session.read.getJson<{ transitions?: unknown }>(
-      `${site.base}/rest/api/3/issue/${issueId}/transitions`,
+      `${site.base}/rest/api/3/issue/${issueId}/transitions?expand=transitions.fields`,
       session.headers,
     );
     const listed = Array.isArray(data.transitions) ? (data.transitions as unknown[]) : [];
-    const into = listed.flatMap(transitionOf).filter((entry) => entry.category === category);
+    const into = listed
+      .flatMap(transitionOf)
+      .filter((entry) => entry.category === category && !entry.needsInput);
     const chosen = into.find((entry) => !entry.hasScreen) ?? into[0];
     if (chosen === undefined) throw new StatusNotAvailableError('jira', status);
     return chosen;

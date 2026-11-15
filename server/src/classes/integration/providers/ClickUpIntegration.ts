@@ -13,7 +13,7 @@ import {
   localDateString,
 } from '../../../sync/providers/trackerCommon.js';
 import type { ItemStatus } from '../../../types/domain.js';
-import type { ClickUpConfig, OAuthResource } from '../../../types/integrations.js';
+import type { ClickUpConfig, OAuthResource, WritableField } from '../../../types/integrations.js';
 import type { CreateTarget } from '../../../types/providerCreate.js';
 import type { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
 import type { OAuthAuth } from '../auth/OAuthAuth.js';
@@ -28,6 +28,7 @@ import {
   type PreparedCreate,
   type ProviderPatch,
   type TrackerWriteSession,
+  type WriteLedger,
 } from '../TrackerIntegration.js';
 import { clickupTaskBody, clickupUpdateBody, type CreateFields } from '../writers/trackerWriter.js';
 
@@ -128,21 +129,28 @@ export class ClickUpIntegration
     );
   }
 
+  /** ClickUp's own rule besides the reachable statuses: it has no lowest priority (0). */
+  protected override checkUpdate(item: ItemData, patch: ProviderPatch): void {
+    super.checkUpdate(item, patch);
+    if (patch.priority === 0) {
+      throw new ValidationError('priority: ClickUp has no lowest priority (0), only none');
+    }
+  }
+
   /**
    * A ClickUp task's write-back: the asked status is looked up first among its list's statuses
    * (GET /list/{id}: the first of the matching type, in the list's order; none:
    * StatusNotAvailableError), then the task is PUT (name, status by name, due and start dates,
-   * priority). ClickUp answers with the task: its name and status are what it confirms.
+   * priority) and confirmed to the ledger. ClickUp answers with the task: its name and status are
+   * what it confirms.
    */
   protected async applyUpdate(
     session: TrackerWriteSession,
     item: ItemData,
     patch: ProviderPatch,
-  ): Promise<MirroredItemPatch> {
+    ledger: WriteLedger,
+  ): Promise<void> {
     const taskId = checkedId('clickupTask', item.source.externalId, 'item');
-    if (patch.priority === 0) {
-      throw new ValidationError('priority: ClickUp has no lowest priority (0), only none');
-    }
     const status =
       patch.status === undefined ? undefined : await this.#statusIn(session, item, patch.status);
     const body = clickupUpdateBody(patch, status?.name);
@@ -150,7 +158,11 @@ export class ClickUpIntegration
       await session.write.updateClickupTask(taskId, session.headers, body),
     );
     const confirmed: MirroredItemPatch = {};
-    if (patch.title !== undefined) confirmed.title = asString(record?.['name']) ?? patch.title;
+    const fields: WritableField[] = [];
+    if (patch.title !== undefined) {
+      confirmed.title = asString(record?.['name']) ?? patch.title;
+      fields.push('title');
+    }
     if (patch.status !== undefined && status !== undefined) {
       const answered = asObject(record?.['status']);
       Object.assign(
@@ -160,20 +172,29 @@ export class ClickUpIntegration
           asString(answered?.['status']) ?? status.name,
         ),
       );
+      fields.push('status');
     }
     if (patch.due !== undefined) {
-      // A due date without a time of day is that day, at its end (as the sync reads it).
+      // A due date without a time of day is that day, at its end (as the sync reads it); no due
+      // date is no all-day either.
       confirmed.dueAt =
         patch.due === null
           ? null
           : patch.due.allDay
             ? dateOnlyDueAt(localDateString(patch.due.at, patch.timeZone), patch.timeZone)
             : patch.due.at;
-      if (patch.due !== null) confirmed.allDay = patch.due.allDay;
+      confirmed.allDay = patch.due?.allDay ?? false;
+      fields.push('dueAt');
     }
-    if (patch.startAt !== undefined) confirmed.startAt = patch.startAt;
-    if (patch.priority !== undefined) confirmed.priority = patch.priority;
-    return confirmed;
+    if (patch.startAt !== undefined) {
+      confirmed.startAt = patch.startAt;
+      fields.push('startAt');
+    }
+    if (patch.priority !== undefined) {
+      confirmed.priority = patch.priority;
+      fields.push('priority');
+    }
+    await ledger.confirm(fields, confirmed);
   }
 
   /** The status of the task's list that `status` becomes (StatusNotAvailableError: none). */

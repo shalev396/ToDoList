@@ -15,7 +15,7 @@ import {
   localDateString,
 } from '../../../sync/providers/trackerCommon.js';
 import type { ItemStatus } from '../../../types/domain.js';
-import type { EmptyConfig } from '../../../types/integrations.js';
+import type { EmptyConfig, WritableField } from '../../../types/integrations.js';
 import type { CreateTarget } from '../../../types/providerCreate.js';
 import type { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
 import type { OAuthAuth } from '../auth/OAuthAuth.js';
@@ -27,6 +27,7 @@ import {
   type PreparedCreate,
   type ProviderPatch,
   type TrackerWriteSession,
+  type WriteLedger,
 } from '../TrackerIntegration.js';
 import {
   linearIssueInput,
@@ -161,21 +162,28 @@ export class LinearIntegration
     });
   }
 
+  /** Linear's own rule besides the reachable statuses: its 0 is "none", so no lowest (0). */
+  protected override checkUpdate(item: ItemData, patch: ProviderPatch): void {
+    super.checkUpdate(item, patch);
+    if (patch.priority === 0) {
+      throw new ValidationError('priority: Linear has no lowest priority (0), only none');
+    }
+  }
+
   /**
    * A Linear issue's write-back: the asked status is looked up first among its team's workflow
    * states (the `IssueTeamStates` query: the first of the matching type, by position; none:
    * StatusNotAvailableError), then the `issueUpdate` mutation is sent (title, state, due date,
-   * priority). Linear answers with the issue: its title and state are what it confirms.
+   * priority) and confirmed to the ledger. Linear answers with the issue: its title and state are
+   * what it confirms.
    */
   protected async applyUpdate(
     session: TrackerWriteSession,
     item: ItemData,
     patch: ProviderPatch,
-  ): Promise<MirroredItemPatch> {
+    ledger: WriteLedger,
+  ): Promise<void> {
     const issueId = checkedId('linearId', item.source.externalId, 'item');
-    if (patch.priority === 0) {
-      throw new ValidationError('priority: Linear has no lowest priority (0), only none');
-    }
     const state =
       patch.status === undefined ? undefined : await this.#stateFor(session, issueId, patch.status);
     const input = linearUpdateInput(patch, state?.id);
@@ -183,7 +191,11 @@ export class LinearIntegration
       await session.write.updateLinearIssue(session.headers, issueId, input),
     );
     const confirmed: MirroredItemPatch = {};
-    if (patch.title !== undefined) confirmed.title = asString(record?.['title']) ?? patch.title;
+    const fields: WritableField[] = [];
+    if (patch.title !== undefined) {
+      confirmed.title = asString(record?.['title']) ?? patch.title;
+      fields.push('title');
+    }
     if (patch.status !== undefined && state !== undefined) {
       const answered = asObject(record?.['state']);
       Object.assign(
@@ -193,6 +205,7 @@ export class LinearIntegration
           asString(answered?.['name']) ?? state.name,
         ),
       );
+      fields.push('status');
     }
     if (patch.due !== undefined) {
       const due =
@@ -201,9 +214,13 @@ export class LinearIntegration
           : dateOnlyDueAt(localDateString(patch.due.at, patch.timeZone), patch.timeZone);
       confirmed.dueAt = due;
       confirmed.allDay = due !== null;
+      fields.push('dueAt');
     }
-    if (patch.priority !== undefined) confirmed.priority = patch.priority;
-    return confirmed;
+    if (patch.priority !== undefined) {
+      confirmed.priority = patch.priority;
+      fields.push('priority');
+    }
+    await ledger.confirm(fields, confirmed);
   }
 
   /** The workflow state of the issue's team that `status` becomes (StatusNotAvailableError: none). */
