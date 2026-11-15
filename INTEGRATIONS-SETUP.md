@@ -187,6 +187,16 @@ Shows as "coming soon". Nothing to set up and no secret. Moodle has no OAuth app
 
 The code uses a **GitHub App**, not an OAuth App: `server/src/services/oauth/providers.ts` sends **no scopes** (the app's permissions decide), uses PKCE S256, and expects an 8-hour access token with a rotating refresh token.
 
+**Done (2026-11-15),** on the personal account `shalev396` (no organization):
+
+| Stage | App name           | Slug (`GITHUB_APP_SLUG`) |
+| ----- | ------------------ | ------------------------ |
+| dev   | ToDoList-Dev       | `todolist-dev`           |
+| qa    | ToDoList-QA        | `todolist-qa`            |
+| prod  | TodoList-shalev396 | `todolist-shalev396`     |
+
+Each app has the permissions below, Any account, webhook off, expiring user tokens, "request user authorization during installation", and the TodoList logo. Its keys are in its stage's secret. Prod is not plain "TodoList": GitHub reserves both "TodoList" and "TodoList App" for existing accounts. Each app has one private key, because GitHub requires one before anyone can install the app. The code never uses it, so its downloaded copy was deleted; generate a new one in the app's Credentials page if one is ever needed. Changing an app's permissions later makes every installation re-approve.
+
 **Console:** <https://github.com/settings/apps/new> (personal account; no org needed). App type: **GitHub App**.
 
 Per stage:
@@ -221,6 +231,17 @@ Per stage:
 
 Scopes the code requests (`providers.ts`): `read:jira-work`, `read:jira-user`, `read:me`, `offline_access`. Later, when a user turns on creating to-dos in Jira, a second consent adds `write:jira-work`. Also sent: `audience=api.atlassian.com`, `prompt=consent`. No PKCE; token requests are JSON.
 
+**Done (2026-11-15),** in the developer console of shalev396@gmail.com (no Developer Space was needed): **ToDoList-Dev**, **ToDoList-QA** and **TodoList** (prod). Each has:
+
+- Access type **Resource-level** (the user picks one site);
+- Jira API classic scopes `read:jira-work`, `read:jira-user`, `write:jira-work`, and User identity API `read:me`;
+- one callback URL;
+- Distribution **Sharing with anyone**: vendor "TodoList", the prod privacy and terms URLs, and support contact shalev396@gmail.com;
+- the logo and a description;
+- its keys in its stage's secret.
+
+**Personal data (to do):** Distribution declares that the app stores personal data, and the box "I confirm that I've implemented the Personal Data Reporting API" is ticked. That API is **not built yet**: see `ATLASSIAN-PERSONAL-DATA.md`, required before real Jira users on prod. **Atlassian review** is optional (unreviewed shared apps show users a warning); we should request it for the prod app once that work ships.
+
 **Console:** <https://developer.atlassian.com/console/myapps/>. App type: **OAuth 2.0 integration**. Prerequisite: an Atlassian account only (no Jira site).
 
 Per stage:
@@ -254,7 +275,9 @@ Per stage:
 
 No scopes (ClickUp has none; the app can do what the user can in the chosen Workspaces). No PKCE, no refresh: the token currently does not expire (the docs say that may change). Callback: one URL per app is the minimum; the docs do not state a maximum.
 
-**Console:** ClickUp, avatar (top right), **Settings, Apps, Create new app** (<https://app.clickup.com/settings/apps>). Prerequisite: Workspace **Owner or Admin**. App type: OAuth app.
+**Done (2026-11-15),** in workspace **Shalev396** (shalev396@gmail.com, Owner; not the TLVTech workspace): **ToDoList-Dev**, **ToDoList-QA**, and **TodoList-shalev396** (prod; ClickUp app names are unique across ClickUp and "TodoList" is taken). Their keys are in the stage secrets.
+
+**Console (as of 2026-11-15):** Settings, Integrations & ClickApps, **ClickUp API**, then the second tab **"ClickUp API Settings"**, OAuth apps, **Create** (`https://app.clickup.com/<workspace id>/settings/team/<workspace id>/clickup-api/settings`). The docs' "Settings, Apps, Create new app" path now lands on the API tokens tab. Prerequisite: Workspace **Owner or Admin**. App type: OAuth app. The form has only a name and redirect URLs: **no logo and no description**. ClickUp saves the redirect as the **domain only** (e.g. `https://dev.todolist.shalev396.com`) and accepts any path on it, so the callback below works.
 
 Per stage:
 
@@ -282,6 +305,8 @@ Per stage:
 ## 6. Linear
 
 Scopes the code requests: `read` (comma separated in the URL). Later consent adds `issues:create` when a user turns on creating to-dos in Linear. PKCE S256. The grant must carry a refresh token.
+
+**Done (2026-11-15),** in workspace **shalev396** (shalev396@gmail.com is its only admin, so Linear's "dedicated workspace" advice isn't needed yet): **ToDoList-Dev**, **ToDoList-QA**, **TodoList** (prod). Each has developer name "TodoList", developer URL `https://todolist.shalev396.com`, a description, the logo, one callback URL, **Public** on ("Publicly available"), and client credentials and webhooks off. Their keys are in the stage secrets. The form had no refresh-token switch: new apps rotate refresh tokens by default. If you ever add another admin to that workspace, they get access to these apps: move the apps to a dedicated workspace first.
 
 **Console:** <https://linear.app/settings/api/applications/new>. Prerequisite: a Linear workspace where you are admin. Linear recommends a **dedicated workspace** for the apps, since every admin of that workspace gets access to them. App type: OAuth application.
 
