@@ -156,9 +156,13 @@ def test_mirrored_item_edits_follow_its_connection(
     start = form.locator("[data-edit-field=startAt]")
     expect(start).to_have_attribute("data-origin", "override")
     expect(start.locator("[data-only-here]")).to_contain_text("Only in TodoList")
+    # Nothing here goes to Jira, so the footer never promises it (and never claims it happened).
+    expect(form.locator("[data-sends-to]")).to_have_count(0)
+    expect(sheet.get_by_text("Saved to Jira too.")).to_have_count(0)
     start.locator("input[type=date]").fill("2027-01-04")
     form.locator("[data-item-edit-save]").click()
     expect(edit.locator("[data-save-status=saved]")).to_be_visible(timeout=NORMAL_TIMEOUT)
+    expect(edit.locator("[data-sent-fields]")).to_have_count(0)
     stored = next(i for i in list_items(api_base_url, owner, demo["id"], provider="jira") if i["id"] == item["id"])
     assert stored["overlay"]["overrides"]["startAt"], "the start is kept as an override"
 
@@ -193,6 +197,10 @@ def test_new_todo_repeat_needs_the_workspace_calendar(
     page.get_by_role("option", name=re.compile(r"^Weekly")).click()
     # 1 Dec 2026 is a Tuesday: the rule starts on its day; another day can be added.
     expect(sheet.locator("[data-weekday]")).to_have_count(7)
+    expect(sheet.locator("[data-weekday=TU]")).to_have_attribute("aria-pressed", "true")
+    # Google counts the first event, so the due date's day can't be unticked.
+    expect(sheet.locator("[data-weekday=TU]")).to_have_attribute("aria-disabled", "true")
+    sheet.locator("[data-weekday=TU]").click()
     expect(sheet.locator("[data-weekday=TU]")).to_have_attribute("aria-pressed", "true")
     sheet.locator("[data-weekday=TH]").click()
     expect(sheet.get_by_label("Repeat", exact=True)).to_have_text("Weekly on Tuesday and Thursday")
