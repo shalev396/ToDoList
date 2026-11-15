@@ -187,7 +187,8 @@ export interface ItemDetail extends ItemSummary {
  *   (409 `integration_read_only`); an event with other guests needs `notifyGuests` (409
  *   `event_has_guests`);
  * - the fields its provider lacks (`editing.overridableFields`) are kept here as overrides, by any
- *   editor who sees it (null, or the provider's own value, clears one; an `allDay` kept here is a
+ *   editor who sees it (null, or the provider's own value, clears one, `title` and `status` too; null on a
+ *   provider field or on a local to-do is 400; an `allDay` kept here is a
  *   due date's, for an item without a start: one with a start, an event, keeps its own form: 400);
  * - anything else (`note`, `topicId`, `containerId`, an `endAt` the provider doesn't take) is
  *   edited at its source: 409 `{message, openIn}`.
@@ -195,7 +196,8 @@ export interface ItemDetail extends ItemSummary {
  * `refused`, `uncertain`, as the code has them).
  */
 export interface UpdateItemRequestBody {
-  title?: string;
+  /** null clears a title override of a mirrored item (400 on a provider title or a to-do). */
+  title?: string | null;
   note?: string | null;
   dueAt?: string | null;
   /** With `dueAt` (or, on an event, with `startAt` and `endAt`): it has no time of day. */
@@ -206,7 +208,8 @@ export interface UpdateItemRequestBody {
   topicId?: string | null;
   containerId?: string | null;
   priority?: number | null;
-  status?: ItemStatus;
+  /** null clears a status override of a mirrored item (400 on a provider status or a to-do). */
+  status?: ItemStatus | null;
   /** A calendar event with other guests: whether Google tells them about the change. */
   notifyGuests?: boolean;
 }

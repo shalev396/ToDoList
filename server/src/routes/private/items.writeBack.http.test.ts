@@ -355,6 +355,78 @@ describe('the provider half: its integration’s owner, read & write', () => {
     assert.deepEqual(lines(), []);
     assert.equal(data(start)['startAt'], DUE);
   });
+
+  it('a refused or unanswered provider write has a code, its message unchanged', async () => {
+    const cases: { status: number; http: number; code: string; message: string }[] = [
+      {
+        status: 401,
+        http: 409,
+        code: 'provider_refused',
+        message: 'github refused the connection: reconnect it',
+      },
+      {
+        status: 403,
+        http: 409,
+        code: 'provider_refused',
+        message: 'github refused this change: the connection may not make it',
+      },
+      {
+        status: 502,
+        http: 502,
+        code: 'provider_no_answer',
+        // A 5xx answer carries its code, never its text.
+        message: 'Internal server error',
+      },
+    ];
+    for (const refusal of cases) {
+      routes = [];
+      on('PATCH', ISSUE_URL, json(refusal.status, { message: 'nope' }));
+      const res = await call('owner', 'PATCH', `/items/${issueId}`, { title: 'Refused title' });
+      assert.equal(res.status, refusal.http, res.text);
+      assert.equal(res.body?.['code'], refusal.code, res.text);
+      assert.equal(res.body['message'], refusal.message);
+    }
+  });
+
+  it('a lookup refused before a Jira write-back is provider_refused too', async () => {
+    const issue = `${JIRA_SITE}/rest/api/3/issue/10500`;
+    on('GET', `${issue}/editmeta`, json(401, { message: 'no' }));
+    const res = await call('owner', 'PATCH', `/items/${jiraItemId}`, { title: 'Lookup refused' });
+    assert.equal(res.status, 409, res.text);
+    assert.equal(res.body?.['code'], 'provider_refused', res.text);
+    assert.equal(res.body['message'], 'jira refused the connection: reconnect it');
+  });
+
+  it('a partial write still keeps the local half beside what the provider took', async () => {
+    const issue = `${JIRA_SITE}/rest/api/3/issue/10500`;
+    sent.length = 0;
+    routes = [];
+    on(
+      'GET',
+      `${issue}/editmeta`,
+      json(200, { fields: { summary: {}, duedate: {}, priority: { allowedValues: [] } } }),
+    );
+    on(
+      'GET',
+      `${issue}/transitions?expand=transitions.fields`,
+      json(200, {
+        transitions: [{ id: '31', name: 'Finish', to: { statusCategory: { key: 'done' } } }],
+      }),
+    );
+    on('PUT', issue, json(204));
+    on('POST', `${issue}/transitions`, json(400, { errorMessages: ['A validator failed'] }));
+    const mixed = await call('owner', 'PATCH', `/items/${jiraItemId}`, {
+      title: 'Ship the report, twice',
+      status: 'done',
+      startAt: LATER,
+    });
+    assert.equal(mixed.status, 409, mixed.text);
+    assert.equal(mixed.body?.['code'], 'provider_partial_write');
+    const after = data(await call('owner', 'GET', `/items/${jiraItemId}`));
+    assert.equal(after['title'], 'Ship the report, twice');
+    assert.equal(after['startAt'], LATER, 'the local half was kept');
+    assert.notEqual(after['status'], 'done');
+  });
 });
 
 describe('the local half and the effective values on every read', () => {
@@ -661,6 +733,29 @@ describe('fix round 1: who may, what never widens, and the edges', () => {
     }
   });
 
+  it('null clears a title or status override; a provider field or a to-do refuses null (400)', async () => {
+    await call('other', 'PATCH', `/items/${prId}`, { title: 'My name', status: 'done' });
+    const cleared = await call('other', 'PATCH', `/items/${prId}`, { title: null, status: null });
+    assert.equal(cleared.status, 200, cleared.text);
+    assert.deepEqual(
+      [overrides(data(cleared))['title'], overrides(data(cleared))['status']],
+      [null, null],
+    );
+    assert.equal(data(cleared)['title'], 'Fix the crash');
+    assert.equal(data(cleared)['status'], 'open');
+    const provider = await call('owner', 'PATCH', `/items/${jiraItemId}`, { title: null });
+    assert.equal(provider.status, 400, provider.text);
+    assert.match(String(provider.body?.['message']), /title: a provider field can't be cleared/);
+    const status = await call('owner', 'PATCH', `/items/${jiraItemId}`, { status: null });
+    assert.equal(status.status, 400, status.text);
+    assert.deepEqual(lines(), []);
+    const todo = data(await call('owner', 'POST', '/items', { title: 'A local to-do' }));
+    for (const body of [{ title: null }, { status: null }]) {
+      const res = await call('owner', 'PATCH', `/items/${String(todo['id'])}`, body);
+      assert.equal(res.status, 400, res.text);
+    }
+  });
+
   it('the item list’s text search finds a title override', async () => {
     await (
       await models.getItemRepository()
@@ -688,6 +783,27 @@ describe('fix round 1: who may, what never widens, and the edges', () => {
     assert.equal(refused.status, 409, refused.text);
     assert.equal(refused.body?.['code'], 'scope_missing');
     assert.deepEqual(lines(), []);
+  });
+
+  it('after a reconnect that carries the write scope, the item can be written to', async () => {
+    const { Integration } = await import('../../classes/integration/index.js');
+    const { callerFor } = await import('../../testing/workspaceFixtures.js');
+    const owner = await callerFor(wid, ids.owner);
+    await Integration.connectOAuth(owner, {
+      provider: 'linear',
+      accountId: 'wb-linear-oauth',
+      label: 'Linear',
+      config: {},
+      topicSlug: 'personal',
+      secret: { accessToken: 'FAKE-linear-access-2', refreshToken: 'FAKE-linear-refresh-2' },
+      scopes: ['read', 'write'],
+      reconnectIntegrationId: linearId,
+    });
+    const editing = data(await call('owner', 'GET', `/items/${linearItemId}`))['editing'] as Json;
+    assert.deepEqual(
+      [editing['needsReconnect'], editing['canWriteProvider'], editing['mode']],
+      [false, true, 'read_write'],
+    );
   });
 
   it('MCP update_todo writes to a provider only with providers:create and confirm', async () => {

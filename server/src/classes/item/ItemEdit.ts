@@ -17,7 +17,8 @@ import type { OverridesPatch } from './Overrides.js';
 
 /** An edit as callers give it: every field optional (an absent one does not change). */
 export interface ItemEditInput {
-  title?: string;
+  /** null clears an override of it (a mirrored item whose provider lacks it); else 400. */
+  title?: string | null;
   /** A to-do's note (its preview text); null clears it. */
   note?: string | null;
   /** null clears it. */
@@ -30,7 +31,8 @@ export interface ItemEditInput {
   topicId?: string | null;
   containerId?: string | null;
   priority?: number | null;
-  status?: ItemStatus;
+  /** null clears an override of it (a mirrored item whose provider lacks it); else 400. */
+  status?: ItemStatus | null;
   /** A calendar event with other guests: whether Google tells them (not a field). */
   notifyGuests?: boolean;
 }
@@ -122,8 +124,12 @@ export class ItemEdit {
   /** A to-do's own fields: the edit as stored (`closedAt` follows a status change). */
   localPatch(now: Date = new Date()): LocalItemPatch {
     const input = this.#input;
+    for (const field of ['title', 'status'] as const) {
+      if (input[field] === null)
+        throw new ValidationError(`${field}: a to-do's ${field} can't be cleared`);
+    }
     return {
-      ...(input.title === undefined ? {} : { title: input.title }),
+      ...(input.title === undefined || input.title === null ? {} : { title: input.title }),
       ...(input.note === undefined ? {} : { bodyPreview: input.note }),
       ...(input.dueAt === undefined ? {} : { dueAt: input.dueAt }),
       ...(input.allDay === undefined ? {} : { allDay: input.allDay }),
@@ -132,7 +138,7 @@ export class ItemEdit {
       ...(input.topicId === undefined ? {} : { topicId: input.topicId }),
       ...(input.containerId === undefined ? {} : { containerId: input.containerId }),
       ...(input.priority === undefined ? {} : { priority: input.priority }),
-      ...(input.status === undefined
+      ...(input.status === undefined || input.status === null
         ? {}
         : { status: input.status, closedAt: closedAtFor(input.status, now) }),
     };
@@ -152,6 +158,9 @@ export class ItemEdit {
     for (const field of PROVIDER_CANDIDATES) {
       if (input[field] === undefined) continue;
       if (writable.includes(field)) {
+        if (input[field] === null && (field === 'title' || field === 'status')) {
+          throw new ValidationError(`${field}: a provider field can't be cleared`);
+        }
         Object.assign(provider, { [field]: input[field] });
       } else if ((OVERRIDABLE_FIELDS as readonly string[]).includes(field)) {
         Object.assign(overrides, { [field as OverridableField]: input[field] });

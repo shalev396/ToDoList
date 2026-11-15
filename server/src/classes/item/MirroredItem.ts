@@ -25,6 +25,7 @@ import { TopicRules } from '../workspace/TopicRules.js';
 import { IntegrationNotOwnerError } from '../../errors/IntegrationNotOwnerError.js';
 import { MirroredItemError } from '../../errors/MirroredItemError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
+import { ProviderPartialWriteError } from '../../errors/ProviderPartialWriteError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { ItemData, ItemOverrides, ItemUpsert } from '../../models/definitions/Item.js';
@@ -136,7 +137,19 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
     const written = Object.keys(provider);
     if (written.length > 0) {
       const integration = await this.#ownIntegration(caller);
-      await this.writeBack(caller, integration, provider, edit.notifyGuests);
+      try {
+        await this.writeBack(caller, integration, provider, edit.notifyGuests);
+      } catch (error) {
+        // Part of it reached the provider (and is kept): the local half is kept too, then the
+        // caller is told. A refusal or no answer wrote nothing, so nothing is kept.
+        if (error instanceof ProviderPartialWriteError) {
+          this.#clearStale(overrides, error.written);
+          if (Object.keys(overrides).length > 0) {
+            await this.storeOverlay({ overrides, editedAt: new Date() });
+          }
+        }
+        throw error;
+      }
       this.#clearStale(overrides, written);
     }
     // 5. The local half.

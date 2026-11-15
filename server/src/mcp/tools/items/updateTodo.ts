@@ -28,7 +28,7 @@ export const updateTodo = defineTool({
   inputSchema: z
     .strictObject({
       id: ItemId,
-      title: field.title,
+      title: field.title.unwrap().unwrap().optional(),
       note: field.note,
       dueAt: field.dueAt,
       allDay: field.allDay,
@@ -37,7 +37,7 @@ export const updateTodo = defineTool({
       topic: TopicRef.nullable().optional(),
       containerId: field.containerId,
       priority: field.priority,
-      status: field.status,
+      status: field.status.unwrap().unwrap().optional(),
       notifyGuests: field.notifyGuests,
       confirm: confirmField.describe(
         'true writes the provider fields to the provider; without it, an edit that would is refused',

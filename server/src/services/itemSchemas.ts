@@ -42,7 +42,7 @@ export const CreateItemBody = z.strictObject({
 
 export const UpdateItemBody = z
   .strictObject({
-    title: Title.optional(),
+    title: Title.nullable().optional(),
     note: Note.nullable().optional(),
     dueAt: Iso.nullable().optional(),
     /** With dueAt (or an event's startAt and endAt): no time of day. */
@@ -52,7 +52,7 @@ export const UpdateItemBody = z
     topicId: Id.nullable().optional(),
     containerId: Id.nullable().optional(),
     priority: Priority.nullable().optional(),
-    status: z.enum(ITEM_STATUSES).optional(),
+    status: z.enum(ITEM_STATUSES).nullable().optional(),
     /** A calendar event with other guests: whether Google tells them about the change. */
     notifyGuests: z.boolean().optional(),
   })
