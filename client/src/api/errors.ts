@@ -61,6 +61,8 @@ export const ERROR_CODE_KEYS: Readonly<Record<ErrorCode, string>> = {
   oauth_limit: 'errors.codes.oauthLimit',
   oauth_failed: 'errors.codes.oauthFailed',
   scope_not_allowed: 'errors.codes.scopeNotAllowed',
+  request_expired: 'errors.codes.requestExpired',
+  agent_key_cap: 'errors.codes.agentKeyCap',
 };
 
 /**

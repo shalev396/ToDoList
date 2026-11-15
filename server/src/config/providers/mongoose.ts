@@ -43,6 +43,7 @@ async function registerModels(): Promise<void> {
   await import('../../models/mongoose/Topic.js');
   await import('../../models/mongoose/AgentKey.js');
   await import('../../models/mongoose/McpClient.js');
+  await import('../../models/mongoose/McpAuthRequest.js');
   await import('../../models/mongoose/CalendarLink.js');
   await import('../../models/mongoose/ReplayNonce.js');
   await import('../../models/mongoose/CreateQuota.js');

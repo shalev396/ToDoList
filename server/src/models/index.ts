@@ -2,6 +2,10 @@ import type { IUserRepository } from './definitions/User.js';
 import type { IMediaRepository } from './definitions/Media.js';
 import { AGENT_KEY_TABLE_NAME, type IAgentKeyRepository } from './definitions/AgentKey.js';
 import { MCP_CLIENT_TABLE_NAME, type IMcpClientRepository } from './definitions/McpClient.js';
+import {
+  MCP_AUTH_REQUEST_TABLE_NAME,
+  type IMcpAuthRequestRepository,
+} from './definitions/McpAuthRequest.js';
 import { AUDIT_LOG_TABLE_NAME, type IAuditLogRepository } from './definitions/AuditLog.js';
 import {
   CALENDAR_LINK_TABLE_NAME,
@@ -50,6 +54,10 @@ export type { ViewData, IViewRepository } from './definitions/View.js';
 export type { TopicData, ITopicRepository } from './definitions/Topic.js';
 export type { AgentKeyData, IAgentKeyRepository } from './definitions/AgentKey.js';
 export type { McpClientData, IMcpClientRepository } from './definitions/McpClient.js';
+export type {
+  McpAuthRequestData,
+  IMcpAuthRequestRepository,
+} from './definitions/McpAuthRequest.js';
 export type { CalendarLinkData, ICalendarLinkRepository } from './definitions/CalendarLink.js';
 export type { IReplayNonceRepository } from './definitions/ReplayNonce.js';
 export type { OAuthStateData, IOAuthStateRepository } from './definitions/OAuthState.js';
@@ -181,6 +189,11 @@ export const getAgentKeyRepository = mongoOnly<IAgentKeyRepository>(
 export const getMcpClientRepository = mongoOnly<IMcpClientRepository>(
   MCP_CLIENT_TABLE_NAME,
   async () => (await import('./mongoose/McpClient.js')).McpClientRepository,
+);
+
+export const getMcpAuthRequestRepository = mongoOnly<IMcpAuthRequestRepository>(
+  MCP_AUTH_REQUEST_TABLE_NAME,
+  async () => (await import('./mongoose/McpAuthRequest.js')).McpAuthRequestRepository,
 );
 
 export const getCalendarLinkRepository = mongoOnly<ICalendarLinkRepository>(

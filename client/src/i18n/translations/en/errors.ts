@@ -66,6 +66,8 @@ export const errors = {
     oauthLimit: 'You, or this workspace, have the most connections allowed. Disconnect one first.',
     oauthFailed: 'Google Calendar couldn’t be connected. Try again.',
     scopeNotAllowed: 'Your role can’t give an agent that access. Choose fewer permissions.',
+    requestExpired: 'This sign-in expired. Go back to your agent and connect again.',
+    agentKeyCap: 'You have the maximum number of agents here. Revoke one in Agent keys first.',
   },
   generic: 'Something went wrong. Try again in a moment.',
   status: {

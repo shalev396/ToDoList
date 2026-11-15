@@ -89,6 +89,10 @@ export const ERROR_CODES = [
   'oauth_failed',
   /** A member asked for an agent-key scope their role does not permit. */
   'scope_not_allowed',
+  /** An MCP sign-in request is unknown, expired, or already answered. */
+  'request_expired',
+  /** The member already holds the most agents allowed in this workspace. */
+  'agent_key_cap',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
