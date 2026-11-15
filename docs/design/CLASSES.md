@@ -22,7 +22,7 @@ It is updated every phase.
 | PC    | The calendar phase: the workspace's `PrimaryCalendar` (value object in `WorkspaceSettings`, `PrimaryCalendarStatus`), the fixed push rule, `PlannedAt`, a pushed event deleted with its to-do, "Also remove everything TodoList added" (`AddedContentRemover`), block connector scopes | **built** |
 | 4a    | Server: the `Item` hierarchy (`Todo`, `MirroredItem`, `TaskItem`, `PullRequest`, `CalendarEvent`), `Container`, `ItemQuery`, `QueryTarget`, `ProviderFields`, `CreateQuota`, `TodoCopy`; overlay overrides and effective values; the split edit; recurring to-dos                      | **built** |
 | 4b    | Client: the item sheet's editing and hints, the Repeat control, copy fixes; server: the primary calendar is always read, `ItemDetail.sourceValues`                                                                                                                                     | **built** |
-| 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                                                                                              | planned   |
+| 5     | `SyncRun` state machine, `SyncCursor`/`SyncCursors`, `Integration.sync()` (template method) with `SyncEngine`, `Calendar` + `PushPlan` + `PushCommit`; the dispatcher, worker and purge on the classes                                                                                 | **built** |
 | 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                                                                                                    | planned   |
 | 7     | The legacy list emptied, dead services deleted                                                                                                                                                                                                                                         | planned   |
 
@@ -36,7 +36,8 @@ It is updated every phase.
   `local.ts`, `stageMaintenance.ts`);
 - the test helpers production code never loads (`src/testing/**`, `__tests__/**`);
 - `LEGACY_DB_IMPORTERS`, the modules that still reach the database until their phase moves them
-  (15 after phase 4a; 20 after phase 3; 23 after phase 2a; 24 after phase 1; 35 after phase 0, down from 42).
+  (6 after phase 5; 15 after phase 4a; 20 after phase 3; 23 after phase 2a; 24 after phase 1; 35
+  after phase 0, down from 42).
 
 ESLint (`@typescript-eslint/no-restricted-imports`, type imports allowed) and
 `src/classes/classBoundary.test.ts` (which also resolves paths, sees dynamic imports and names
@@ -412,6 +413,7 @@ classDiagram
     +saveCredential(caller, body) Promise
     +testConnection(caller) Promise
     +requestSync(caller) Promise
+    +sync(workspace, options) Promise~SyncRunSummary~
     +stopSharing(caller) Promise
     +disconnect(caller) Promise
     +assertWritable(caller)
@@ -436,6 +438,7 @@ classDiagram
     +connectWithKey(caller, input)$ Integration
     +connectOAuth(caller, conn)$ ConnectedIntegration
     +forWorker(id)$ Integration
+    +runSync(id, options)$ Promise~SyncRunSummary~
     +listForDispatch()$ Integration[]
     +disconnectAllOf(workspaceId, actor, member)$ number
     +withSyncSecret(id, fn)$ Promise
@@ -889,7 +892,7 @@ What the tests hold:
 - **Capabilities to the client**: `GET …/oauth/providers` adds `capabilities[]` from
   `Integration.capabilitiesOf()` (auth methods, picker, revoke on disconnect, revoke page, can
   create, coming soon); the Integrations page reads them instead of its lists.
-- **`Integration`'s collaborators**: `IntegrationConnector`, `ConnectionTester`, `SyncRequest`.
+- **`Integration`'s collaborators**: `IntegrationConnector`, `ConnectionTester`, `SyncRequest`, and (phase 5) `SyncEngine`, the body of `Integration#sync`.
   They get the protected members they need as functions; the credential never leaves
   `Integration.ts`. `toStatusView` is gone (`toView`).
 
@@ -1131,22 +1134,42 @@ classDiagram
   CalendarEvent ..> CreateQuota
 
   class Calendar {
-    +plan()
-    +push()
-    +commit()
+    one target Google calendar
+    +primaryFor(integration)$ Calendar
+    +of(integration, calendarId)$ Calendar
+    +cursor() SyncCursor
+    +plan(now, narrowing?, budget?) PushPlan
+    +commit(input, now) CommitCounts
   }
   WorkspaceEntity <|-- Calendar
-  class CalendarLink
+  class CalendarLink {
+    +isOwnLive(link)$ boolean
+    +isPushedByTodoList: boolean
+  }
   SoftDeletable <|.. CalendarLink
   Calendar *-- CalendarLink
+  class CalendarLinks {
+    +in(workspaceId)$ CalendarLinks
+    +onItemDeleted(itemId) number
+  }
   class SyncCursor {
     <<value object>>
   }
   class PushPlan {
     <<value object>>
+    +ops
+    +calendarId
+    +dailyCapReached
+    +toDryRun()
+  }
+  class PushCommit {
+    method object
+    +apply(integration, input, now, pushedTo?)$ CommitCounts
   }
   Calendar *-- SyncCursor
   Calendar *-- PushPlan
+  Calendar ..> PushCommit : commit
+  PushCommit ..> SyncRun : succeed
   class AttributeValues {
     <<value object>>
   }
@@ -1229,9 +1252,12 @@ classDiagram
   class Copies:::built
   class PlannedAt:::built
   class CalendarLink:::built
-  class Calendar:::planned
-  class SyncCursor:::planned
-  class PushPlan:::planned
+  class CalendarLinks:::built
+  class Calendar:::built
+  class SyncCursor:::built
+  class PushPlan:::built
+  class PushCommit:::built
+  class SyncRun:::built
   class AttributeValues:::planned
 ```
 
@@ -1671,17 +1697,81 @@ classDiagram
   }
   class SyncRun {
     <<state machine>>
-    -status
-    +start()
-    +succeed(counts)
-    +fail(reason)
-    +cancel()
+    -set status(next)
+    +queue(owner, trigger)$ SyncRun
+    +begin(owner, trigger, at)$ SyncRun
+    +skipNew(owner, trigger, at, error, counts)$ SyncRun
+    +request(caller, integration, trigger)$ SyncRun
+    +claim(owner, runId)$ SyncRun
+    +list(caller, owners, limit)$ SyncRun[]
+    +get(caller, runId)$ SyncRun
+    +listRunningStartedBefore(before, limit)$ SyncRun[]
+    +reapStuck(now, staleAfterMs, limit)$ SyncRun[]
+    +start(at)
+    +retry(at)
+    +skip(at, error, counts)
+    +succeed(results, outcome)
+    +fail(error, at, results?)
+    +cancel(error, at, results?) boolean
+    +toView() SyncRunView
   }
   WorkspaceEntity <|-- SyncRun
+  class Auditable {
+    <<interface>>
+  }
+  class Viewable~TView~ {
+    <<interface>>
+  }
+  Auditable <|.. SyncRun
+  Viewable <|.. SyncRun
   class SyncCursor {
     <<value object>>
+    +none$
+    +of(state)$ SyncCursor
+    +isFullSyncDue(now, interval) boolean
+    +toState() SyncStateData
+    +equals(other) boolean
   }
-  SyncRun ..> SyncCursor
+  class SyncCursors {
+    +RUN$ = '__run__'
+    +of(integration)$ SyncCursors
+    +get(resource) SyncCursor
+    +save(resource, patch) SyncCursor
+    +countFailedRun(runId) number
+    +resetFailures()
+  }
+  SyncCursors ..> SyncCursor
+  class SyncEngine {
+    method object: one run
+    +openRun(integration, options, now)$ SyncRun
+    +skipHeld(integration, options, now, code)$
+    +endRunOfGone(id, found, runId, now)$
+    +deleteWritesOf(integration, at)$
+    +execute() SyncRunSummary
+    +abandon(thrown)
+  }
+  class SyncTarget {
+    <<interface>>
+    +data
+    +adapter: ProviderAdapter
+    +reload()
+    +recordSyncResult(result)
+  }
+  class Integration {
+    <<abstract>>
+    +sync(workspace, options)
+    +runSync(id, options)$
+  }
+  Integration ..> SyncEngine : sync() template
+  SyncEngine ..> SyncTarget
+  SyncEngine ..> SyncRun
+  SyncEngine ..> SyncCursors
+  SyncEngine ..> Item : upsertSynced, sweeps
+  SyncEngine ..> Container : upsertSynced, sweeps
+  class Item {
+    <<abstract>>
+  }
+  class Container
   class AgentKey {
     +authenticate(raw)$ AgentKey
     +scopes: ScopeSet
@@ -1735,8 +1825,15 @@ classDiagram
   class Expirable:::built
   class Revocable:::built
   class Auditable:::built
-  class SyncRun:::planned
-  class SyncCursor:::planned
+  class Viewable:::built
+  class SyncRun:::built
+  class SyncCursor:::built
+  class SyncCursors:::built
+  class SyncEngine:::built
+  class SyncTarget:::built
+  class Integration:::built
+  class Item:::built
+  class Container:::built
   class AgentKey:::planned
   class ScopeSet:::planned
   class ConnectLink:::planned
@@ -1749,6 +1846,58 @@ classDiagram
 
 The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
 SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
+
+## What phase 5 built (sync, the dispatchers and the calendar push)
+
+- **`SyncRun`** (`classes/sync/SyncRun.ts`) is the only code that reads or writes runs, and a
+  state machine. Its status changes only through its transitions and a private `#status` setter
+  that refuses any edge the machine doesn't have (`IllegalSyncRunTransitionError`):
+
+  | Transition                               | From                                    | To                        |
+  | ---------------------------------------- | --------------------------------------- | ------------------------- |
+  | `queue` / `begin` / `skipNew` (created)  | —                                       | queued / running / failed |
+  | `start`                                  | queued                                  | running                   |
+  | `retry` (its job run again by Lambda)    | running, succeeded, partial, failed     | running                   |
+  | `skip` (a paused or expired integration) | any                                     | failed                    |
+  | `succeed`                                | running                                 | succeeded, partial        |
+  | `fail`                                   | queued (its job never started), running | failed                    |
+  | `cancel` (one conditional write)         | queued, running (as stored)             | failed                    |
+
+  Statics: `request(caller, integration, trigger)` (queue + start the job; `enqueue_failed`),
+  `list`, `get`, `claim`, `listFor`, `listRunningStartedBefore` and the reaper `reapStuck`.
+  `toView()` is the sanitized run view (named counts, a code with its fixed message).
+
+- **`SyncCursor`** (value object, a SyncStates row; adapters still read the row as it is) and
+  **`SyncCursors`** (SyncStates' only reader and writer, `__run__` included).
+- **`Integration#sync(workspace, options)`** is the template method (held → open the run → read
+  session → `adapter.resources()` → fetch and map → `Container`/`Item` upserts → sweep → the run
+  finishes → status → `sync.run` audit). **`SyncEngine`** (a method object, one run) is its
+  collaborator: the old `sync/runSync.ts` moved behind it verbatim. `Integration.runSync(id,
+options)` is the worker's and the seed's entry (the integration and workspace loaded, a gone
+  one's run ended). The adapters stay strategies; the read session still goes through
+  `sync/secrets.ts` (the tests' vault seam).
+- **`Item` / `Container`** gain the sync's writes: `upsertSynced`, `deleteSynced`, `sweepUnseen`,
+  `sweepOrphanedResources`, `softDeleteAllOf`, `purgeDeletedBefore` (`Container.listSynced`).
+- **Dispatcher, worker, purge:** thin entry functions over the classes (`Integration.listForDispatch`,
+  `Member.userIdsIn`, `SyncRun.request`, `Integration.runSync`, `SyncRun.reapStuck`,
+  `Item.purgeDeletedBefore`, `Container.purgeDeletedBefore`). `services/syncJobs.ts` only starts jobs;
+  `services/syncRuns.ts` is thin functions over `Integration` and `SyncRun`.
+- **`Calendar`** (`classes/calendar/Calendar.ts`): one target Google calendar. `primaryFor` (409
+  `calendar_not_primary`, 409 member gone), `plan` → **`PushPlan`** (value object: `ops`,
+  `calendarId`, `dailyCapReached`, `toDryRun`), `cursor` (`gcal:<id>`), `commit` → **`PushCommit`**
+  (a method object; closes its `SyncRun` with `succeed`). `gcal/plan.ts` and `gcal/commit.ts` are
+  gone; `gcal/diff.ts` and `calendarApi.ts` stay pure. `GoogleCalendarIntegration` keeps `push`,
+  `dryRun` and `insertEvent`.
+- **Carried fixes:** a clean-up racing another integration's push (a cancellation of an event
+  another integration tombstoned `dashboard` in the last 10 minutes drops only this link row, the
+  item stays); a 403 without a permission reason in a clean-up says it will be retried; the
+  `CalendarLinks (workspaceId, calendarId, googleEventId)` index; MCP names `provider_no_answer`
+  ("may have been made at …") and `provider_unreachable` ("nothing was changed"); a partial write's
+  `details.kept` names only the edit's own local fields.
+- **Legacy list: 13 → 6** (`gcal/commit.ts`, `gcal/plan.ts`, `jobs/purge.ts`,
+  `services/syncJobs.ts`, `services/syncRuns.ts`, `sync/dispatcher.ts`, `sync/runSync.ts` off).
+  Left: `mcp/tools/workspace/auditLogQuery.ts`, `seed/seedWorkspace.ts`, `services/connectLinks.ts`,
+  `services/dashboards.ts`, `services/personas.ts`, `services/views.ts` (phases 6 and 7).
 
 ## What phase 4a built (server)
 
