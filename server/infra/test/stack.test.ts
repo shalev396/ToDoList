@@ -198,7 +198,17 @@ for (const stage of STAGES) {
         (b) => b['PathPattern'] === '/.well-known/oauth-*',
       );
       assert.ok(api && wellKnown);
-      assert.equal(wellKnown['TargetOriginId'], api['TargetOriginId']);
+      for (const key of [
+        'TargetOriginId',
+        'AllowedMethods',
+        'CachedMethods',
+        'CachePolicyId',
+        'OriginRequestPolicyId',
+        'ViewerProtocolPolicy',
+        'Compress',
+      ]) {
+        assert.deepEqual(wellKnown[key], api[key], key);
+      }
       // CachingDisabled managed policy
       assert.equal(wellKnown['CachePolicyId'], '4135ea2d-6df8-44a3-9df3-4b5a84be39ad');
       assert.equal(wellKnown['CachePolicyId'], api['CachePolicyId']);
