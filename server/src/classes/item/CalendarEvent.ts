@@ -289,7 +289,8 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
         });
         throw new CreatedNotStoredError(data.provider, ['event']);
       }
-      // Deleted at Google since (gone, or cancelled): a retry can't bring it back.
+      // Deleted at Google since (cancelled, or 410 gone): a retry can't bring it back. A 404 threw
+      // above: the series may have moved, so that stays "created, not stored" (Try again).
       if (atGoogle === null || atGoogle['status'] === 'cancelled') {
         throw new ProviderItemMissingError(data.provider);
       }
@@ -307,9 +308,10 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
   }
 
   /**
-   * The request's topic and priority on the stored event (also on a retry that found it already:
-   * the same values again, so it is idempotent). A failure leaves the event stored without them:
-   * 409 `created_not_stored`, and the same retry completes it.
+   * The request's topic and priority on the stored event, where it has none yet: on the first
+   * store, and on a retry that completes one that failed. A replay of the same key never puts them
+   * back over a later edit. A failure leaves the event stored without them: 409
+   * `created_not_stored`, and the same retry completes it.
    */
   static async #applyLocal(
     stored: CalendarEvent,
@@ -317,13 +319,14 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
     input: NewRecurringTodo,
     now: Date,
   ): Promise<CalendarEvent> {
+    const overlay = stored.overlay;
+    const topic = input.topicId ?? null;
+    const priority = input.priority ?? null;
     const local = {
-      ...(input.topicId === undefined || input.topicId === null
+      ...(topic === null || overlay.topicOverride !== null ? {} : { topicOverride: topic }),
+      ...(priority === null || overlay.overrides.toView().priority !== null
         ? {}
-        : { topicOverride: input.topicId }),
-      ...(input.priority === undefined || input.priority === null
-        ? {}
-        : { overrides: { priority: input.priority } }),
+        : { overrides: { priority } }),
     };
     if (Object.keys(local).length === 0) return stored;
     try {

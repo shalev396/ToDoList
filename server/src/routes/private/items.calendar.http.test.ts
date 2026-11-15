@@ -496,7 +496,7 @@ describe('a recurring to-do', () => {
     }
   });
 
-  it('a retry that finds the event deleted at Google: 409 provider_item_missing', async () => {
+  it('a retry that finds the event cancelled at Google: 404 provider_item_missing', async () => {
     const { MirroredItem } = await import('../../classes/item/index.js');
     const store = MirroredItem.store.bind(MirroredItem);
     MirroredItem.store = (): Promise<never> => Promise.reject(new Error('database down'));
@@ -512,6 +512,46 @@ describe('a recurring to-do', () => {
     const again = await recurring('owner', { title: 'Deleted later', idempotencyKey: 'i2c' });
     assert.equal(again.status, 404, again.text);
     assert.equal(again.body?.['code'], 'provider_item_missing');
+  });
+
+  it('a read-back Google answers 410 (gone): 404 provider_item_missing; a 404 (maybe moved): created_not_stored', async () => {
+    const { MirroredItem } = await import('../../classes/item/index.js');
+    const store = MirroredItem.store.bind(MirroredItem);
+    for (const [key, status, code, httpStatus] of [
+      ['i2g', 410, 'provider_item_missing', 404],
+      ['i2h', 404, 'created_not_stored', 409],
+    ] as const) {
+      MirroredItem.store = (): Promise<never> => Promise.reject(new Error('database down'));
+      try {
+        const first = await recurring('owner', { title: `Read ${key}`, idempotencyKey: key });
+        assert.equal(first.body?.['code'], 'created_not_stored', first.text);
+      } finally {
+        MirroredItem.store = store;
+      }
+      mock.failNextRead(status);
+      const again = await recurring('owner', { title: `Read ${key}`, idempotencyKey: key });
+      assert.equal(again.status, httpStatus, again.text);
+      assert.equal(again.body?.['code'], code);
+    }
+  });
+
+  it('a replay of the same key never puts its topic or priority back over a later edit', async () => {
+    const first = await recurring('owner', {
+      title: 'Replayed',
+      priority: 1,
+      idempotencyKey: 'i2r',
+    });
+    assert.equal(first.status, 201, first.text);
+    const id = String(data(first)['id']);
+    const edited = await call('owner', 'PATCH', `/items/${id}`, { priority: 4 });
+    assert.equal(edited.status, 200, edited.text);
+    const replay = await recurring('owner', {
+      title: 'Replayed',
+      priority: 1,
+      idempotencyKey: 'i2r',
+    });
+    assert.equal(replay.status, 200, replay.text);
+    assert.equal(data(replay)['priority'], 4, 'the later edit stays');
   });
 
   it('a topic or priority that failed to store: created_not_stored, and the same retry completes it', async () => {
@@ -558,7 +598,9 @@ describe('a recurring to-do', () => {
     const own = integration as unknown as {
       readEvent(c: unknown, a: string, b: string): Promise<unknown>;
     };
-    assert.equal(await own.readEvent(mine, ALICE.email, 'whatever'), null);
+    // The owner gets past the owner check to Google, which has no such event: a 404 is thrown
+    // (only a 410 reads as gone).
+    await assert.rejects(own.readEvent(mine, ALICE.email, 'whatever'), /answered 404/);
   });
 });
 

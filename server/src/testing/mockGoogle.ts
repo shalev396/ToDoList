@@ -113,6 +113,8 @@ export interface MockGoogle {
    * Google's error `reason` when given (`rateLimitExceeded`, `forbidden`…).
    */
   failNextWrite(status: number, reason?: string): void;
+  /** The next single-event read (events.get) answers that status (a 404, a 410…). */
+  failNextRead(status: number): void;
   reset(): void;
   close(): Promise<void>;
 }
@@ -188,6 +190,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
   let epoch = randomBytes(4).toString('hex');
   let seq = 0;
   let failWrite: { status: number; reason?: string } | null = null;
+  let failRead: number | null = null;
 
   const calendarsOf = (who: MockGoogleAccount): CalendarEntry[] => [
     { id: who.email, summary: who.email, primary: true, accessRole: 'owner' },
@@ -525,6 +528,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     if (failWrite !== null && req.method !== 'GET') {
       const { status, reason } = failWrite;
       failWrite = null;
+      failRead = null;
       apiError(res, status, 'Backend Error', reason);
       return;
     }
@@ -568,6 +572,12 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
       return;
     }
     if (req.method === 'GET' && eventId !== undefined) {
+      if (failRead !== null) {
+        const status = failRead;
+        failRead = null;
+        apiError(res, status, status === 410 ? 'Resource has been deleted' : 'Not Found');
+        return;
+      }
       const found = eventsOf(calendar.id).get(eventId);
       if (found === undefined) apiError(res, 404, 'Not Found');
       else send(res, 200, wire(found));
@@ -722,6 +732,9 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     requests: (): readonly { method: string; path: string; query: string }[] => [...received],
     failNextWrite(status, reason): void {
       failWrite = reason === undefined ? { status } : { status, reason };
+    },
+    failNextRead(status): void {
+      failRead = status;
     },
     reset,
     close: () =>

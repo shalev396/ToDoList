@@ -287,7 +287,10 @@ export interface CalendarReader {
     query: { syncToken: string } | { timeMin: string },
     pageToken: string | null,
   ): Promise<EventsPage>;
-  /** events.get: one event as Google has it, or null when it is gone (404 or 410). */
+  /**
+   * events.get: one event as Google has it, or null when Google says it is gone (410). A 404 is
+   * thrown like any failure: after a 409 the event may only have moved to another calendar.
+   */
   get(calendarId: string, eventId: string): Promise<Record<string, unknown> | null>;
 }
 
@@ -317,7 +320,7 @@ export function calendarReader(auth: Readonly<Record<string, string>>): Calendar
         const data = await request(auth, 'GET', eventsUrl(calendarId, eventId));
         return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : null;
       } catch (error) {
-        if (error instanceof CalendarApiError && (error.status === 404 || error.status === 410)) {
+        if (error instanceof CalendarApiError && error.status === 410) {
           return null;
         }
         throw error;
