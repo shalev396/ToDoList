@@ -18,6 +18,12 @@
  * provider writer, so only provider subclasses write, and only inside their capability methods
  * (capabilities.ts). It refuses demo data and fixtures first (`provider_writes_off`), then a
  * read-only integration (ReadOnlyIntegrationError, 409 `integration_read_only`).
+ *
+ * Integration stays the one public base; it hands parts of its work to collaborators, giving them
+ * only what they need (its protected members as functions, never the credential itself):
+ * IntegrationConnector (a new integration, within the caps), ConnectionTester ("test
+ * connection") and SyncRequest ("sync now"). What each provider is lives in its class's
+ * `static definition` (definitions/*).
  */
 import type { ActorRef } from '../base/Actor.js';
 import { AuditTarget } from '../base/AuditTarget.js';
@@ -27,7 +33,6 @@ import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { AuditLog, type AuditScope } from '../AuditLog.js';
 import { IntegrationPolicy } from '../policies/IntegrationPolicy.js';
 import { ItemPolicy } from '../policies/ItemPolicy.js';
-import { LIMITS } from '../../config/limits.js';
 import { AppError } from '../../errors/AppError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ReadOnlyIntegrationError } from '../../errors/ReadOnlyIntegrationError.js';
@@ -35,8 +40,6 @@ import { ValidationError } from '../../errors/ValidationError.js';
 import type { ErrorInfo } from '../../models/definitions/common.js';
 import {
   toIntegrationStatus,
-  type ConnectionTestPatch,
-  type CreateIntegrationInput,
   type IntegrationData,
   type IntegrationPatch,
   type IntegrationStatusView,
@@ -45,24 +48,17 @@ import {
   getContainerRepository,
   getIntegrationRepository,
   getItemRepository,
-  getSyncRunRepository,
   getSyncStateRepository,
 } from '../../models/index.js';
 import { removeConnectorEverywhere } from '../../services/dashboards.js';
-import { assertUserConnectable, EMPTY_UPDATE_MESSAGE } from '../../services/integrationConfig.js';
+import { EMPTY_UPDATE_MESSAGE } from '../../services/integrationConfig.js';
 import { logger } from '../../services/logger.js';
-import { OAuthFailure } from '../../services/oauth/common.js';
 import { writeModeFor } from '../../services/providerCreate/mode.js';
-import { enqueueSync } from '../../services/syncJobs.js';
-import { assertTopicOf, topicIdBySlug } from '../../services/topics.js';
-import { ProviderHttpError } from '../../sync/errors.js';
-import { fixtureSetDir } from '../../sync/fixtureSets.js';
-import type { Transport } from '../../sync/http.js';
+import { assertTopicOf } from '../../services/topics.js';
 import '../../sync/providers/index.js';
 import { getAdapter } from '../../sync/registry.js';
-import { RUN_STATE_RESOURCE, SYNC_ERROR_MESSAGES } from '../../sync/runSync.js';
+import { RUN_STATE_RESOURCE } from '../../sync/runSync.js';
 import { syncModeFor } from '../../sync/syncMode.js';
-import { fixtureTransport, loadFixtureSet } from '../../sync/transports/fixtures.js';
 import type { AdapterContext, ProviderAdapter } from '../../sync/types.js';
 import {
   PROVIDERS,
@@ -75,32 +71,24 @@ import type { AuthKind, AuthStrategy, SecretJson } from './auth/AuthStrategy.js'
 import { OAuthAuth } from './auth/OAuthAuth.js';
 import { UnofferedAuth } from './auth/UnofferedAuth.js';
 import { isCreateFunnel, isResourcePicker, isRevocable } from './capabilities.js';
-import {
-  beforeDeadline,
-  canTest,
-  CONNECTION_TEST_TIMEOUT_MS,
-  connectionTestTransport,
-  failed,
-  logFailure,
-  NO_WAIT,
-  testTransport,
-  toProbe,
-  type Outcome,
-  type Probe,
-  type TestableAdapter,
-  type TestRateLimited,
-} from './connectionTest.js';
+import type { TestableAdapter, TestRateLimited } from './connectionTest.js';
+import { ConnectionTester, type LearnedSetting, type TestSubject } from './ConnectionTester.js';
 import { Credential } from './Credential.js';
-import { isPlaceholderAccountId } from './definitions/fields.js';
 import {
   DEFINITIONS,
-  requireDefinition,
   strategyForMethod,
   type ConnectionInput,
   type IntegrationDefinition,
 } from './definitions/index.js';
+import {
+  CREDENTIAL_MISSING,
+  IntegrationConnector,
+  type ConnectedIntegration,
+  type OAuthConnection,
+} from './IntegrationConnector.js';
 import { IntegrationRegistry } from './IntegrationRegistry.js';
 import { Mode } from './Mode.js';
+import { SyncRequest, type SyncSubject } from './SyncRequest.js';
 
 export type { TestRateLimited };
 
@@ -112,28 +100,6 @@ export interface IntegrationUpdate {
   config?: Record<string, unknown> | undefined;
   /** null clears it. */
   expiresAt?: Date | null | undefined;
-}
-
-/** An OAuth result, as the flow hands it over: the account, its grant and where it starts. */
-export interface OAuthConnection {
-  provider: Provider;
-  /** The provider's stable account key (Google `sub`, GitHub login, Atlassian account id…). */
-  accountId: string;
-  label: string;
-  /** Non-secret settings a new integration starts with (a reconnect keeps what it has). */
-  config: Record<string, unknown>;
-  /** The default topic (by slug) a new integration starts in; Unsorted when the workspace has none. */
-  topicSlug: string;
-  /** Sealed as is: write-only from here on. */
-  secret: Record<string, string>;
-  scopes: string[];
-  /** The integration a reconnect started from (the OAuth state's): it must be the member's own. */
-  reconnectIntegrationId?: string | null | undefined;
-}
-
-export interface ConnectedIntegration {
-  integration: Integration;
-  created: boolean;
 }
 
 export type SyncRequestOutcome = { runId: string } | { retryAfterMs: number };
@@ -149,44 +115,7 @@ export interface WriteSession<TSecret extends SecretJson, TWriter> extends ReadS
   readonly writer: TWriter;
 }
 
-/** Why a new integration is `error`: until `PUT …/credential`, it has no credential (R5). */
-export const CREDENTIAL_MISSING = {
-  code: 'credential_missing',
-  message: 'Save the credential to finish connecting',
-} as const;
-
-/** MongoDB's E11000: here, an account already connected in the workspace. */
-function isDuplicateKey(error: unknown): boolean {
-  return (
-    typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000
-  );
-}
-
-type IntegrationCap = 'member' | 'workspace';
-
-/** A setting a successful connection test may learn (ConnectionTestPatch, the label aside). */
-type LearnedSetting = Exclude<keyof ConnectionTestPatch, 'label'>;
-
-/** A connect within the caps: the new integration, or which cap was full. */
-type WithinCaps = { created: IntegrationData; cap: null } | { created: null; cap: IntegrationCap };
-
-/** Why an integration can't be synced now. */
-type SyncHold = 'demo' | 'paused' | 'expired' | 'reconnect' | 'no_credential';
-
-const HOLD_MESSAGES: Readonly<Record<SyncHold, string>> = {
-  demo: 'Demo data never syncs: its items are a sample',
-  paused: 'This integration is paused: save its credential again to resume',
-  expired: 'This connection has expired: save a new credential',
-  reconnect: 'Reconnect required: save the credential again',
-  no_credential: 'Save the credential first',
-};
-
-/** Runs looked at for the newest manual one: far more than 5 minutes can hold. */
-const RECENT_RUNS = 20;
-const RATE_WINDOW_MS = 60_000;
-/** Tests audited in one workspace in a minute: at most 5 per integration, 20 integrations. */
-const RECENT_TESTS_SCANNED = 200;
-const NO_SECRET: SecretJson = Object.freeze({});
+export { CREDENTIAL_MISSING, type ConnectedIntegration, type OAuthConnection };
 
 const writesOff = (): AppError =>
   new AppError(409, 'Creating in providers is off on this server', { code: 'provider_writes_off' });
@@ -344,133 +273,36 @@ export abstract class Integration<
 
   // ─── Connecting ──────────────────────────────────────────────────────────
 
-  /**
-   * Which cap (ruling 19) is exceeded with `extra` more integrations of the member's:
-   * LIMITS.integrationsPerUserPerWorkspace of their own, LIMITS.integrationsPerWorkspace for every
-   * member together. Null when both hold.
-   */
-  static async #capExceeded(
-    workspaceId: string,
-    ownerUserId: string,
-    extra: number,
-  ): Promise<IntegrationCap | null> {
-    const integrations = await getIntegrationRepository();
-    if (
-      (await integrations.countActiveForOwner(workspaceId, ownerUserId)) + extra >
-      LIMITS.integrationsPerUserPerWorkspace
-    ) {
-      return 'member';
-    }
-    if ((await integrations.countActive(workspaceId)) + extra > LIMITS.integrationsPerWorkspace) {
-      return 'workspace';
-    }
-    return null;
-  }
+  /** How a new integration comes to be (IntegrationConnector): the factory and the connect hook. */
+  static readonly #connector = new IntegrationConnector({
+    from: (data): Integration => Integration.from(data),
+    onConnected: (integration): Promise<Record<string, unknown>> => integration.onConnected(),
+    createdAction: Integration.Audit.create,
+  });
 
   /**
-   * A new integration, inserted only within both caps even when connects race (there are no
-   * transactions here): check, insert, then count again with the new one included. Over a cap,
-   * the new integration is soft-deleted again and the full cap comes back instead. Racers may all
-   * back out, but the caps are never exceeded: the last of any set of kept integrations to count
-   * would have seen them all. The insert's own errors (a duplicate account) propagate. Every new
-   * integration is read-only: `mode` is never an input.
+   * Editors and owners: a new integration of their own, connected with a key or token
+   * (IntegrationConnector#connectWithKey). It is read-only, and `error` until `PUT …/credential`
+   * saves its credential. 409 at either cap and for an account this member already connected here.
+   * Audited as `integration.create`.
    */
-  static async #createWithinCaps(
-    workspaceId: string,
-    input: Omit<CreateIntegrationInput, 'mode'> & { ownerUserId: string },
-  ): Promise<WithinCaps> {
-    const full = await Integration.#capExceeded(workspaceId, input.ownerUserId, 1);
-    if (full !== null) return { created: null, cap: full };
-    const integrations = await getIntegrationRepository();
-    const created = await integrations.create(workspaceId, { ...input, mode: Mode.read.name });
-    const exceeded = await Integration.#capExceeded(workspaceId, input.ownerUserId, 0);
-    if (exceeded === null) return { created, cap: null };
-    await integrations.softDelete(workspaceId, created.id);
-    return { created: null, cap: exceeded };
-  }
-
-  /**
-   * Editors and owners: a new integration of their own from the provider and its non-secret
-   * config (validated per provider, integrationConfig.ts), connected with a key or token. It has
-   * no credential yet, so it starts as `error` with `lastError` CREDENTIAL_MISSING (the API shows
-   * `error`) until `PUT …/credential` saves one. It is read-only. 409 at either cap (they hold
-   * under concurrent connects) and for an account this member already connected here (another
-   * member may connect the same account: ruling 8). Audited as `integration.create`.
-   */
-  static async connectWithKey(
+  static connectWithKey(
     caller: Caller,
     input: ConnectionInput,
     options: { demo?: boolean } = {},
   ): Promise<Integration> {
-    // Requests route through requireWorkspace(minRole) too; the class checks again for MCP.
-    caller.require('editor');
-    const workspaceId = caller.workspaceId;
-    if (options.demo !== true) assertUserConnectable(input.provider);
-    const plan = requireDefinition(input.provider).planConnection(input);
-    if (plan.topicId !== undefined && plan.topicId !== null) {
-      await assertTopicOf(workspaceId, plan.topicId);
-    }
-    const topicId =
-      plan.topicId === undefined
-        ? await topicIdBySlug(workspaceId, plan.defaultTopic)
-        : plan.topicId;
-    let result: WithinCaps;
-    try {
-      result = await Integration.#createWithinCaps(workspaceId, {
-        connectedBy: caller.userId,
-        ownerUserId: caller.userId,
-        provider: plan.provider,
-        accountId: plan.accountId,
-        label: plan.label,
-        authMethod: plan.authMethod,
-        topicId,
-        config: plan.config,
-        status: 'error',
-        lastError: { ...CREDENTIAL_MISSING },
-        ...(options.demo === true ? { demo: true } : {}),
-      });
-    } catch (error) {
-      if (isDuplicateKey(error)) {
-        throw new AppError(
-          409,
-          `You already connected this ${plan.provider} account (${plan.label}) in this workspace`,
-          { code: 'account_already_connected' },
-        );
-      }
-      throw error;
-    }
-    if (result.cap !== null) {
-      throw new AppError(
-        409,
-        result.cap === 'member'
-          ? `You can connect at most ${String(LIMITS.integrationsPerUserPerWorkspace)} integrations in a workspace`
-          : `A workspace can have at most ${String(LIMITS.integrationsPerWorkspace)} integrations`,
-      );
-    }
-    const created = Integration.from(result.created);
-    const meta: Record<string, unknown> = {
-      provider: plan.provider,
-      topicId,
-      authMethod: plan.authMethod,
-      ...(await created.onConnected()),
-    };
-    await AuditLog.record(caller, Integration.Audit.create, created, meta);
-    return created;
+    return Integration.#connector.connectWithKey(caller, input, options);
   }
 
   /**
    * The ONE way an OAuth result becomes an integration (Google Calendar, GitHub, Jira, ClickUp,
-   * Linear): create it for the provider account, or reconnect the one the member has, seal the
-   * credential, clear the failures it left, and mark it active. The ownership rules:
-   * - an integration is its connecting member's; a reconnect finds only the member's own
-   *   integration of that account, and a reconnect started from an integration must be theirs;
-   * - another member's integration of the same account is left alone (ruling 8);
-   * - a new integration needs an editor or owner (ruling 9; a viewer may still reconnect their
-   *   own, ruling 10) and room under both caps (ruling 19). It is read-only.
-   * The caller has checked that the grant is what the integration needs.
+   * Linear): create it for the provider account, or reconnect the one the member has
+   * (IntegrationConnector#upsertOAuth: the ownership rules), seal the credential, clear the
+   * failures it left, and mark it active. The caller has checked that the grant is what the
+   * integration needs.
    */
   static async connectOAuth(caller: Caller, conn: OAuthConnection): Promise<ConnectedIntegration> {
-    const result = await Integration.#upsertOAuth(caller, conn);
+    const result = await Integration.#connector.upsertOAuth(caller, conn);
     const { integration } = result;
     const workspaceId = caller.workspaceId;
     await Credential.seal(
@@ -501,62 +333,6 @@ export abstract class Integration<
       integration: updated === null ? integration : Integration.from(updated),
       created: result.created,
     };
-  }
-
-  /** The member's own integration for this account: reconnected, or created. */
-  static async #upsertOAuth(caller: Caller, conn: OAuthConnection): Promise<ConnectedIntegration> {
-    const workspaceId = caller.workspaceId;
-    const integrations = await getIntegrationRepository();
-    if (conn.reconnectIntegrationId !== undefined && conn.reconnectIntegrationId !== null) {
-      const target = await integrations.findById(workspaceId, conn.reconnectIntegrationId);
-      if (target === null || !IntegrationPolicy.isOwn(target, caller.userId)) {
-        throw new OAuthFailure('oauth_failed');
-      }
-    }
-    const reconnectable = (data: IntegrationData): ConnectedIntegration => {
-      const integration = Integration.from(data);
-      if (integration.auth.kind !== 'oauth') throw new OAuthFailure('oauth_failed');
-      return { integration, created: false };
-    };
-    const find = async (): Promise<IntegrationData | null> =>
-      (await integrations.listForOwner(workspaceId, caller.userId)).find(
-        (entry) => entry.provider === conn.provider && entry.accountId === conn.accountId,
-      ) ?? null;
-    const existing = await find();
-    if (existing !== null) return reconnectable(existing);
-    if (!caller.role.atLeast('editor')) throw new OAuthFailure('oauth_not_editor');
-    const topicId = await topicIdBySlug(workspaceId, conn.topicSlug);
-    try {
-      const result = await Integration.#createWithinCaps(workspaceId, {
-        connectedBy: caller.userId,
-        ownerUserId: caller.userId,
-        provider: conn.provider,
-        accountId: conn.accountId,
-        label: conn.label,
-        authMethod: 'oauth',
-        topicId,
-        config: conn.config,
-        status: 'error',
-        lastError: { ...CREDENTIAL_MISSING },
-      });
-      // createWithinCaps, as the OAuth callback answers a full cap: `oauth_limit`.
-      if (result.cap !== null) throw new OAuthFailure('oauth_limit');
-      const created = Integration.from(result.created);
-      const meta: Record<string, unknown> = {
-        provider: conn.provider,
-        topicId,
-        authMethod: 'oauth',
-        ...(await created.onConnected()),
-      };
-      await AuditLog.record(caller, Integration.Audit.create, created, meta);
-      return { integration: created, created: true };
-    } catch (error) {
-      // The member connected the same account meanwhile (another tab): that one is reconnected.
-      if (!isDuplicateKey(error)) throw error;
-      const raced = await find();
-      if (raced === null) throw error;
-      return reconnectable(raced);
-    }
   }
 
   /**
@@ -867,25 +643,10 @@ export abstract class Integration<
     this.assertOwner(caller);
     // Demo data is never tested against its provider: its credential is FAKE.
     if (this.demo) throw new AppError(409, 'Demo data is not connected to a provider');
-    const wait = await this.#waitBeforeNextTest();
+    const tester = new ConnectionTester(this.#testSubject(), Integration.Audit.test);
+    const wait = await tester.waitBeforeNext();
     if (wait > 0) return { retryAfterMs: wait };
-    const outcome = await this.#runTest(caller.settings.timezone);
-    let result: IntegrationTestResult;
-    if ('probe' in outcome) {
-      result = await this.#recordSuccess(outcome.probe);
-    } else {
-      logFailure(this.data, outcome.code, outcome.error);
-      if (outcome.code === 'auth_failed') {
-        // A reconnect is needed. A pause or an expiry is kept (the conditional write).
-        await (
-          await getIntegrationRepository()
-        ).recordSyncResult(this.workspaceId, this.id, {
-          status: 'error',
-          lastError: { code: 'auth_failed', message: SYNC_ERROR_MESSAGES.auth_failed },
-        });
-      }
-      result = { ok: false, code: outcome.code };
-    }
+    const result = await tester.run(caller.settings.timezone);
     await AuditLog.record(
       caller,
       Integration.Audit.test,
@@ -903,11 +664,12 @@ export abstract class Integration<
    */
   async requestSync(caller: Caller): Promise<SyncRequestOutcome> {
     this.assertOwner(caller);
-    const hold = await this.#syncHold();
-    if (hold !== null) throw new AppError(409, HOLD_MESSAGES[hold]);
-    const wait = await this.#manualSyncWait();
+    const request = new SyncRequest(this.#syncSubject());
+    const hold = await request.hold();
+    if (hold !== null) throw new AppError(409, SyncRequest.HOLD_MESSAGES[hold]);
+    const wait = await request.manualWait();
     if (wait > 0) return { retryAfterMs: wait };
-    return { runId: await this.#enqueueManualSync() };
+    return { runId: await request.enqueue() };
   }
 
   /**
@@ -919,10 +681,11 @@ export abstract class Integration<
     const runIds: string[] = [];
     let queueFailures = 0;
     for (const integration of await Integration.listOwn(caller)) {
-      if ((await integration.#syncHold()) !== null) continue;
-      if ((await integration.#manualSyncWait()) > 0) continue;
+      const request = new SyncRequest(integration.#syncSubject());
+      if ((await request.hold()) !== null) continue;
+      if ((await request.manualWait()) > 0) continue;
       try {
-        runIds.push(await integration.#enqueueManualSync());
+        runIds.push(await request.enqueue());
       } catch (error) {
         if (!(error instanceof AppError)) throw error;
         queueFailures += 1;
@@ -1130,174 +893,36 @@ export abstract class Integration<
    */
   protected readonly learnedCapabilities: Readonly<Record<string, LearnedSetting>> = {};
 
-  // ─── Internals ───────────────────────────────────────────────────────────
+  // ─── What the collaborators get (protected members, handed over as functions) ──
 
-  async #runTest(timeZone: string): Promise<Outcome> {
-    const adapter = this.adapter;
-    if (adapter === null) return { code: 'no_adapter' };
-    if (!canTest(adapter)) return { code: 'not_supported' };
-    const deadline = Date.now() + CONNECTION_TEST_TIMEOUT_MS;
-
-    if (this.usesFixtures) {
-      let transport: Transport;
-      try {
-        transport = fixtureTransport(await loadFixtureSet(fixtureSetDir(adapter)));
-      } catch (error) {
-        return { code: 'fixtures_missing', error };
-      }
-      try {
-        return {
-          probe: await this.#probeWith(
-            adapter,
-            timeZone,
-            NO_SECRET as TSecret,
-            transport,
-            deadline,
-          ),
-        };
-      } catch (error) {
-        return failed(error);
-      }
-    }
-
-    const credential = await Credential.meta(this.workspaceId, this.id);
-    if (credential === null) return { code: 'credential_missing' };
-    // An object, so the callback's write is seen after the await (a flag would stay narrowed).
-    const progress = { opened: false };
-    try {
-      const found = await this.withReadSession((session) => {
-        progress.opened = true;
-        const transport = this.auth.transport(connectionTestTransport());
-        return this.#probeWith(adapter, timeZone, session.secret, transport, deadline);
-      });
-      return { probe: found };
-    } catch (error) {
-      // Thrown before the callback ran: the credential could not be opened.
-      // A refused OAuth refresh happens before the callback: it is the provider saying reconnect.
-      if (progress.opened || (error instanceof ProviderHttpError && error.code === 'auth_failed')) {
-        return failed(error);
-      }
-      return { code: 'credential_unavailable', error };
-    }
-  }
-
-  /** The probe over `transport`, with `secret` (`{}` in fixtures mode), within the deadline. */
-  async #probeWith(
-    adapter: TestableAdapter,
-    timeZone: string,
-    secret: TSecret,
-    transport: Transport,
-    deadline: number,
-  ): Promise<Probe> {
-    const client = adapter.createClient(testTransport(transport, deadline), NO_WAIT);
-    const now = new Date();
-    const context: AdapterContext = {
-      integration: this.toJSON(),
-      secret,
-      // The headers come from the integration's auth strategy, never from the adapter.
-      auth: this.auth.bind({ secret, client, now }),
-      client,
-      now,
-      timeZone,
-      fullSyncDue: false,
-    };
-    return toProbe(await beforeDeadline(this.probe(adapter, context), deadline));
-  }
-
-  /**
-   * A pending account becomes the real one (once); a default label becomes the account's own;
-   * what the provider class learns from the probe is recorded. The label and the settings are
-   * written field by field (recordConnectionTest), so a label or config saved while the test ran
-   * is kept.
-   */
-  async #recordSuccess(found: Probe): Promise<IntegrationTestResult> {
-    const integrations = await getIntegrationRepository();
-    if (isPlaceholderAccountId(this.accountId)) {
-      try {
-        await integrations.replacePendingAccount(
-          this.workspaceId,
-          this.id,
-          found.accountId ?? found.accountLabel,
-        );
-      } catch (error) {
-        if (isDuplicateKey(error)) return { ok: false, code: 'already_connected' };
-        throw error;
-      }
-    }
-    const learned: ConnectionTestPatch = {};
-    const definition = this.definition;
-    if (definition !== null) {
-      const label = definition.defaultLabel(this.toJSON().config);
-      if (this.label === label && found.accountLabel !== label) {
-        learned.label = { from: label, to: this.learnedLabel(found.accountLabel) };
-      }
-    }
-    for (const [capability, setting] of Object.entries(this.learnedCapabilities)) {
-      const value = found.capabilities?.[capability];
-      if (value !== undefined) learned[setting] = value;
-    }
-    if (learned.label !== undefined || learned.boardsEnabled !== undefined) {
-      await integrations.recordConnectionTest(this.workspaceId, this.id, learned);
-    }
+  /** What "test connection" needs (ConnectionTester). */
+  #testSubject(): TestSubject {
     return {
-      ok: true,
-      accountLabel: found.accountLabel,
-      ...(found.capabilities === null ? {} : { capabilities: found.capabilities }),
+      data: this.toJSON(),
+      adapter: this.adapter,
+      usesFixtures: this.usesFixtures,
+      defaultLabel: this.definition?.defaultLabel(this.toJSON().config) ?? null,
+      learnedCapabilities: this.learnedCapabilities,
+      learnedLabel: (accountLabel) => this.learnedLabel(accountLabel),
+      hasCredential: () => this.#hasCredential(),
+      withSecret: (fn) => this.withReadSession(({ secret }) => fn(secret)),
+      transport: (inner) => this.auth.transport(inner),
+      auth: (secret, client, now) => this.auth.bind({ secret: secret as TSecret, client, now }),
+      probe: (adapter, context) => this.probe(adapter, context),
     };
   }
 
-  /**
-   * How long until the integration may be tested again (0: now). Every test that ran is audited
-   * (`integration.test`), so the audit log counts them; a refused request isn't counted.
-   */
-  async #waitBeforeNextTest(): Promise<number> {
-    const now = Date.now();
-    const entries = await AuditLog.list(
-      this.workspaceId,
-      { action: Integration.Audit.test, since: new Date(now - RATE_WINDOW_MS) },
-      RECENT_TESTS_SCANNED,
-    );
-    // Newest first: the last one that still counts against the limit.
-    const counted = entries.filter((entry) => entry.targetId === this.id);
-    const oldest = counted[LIMITS.connectionTestsPerMinute - 1];
-    if (oldest === undefined) return 0;
-    return Math.max(1, oldest.at.getTime() + RATE_WINDOW_MS - now);
+  /** What "sync now" needs (SyncRequest). */
+  #syncSubject(): SyncSubject {
+    return {
+      data: this.toJSON(),
+      usesFixtures: this.usesFixtures,
+      hasCredential: () => this.#hasCredential(),
+    };
   }
 
-  /** What waits for the owner, as the dispatcher sees it; live mode also needs a credential. */
-  async #syncHold(): Promise<SyncHold | null> {
-    if (this.demo) return 'demo';
-    if (this.status === 'paused') return 'paused';
-    if (this.status === 'expired') return 'expired';
-    if (this.lastError?.code === 'auth_failed') return 'reconnect';
-    if (!this.usesFixtures) {
-      if ((await Credential.meta(this.workspaceId, this.id)) === null) return 'no_credential';
-    }
-    return null;
-  }
-
-  /** How long until the integration may be synced manually again (0: now). */
-  async #manualSyncWait(): Promise<number> {
-    const runs = await (
-      await getSyncRunRepository()
-    ).listForIntegration(this.workspaceId, this.id, RECENT_RUNS);
-    const newestManual = runs
-      .filter((run) => run.trigger === 'manual')
-      .reduce<number>((newest, run) => Math.max(newest, run.createdAt.getTime()), 0);
-    if (newestManual === 0) return 0;
-    return Math.max(0, newestManual + LIMITS.manualSyncIntervalMs - Date.now());
-  }
-
-  /**
-   * A failure to start the run (on Lambda, the async invoke of the function itself) is not the
-   * request's: 503, the detail in the log.
-   */
-  async #enqueueManualSync(): Promise<string> {
-    try {
-      return (await enqueueSync(this.id, 'manual')).runId;
-    } catch (error) {
-      logger.error('could not queue a manual sync', { integrationId: this.id, error });
-      throw new AppError(503, 'Could not queue the sync. Try again later.');
-    }
+  /** Whether a credential is saved (its metadata: nothing is opened). */
+  async #hasCredential(): Promise<boolean> {
+    return (await Credential.meta(this.workspaceId, this.id)) !== null;
   }
 }
