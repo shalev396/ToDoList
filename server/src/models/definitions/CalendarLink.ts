@@ -26,7 +26,10 @@ export interface CalendarLinkData {
   /**
    * A `dashboard` tombstone is TodoList's claim on the event (EventClaim, taken before its DELETE
    * is sent); this is when Google answered that DELETE (made or refused for good), or when a read
-   * showed it was made. Null while the claim stands unanswered, and for every other row.
+   * showed it was made. Null while the claim stands unanswered, and for every other row. A
+   * `dashboard` tombstone written before the field existed (stored without it) reads as answered at
+   * its `tombstonedAt`: the old code tombstoned only after Google answered (the
+   * 2026-11-15-calendar-link-delete-answered migration stores that).
    */
   deleteAnsweredAt: Date | null;
   createdAt: Date;
@@ -112,9 +115,15 @@ export interface ICalendarLinkRepository {
   ): Promise<number>;
   /**
    * Every link of the integration, tombstoned or not, removed (what TodoList added was taken back
-   * before a disconnect). Returns how many.
+   * before a disconnect), except, with `keepClaimsSince`, its claims that may still stand for
+   * another integration's push: answered since then, or unanswered and claimed since then. Returns
+   * how many were removed.
    */
-  removeForIntegration(workspaceId: string, integrationId: string): Promise<number>;
+  removeForIntegration(
+    workspaceId: string,
+    integrationId: string,
+    keepClaimsSince?: Date,
+  ): Promise<number>;
   /**
    * Another integration's claim on the same event (`key`): its link tombstoned `dashboard`
    * (TodoList itself deleted the event, or is deleting it: a clean-up step, a to-do's delete, a
@@ -129,11 +138,15 @@ export interface ICalendarLinkRepository {
   ): Promise<CalendarLinkData | null>;
   /** The claim tombstoned at `tombstonedAt` was answered now: `deleteAnsweredAt` set, once. */
   settle(workspaceId: string, id: string, tombstonedAt: Date): Promise<boolean>;
-  /** The integration's claims whose DELETE is still unanswered, claimed before `before`. */
+  /**
+   * The integration's claims whose DELETE is still unanswered (an explicit null), claimed before
+   * `before`: the oldest first, at most `limit`.
+   */
   listUnsettledClaims(
     workspaceId: string,
     integrationId: string,
     before: Date,
+    limit: number,
   ): Promise<CalendarLinkData[]>;
   /** Whether another integration of the workspace holds a live link to the same event. */
   hasOtherLive(workspaceId: string, integrationId: string, key: CalendarLinkKey): Promise<boolean>;

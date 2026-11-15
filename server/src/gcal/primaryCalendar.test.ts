@@ -469,10 +469,13 @@ describe('disconnect with "Also remove everything TodoList added to this calenda
     assert.equal(eventIds(shared).length, 1, 'the other workspace’s event is untouched');
     assert.equal(eventIds(ALICE.email).length, 1);
     assert.deepEqual(await (await models.getCalendarLinkRepository()).listLive(wid, iid), []);
-    assert.equal(
-      await (await models.getCalendarLinkRepository()).findByItem(wid, iid, items['due'] ?? ''),
-      null,
-    );
+    // A claim just settled stays (another integration's push in flight must still see TodoList's
+    // delete); nothing of it is live.
+    const kept = await (
+      await models.getCalendarLinkRepository()
+    ).findByItem(wid, iid, items['due'] ?? '');
+    assert.equal(kept?.deletedBy, 'dashboard');
+    assert.ok(kept.deleteAnsweredAt instanceof Date);
     assert.deepEqual(await audits('integration.cleanup'), [
       { events: 2, calendars: 1, calendarsKept: 2, remaining: 0, skipped: 0, failed: 0 },
     ]);

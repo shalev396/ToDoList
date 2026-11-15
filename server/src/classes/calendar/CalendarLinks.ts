@@ -25,10 +25,12 @@ export class CalendarLinks {
   }
 
   /**
-   * A to-do was deleted: each own live link's event is deleted now. A link whose integration is
-   * read-only, gone, or whose owner left stays (its next push removes the event, once it can); a
-   * failure of any kind is logged and never fails the delete, which already happened. Returns how
-   * many events were deleted.
+   * A to-do was deleted: each own live link's event is deleted now (claimed first, EventClaim). A
+   * link whose integration is read-only, gone, or whose owner left stays (its next push removes the
+   * event, once it can); a delete with no answer keeps its claim, which the integration's next push,
+   * clean-up or look at its pushed events reconciles once 10 minutes old; any other failure is
+   * logged and never fails the delete, which already happened. Returns how many events were
+   * deleted.
    */
   async onItemDeleted(itemId: string): Promise<number> {
     const workspaceId = this.#workspaceId;
@@ -61,7 +63,7 @@ export class CalendarLinks {
 }
 
 function left(integrationId: string | null, error: unknown): void {
-  logger.warn('A deleted to-do’s calendar event was left for the next push', {
+  logger.warn('A deleted to-do’s calendar event was left for a later push or clean-up', {
     integrationId,
     errorName: error instanceof Error ? error.name : typeof error,
   });

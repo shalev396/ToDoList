@@ -47,6 +47,7 @@ function scripted(script: Record<string, number>): CalendarWriter & { calls: str
     update: () => Promise.reject(new Error('the push does not call update')),
     insertCalendar: () => Promise.reject(new Error('the push does not call insertCalendar')),
     removeCalendar: () => Promise.reject(new Error('the push does not call removeCalendar')),
+    get: () => Promise.reject(new Error('the push reads nothing through applyOps')),
   };
 }
 

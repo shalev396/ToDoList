@@ -63,6 +63,17 @@ const PATCH_KEYS: readonly (keyof CalendarLinkPatch)[] = [
   'deleteAnsweredAt',
 ];
 
+/**
+ * When the claim's DELETE was answered. A `dashboard` tombstone stored before the field existed
+ * (the field missing, not null) was written by the old code after Google answered: at its
+ * `tombstonedAt`.
+ */
+function answeredAtOf(doc: CalendarLinkFields): Date | null {
+  const stored = (doc as { deleteAnsweredAt?: Date | null }).deleteAnsweredAt;
+  if (stored !== undefined) return stored;
+  return doc.deletedBy === 'dashboard' ? (doc.tombstonedAt ?? null) : null;
+}
+
 function toCalendarLinkData(doc: CalendarLinkFields): CalendarLinkData {
   return {
     id: doc._id,
@@ -78,7 +89,7 @@ function toCalendarLinkData(doc: CalendarLinkFields): CalendarLinkData {
     pushedHash: doc.pushedHash ?? null,
     tombstonedAt: doc.tombstonedAt ?? null,
     deletedBy: doc.deletedBy ?? null,
-    deleteAnsweredAt: doc.deleteAnsweredAt ?? null,
+    deleteAnsweredAt: answeredAtOf(doc),
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -185,8 +196,25 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
     return result.deletedCount;
   },
 
-  async removeForIntegration(workspaceId, integrationId) {
-    const result = await CalendarLinkMongoModel.deleteMany({ workspaceId, integrationId });
+  async removeForIntegration(workspaceId, integrationId, keepClaimsSince) {
+    const result = await CalendarLinkMongoModel.deleteMany({
+      workspaceId,
+      integrationId,
+      ...(keepClaimsSince === undefined
+        ? {}
+        : {
+            // Not a claim that may still stand: answered since then, or (unanswered or stored
+            // before the field existed) claimed since then.
+            $nor: [
+              { deletedBy: 'dashboard', deleteAnsweredAt: { $gte: keepClaimsSince } },
+              {
+                deletedBy: 'dashboard',
+                deleteAnsweredAt: null,
+                tombstonedAt: { $gte: keepClaimsSince },
+              },
+            ],
+          }),
+    });
     return result.deletedCount;
   },
 
@@ -200,7 +228,9 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
       tombstonedAt: { $ne: null },
       $or: [
         { deleteAnsweredAt: { $gte: since.answeredSince } },
-        { deleteAnsweredAt: null, tombstonedAt: { $gte: since.claimedSince } },
+        // Unanswered: an explicit null (a missing field: an old claim, answered at its tombstone).
+        { deleteAnsweredAt: { $type: 'null' }, tombstonedAt: { $gte: since.claimedSince } },
+        { deleteAnsweredAt: { $exists: false }, tombstonedAt: { $gte: since.answeredSince } },
       ],
     }).lean<CalendarLinkFields>();
     return doc ? toCalendarLinkData(doc) : null;
@@ -208,20 +238,30 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
 
   async settle(workspaceId, id, tombstonedAt) {
     const result = await CalendarLinkMongoModel.updateOne(
-      { _id: id, workspaceId, deletedBy: 'dashboard', tombstonedAt, deleteAnsweredAt: null },
+      {
+        _id: id,
+        workspaceId,
+        deletedBy: 'dashboard',
+        tombstonedAt,
+        deleteAnsweredAt: { $type: 'null' },
+      },
       { $set: { deleteAnsweredAt: new Date() } },
     );
     return result.modifiedCount > 0;
   },
 
-  async listUnsettledClaims(workspaceId, integrationId, before) {
+  async listUnsettledClaims(workspaceId, integrationId, before, limit) {
     const docs = await CalendarLinkMongoModel.find({
       workspaceId,
       integrationId,
       deletedBy: 'dashboard',
-      deleteAnsweredAt: null,
+      // An explicit null only: a row stored before the field existed was answered.
+      deleteAnsweredAt: { $type: 'null' },
       tombstonedAt: { $ne: null, $lt: before },
-    }).lean<CalendarLinkFields[]>();
+    })
+      .sort({ tombstonedAt: 1 })
+      .limit(limit)
+      .lean<CalendarLinkFields[]>();
     return docs.map(toCalendarLinkData);
   },
 
@@ -238,7 +278,15 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
 
   async release(workspaceId, id, calendarId, tombstonedAt) {
     const doc = await CalendarLinkMongoModel.findOneAndUpdate(
-      { _id: id, workspaceId, calendarId, deletedBy: 'dashboard', tombstonedAt },
+      {
+        _id: id,
+        workspaceId,
+        calendarId,
+        deletedBy: 'dashboard',
+        tombstonedAt,
+        // Never a settled claim: its delete was made or refused for good.
+        deleteAnsweredAt: { $type: 'null' },
+      },
       { $set: { tombstonedAt: null, deletedBy: null, deleteAnsweredAt: null } },
       { new: true, runValidators: true },
     ).lean<CalendarLinkFields>();

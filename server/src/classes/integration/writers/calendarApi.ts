@@ -135,6 +135,12 @@ export interface CalendarWriter {
    * are done.
    */
   removeCalendar(calendarId: string): Promise<void>;
+  /**
+   * events.get with the session's own token (a read, not a write): one event as Google has it, or
+   * null when Google says it is gone (410). A 404 is thrown. How a DELETE whose answer was lost is
+   * resolved without a second grant exchange.
+   */
+  get(calendarId: string, eventId: string): Promise<Record<string, unknown> | null>;
 }
 
 /** What a writer may do beyond its fixed list: the calendars it may delete, by exact id. */
@@ -381,6 +387,7 @@ export function calendarWriter(
         call('DELETE', `${googleEndpoints().calendar}/calendars/${encodeURIComponent(calendarId)}`),
       );
     },
+    get: (calendarId, eventId) => calendarReader(auth).get(calendarId, eventId),
   };
 }
 

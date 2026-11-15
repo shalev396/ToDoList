@@ -11,9 +11,10 @@
  *   reads that delete as the user's, and the next push (created after the answer) makes or adopts
  *   the event again and tracks it. The integration's own standing claim on the target calendar
  *   (its clean-up raced this push) is never revived by its write. A delete keeps its tombstone
- *   (claimed before it was sent, settled once answered); a create went to the workspace's primary calendar (its link moves there when the
- *   primary calendar changed), an update to its link's calendar; every write is audited
- *   (`gcal.write`); a 412 is a conflict, settled by the next pull;
+ *   (claimed before it was sent, settled once answered); a create went to the workspace's
+ *   primary calendar (its link moves there when the primary calendar changed), an update to its
+ *   link's calendar; every write is audited (`gcal.write`); a 412 is a conflict, settled by the
+ *   next pull;
  * - echoes (`etag == link.lastEtag`) are our own writes and are skipped;
  * - a changed event of a linked item: last write wins between Google's `updated` and the user's
  *   edit time (a tie goes to Google); the loser's values go to `AuditLogs.meta`, redacted. When
@@ -178,7 +179,9 @@ export class PushCommit {
     this.#primaryCalendarId = state.primaryCalendarId;
     this.#ownIntegrations = state.ownIntegrations;
     // Stamped by the Node process when the run row was created, like a claim's tombstone and its
-    // answer (a run's `startedAt` may be a caller's `now`); the claim margin absorbs the skew.
+    // answer (a run's `startedAt` may be a caller's `now`). An unanswered claim is compared with a
+    // CLAIM_MARGIN_MS margin, which absorbs the skew between processes; an answered one is compared
+    // exactly (its answer at or after this time), so it relies on their clocks agreeing.
     this.#runCreatedAt = state.run.createdAt;
   }
 

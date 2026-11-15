@@ -18,6 +18,11 @@
  *   again and tracks it at once, so a user's delete and the to-do's delete then count (W1, O1).
  *   IA's own push never revives IA's own claim (S1). A claim answered before IB's run, or one left
  *   unanswered for over a minute before it, is not this race; nor is a delete with no claim at all.
+ * - phase 5 re-review 2: a clean-up claim kept unanswered on an integration that no longer pushes
+ *   is reconciled by its next Remove (D); "Also remove" keeps the integration's fresh claims, so a
+ *   push racing it still drops its adopt (E). Not covered (PERMISSIONS-V2 ruling 12): a push that
+ *   moves an event to the new workspace calendar re-points its own link, so its claim on the old
+ *   calendar is gone if another integration adopts the event there in the same moments.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -572,6 +577,73 @@ describe('shared calendar, a clean-up racing another integration’s push', () =
     await commitOf(r, await nextRun(r), [], [r.cancelled]);
     assert.equal(await (await models.getItemRepository()).findById(r.t.wid, r.x), null);
     assert.equal((await links.findByItem(r.t.wid, r.ib, r.x))?.deletedBy, 'google');
+  });
+
+  it('D: a clean-up claim kept on an integration that no longer pushes: its next Remove reconciles it', async () => {
+    const { eventIdFor } = await import('./diff.js');
+    const t = await team('kept');
+    const ia = await connect(t, t.first);
+    const ib = await connect(t, t.second);
+    const c = await primary(t, t.first, { integrationId: ia, newCalendarName: 'Kept' });
+    const x = await todo(t, t.first, 'First owner’s kept claim', 1);
+    await push(t, t.first, ia);
+    // The primary goes to IB; IA's owner presses Remove: no answer, and the read fails too.
+    await primary(t, t.second, { integrationId: ib, calendarId: ALICE.email });
+    mock.holdNextWrite(() => {
+      mock.failNextWrite(503);
+      setImmediate(() => {
+        mock.failNextRead(500);
+      });
+      return Promise.resolve();
+    });
+    const removed = await t.call(t.first, 'POST', `/integrations/${ia}/remove-pushed`);
+    assert.equal(removed.status, 502, removed.text);
+    const links = await models.getCalendarLinkRepository();
+    const row = await links.findByItem(t.wid, ia, x);
+    assert.equal(row?.deletedBy, 'dashboard', 'kept');
+    assert.ok(
+      mock.events(c).some((event) => event.id === eventIdFor(x)),
+      'its event is live',
+    );
+    // Eleven minutes on, IA's own push is refused (not the primary's)…
+    const { CalendarLinkMongoModel } = await import('../models/mongoose/CalendarLink.js');
+    await CalendarLinkMongoModel.updateOne(
+      { _id: row.id },
+      { $set: { tombstonedAt: new Date(Date.now() - 11 * 60_000) } },
+    );
+    const refused = await t.call(t.first, 'POST', '/gcal-sync', {
+      integrationId: ia,
+      confirm: true,
+    });
+    assert.equal(refused.status, 409, refused.text);
+    // …but its next Remove reconciles the claim (the event is live: taken back) and deletes it.
+    const again = await t.call(t.first, 'POST', `/integrations/${ia}/remove-pushed`);
+    assert.equal(again.status, 200, again.text);
+    assert.equal(data(again.body)['events'], 1);
+    assert.equal(
+      mock.events(c).some((event) => event.id === eventIdFor(x)),
+      false,
+    );
+    assert.ok((await links.findByItem(t.wid, ia, x))?.deleteAnsweredAt instanceof Date);
+  });
+
+  it('E: "Also remove" keeps IA’s fresh claims, so IB’s racing commit drops its adopt', async () => {
+    const r = await raced('ra');
+    // C also holds the user's own event, so "Also remove" keeps the calendar.
+    mock.addEvent(r.c, {
+      summary: 'The user’s own event',
+      start: { date: '2026-12-01' },
+      end: { date: '2026-12-02' },
+    });
+    await primary(r.t, r.t.first, { integrationId: r.ia, calendarId: ALICE.email });
+    const gone = await r.t.call(r.t.first, 'DELETE', `/integrations/${r.ia}?removeAdded=true`);
+    assert.equal(gone.status, 200, gone.text);
+    const links = await models.getCalendarLinkRepository();
+    const claim = await links.findByItem(r.t.wid, r.ia, r.x);
+    assert.equal(claim?.deletedBy, 'dashboard', 'its fresh claim stays');
+    await commitOf(r, r.runId, [r.adopt], [r.cancelled]);
+    assert.equal(await links.findByItem(r.t.wid, r.ib, r.x), null, 'IB dropped its adopt');
+    await nothingLost(r.t, [r.x], [r.ib]);
   });
 
   it('a user’s own delete in Google, with no clean-up of that event, still deletes the to-do', async () => {

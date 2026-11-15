@@ -2,7 +2,8 @@
  * The Google Calendar push's ops applied through the calendar writer (calendarApi.ts), as
  * Code.gs's applyOps_ does it: a create that exists already is patched, an update carries
  * `If-Match` (412 is a conflict), a delete of a gone event is done, ops past the deadline are
- * deferred to the next run, and an op Google gave no answer to is told apart (`no_answer`). Only GoogleCalendarIntegration's write session hands it a writer.
+ * deferred to the next run, and an op Google gave no answer to is told apart
+ * (`no_answer`). Only GoogleCalendarIntegration's write session hands it a writer.
  */
 import type { WireOp } from '../../../gcal/diff.js';
 import { CalendarApiError, type CalendarWriter } from './calendarApi.js';

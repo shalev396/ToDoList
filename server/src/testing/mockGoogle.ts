@@ -118,6 +118,8 @@ export interface MockGoogle {
    * write is in flight (a race), run in the test's own process.
    */
   holdNextWrite(hook: () => Promise<void>): void;
+  /** Right after the next single-event read (events.get) is answered, `hook` runs (a race). */
+  afterNextRead(hook: () => void): void;
   /** The next single-event read (events.get) answers that status (a 404, a 410…). */
   failNextRead(status: number): void;
   reset(): void;
@@ -197,6 +199,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
   let failWrite: { status: number; reason?: string } | null = null;
   let failRead: number | null = null;
   let holdWrite: (() => Promise<void>) | null = null;
+  let afterRead: (() => void) | null = null;
 
   const calendarsOf = (who: MockGoogleAccount): CalendarEntry[] => [
     { id: who.email, summary: who.email, primary: true, accessRole: 'owner' },
@@ -592,6 +595,11 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
       const found = eventsOf(calendar.id).get(eventId);
       if (found === undefined) apiError(res, 404, 'Not Found');
       else send(res, 200, wire(found));
+      if (afterRead !== null) {
+        const hook = afterRead;
+        afterRead = null;
+        hook();
+      }
       return;
     }
     if (
@@ -615,6 +623,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     next = null;
     failWrite = null;
     holdWrite = null;
+    afterRead = null;
   };
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -747,6 +756,9 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     },
     holdNextWrite(hook): void {
       holdWrite = hook;
+    },
+    afterNextRead(hook): void {
+      afterRead = hook;
     },
     failNextRead(status): void {
       failRead = status;

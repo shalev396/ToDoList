@@ -8,7 +8,10 @@
  * - a delete op whose link is no longer this integration's is not sent; a delete that was not made
  *   (rate limited) takes its claim back, and the next push sends it again;
  * - a to-do's delete whose DELETE fails takes its claim back;
- * - a database failure between the push's claims takes back what was claimed, and sends nothing.
+ * - a database failure between the push's claims takes back what was claimed, and sends nothing;
+ * - phase 5 re-review 2: claims stored before the field existed are never swept (A); a database
+ *   failure while settling releases nothing whose DELETE was made (B); a DELETE that lands after
+ *   the read said live leaves the claim kept, so the push's own pull reads nothing (C).
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -187,11 +190,12 @@ describe('a push’s own delete whose answer is lost (P1)', () => {
     assert.equal(row.deleteAnsweredAt, null, 'unanswered');
     assert.ok(live(o, x.eventId), 'the event is still in Google');
 
-    // Six minutes on, the next push reconciles it: the event is live, so the claim goes back…
+    // Eleven minutes on (past STUCK_CLAIM_MS), the next push reconciles it: the event is live, and
+    // its call is long over, so the claim goes back…
     const { CalendarLinkMongoModel } = await import('../models/mongoose/CalendarLink.js');
     await CalendarLinkMongoModel.updateOne(
       { _id: row.id },
-      { $set: { tombstonedAt: new Date(Date.now() - 6 * 60_000) } },
+      { $set: { tombstonedAt: new Date(Date.now() - 11 * 60_000) } },
     );
     await push(o);
     row = await link(o, x.id);
@@ -202,6 +206,46 @@ describe('a push’s own delete whose answer is lost (P1)', () => {
     row = await link(o, x.id);
     assert.equal(row?.deletedBy, 'dashboard');
     assert.ok(row.deleteAnsweredAt instanceof Date);
+  });
+});
+
+describe('claims stored before the field existed (A)', () => {
+  it('read as answered at their tombstone: the sweep never reads them, nor takes back a restored event', async () => {
+    const o = await owner('old');
+    const xs = [await todo(o, 'Old 0'), await todo(o, 'Old 1'), await todo(o, 'Old 2')];
+    await push(o);
+    for (const x of xs) await undate(o, x.id);
+    await push(o);
+    // As the old code left them: no deleteAnsweredAt, ten days old.
+    const { CalendarLinkMongoModel } = await import('../models/mongoose/CalendarLink.js');
+    await CalendarLinkMongoModel.collection.updateMany(
+      { workspaceId: o.wid, integrationId: o.iid, deletedBy: 'dashboard' },
+      {
+        $unset: { deleteAnsweredAt: '' },
+        $set: { tombstonedAt: new Date(Date.now() - 10 * 86_400_000) },
+      },
+    );
+    // The user restored one event in Google.
+    const [restored] = xs;
+    assert.ok(restored !== undefined);
+    mock.addEvent(o.calendarId, {
+      id: restored.eventId,
+      summary: 'Old 0 (restored)',
+      start: { date: '2026-12-01' },
+      end: { date: '2026-12-02' },
+    });
+    const before = mock.requests().length;
+    await push(o);
+    const reads = mock
+      .requests()
+      .slice(before)
+      .filter((request) => request.method === 'GET' && /\/events\/[^/]+$/.test(request.path));
+    assert.deepEqual(reads, [], 'no claim read: they are answered');
+    const row = await link(o, restored.id);
+    assert.equal(row?.deletedBy, 'dashboard', 'still TodoList’s delete, never taken back');
+    assert.ok(row.deleteAnsweredAt instanceof Date, 'answered at its tombstone');
+    await push(o);
+    assert.ok(live(o, restored.eventId), 'the restored event stays');
   });
 });
 
@@ -266,6 +310,68 @@ describe('the push’s claims', () => {
     assert.equal((await link(o, x.id))?.tombstonedAt, null, 'the first claim was taken back');
     assert.equal((await link(o, y.id))?.tombstonedAt, null);
     assert.ok(live(o, x.eventId) && live(o, y.eventId));
+  });
+});
+
+describe('re-review 2: a made DELETE is never released, a live reading never trusted at once', () => {
+  it('B: a database failure while settling releases nothing; the claims stay', async (t) => {
+    const o = await owner('blind');
+    const x = await todo(o, 'Blind X');
+    const y = await todo(o, 'Blind Y');
+    await push(o);
+    await undate(o, x.id);
+    await undate(o, y.id);
+    const { CalendarLinkMongoModel } = await import('../models/mongoose/CalendarLink.js');
+    const settles = t.mock.method(CalendarLinkMongoModel, 'updateOne');
+    settles.mock.mockImplementationOnce(() => {
+      throw new Error('database blip');
+    });
+    await push(o);
+    settles.mock.restore();
+    for (const item of [x, y]) {
+      assert.equal(live(o, item.eventId), false, 'both DELETEs were made');
+      assert.equal((await link(o, item.id))?.deletedBy, 'dashboard', 'and both claims stay');
+    }
+    // The one whose settle failed waits, unanswered, for the sweep; the other is settled.
+    const answered = [await link(o, x.id), await link(o, y.id)].map(
+      (row) => row?.deleteAnsweredAt instanceof Date,
+    );
+    assert.deepEqual(answered.sort(), [false, true]);
+  });
+
+  it('C: a DELETE that lands after the read said live: the claim is kept, the to-do stays', async () => {
+    const o = await owner('slow');
+    const x = await todo(o, 'Slow delete');
+    await push(o);
+    await push(o);
+    await undate(o, x.id);
+    // No answer; the read finds the event live; only then does the DELETE land.
+    mock.holdNextWrite(() => {
+      mock.failNextWrite(503);
+      mock.afterNextRead(() => {
+        assert.ok(mock.deleteEvent(o.calendarId, x.eventId));
+      });
+      return Promise.resolve();
+    });
+    await push(o);
+    let row = await link(o, x.id);
+    assert.equal(row?.deletedBy, 'dashboard', 'kept: a live reading may come before the delete');
+    assert.equal(row.deleteAnsweredAt, null);
+    const item = await (await models.getItemRepository()).findById(o.wid, x.id);
+    assert.equal(
+      item?.deletedAt,
+      null,
+      'the push’s own pull read nothing of ours: the to-do stays',
+    );
+    // Eleven minutes on, the sweep reads it gone: settled.
+    const { CalendarLinkMongoModel } = await import('../models/mongoose/CalendarLink.js');
+    await CalendarLinkMongoModel.updateOne(
+      { _id: row.id },
+      { $set: { tombstonedAt: new Date(Date.now() - 11 * 60_000) } },
+    );
+    await push(o);
+    row = await link(o, x.id);
+    assert.ok(row?.deleteAnsweredAt instanceof Date, 'settled by the sweep');
   });
 });
 
