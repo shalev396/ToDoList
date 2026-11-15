@@ -59,9 +59,5 @@ export const AUDIT_LOG_WRITER = 'src/classes/AuditLog.ts';
  */
 export const LEGACY_DB_IMPORTERS = [
   'src/mcp/tools/workspace/auditLogQuery.ts',
-  'src/seed/seedWorkspace.ts',
   'src/services/connectLinks.ts',
-  'src/services/dashboards.ts',
-  'src/services/personas.ts',
-  'src/services/views.ts',
 ];
