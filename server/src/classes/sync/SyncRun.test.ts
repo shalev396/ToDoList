@@ -82,6 +82,13 @@ describe('SyncRun: the transitions table', () => {
     // What it holds is the run as stored now, not as loaded.
     assert.equal(run.toJSON().status, 'running');
     assert.equal(run.toJSON().startedAt.getTime(), AT.getTime());
+    // Its getters hand out copies: changing one changes nothing of the run.
+    run.startedAt.setTime(0);
+    run.createdAt.setTime(0);
+    run.counts['fetched'] = 99;
+    assert.equal(run.startedAt.getTime(), AT.getTime());
+    assert.notEqual(run.createdAt.getTime(), 0);
+    assert.equal(run.counts['fetched'], undefined);
     const row = await runs.findById(WS, run.id);
     assert.equal(row?.status, 'running');
     assert.equal(row.startedAt.getTime(), AT.getTime());

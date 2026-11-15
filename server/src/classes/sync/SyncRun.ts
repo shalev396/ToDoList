@@ -368,24 +368,27 @@ export class SyncRun
     return this.#current.trigger;
   }
 
+  /** A copy (as every getter of the run's own values: nothing handed out can change it). */
   get startedAt(): Date {
-    return this.#current.startedAt;
+    return new Date(this.#current.startedAt);
   }
 
   get finishedAt(): Date | null {
-    return this.#current.finishedAt;
+    const at = this.#current.finishedAt;
+    return at === null ? null : new Date(at);
   }
 
-  get counts(): Readonly<Record<string, number>> {
-    return this.#current.counts;
+  get counts(): Record<string, number> {
+    return { ...this.#current.counts };
   }
 
-  get error(): Readonly<ErrorInfo> | null {
-    return this.#current.error;
+  get error(): ErrorInfo | null {
+    const error = this.#current.error;
+    return error === null ? null : { ...error };
   }
 
   get createdAt(): Date {
-    return this.#current.createdAt;
+    return new Date(this.#current.createdAt);
   }
 
   get isOpen(): boolean {
