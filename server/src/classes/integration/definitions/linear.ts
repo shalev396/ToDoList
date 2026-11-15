@@ -98,7 +98,11 @@ const linear: DefinitionSpec<
     readOptions: linearOptions,
   },
   // An issue's title, workflow state (of its team), due date (a date) and priority.
-  write: { fields: ['title', 'status', 'dueAt', 'priority'], kinds: ['issue'] },
+  write: {
+    fields: ['title', 'status', 'dueAt', 'priority'],
+    kinds: ['issue'],
+    statuses: ['open', 'in_progress', 'done', 'cancelled'],
+  },
   revokePage: 'https://linear.app/settings/account/security',
   fixtures: { createOptions: 'create-options' },
 };

@@ -161,7 +161,7 @@ const github: DefinitionSpec<
   // An issue's title and state (open; closed as completed or not planned). Its due date comes from
   // a board or a milestone, and "in progress" from a board column: neither is the issue's own.
   // Pull requests and board drafts take no write-back.
-  write: { fields: ['title', 'status'], kinds: ['issue'] },
+  write: { fields: ['title', 'status'], kinds: ['issue'], statuses: ['open', 'done', 'cancelled'] },
   revokePage: 'https://github.com/settings/apps/authorizations',
   fixtures: { createOptions: 'create-options' },
 };

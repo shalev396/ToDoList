@@ -192,7 +192,11 @@ const jira: DefinitionSpec<
   },
   // An issue's summary, status (a transition), due date (a date) and priority (by its default
   // name). Jira has no start date; a description is kept here only as a preview.
-  write: { fields: ['title', 'status', 'dueAt', 'priority'], kinds: ['issue'] },
+  write: {
+    fields: ['title', 'status', 'dueAt', 'priority'],
+    kinds: ['issue'],
+    statuses: ['open', 'in_progress', 'done'],
+  },
   picker: 'sites',
   revokePage: 'https://id.atlassian.com/manage-profile/apps',
   fixtures: { createOptions: 'create-options' },

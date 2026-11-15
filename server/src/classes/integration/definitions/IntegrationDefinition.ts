@@ -20,7 +20,7 @@ import {
 } from '../../../models/definitions/Integration.js';
 import { findSecrets } from '../../../services/secretPatterns.js';
 import type { AdapterAuth, ProviderAdapter } from '../../../sync/types.js';
-import type { AuthMethod, ItemKind } from '../../../types/domain.js';
+import type { AuthMethod, ItemKind, ItemStatus } from '../../../types/domain.js';
 import type { ConnectableProvider, WritableField } from '../../../types/integrations.js';
 import type {
   CreateFailure,
@@ -132,6 +132,12 @@ export interface WriteRules {
   readonly fields: readonly WritableField[];
   /** The item kinds that take a write-back (GitHub: issues; never a pull request or a draft card). */
   readonly kinds: readonly ItemKind[];
+  /**
+   * The statuses a write-back can set there (those that read back as themselves): Jira and
+   * ClickUp have no "cancelled", GitHub's "in progress" is a board column. Empty: status isn't
+   * written. A status outside these is refused (`status_not_available`) before anything opens.
+   */
+  readonly statuses: readonly ItemStatus[];
 }
 
 /** The recorded fixtures a provider is exercised with (tests, the demo). */
@@ -197,6 +203,8 @@ export class IntegrationDefinition<
   readonly writableFields: readonly WritableField[];
   /** The item kinds that take a write-back; empty: none. */
   readonly writableKinds: readonly ItemKind[];
+  /** The statuses a write-back can set; empty: none. */
+  readonly reachableStatuses: readonly ItemStatus[];
   readonly picker: PickerKind | null;
   readonly revokePage: string | null;
   readonly comingSoon: boolean;
@@ -220,6 +228,7 @@ export class IntegrationDefinition<
     this.create = spec.create === undefined ? null : Object.freeze({ ...spec.create });
     this.writableFields = Object.freeze([...(spec.write?.fields ?? [])]);
     this.writableKinds = Object.freeze([...(spec.write?.kinds ?? [])]);
+    this.reachableStatuses = Object.freeze([...(spec.write?.statuses ?? [])]);
     this.picker = spec.picker ?? null;
     this.revokePage = spec.revokePage ?? null;
     this.comingSoon = spec.comingSoon === true;

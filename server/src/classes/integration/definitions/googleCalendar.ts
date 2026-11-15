@@ -80,9 +80,9 @@ const googleCalendar: DefinitionSpec<
     linkAllowed: (host) => host === 'google.com' || host.endsWith('.google.com'),
     forbiddenWithOAuth: 'rejected',
   },
-  // A pulled event's title and time (start, end, all day): updateEvent. Its description is
-  // written there too, but an item keeps none.
-  write: { fields: ['title', 'startAt', 'endAt'], kinds: ['event'] },
+  // A pulled event's title and time (startAt, endAt, with allDay): updateEvent, in the item's own
+  // names (EventEdit). Its description is written there too, but an item keeps none. No status.
+  write: { fields: ['title', 'startAt', 'endAt'], kinds: ['event'], statuses: [] },
   picker: 'calendars',
 };
 

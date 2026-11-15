@@ -344,17 +344,40 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
   it('declares each provider’s writable fields: what its API has of an item, nothing more', () => {
     assert.deepEqual(
       Object.fromEntries(
-        DEFINITIONS.map((d) => [d.provider, [[...d.writableFields], [...d.writableKinds]]]),
+        DEFINITIONS.map((d) => [
+          d.provider,
+          [[...d.writableFields], [...d.writableKinds], [...d.reachableStatuses]],
+        ]),
       ),
       {
-        jira: [['title', 'status', 'dueAt', 'priority'], ['issue']],
-        clickup: [['title', 'status', 'dueAt', 'startAt', 'priority'], ['task']],
-        linear: [['title', 'status', 'dueAt', 'priority'], ['issue']],
-        moodle: [[], []],
-        google_calendar: [['title', 'startAt', 'endAt'], ['event']],
-        github: [['title', 'status'], ['issue']],
+        jira: [
+          ['title', 'status', 'dueAt', 'priority'],
+          ['issue'],
+          ['open', 'in_progress', 'done'],
+        ],
+        clickup: [
+          ['title', 'status', 'dueAt', 'startAt', 'priority'],
+          ['task'],
+          ['open', 'in_progress', 'done'],
+        ],
+        linear: [
+          ['title', 'status', 'dueAt', 'priority'],
+          ['issue'],
+          ['open', 'in_progress', 'done', 'cancelled'],
+        ],
+        moodle: [[], [], []],
+        google_calendar: [['title', 'startAt', 'endAt'], ['event'], []],
+        github: [['title', 'status'], ['issue'], ['open', 'done', 'cancelled']],
       },
     );
+    // A status is reachable only where the status itself is writable.
+    for (const definition of DEFINITIONS) {
+      assert.equal(
+        definition.reachableStatuses.length > 0,
+        definition.writableFields.includes('status'),
+        definition.provider,
+      );
+    }
     // A GitHub pull request or board draft takes none.
     assert.deepEqual(definitionOf('github')?.writableFieldsFor('pr'), []);
     assert.deepEqual(definitionOf('github')?.writableFieldsFor('task'), []);
@@ -372,6 +395,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         canCreate: true,
         canUpdate: true,
         writableFields: ['title', 'status', 'dueAt', 'priority'],
+        writableKinds: ['issue'],
+        reachableStatuses: ['open', 'in_progress', 'done'],
         comingSoon: false,
       },
       {
@@ -383,6 +408,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         canCreate: true,
         canUpdate: true,
         writableFields: ['title', 'status', 'dueAt', 'startAt', 'priority'],
+        writableKinds: ['task'],
+        reachableStatuses: ['open', 'in_progress', 'done'],
         comingSoon: false,
       },
       {
@@ -394,6 +421,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         canCreate: true,
         canUpdate: true,
         writableFields: ['title', 'status', 'dueAt', 'priority'],
+        writableKinds: ['issue'],
+        reachableStatuses: ['open', 'in_progress', 'done', 'cancelled'],
         comingSoon: false,
       },
       {
@@ -405,6 +434,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         canCreate: false,
         canUpdate: false,
         writableFields: [],
+        writableKinds: [],
+        reachableStatuses: [],
         comingSoon: true,
       },
       {
@@ -416,6 +447,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         canCreate: true,
         canUpdate: true,
         writableFields: ['title', 'startAt', 'endAt'],
+        writableKinds: ['event'],
+        reachableStatuses: [],
         comingSoon: false,
       },
       {
@@ -427,6 +460,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         canCreate: true,
         canUpdate: true,
         writableFields: ['title', 'status'],
+        writableKinds: ['issue'],
+        reachableStatuses: ['open', 'done', 'cancelled'],
         comingSoon: false,
       },
     ]);

@@ -7,7 +7,7 @@
  * (models/definitions/Integration.ts) and nothing else.
  */
 import type { Query } from './builder.js';
-import type { AuthMethod, SyncRunStatus, SyncTrigger } from './domain.js';
+import type { AuthMethod, ItemKind, ItemStatus, SyncRunStatus, SyncTrigger } from './domain.js';
 
 /** Providers an owner can connect through the API. Slack, Notion and local are not among them. */
 export const CONNECTABLE_PROVIDERS = [
@@ -219,8 +219,12 @@ export interface ProviderCapabilities {
   canCreate: boolean;
   /** A mirrored item's edits can be written back there (when the integration is read & write). */
   canUpdate: boolean;
-  /** The item fields written back there; the rest of an edit stays in TodoList. Empty: none. */
+  /** The item fields written back there; any other field is refused there. Empty: none. */
   writableFields: WritableField[];
+  /** The item kinds that take a write-back (a GitHub pull request takes none). Empty: none. */
+  writableKinds: ItemKind[];
+  /** The statuses a write-back can set there (the status dropdown's choices). Empty: none. */
+  reachableStatuses: ItemStatus[];
   /** Listed, but not open to connect yet. */
   comingSoon: boolean;
 }

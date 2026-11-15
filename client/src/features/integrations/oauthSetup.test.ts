@@ -65,6 +65,8 @@ const cap = (
   canCreate: false,
   canUpdate: false,
   writableFields: [],
+  writableKinds: [],
+  reachableStatuses: [],
   comingSoon: false,
   ...over,
 });
@@ -84,6 +86,8 @@ const response: OAuthProvidersResponse = {
       canCreate: true,
       canUpdate: true,
       writableFields: ['title', 'status', 'dueAt', 'priority'],
+      writableKinds: ['issue'],
+      reachableStatuses: ['open', 'in_progress', 'done'],
     }),
     cap('clickup', {
       authMethods: ['oauth', 'personal_token'],
@@ -92,6 +96,8 @@ const response: OAuthProvidersResponse = {
       canCreate: true,
       canUpdate: true,
       writableFields: ['title', 'status', 'dueAt', 'startAt', 'priority'],
+      writableKinds: ['task'],
+      reachableStatuses: ['open', 'in_progress', 'done'],
     }),
     cap('linear', {
       authMethods: ['oauth', 'personal_api_key'],
@@ -100,6 +106,8 @@ const response: OAuthProvidersResponse = {
       canCreate: true,
       canUpdate: true,
       writableFields: ['title', 'status', 'dueAt', 'priority'],
+      writableKinds: ['issue'],
+      reachableStatuses: ['open', 'in_progress', 'done', 'cancelled'],
     }),
     cap('moodle', { authMethods: ['moodle_ws_token'], comingSoon: true }),
     cap('google_calendar', {
@@ -108,6 +116,7 @@ const response: OAuthProvidersResponse = {
       canCreate: true,
       canUpdate: true,
       writableFields: ['title', 'startAt', 'endAt'],
+      writableKinds: ['event'],
     }),
     cap('github', {
       authMethods: ['oauth', 'fine_grained_pat'],
@@ -115,6 +124,8 @@ const response: OAuthProvidersResponse = {
       canCreate: true,
       canUpdate: true,
       writableFields: ['title', 'status'],
+      writableKinds: ['issue'],
+      reachableStatuses: ['open', 'done', 'cancelled'],
     }),
   ],
 };

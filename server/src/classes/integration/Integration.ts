@@ -65,6 +65,7 @@ import {
   type AuthMethod,
   type IntegrationMode,
   type ItemKind,
+  type ItemStatus,
   type Provider,
 } from '../../types/domain.js';
 import type {
@@ -279,6 +280,8 @@ export abstract class Integration<
           canCreate: isCreateFunnel(can) && definition.create !== null,
           canUpdate,
           writableFields: canUpdate ? [...definition.writableFields] : [],
+          writableKinds: canUpdate ? [...definition.writableKinds] : [],
+          reachableStatuses: canUpdate ? [...definition.reachableStatuses] : [],
           comingSoon: definition.comingSoon,
         },
       ];
@@ -869,6 +872,11 @@ export abstract class Integration<
   /** The item fields an item of `kind` writes back to this provider (its definition's). */
   protected writableFieldsFor(kind: ItemKind): readonly WritableField[] {
     return this.definition?.writableFieldsFor(kind) ?? [];
+  }
+
+  /** The statuses a write-back can set at this provider (its definition's). */
+  protected get reachableStatuses(): readonly ItemStatus[] {
+    return this.definition?.reachableStatuses ?? [];
   }
 
   /**
