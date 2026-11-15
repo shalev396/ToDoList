@@ -22,6 +22,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { ProviderIcon } from '@/features/landing/ProviderIcon';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -110,6 +111,7 @@ export function IntegrationCard({
   const [confirming, setConfirming] = useState(false);
   const [confirmingStop, setConfirmingStop] = useState(false);
   const [confirmingWrite, setConfirmingWrite] = useState(false);
+  const [removeAdded, setRemoveAdded] = useState(false);
   const testConnection = useTestIntegration(workspaceId);
   const syncNow = useSyncIntegration(workspaceId);
   const disconnect = useDisconnectIntegration(workspaceId);
@@ -181,7 +183,11 @@ export function IntegrationCard({
       return;
     }
     try {
-      await disconnect.mutateAsync(integration.id);
+      await disconnect.mutateAsync(
+        removeAdded && provider === 'google_calendar' && integration.mode === 'read_write'
+          ? { id: integration.id, removeAdded: true }
+          : integration.id,
+      );
     } catch (failure) {
       setProblem(errorMessage(t, failure, 'connect.card.disconnectError'));
     }
@@ -530,7 +536,13 @@ export function IntegrationCard({
         </AlertDialogContent>
       </AlertDialog>
 
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+      <AlertDialog
+        open={confirming}
+        onOpenChange={(open) => {
+          setConfirming(open);
+          setRemoveAdded(false);
+        }}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('connect.card.disconnectTitle', { name })}</AlertDialogTitle>
@@ -557,6 +569,29 @@ export function IntegrationCard({
                   </>
                 )}
               </p>
+            ) : null}
+            {provider === 'google_calendar' && integration !== undefined ? (
+              <div className="flex flex-col gap-1">
+                <div className="flex min-h-6 items-center gap-2 max-md:min-h-11">
+                  <Checkbox
+                    id={`remove-added-${integration.id}`}
+                    data-remove-added
+                    checked={removeAdded && integration.mode === 'read_write'}
+                    disabled={integration.mode === 'read'}
+                    onCheckedChange={(value) => {
+                      setRemoveAdded(value === true);
+                    }}
+                  />
+                  <label htmlFor={`remove-added-${integration.id}`} className="text-sm">
+                    {t('connect.card.removeAdded')}
+                  </label>
+                </div>
+                {integration.mode === 'read' ? (
+                  <p className="ps-6 text-[13px] text-muted-foreground">
+                    {t('connect.card.removeAddedNeedsWrite')}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
           </AlertDialogHeader>
           <AlertDialogFooter>

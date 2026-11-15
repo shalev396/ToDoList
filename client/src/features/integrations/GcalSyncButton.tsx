@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CalendarSync } from 'lucide-react';
 import { errorMessage } from '@/api/errors';
-import { useIntegrations, useIntegrationSyncRuns } from '@/api/queries/integrations';
+import { useIntegrationSyncRuns, usePrimaryCalendar } from '@/api/queries/integrations';
 import { gcalSync } from '@/api/services/integrationService';
 import { Button } from '@/components/ui/button';
 import {
@@ -140,21 +140,37 @@ function GcalSyncDialog({
 
 /**
  * "Sync to calendar": a dry run with create, update and remove counts, then a confirmed run that
- * is polled through the sync runs. Editors and owners with a Google Calendar connected only.
+ * is polled through the sync runs. It pushes the workspace calendar, for editors and owners who
+ * own its connection.
  */
 export function GcalSyncButton({ className }: { className?: string | undefined }) {
   const { t } = useTranslation();
   const { workspace, role } = useCurrentWorkspace();
   const workspaceId = workspace?.id ?? '';
-  const integrations = useIntegrations(workspaceId);
+  const primary = usePrimaryCalendar(workspaceId).data;
   const [open, setOpen] = useState(false);
-  const calendar = integrations.data?.find((entry) => entry.provider === 'google_calendar');
   const allowed = role === 'editor' || role === 'owner';
+  // Only the workspace calendar is pushed, and only by the owner of its connection. A read-only
+  // connection still opens the dialog for the dry run; the confirm stays off there.
+  const target =
+    primary !== undefined && primary.mine && primary.integrationId !== null
+      ? { id: primary.integrationId, readOnly: primary.state === 'suspended' }
+      : null;
+  const pushable =
+    primary !== undefined &&
+    (primary.state === 'active' ||
+      (primary.state === 'suspended' && primary.reason === 'read_only'));
   const reason = !allowed
     ? t('blocks.action.notEditor')
-    : calendar === undefined
-      ? t('connect.gcalSync.notConnected')
-      : null;
+    : primary === undefined || primary.state === 'unset'
+      ? t('connect.gcalSync.noPrimary')
+      : primary.state === 'suspended' && primary.reason === 'disconnected'
+        ? t('connect.gcalSync.primaryDisconnected')
+        : !primary.mine || target === null
+          ? t('connect.gcalSync.notMine')
+          : pushable
+            ? null
+            : t('connect.gcalSync.noPrimary');
   return (
     <>
       <Button
@@ -170,11 +186,11 @@ export function GcalSyncButton({ className }: { className?: string | undefined }
         <CalendarSync aria-hidden="true" />
         {t('blocks.action.sync_gcal')}
       </Button>
-      {open && calendar !== undefined ? (
+      {open && target !== null ? (
         <GcalSyncDialog
           workspaceId={workspaceId}
-          integrationId={calendar.id}
-          mode={calendar.mode}
+          integrationId={target.id}
+          mode={target.readOnly ? 'read' : 'read_write'}
           onClose={() => {
             setOpen(false);
           }}

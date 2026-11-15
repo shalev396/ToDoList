@@ -6,11 +6,14 @@ import {
   createIntegration,
   deleteIntegration,
   getIntegrationConfig,
+  clearPrimaryCalendar,
   getIntegrationSharing,
+  getPrimaryCalendar,
   listGoogleCalendars,
   listIntegrations,
   listOAuthProviders,
   listOAuthResources,
+  setPrimaryCalendar,
   stopSharingIntegration,
   syncIntegration,
   testIntegration,
@@ -21,6 +24,7 @@ import { anyRunActive, syncPollInterval } from '@/features/integrations/status';
 import { workspaceKey } from '@/features/workspaces/switching';
 import type {
   CreateIntegrationRequestBody,
+  SetPrimaryCalendarRequestBody,
   UpdateIntegrationRequestBody,
 } from '@api-types/api-contracts';
 import type { SyncRunView } from '@api-types/integrations';
@@ -129,10 +133,61 @@ export function useUpdateIntegration(workspaceId: string) {
 }
 
 export function useDisconnectIntegration(workspaceId: string) {
+  const queryClient = useQueryClient();
   const refresh = useRefreshIntegrations(workspaceId);
   return useMutation({
-    mutationFn: (integrationId: string) =>
-      deleteIntegration(workspaceId, integrationId, { suppressErrorToast: true }),
+    mutationFn: (input: string | { id: string; removeAdded?: boolean }) => {
+      const { id, removeAdded } = typeof input === 'string' ? { id: input } : input;
+      return deleteIntegration(workspaceId, id, removeAdded === undefined ? {} : { removeAdded }, {
+        suppressErrorToast: true,
+      });
+    },
+    onSuccess: async () => {
+      await refresh();
+      await queryClient.invalidateQueries({ queryKey: queryKeys.primaryCalendar(workspaceId) });
+    },
+  });
+}
+
+/** The workspace's primary calendar (any member): state, why it is suspended, whether it is mine. */
+export function usePrimaryCalendar(workspaceId: string) {
+  return useQuery({
+    queryKey: queryKeys.primaryCalendar(workspaceId),
+    staleTime: QUERY_STALE_TIME_PRIVATE_MS,
+    enabled: workspaceId !== '',
+    queryFn: async ({ signal }) => {
+      const response = await getPrimaryCalendar(workspaceId, { signal, suppressErrorToast: true });
+      return response.data;
+    },
+  });
+}
+
+/** After a change of the primary calendar: it, the cards and the integration settings refresh. */
+function useRefreshPrimaryCalendar(workspaceId: string) {
+  const queryClient = useQueryClient();
+  const refresh = useRefreshIntegrations(workspaceId);
+  return async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.primaryCalendar(workspaceId) }),
+      refresh(),
+    ]);
+  };
+}
+
+export function useSetPrimaryCalendar(workspaceId: string) {
+  const refresh = useRefreshPrimaryCalendar(workspaceId);
+  return useMutation({
+    mutationFn: async (body: SetPrimaryCalendarRequestBody) =>
+      (await setPrimaryCalendar(workspaceId, body, { suppressErrorToast: true })).data,
+    onSuccess: refresh,
+  });
+}
+
+export function useClearPrimaryCalendar(workspaceId: string) {
+  const refresh = useRefreshPrimaryCalendar(workspaceId);
+  return useMutation({
+    mutationFn: async () =>
+      (await clearPrimaryCalendar(workspaceId, { suppressErrorToast: true })).data,
     onSuccess: refresh,
   });
 }

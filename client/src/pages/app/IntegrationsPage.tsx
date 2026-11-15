@@ -23,6 +23,7 @@ import { pageTitle } from '@/data/pageTitles';
 import { ConnectDialog } from '@/features/integrations/ConnectDialog';
 import { GcalCalendarPicker } from '@/features/integrations/GcalCalendarPicker';
 import { GcalSyncButton } from '@/features/integrations/GcalSyncButton';
+import { PrimaryCalendarSection } from '@/features/integrations/PrimaryCalendarSection';
 import { IntegrationCard } from '@/features/integrations/IntegrationCard';
 import {
   OAUTH_RETURN_PARAMS,
@@ -447,6 +448,9 @@ export default function IntegrationsPage() {
         description={t('connect.description')}
         actions={<GcalSyncButton />}
       />
+      {workspace === null ? null : (
+        <PrimaryCalendarSection key={workspace.id} workspaceId={workspace.id} />
+      )}
       {workspace === null ? null : (
         <Cards key={workspace.id} workspace={workspace} canConnect={canConnect} />
       )}

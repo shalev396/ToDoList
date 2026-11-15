@@ -62,6 +62,8 @@ export const queryKeys = {
   integrations: (workspaceId: string) => workspaceKey(workspaceId, 'integrations'),
   /** Which of my integrations are on a block (shared): under integrations, refreshed with them. */
   integrationSharing: (workspaceId: string) => workspaceKey(workspaceId, 'integrations', 'sharing'),
+  /** The workspace's primary calendar (where dated to-dos are pushed). */
+  primaryCalendar: (workspaceId: string) => workspaceKey(workspaceId, 'primaryCalendar'),
   agentKeys: (workspaceId: string) => workspaceKey(workspaceId, 'agentKeys'),
   views: (workspaceId: string) => workspaceKey(workspaceId, 'views'),
   view: (workspaceId: string, viewId: string) => workspaceKey(workspaceId, 'view', viewId),

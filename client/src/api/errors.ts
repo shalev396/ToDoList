@@ -37,6 +37,7 @@ export const ERROR_CODE_KEYS: Readonly<Record<ErrorCode, string>> = {
   integration_read_only: 'errors.codes.integrationReadOnly',
   status_not_available: 'errors.codes.statusNotAvailable',
   scope_missing: 'errors.codes.scopeMissing',
+  calendar_not_primary: 'errors.codes.calendarNotPrimary',
   field_not_writable: 'errors.codes.fieldNotWritable',
   provider_partial_write: 'errors.codes.providerPartialWrite',
   provider_item_missing: 'errors.codes.providerItemMissing',

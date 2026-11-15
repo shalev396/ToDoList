@@ -80,8 +80,7 @@ export const PROVIDER_REGISTRY: { [P in ConnectableProvider]: ProviderSpec<P> } 
     docsUrl: 'https://developers.google.com/calendar/api/guides/overview',
     config: {
       calendars: managed,
-      targetCalendarId: managed,
-      pushFilter: managed,
+      appCreatedCalendars: managed,
       horizonDays: managed,
       maxOpsPerRun: managed,
     },

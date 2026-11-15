@@ -17,7 +17,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { SelectField } from '@/components/ui/select';
 import { SaveStatus } from '@/components/ui/save-status';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { IntegrationStatusView } from '@api-types/api-contracts';
@@ -25,8 +24,6 @@ import type { GoogleCalendarConfig } from '@api-types/integrations';
 
 interface Choice {
   read: string[];
-  /** '' sends no tasks. */
-  target: string;
 }
 
 function isGoogleCalendarConfig(value: unknown): value is GoogleCalendarConfig {
@@ -41,14 +38,13 @@ function isGoogleCalendarConfig(value: unknown): value is GoogleCalendarConfig {
 function choiceOf(config: GoogleCalendarConfig): Choice {
   return {
     read: config.calendars.map((calendar) => calendar.id),
-    target: config.targetCalendarId ?? '',
   };
 }
 
 /**
  * The calendar picker of a Google Calendar connected with Google: the account's calendars from
- * Google (never typed in), which ones to read, and the one the dashboard's tasks are sent to (a
- * calendar the account can write). The other settings (push filter, horizon) are kept as they are.
+ * Google (never typed in) and which ones to read. Where tasks are sent is the workspace calendar
+ * (PrimaryCalendarSection), not a setting here. The other settings (horizon) are kept as they are.
  */
 export function GcalCalendarPicker({
   workspaceId,
@@ -80,9 +76,10 @@ export function GcalCalendarPicker({
     }
     // The settings this picker doesn't edit are kept as they are.
     const next: GoogleCalendarConfig = {
-      calendars: choice.read.map((id) => ({ id, mode: id === choice.target ? 'two_way' : 'read' })),
-      ...(choice.target === '' ? {} : { targetCalendarId: choice.target }),
-      ...(stored.pushFilter === undefined ? {} : { pushFilter: stored.pushFilter }),
+      calendars: choice.read.map((id) => ({
+        id,
+        mode: stored.calendars.find((calendar) => calendar.id === id)?.mode ?? 'read',
+      })),
       ...(stored.horizonDays === undefined ? {} : { horizonDays: stored.horizonDays }),
       ...(stored.maxOpsPerRun === undefined ? {} : { maxOpsPerRun: stored.maxOpsPerRun }),
     };
@@ -157,27 +154,6 @@ export function GcalCalendarPicker({
                 );
               })}
             </fieldset>
-            <div className="flex flex-col gap-1.5">
-              <label htmlFor="gcal-push-to" className="text-sm font-medium">
-                {t('connect.oauth.pushTo')}
-              </label>
-              <SelectField
-                id="gcal-push-to"
-                value={choice.target}
-                onValueChange={(next) => {
-                  change({ ...choice, target: next });
-                }}
-                options={[
-                  { value: '', label: t('connect.oauth.pushNone') },
-                  ...calendars.data
-                    .filter(
-                      (calendar) =>
-                        calendar.accessRole === 'owner' || calendar.accessRole === 'writer',
-                    )
-                    .map((calendar) => ({ value: calendar.id, label: calendar.summary })),
-                ]}
-              />
-            </div>
           </div>
         )}
         <DialogFooter>

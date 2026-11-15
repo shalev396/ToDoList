@@ -9,7 +9,11 @@ import type {
   CreateIntegrationResponseData,
   GetIntegrationConfigResponseData,
   IntegrationSharingResponseData,
+  ClearPrimaryCalendarResponseData,
+  GetPrimaryCalendarResponseData,
   ListGoogleCalendarsResponseData,
+  SetPrimaryCalendarRequestBody,
+  SetPrimaryCalendarResponseData,
   ListIntegrationsResponseData,
   SaveCredentialRequestBody,
   StartGoogleCalendarOAuthRequestBody,
@@ -97,12 +101,51 @@ export async function updateIntegration(
   return response.data;
 }
 
+/** `removeAdded` (Google Calendar, read & write): first remove what TodoList added there. */
 export async function deleteIntegration(
   workspaceId: string,
   integrationId: string,
+  options: { removeAdded?: boolean } = {},
   config?: ApiRequestConfig,
 ) {
-  await api.delete(integrationPath(workspaceId, integrationId), config);
+  await api.delete(integrationPath(workspaceId, integrationId), {
+    ...config,
+    ...(options.removeAdded === true ? { params: { removeAdded: true } } : {}),
+  });
+}
+
+function primaryCalendarPath(workspaceId: string): string {
+  return `${wsPath(workspaceId)}/primary-calendar`;
+}
+
+/** The workspace's primary calendar: any member sees its state, its owner also its ids. */
+export async function getPrimaryCalendar(workspaceId: string, config?: ApiRequestConfig) {
+  const response = await api.get<ApiSuccessResponse<GetPrimaryCalendarResponseData>>(
+    primaryCalendarPath(workspaceId),
+    config,
+  );
+  return response.data;
+}
+
+export async function setPrimaryCalendar(
+  workspaceId: string,
+  body: SetPrimaryCalendarRequestBody,
+  config?: ApiRequestConfig,
+) {
+  const response = await api.put<ApiSuccessResponse<SetPrimaryCalendarResponseData>>(
+    primaryCalendarPath(workspaceId),
+    body,
+    config,
+  );
+  return response.data;
+}
+
+export async function clearPrimaryCalendar(workspaceId: string, config?: ApiRequestConfig) {
+  const response = await api.delete<ApiSuccessResponse<ClearPrimaryCalendarResponseData>>(
+    primaryCalendarPath(workspaceId),
+    config,
+  );
+  return response.data;
 }
 
 /** Which of my own integrations are shared: a connector on some block (ids only). */
