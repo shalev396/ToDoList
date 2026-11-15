@@ -287,6 +287,8 @@ export interface CalendarReader {
     query: { syncToken: string } | { timeMin: string },
     pageToken: string | null,
   ): Promise<EventsPage>;
+  /** events.get: one event as Google has it, or null when it is gone (404 or 410). */
+  get(calendarId: string, eventId: string): Promise<Record<string, unknown> | null>;
 }
 
 /** A reader acting with the grant's auth headers (its strategy's): GET events.list only. */
@@ -309,6 +311,17 @@ export function calendarReader(auth: Readonly<Record<string, string>>): Calendar
         nextPageToken: str(data?.['nextPageToken']),
         nextSyncToken: str(data?.['nextSyncToken']),
       };
+    },
+    async get(calendarId, eventId): Promise<Record<string, unknown> | null> {
+      try {
+        const data = await request(auth, 'GET', eventsUrl(calendarId, eventId));
+        return typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : null;
+      } catch (error) {
+        if (error instanceof CalendarApiError && (error.status === 404 || error.status === 410)) {
+          return null;
+        }
+        throw error;
+      }
     },
   };
 }

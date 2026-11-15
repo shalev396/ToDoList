@@ -567,6 +567,12 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
       listEvents(calendar.id, url, res);
       return;
     }
+    if (req.method === 'GET' && eventId !== undefined) {
+      const found = eventsOf(calendar.id).get(eventId);
+      if (found === undefined) apiError(res, 404, 'Not Found');
+      else send(res, 200, wire(found));
+      return;
+    }
     if (
       (req.method === 'POST' && eventId === undefined) ||
       ((req.method === 'PATCH' || req.method === 'DELETE') && eventId !== undefined)

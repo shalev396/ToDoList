@@ -201,6 +201,12 @@ export interface CalendarProvider extends CreateFunnel {
    * a read calendar); whether it was added.
    */
   ensureReads(caller: Caller, calendarId: string): Promise<boolean>;
+  /** One event as Google has it now (a read; null when gone): what a retried create stored. */
+  readEvent(
+    caller: Caller,
+    calendarId: string,
+    eventId: string,
+  ): Promise<Record<string, unknown> | null>;
   /** A pulled event deleted, by its item (already gone is done); the item goes too. */
   deleteEvent(caller: Caller, item: ItemRef, notice?: GuestNotice): Promise<void>;
   /**

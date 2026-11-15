@@ -70,9 +70,13 @@ function createFailure(result: Exclude<WriteResult, { kind: 'created' }>): AppEr
   if (result.kind === 'unknown') return new ProviderNoAnswerError(provider);
   switch (result.reason) {
     case 'auth':
-      return new AppError(409, `${provider} refused the connection: reconnect it`);
+      return new AppError(409, `${provider} refused the connection: reconnect it`, {
+        code: 'provider_refused',
+      });
     case 'forbidden':
-      return new AppError(409, `${provider} refused this change: the connection may not make it`);
+      return new AppError(409, `${provider} refused this change: the connection may not make it`, {
+        code: 'provider_refused',
+      });
     case 'rate_limited':
       return new AppError(429, `${provider} is busy. Try again in a moment.`);
     default:
@@ -255,7 +259,11 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
     // The primary calendar is always a read calendar (the owner was told when picking it): this
     // only restores that invariant, it never widens what the integration reads.
     try {
-      await integration.ensureReads(caller, calendarId);
+      if (await integration.ensureReads(caller, calendarId)) {
+        logger.warn('The primary calendar was not a read calendar: added again', {
+          integrationId: data.id,
+        });
+      }
     } catch (error) {
       // The event exists at Google already: a masked 500 would invite a second series.
       logger.warn('A created recurring event could not be kept read', {
@@ -264,7 +272,29 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
       });
       throw new CreatedNotStoredError(data.provider, ['event']);
     }
-    const stored = await CalendarEvent.#storeCreated(caller, data, calendarId, event, rule, result);
+    // A retry that found the event at Google stores Google's version (its summary, time and rule
+    // may differ from this request's); a read that fails leaves it to the next sync.
+    let atGoogle: Record<string, unknown> | null = null;
+    if (existed) {
+      try {
+        atGoogle = await integration.readEvent(caller, calendarId, eventId);
+      } catch (error) {
+        logger.warn('A recurring event found at Google could not be read back', {
+          integrationId: data.id,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      }
+      if (atGoogle === null) throw new CreatedNotStoredError(data.provider, ['event']);
+    }
+    const stored = await CalendarEvent.#storeCreated(
+      caller,
+      data,
+      calendarId,
+      event,
+      rule,
+      result,
+      atGoogle,
+    );
     const local = {
       ...(input.topicId === undefined || input.topicId === null
         ? {}
@@ -290,10 +320,11 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
     event: PlainEventBody,
     rule: RecurrenceRule,
     result: Extract<WriteResult, { kind: 'created' }>,
+    atGoogle: Record<string, unknown> | null,
   ): Promise<CalendarEvent> {
     let stored: MirroredItem | null = null;
     try {
-      const mapped = CalendarEvent.#mapped(caller, data, calendarId, event, rule, result);
+      const mapped = CalendarEvent.#mapped(caller, data, calendarId, event, rule, result, atGoogle);
       stored = mapped === null ? null : await MirroredItem.store(data, mapped);
     } catch (error) {
       logger.warn('A created recurring event could not be stored', {
@@ -331,9 +362,10 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
     event: PlainEventBody,
     rule: RecurrenceRule,
     result: Extract<WriteResult, { kind: 'created' }>,
+    atGoogle: Record<string, unknown> | null,
   ): MappedItem | null {
     const mapped = mapCalendarEvent(
-      {
+      atGoogle ?? {
         id: result.record.id,
         status: 'confirmed',
         summary: event.summary,
