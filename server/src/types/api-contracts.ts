@@ -199,6 +199,7 @@ export type {
   UpdateIntegrationResponseData,
   StopSharingResponseData,
   IntegrationSharingResponseData,
+  RemovePushedResponseData,
 } from '../routes/private/integrations.js';
 
 export type {
@@ -246,6 +247,7 @@ export type { CatalogDescription, CatalogField } from './builder.js';
 export type { GcalSyncRequestBody, GcalSyncResponseData } from '../routes/private/gcalSync.js';
 
 export type {
+  CleanupProgress,
   PrimaryCalendarSuspension,
   PrimaryCalendarView,
   SetPrimaryCalendarRequestBody,

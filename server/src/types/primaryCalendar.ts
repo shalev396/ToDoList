@@ -32,3 +32,18 @@ export interface PrimaryCalendarView {
 export type SetPrimaryCalendarRequestBody =
   | { integrationId: string; calendarId: string }
   | { integrationId: string; newCalendarName: string };
+
+/**
+ * How far taking back what TodoList added got (counts only): the `progress` of a 409
+ * `cleanup_incomplete` (remove-pushed, or a disconnect with removeAdded).
+ */
+export interface CleanupProgress {
+  /** Pushed events deleted at the provider. */
+  events: number;
+  /** Calendars TodoList created, deleted. */
+  calendars: number;
+  /** Calendars TodoList created, kept because they hold events it did not add. */
+  calendarsKept: number;
+  /** What is left: events and calendars not reached yet. */
+  remaining: number;
+}

@@ -25,7 +25,8 @@
  *   all fail, as does any `as` rename of a factory or a dynamic import whose target is unknown.
  * - MCP never switches the mode: nothing under src/mcp/ names `setMode`, `checkMode` or
  *   `UpdateIntegrationBody`; nor does it choose the workspace's primary calendar or take back
- *   what TodoList added (`setPrimaryCalendar`, `clearPrimaryCalendar`, `removeAdded`).
+ *   what TodoList added (`setPrimaryCalendar`, `clearPrimaryCalendar`, `removeAdded`,
+ *   `removePushed`).
  * - a calendar's delete (the writer's `removeCalendar`, which its allow-list takes only for the
  *   calendars TodoList created on the integration) is called once in all of server/src: in
  *   GoogleCalendarIntegration.ts, inside a `withWriteSession(…)` call.
@@ -41,7 +42,7 @@ const TRACKER_BASE = 'classes/integration/TrackerIntegration.ts';
 const GOOGLE = 'classes/integration/providers/GoogleCalendarIntegration.ts';
 const WRITER_NAMES = /\b(?:createWriteClient|calendarWriter|guardedTransport)\b/;
 const MODE_SWITCH_NAMES =
-  /\b(?:setMode|checkMode|UpdateIntegrationBody|setPrimaryCalendar|clearPrimaryCalendar|removeAdded)\b/;
+  /\b(?:setMode|checkMode|UpdateIntegrationBody|setPrimaryCalendar|clearPrimaryCalendar|removeAdded|removePushed)\b/;
 
 /** Where a pinned call must sit: a `createWriter` body, or a `withWriteSession(…)` call. */
 type Within = 'createWriter' | 'writeSession';
@@ -585,12 +586,14 @@ ${provider}`,
         'mcp/tools/calendar/primary.ts': `export const p = (w: W, c: C) => w.setPrimaryCalendar(c, x);`,
         'mcp/tools/calendar/clear.ts': `export const q = (w: W, c: C) => w.clearPrimaryCalendar(c);`,
         'mcp/tools/calendar/clean.ts': `export const r = (i: I, c: C) => i.removeAdded(c);`,
+        'mcp/tools/calendar/pushed.ts': `export const s = (i: I, c: C) => i.removePushed(c);`,
         'mcp/tools/calendar/fine.ts': `export const status = 'primary';`,
       }),
       [
         'mcp/tools/calendar/clean.ts',
         'mcp/tools/calendar/clear.ts',
         'mcp/tools/calendar/primary.ts',
+        'mcp/tools/calendar/pushed.ts',
       ],
     );
   });

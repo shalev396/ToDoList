@@ -1,4 +1,4 @@
-import { type RequestHandler } from 'express';
+import { type RequestHandler, type Response } from 'express';
 
 import { LIMITS } from '../config/limits.js';
 import { takeSensitiveBody } from '../middlewares/sensitiveBody.js';
@@ -7,11 +7,15 @@ import type {
   GetIntegrationConfigResponseData,
   IntegrationSharingResponseData,
   ListIntegrationsResponseData,
+  RemovePushedResponseData,
   StopSharingResponseData,
   TestIntegrationResponseData,
   UpdateIntegrationResponseData,
 } from '../routes/private/integrations.js';
-import { Integration } from '../classes/integration/index.js';
+import { Integration, isAddedContentRemover } from '../classes/integration/index.js';
+import { AppError } from '../errors/AppError.js';
+import { CleanupIncompleteError } from '../errors/CleanupIncompleteError.js';
+import { redactString } from '../services/secretPatterns.js';
 import {
   CreateIntegrationBody,
   DisconnectQuery,
@@ -25,11 +29,33 @@ import { parseOr400, routeParam } from '../utils/validation.js';
 /** The caller's own integrations only: other members' show as provider icons on Members. */
 const list: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
-  const data: ListIntegrationsResponseData = (await Integration.listOwn(request.caller)).map(
-    (integration) => integration.toView(),
+  const data: ListIntegrationsResponseData = await Promise.all(
+    (await Integration.listOwn(request.caller)).map(async (integration) =>
+      // A Google Calendar's live pushed events, so an earlier workspace calendar's can be removed.
+      isAddedContentRemover(integration)
+        ? {
+            ...integration.toView(),
+            pushedEvents: await integration.pushedEventCount(request.caller),
+          }
+        : integration.toView(),
+    ),
   );
   res.success(data);
 };
+
+/**
+ * A clean-up that ran out of time: `409 {message, code: 'cleanup_incomplete', progress}` (the
+ * counts, so the client offers "Continue"). True when it answered.
+ */
+function answeredIncomplete(error: unknown, res: Response): boolean {
+  if (!(error instanceof CleanupIncompleteError)) return false;
+  res.status(409).json({
+    message: redactString(error.message),
+    code: error.code,
+    progress: { ...error.progress },
+  });
+  return true;
+}
 
 /** Which of the caller's own integrations are shared (a connector on some block): ids only. */
 const sharing: RequestHandler = async (req, res): Promise<void> => {
@@ -106,8 +132,29 @@ const remove: RequestHandler = async (req, res): Promise<void> => {
     request.caller,
     routeParam(req, 'iid'),
   );
-  await integration.disconnect(request.caller, { removeAdded: query.removeAdded === 'true' });
+  try {
+    await integration.disconnect(request.caller, { removeAdded: query.removeAdded === 'true' });
+  } catch (error) {
+    if (answeredIncomplete(error, res)) return;
+    throw error;
+  }
   res.status(204).end();
+};
+
+/** "Remove" the events a Google Calendar integration pushed (its owner, read & write). */
+const removePushed: RequestHandler = async (req, res): Promise<void> => {
+  const request = req as WorkspaceRequest;
+  const integration = await Integration.findOwn(request.caller, routeParam(req, 'iid'));
+  if (!isAddedContentRemover(integration)) {
+    throw new AppError(400, 'This integration pushes no events');
+  }
+  try {
+    const data: RemovePushedResponseData = await integration.removePushed(request.caller);
+    res.success(data);
+  } catch (error) {
+    if (answeredIncomplete(error, res)) return;
+    throw error;
+  }
 };
 
 /** "Stop sharing": its connectors come off every block (its owner; 404 for anyone else). */
@@ -127,5 +174,6 @@ export const IntegrationsController = {
   config,
   update,
   remove,
+  removePushed,
   stopSharing,
 } as const;

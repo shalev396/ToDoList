@@ -448,8 +448,13 @@ describe('credential route', () => {
         'lastSyncAt',
         'mode',
         'provider',
+        // A Google Calendar's live pushed events (a count), and only there.
+        ...(status['provider'] === 'google_calendar' ? ['pushedEvents'] : []),
         'status',
       ]);
+      if (status['provider'] === 'google_calendar') {
+        check(typeof status['pushedEvents'] === 'number', 'pushedEvents is a count');
+      }
       assertions += 1;
     }
   });

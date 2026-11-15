@@ -211,6 +211,11 @@ export interface IntegrationStatusView {
   canSwitchMode: boolean;
   expiresAt: Date | null;
   lastSyncAt: Date | null;
+  /**
+   * A Google Calendar integration: how many events TodoList pushed with it are still live (so an
+   * earlier workspace calendar's leftovers can be removed). Absent for other providers.
+   */
+  pushedEvents?: number;
 }
 
 const PUBLIC_STATUS: Readonly<Record<IntegrationStatus, PublicIntegrationStatus>> = {

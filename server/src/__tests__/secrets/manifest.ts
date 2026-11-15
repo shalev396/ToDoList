@@ -478,6 +478,14 @@ export const MANIFEST: readonly Entry[] = [
     expect: [2],
     noBadInput: true,
   },
+  // Only a Google Calendar pushes events: 400 for the Jira one (and nothing is removed).
+  {
+    method: 'POST',
+    path: `${W}/integrations/:iid/remove-pushed`,
+    params: jira,
+    expect: [4],
+    noBadInput: true,
+  },
   { method: 'POST', path: `${W}/sync`, expect: [2] },
   { method: 'GET', path: `${W}/sync-runs`, expect: [2] },
   {

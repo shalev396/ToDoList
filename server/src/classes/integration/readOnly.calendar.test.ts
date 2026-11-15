@@ -236,7 +236,8 @@ describe('Google Calendar while read-only', () => {
     await assert.rejects(integration.removeAdded(caller), readOnly);
     await assert.rejects(integration.primaryCandidate(caller, ALICE.email), readOnly);
     // A to-do's delete leaves the event for the next push while it is read-only.
-    assert.equal(await GoogleCalendarIntegration.deleteEventsOfDeletedItem(wid, 'ro-linked-1'), 0);
+    const { CalendarLinks } = await import('../calendar/CalendarLinks.js');
+    assert.equal(await CalendarLinks.in(wid).onItemDeleted('ro-linked-1'), 0);
     assert.deepEqual(writes(), before);
     const kept = await links.findByItem(wid, iid, 'ro-linked-1');
     assert.equal(kept?.tombstonedAt, null);

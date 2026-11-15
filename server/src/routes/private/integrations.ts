@@ -281,6 +281,27 @@ router.post(
   IntegrationsController.stopSharing,
 );
 
+// ─── POST /api/private/workspaces/:wid/integrations/:iid/remove-pushed ──────
+
+/**
+ * Its owner, a Google Calendar integration that is read & write (409 `integration_read_only`; 400
+ * for another provider). "Remove" the events TodoList pushed with it (an earlier workspace
+ * calendar's leftovers, or the old one's on Change and Stop): each through the write session,
+ * its link tombstoned, within the push's 20 s budget. Done: `{events, remaining: 0}`. Out of
+ * time: `409 {message, code: 'cleanup_incomplete', progress: {events, calendars, calendarsKept,
+ * remaining}}`: call again to go on. Never MCP. Audited as `integration.cleanup` (counts only).
+ */
+export interface RemovePushedResponseData {
+  events: number;
+  remaining: 0;
+}
+
+router.post(
+  '/workspaces/:wid/integrations/:iid/remove-pushed',
+  requireWorkspace('viewer'),
+  IntegrationsController.removePushed,
+);
+
 // ─── DELETE /api/private/workspaces/:wid/integrations/:iid ──────────────────
 
 /**
@@ -290,7 +311,9 @@ router.post(
  * TodoList pushed with it and each calendar TodoList created there that holds nothing else, then
  * its links; it needs the integration read & write (409 `integration_read_only`), 400 for another
  * provider, and a Google failure (502, 409 to reconnect) stops before anything is disconnected.
- * Audited as `integration.cleanup` (counts only).
+ * It has the push's 20 s budget: out of time, `409 {message, code: 'cleanup_incomplete',
+ * progress}` and the integration stays connected (call again to go on, or disconnect without
+ * it). Audited as `integration.cleanup` (counts only).
  */
 export interface DisconnectIntegrationQuery {
   removeAdded?: 'true' | 'false';

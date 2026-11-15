@@ -28,7 +28,7 @@ import type { ItemCopyView } from '../types/items.js';
 import type { ContainerType, ItemKind, ItemStatus, Provider } from '../types/domain.js';
 import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
 import { Topic } from '../classes/workspace/Topic.js';
-import { GoogleCalendarIntegration } from '../classes/integration/index.js';
+import { CalendarLinks } from '../classes/calendar/CalendarLinks.js';
 import { PlannedAt } from '../classes/item/PlannedAt.js';
 import { scrub } from './scrub.js';
 import { redactString } from './secretPatterns.js';
@@ -520,7 +520,7 @@ export async function deleteItem(ws: WorkspaceContext, userId: string, id: strin
   const items = await getItemRepository();
   if (!(await items.softDelete(ws.id, id))) throw new AppError(404, 'Not found');
   // Its events on the workspace calendar go now, not at the next push (read-only: they wait).
-  await GoogleCalendarIntegration.deleteEventsOfDeletedItem(ws.id, id);
+  await CalendarLinks.in(ws.id).onItemDeleted(id);
 }
 
 export async function updateOverlay(

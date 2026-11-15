@@ -50,6 +50,11 @@ export const ERROR_CODES = [
   'event_has_guests',
   /** A push for a Google Calendar integration that is not the workspace's primary calendar. */
   'calendar_not_primary',
+  /**
+   * Removing what TodoList added at a calendar ran out of time: what was done stays done, the rest
+   * is left for the next call (the answer carries `progress`).
+   */
+  'cleanup_incomplete',
   // Creating a to-do in a provider too (H5)
   'provider_writes_off',
   'create_rate_limited',

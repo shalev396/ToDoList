@@ -151,12 +151,18 @@ export interface AddedRemoval {
 }
 
 /**
- * An integration that can take back what TodoList added at its provider, before its owner
- * disconnects it ("Also remove everything TodoList added"): only what TodoList itself made, and
- * only while it is read & write (409 `integration_read_only`).
+ * An integration that can take back what TodoList added at its provider, always on its owner's
+ * request: only what TodoList itself made, only while it is read & write (409
+ * `integration_read_only`), within the write budget (409 `cleanup_incomplete` with the progress
+ * when time runs out; the next call goes on).
  */
 export interface AddedContentRemover {
+  /** "Also remove everything TodoList added", before a disconnect. */
   removeAdded(caller: Caller): Promise<AddedRemoval>;
+  /** "Remove" the events it pushed (an earlier workspace calendar's leftovers). */
+  removePushed(caller: Caller): Promise<{ events: number; remaining: 0 }>;
+  /** How many events it pushed are still live. */
+  pushedEventCount(caller: Caller): Promise<number>;
 }
 
 /**

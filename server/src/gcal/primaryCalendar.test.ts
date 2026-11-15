@@ -45,6 +45,8 @@ let wid: string;
 let iid = '';
 let created = '';
 let spare = '';
+let shared = '';
+let other = '';
 const items: Record<string, string> = {};
 
 const W = (): string => `/api/private/workspaces/${wid}`;
@@ -71,8 +73,9 @@ async function audits(action: string): Promise<Json[]> {
   );
 }
 
-async function connect(): Promise<string> {
-  const started = await fetch(`${api.baseUrl}${W()}/integrations/google-calendar/oauth/start`, {
+async function connect(workspaceId: string = wid): Promise<string> {
+  const base = `/api/private/workspaces/${workspaceId}`;
+  const started = await fetch(`${api.baseUrl}${base}/integrations/google-calendar/oauth/start`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${owner}` },
     body: '{}',
@@ -370,6 +373,54 @@ describe('the push goes to the primary calendar', () => {
   });
 });
 
+describe('another workspace on the same Google account (I1)', () => {
+  it('pushes into a calendar the first workspace created: it is never that one’s to delete', async () => {
+    const { Actor } = await import('../classes/base/Actor.js');
+    const { Caller } = await import('../classes/base/Caller.js');
+    const { Integration, isCalendarProvider } = await import('../classes/integration/index.js');
+    const caller = await Caller.enter(wid, Actor.user(ownerId));
+    assert.ok(caller);
+    const first = await Integration.findOwn(caller, iid);
+    assert.ok(isCalendarProvider(first));
+    shared = (await first.createCalendar(caller, 'Shared TodoList')).id;
+
+    other = (
+      await (
+        await models.getWorkspaceRepository()
+      ).create({ name: 'Other', slug: `other-${randomUUID().slice(0, 8)}`, ownerId })
+    ).id;
+    await (
+      await models.getMembershipRepository()
+    ).create(other, { userId: ownerId, role: 'owner' });
+    const theirs = await connect(other);
+    const at = (path: string): string => `/api/private/workspaces/${other}${path}`;
+    const switched = await api.call('PATCH', at(`/integrations/${theirs}`), {
+      token: owner,
+      body: { mode: 'read_write' },
+    });
+    assert.equal(switched.status, 200, switched.text);
+    const chosen = await api.call('PUT', at('/primary-calendar'), {
+      token: owner,
+      body: { integrationId: theirs, calendarId: shared },
+    });
+    assert.equal(chosen.status, 200, chosen.text);
+    const made = await api.call('POST', at('/items'), {
+      token: owner,
+      body: {
+        title: 'Other workspace’s to-do',
+        dueAt: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+    });
+    assert.equal(made.status, 201, made.text);
+    const pushed = await api.call('POST', at('/gcal-sync'), {
+      token: owner,
+      body: { integrationId: theirs, confirm: true },
+    });
+    assert.equal(pushed.status, 202, pushed.text);
+    assert.deepEqual(eventIds(shared), [eventIdFor(data(made.body)['id'] as string)]);
+  });
+});
+
 describe('disconnect with "Also remove everything TodoList added to this calendar"', () => {
   it('deletes the pushed events and the calendars TodoList made that hold nothing else, then disconnects', async () => {
     const { Actor } = await import('../classes/base/Actor.js');
@@ -407,10 +458,15 @@ describe('disconnect with "Also remove everything TodoList added to this calenda
       sent.filter((line) => /^DELETE \/calendar\/v3\/calendars\/[^/]+$/.test(line)),
       [`DELETE ${calendarPath(created)}`],
     );
+    // Kept: the one holding the user's own event, and the one another workspace pushes into.
     assert.deepEqual(
-      mock.createdCalendars().map((calendar) => calendar.id),
-      [spare],
+      mock
+        .createdCalendars()
+        .map((calendar) => calendar.id)
+        .sort(),
+      [shared, spare].sort(),
     );
+    assert.equal(eventIds(shared).length, 1, 'the other workspace’s event is untouched');
     assert.equal(eventIds(ALICE.email).length, 1);
     assert.deepEqual(await (await models.getCalendarLinkRepository()).listLive(wid, iid), []);
     assert.equal(
@@ -418,7 +474,7 @@ describe('disconnect with "Also remove everything TodoList added to this calenda
       null,
     );
     assert.deepEqual(await audits('integration.cleanup'), [
-      { events: 2, calendars: 1, calendarsKept: 1 },
+      { events: 2, calendars: 1, calendarsKept: 2, remaining: 0 },
     ]);
     const stored = await (await models.getIntegrationRepository()).findIncludingDeleted(wid, iid);
     assert.ok(stored?.deletedAt instanceof Date);
