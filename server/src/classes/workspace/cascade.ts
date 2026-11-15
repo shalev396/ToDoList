@@ -8,15 +8,15 @@
  * 2. the workspace itself, soft-deleted: from here on `requireWorkspace` answers 404;
  * 3. its items, soft-deleted (the purge job removes them later);
  * 4. its containers, soft-deleted;
- * 5. its members: pending invites are withdrawn, every membership ends (with the member's agent
+ * 5. its dashboards with their version histories, and its saved views: hard-deleted (the purge job
+ *    removes only items and containers, so nothing else would; the owner's Phase 6 ruling);
+ * 6. its members: pending invites are withdrawn, every membership ends (with the member's agent
  *    keys);
- * 6. the audit entry, `workspace.delete`;
- * 7. an email to every member who had integrations in it (PERMISSIONS-V2 ruling 11; best effort).
+ * 7. the audit entry, `workspace.delete`;
+ * 8. an email to every member who had integrations in it (PERMISSIONS-V2 ruling 11; best effort).
  *
- * Every step is idempotent, so an interrupted run completes on the next one. Dashboards are not a
- * step: as before, they become unreachable with the workspace (requireWorkspace answers 404) and
- * stay in the database, because the purge job removes only items and containers. Deleting them is
- * held back for the owner's decision in Phase 6, since it would change behaviour.
+ * Every step is idempotent, so an interrupted run completes on the next one. Dashboards of
+ * workspaces deleted before step 5 existed are removed once by the orphaned-dashboards migration.
  */
 import {
   getContainerRepository,
@@ -59,6 +59,7 @@ export abstract class WorkspaceTeardown {
     await this.retireWorkspace();
     await this.removeItems();
     await this.removeContainers();
+    await this.removeDashboards();
     await this.endMemberships();
     await this.recordAudit();
     await this.notifyConnectedMembers(workspaceName);
@@ -83,6 +84,19 @@ export abstract class WorkspaceTeardown {
 
   protected async removeContainers(): Promise<void> {
     await (await getContainerRepository()).softDeleteForWorkspace(this.#workspaceId);
+  }
+
+  /**
+   * The dashboards (with their histories) and the saved views. Imported on first use: dashboards
+   * bring the whole builder, which deleting a workspace otherwise never needs.
+   */
+  protected async removeDashboards(): Promise<void> {
+    const [{ Dashboard }, { View }] = await Promise.all([
+      import('../dashboard/Dashboard.js'),
+      import('../dashboard/View.js'),
+    ]);
+    await Dashboard.removeAllIn(this.#workspaceId);
+    await View.removeAllIn(this.#workspaceId);
   }
 
   protected async endMemberships(): Promise<void> {

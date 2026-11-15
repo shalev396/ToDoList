@@ -37,6 +37,11 @@ class Recording extends WorkspaceTeardown {
     return Promise.resolve();
   }
 
+  protected override removeDashboards(): Promise<void> {
+    this.steps.push('dashboards');
+    return Promise.resolve();
+  }
+
   protected override endMemberships(): Promise<void> {
     this.steps.push('members');
     return Promise.resolve();
@@ -54,7 +59,7 @@ class Recording extends WorkspaceTeardown {
 }
 
 describe('WorkspaceTeardown', () => {
-  it('runs the steps in the order the cascade always had', async () => {
+  it('runs the steps in the plan’s order: integrations, items, dashboards, members, audit', async () => {
     const teardown = new Recording('w-1', Actor.user('u-1'));
     await teardown.run();
     assert.deepEqual(teardown.steps, [
@@ -63,6 +68,7 @@ describe('WorkspaceTeardown', () => {
       'workspace',
       'items',
       'containers',
+      'dashboards',
       'members',
       'audit',
       'notify:Name',

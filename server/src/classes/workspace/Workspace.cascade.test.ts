@@ -89,6 +89,28 @@ async function seedWorkspaceData(workspace: WorkspaceEntity, owner: UserData): P
     email: `pending-${workspace.slug}@example.test`,
     role: 'viewer',
   });
+  // Besides the first page Workspace.create made: a dashboard with a version, a deleted one, a view.
+  const dashboards = await models.getDashboardRepository();
+  const page = await dashboards.create(workspace.id, { ownerUserId: owner.id, title: 'Page' });
+  await (
+    await models.getDashboardVersionRepository()
+  ).append(workspace.id, {
+    dashboardId: page.id,
+    version: 1,
+    patch: [],
+    inverse: [],
+    actorUserId: owner.id,
+  });
+  const gone = await dashboards.create(workspace.id, { ownerUserId: owner.id, title: 'Gone' });
+  await dashboards.softDelete(workspace.id, gone.id);
+  await (
+    await models.getViewRepository()
+  ).create(workspace.id, {
+    ownerUserId: owner.id,
+    title: 'View',
+    query: { source: 'items' },
+    viz: { kind: 'list' },
+  });
 }
 
 async function giveKey(workspaceId: string, userId: string, name: string): Promise<void> {
@@ -110,6 +132,9 @@ async function remains(workspaceId: string): Promise<Record<string, unknown>> {
   const { ItemMongoModel } = await import('../../models/mongoose/Item.js');
   const { ContainerMongoModel } = await import('../../models/mongoose/Container.js');
   const { WorkspaceMongoModel } = await import('../../models/mongoose/Workspace.js');
+  const { DashboardMongoModel } = await import('../../models/mongoose/Dashboard.js');
+  const { DashboardVersionMongoModel } = await import('../../models/mongoose/DashboardVersion.js');
+  const { ViewMongoModel } = await import('../../models/mongoose/View.js');
   const live = { workspaceId, deletedAt: null };
   const workspace = await WorkspaceMongoModel.findById(workspaceId).lean();
   return {
@@ -123,6 +148,10 @@ async function remains(workspaceId: string): Promise<Record<string, unknown>> {
     pendingInvites: (
       await (await models.getInviteRepository()).listForWorkspace(workspaceId)
     ).filter((invite) => invite.status === 'pending').length,
+    // Deleted ones too: a workspace's deletion removes them for good.
+    dashboards: await DashboardMongoModel.countDocuments({ workspaceId }),
+    dashboardVersions: await DashboardVersionMongoModel.countDocuments({ workspaceId }),
+    views: await ViewMongoModel.countDocuments({ workspaceId }),
   };
 }
 
@@ -134,6 +163,10 @@ const UNTOUCHED = {
   allItems: 2,
   liveContainers: 1,
   pendingInvites: 1,
+  // The first page (with its version), the seeded page and version, the deleted page, the view.
+  dashboards: 3,
+  dashboardVersions: 2,
+  views: 1,
 };
 
 const DELETED = {
@@ -145,10 +178,13 @@ const DELETED = {
   liveContainers: 0,
   members: 0,
   pendingInvites: 0,
+  dashboards: 0,
+  dashboardVersions: 0,
+  views: 0,
 };
 
 describe('deleteWorkspace', () => {
-  it('hard-deletes credentials, soft-deletes the rest, and ends every membership', async () => {
+  it('hard-deletes credentials, dashboards and views, soft-deletes the rest, ends every membership', async () => {
     const owner = await newUser('del-owner');
     const viewer = await newUser('del-viewer');
     const workspace = await Workspace.create(owner, { name: 'Doomed' });
