@@ -7,11 +7,16 @@
  *   POST   /calendars/{id}/events             events.insert
  *   PATCH  /calendars/{id}/events/{eventId}   events.patch (the push's with `If-Match`)
  *   DELETE /calendars/{id}/events/{eventId}   events.delete
- * The last two may carry exactly one query, `sendUpdates=all` or `sendUpdates=none` (whether
- * Google tells the event's guests). The URL must be exactly as sent: one that the URL parser
- * would normalize (a `.` or `..` segment, encoded or not, an empty segment) is refused, so an
- * allowed event call can never land on a calendar's own endpoint. Anything else (a calendar's
- * delete, its ACL, a GET) is refused before it is sent. The base is
+ *   DELETE /calendars/{id}                    calendars.delete, ONLY for an id the writer was
+ *                                             made with (`deletableCalendars`: the calendars
+ *                                             TodoList created on this integration), exactly
+ * The event patch and delete may carry exactly one query, `sendUpdates=all` or
+ * `sendUpdates=none` (whether Google tells the event's guests). The URL must be exactly as sent:
+ * one that the URL parser would normalize (a `.` or `..` segment, encoded or not, an empty
+ * segment) is refused, and so is a segment that decodes to something holding `/`, `\` or a
+ * control character, so an allowed event call can never land on a calendar's own endpoint.
+ * Anything else (another calendar's delete, a clear, an ACL, a GET) is refused before it is
+ * sent. The base is
  * Google's (googleEndpoints), or a test's stand-in. No redirect is followed, a call gives up after
  * 15 s, and a failure is a CalendarApiError with the HTTP status only: never a token, a body or a
  * URL.
@@ -102,18 +107,42 @@ export interface CalendarWriter {
   remove(calendarId: string, eventId: string, sendUpdates?: GuestUpdates): Promise<void>;
   /** A secondary calendar, owned by the account (calendars.insert). */
   insertCalendar(summary: string, timeZone: string): Promise<CreatedCalendar>;
+  /**
+   * Deletes a calendar TodoList created (calendars.delete): only one of the writer's
+   * `deletableCalendars`, refused before anything is sent otherwise. 404 and 410 (already gone)
+   * are done.
+   */
+  removeCalendar(calendarId: string): Promise<void>;
+}
+
+/** What a writer may do beyond its fixed list: the calendars it may delete, by exact id. */
+export interface CalendarWriterOptions {
+  /** The calendars TodoList created on this integration (its config's `appCreatedCalendars`). */
+  deletableCalendars?: readonly string[];
 }
 
 /** `/calendars/<id>/events` and `/calendars/<id>/events/<eventId>`, ids percent-encoded. */
 const EVENTS = /^\/calendars\/[^/?#]{1,1024}\/events$/;
 const EVENT = /^\/calendars\/[^/?#]{1,1024}\/events\/[^/?#]{1,1100}$/;
+const CALENDAR = /^\/calendars\/([^/?#]{1,1024})$/;
 const GUEST_UPDATES = new Set(['', '?sendUpdates=all', '?sendUpdates=none']);
 
-/** A path segment that is empty, or `.` or `..` once decoded (or that doesn't decode). */
-function isDotOrEmpty(segment: string): boolean {
+/** Whether the text holds a slash, a backslash, or a control character (C0 or DEL). */
+function hasUnsafeChar(text: string): boolean {
+  return Array.from(text).some((char) => {
+    const code = char.codePointAt(0) ?? 0;
+    return char === '/' || char === '\\' || code < 0x20 || code === 0x7f;
+  });
+}
+
+/**
+ * A path segment that is empty, or `.` or `..` once decoded, or decodes to something holding a
+ * slash, a backslash or a control character (or that doesn't decode).
+ */
+function isUnsafeSegment(segment: string): boolean {
   try {
     const decoded = decodeURIComponent(segment);
-    return decoded === '' || decoded === '.' || decoded === '..';
+    return decoded === '' || decoded === '.' || decoded === '..' || hasUnsafeChar(decoded);
   } catch {
     return true;
   }
@@ -124,7 +153,11 @@ function isDotOrEmpty(segment: string): boolean {
  * under the calendar base, and no query but an event patch's or delete's `sendUpdates`. The URL
  * must be exactly what the parser makes of it, with no dot or empty segment.
  */
-export function isAllowedCalendarWrite(method: string, url: string): boolean {
+export function isAllowedCalendarWrite(
+  method: string,
+  url: string,
+  deletableCalendars: readonly string[] = [],
+): boolean {
   let parsed: URL;
   let base: URL;
   try {
@@ -136,13 +169,21 @@ export function isAllowedCalendarWrite(method: string, url: string): boolean {
   if (parsed.href !== url || parsed.hash !== '' || parsed.origin !== base.origin) return false;
   if (!parsed.pathname.startsWith(`${base.pathname}/`)) return false;
   const path = parsed.pathname.slice(base.pathname.length);
-  if (path.split('/').slice(1).some(isDotOrEmpty)) return false;
+  if (path.split('/').slice(1).some(isUnsafeSegment)) return false;
   switch (method) {
     case 'POST':
       return parsed.search === '' && (path === '/calendars' || EVENTS.test(path));
     case 'PATCH':
-    case 'DELETE':
       return GUEST_UPDATES.has(parsed.search) && EVENT.test(path);
+    case 'DELETE': {
+      if (GUEST_UPDATES.has(parsed.search) && EVENT.test(path)) return true;
+      const calendar = CALENDAR.exec(path)?.[1];
+      return (
+        parsed.search === '' &&
+        calendar !== undefined &&
+        deletableCalendars.some((id) => encodeURIComponent(id) === calendar)
+      );
+    }
     default:
       return false;
   }
@@ -250,15 +291,22 @@ export function calendarReader(auth: Readonly<Record<string, string>>): Calendar
   };
 }
 
-/** A writer acting with the grant's auth headers (its strategy's, for one write session only). */
-export function calendarWriter(auth: Readonly<Record<string, string>>): CalendarWriter {
+/**
+ * A writer acting with the grant's auth headers (its strategy's, for one write session only).
+ * `deletableCalendars` are the only calendars it may delete, by exact id.
+ */
+export function calendarWriter(
+  auth: Readonly<Record<string, string>>,
+  options: CalendarWriterOptions = {},
+): CalendarWriter {
+  const deletable = Object.freeze([...(options.deletableCalendars ?? [])]);
   const call = (
     method: 'POST' | 'PATCH' | 'DELETE',
     url: string,
     body?: unknown,
     headers: Record<string, string> = {},
   ): Promise<unknown> => {
-    if (!isAllowedCalendarWrite(method, url)) {
+    if (!isAllowedCalendarWrite(method, url, deletable)) {
       return Promise.reject(new CalendarWriteRefusedError());
     }
     return request(auth, method, url, body, headers);
@@ -288,14 +336,24 @@ export function calendarWriter(auth: Readonly<Record<string, string>>): Calendar
       return { id, summary: typeof named === 'string' ? named : null };
     },
     async remove(calendarId, eventId, sendUpdates): Promise<void> {
-      try {
-        await call('DELETE', eventUrl(calendarId, eventId, sendUpdates));
-      } catch (error) {
-        if (error instanceof CalendarApiError && (error.status === 404 || error.status === 410)) {
-          return;
-        }
-        throw error;
-      }
+      await gone(call('DELETE', eventUrl(calendarId, eventId, sendUpdates)));
+    },
+    async removeCalendar(calendarId): Promise<void> {
+      await gone(
+        call('DELETE', `${googleEndpoints().calendar}/calendars/${encodeURIComponent(calendarId)}`),
+      );
     },
   };
+}
+
+/** A delete: one already gone (404, 410) is done. */
+async function gone(deleted: Promise<unknown>): Promise<void> {
+  try {
+    await deleted;
+  } catch (error) {
+    if (error instanceof CalendarApiError && (error.status === 404 || error.status === 410)) {
+      return;
+    }
+    throw error;
+  }
 }

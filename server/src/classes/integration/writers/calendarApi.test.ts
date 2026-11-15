@@ -3,8 +3,10 @@
  * events.delete under the calendar base, by method, with no query but an event patch's or
  * delete's `sendUpdates=all|none`. The URL must be exactly as sent: a dot segment (`.`, `..`,
  * `%2e%2e`) or an empty one, which the URL parser would fold into a calendar's own endpoint, is
- * refused, as is anything else (a calendar's delete or ACL, a GET, another host, a malformed id),
- * before anything is sent.
+ * refused, and so is a segment that decodes to a slash, a backslash or a control character, as is
+ * anything else (a calendar's ACL, a GET, another host, a malformed id), before anything is sent.
+ * A calendar's delete passes only for an exact id the writer was made with (the calendars TodoList
+ * created on the integration).
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -93,6 +95,42 @@ describe('isAllowedCalendarWrite', () => {
   });
 });
 
+describe('a calendar’s delete: exact ids the writer was made with, nothing else', () => {
+  const MINE = 'abc123@group.calendar.google.com';
+  const URL_OF = (id: string): string => `${BASE}/calendars/${encodeURIComponent(id)}`;
+
+  it('passes only for a deletable id, exactly', () => {
+    assert.equal(isAllowedCalendarWrite('DELETE', URL_OF(MINE), [MINE]), true);
+    for (const [url, deletable] of [
+      [URL_OF(MINE), []],
+      [URL_OF('me@example.test'), [MINE]],
+      [URL_OF(`${MINE}x`), [MINE]],
+      [`${URL_OF(MINE)}?sendUpdates=all`, [MINE]],
+      [`${URL_OF(MINE)}/events`, [MINE]],
+      [`${URL_OF(MINE)}/acl`, [MINE]],
+      [`${BASE}/calendars/${MINE}`, [MINE]],
+      [URL_OF('..'), ['..']],
+      [`${BASE}/calendars/${encodeURIComponent('a/b')}`, ['a/b']],
+    ] as const) {
+      assert.equal(isAllowedCalendarWrite('DELETE', url, deletable), false, url);
+    }
+    assert.equal(isAllowedCalendarWrite('PATCH', URL_OF(MINE), [MINE]), false);
+    assert.equal(isAllowedCalendarWrite('POST', `${URL_OF(MINE)}/clear`, [MINE]), false);
+  });
+
+  it('refuses a segment that decodes to a slash, a backslash or a control character', () => {
+    for (const segment of ['x%2F..%2F..', '%2Fevents', 'a%5Cb', '%00', 'a%0Ab', '%7F']) {
+      for (const url of [
+        `${BASE}/calendars/${segment}/events`,
+        `${BASE}/calendars/${CAL}/events/${segment}`,
+      ]) {
+        const method = url.endsWith('/events') ? 'POST' : 'DELETE';
+        assert.equal(isAllowedCalendarWrite(method, url), false, url);
+      }
+    }
+  });
+});
+
 describe('calendarWriter', () => {
   const realFetch = globalThis.fetch;
   const sent: string[] = [];
@@ -130,6 +168,19 @@ describe('calendarWriter', () => {
       }),
       refused,
     );
+    assert.deepEqual(sent, []);
+  });
+
+  it('deletes no calendar it was not made with: refused before anything is sent', async () => {
+    const refused = (error: unknown): boolean => error instanceof CalendarWriteRefusedError;
+    const plain = calendarWriter({ authorization: 'Bearer FAKE-access' });
+    await assert.rejects(plain.removeCalendar('abc@group.calendar.google.com'), refused);
+    const scoped = calendarWriter(
+      { authorization: 'Bearer FAKE-access' },
+      { deletableCalendars: ['abc@group.calendar.google.com'] },
+    );
+    await assert.rejects(scoped.removeCalendar('me@example.test'), refused);
+    await assert.rejects(scoped.removeCalendar('primary'), refused);
     assert.deepEqual(sent, []);
   });
 });
