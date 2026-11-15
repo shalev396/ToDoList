@@ -40,8 +40,9 @@ calendarLinkSchema.index(
   { integrationId: 1, tombstonedAt: 1 },
   { partialFilterExpression: { tombstonedAt: null } },
 ); // live links for diffing
-// One event across the workspace's integrations: one tracker per event (removeOthersForEvent) is
-// a point lookup, not a seek per integration.
+// One event across the workspace's integrations: one tracker per event (removeOthersForEvent) and
+// another integration's recent clean-up of it (findOthersCleanup) are point lookups, not a seek
+// per integration.
 calendarLinkSchema.index({ workspaceId: 1, calendarId: 1, googleEventId: 1 });
 
 export const CalendarLinkMongoModel = mongoose.model<CalendarLinkFields>(
@@ -184,5 +185,22 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
   async removeForIntegration(workspaceId, integrationId) {
     const result = await CalendarLinkMongoModel.deleteMany({ workspaceId, integrationId });
     return result.deletedCount;
+  },
+
+  async findOthersCleanup(workspaceId, integrationId, key, since) {
+    const doc = await CalendarLinkMongoModel.findOne({
+      workspaceId,
+      calendarId: key.calendarId,
+      googleEventId: key.googleEventId,
+      integrationId: { $ne: integrationId },
+      deletedBy: 'dashboard',
+      tombstonedAt: { $gte: since },
+    }).lean<CalendarLinkFields>();
+    return doc ? toCalendarLinkData(doc) : null;
+  },
+
+  async remove(workspaceId, id) {
+    const result = await CalendarLinkMongoModel.deleteOne({ _id: id, workspaceId });
+    return result.deletedCount > 0;
   },
 };

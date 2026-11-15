@@ -108,6 +108,19 @@ export interface ICalendarLinkRepository {
    * before a disconnect). Returns how many.
    */
   removeForIntegration(workspaceId: string, integrationId: string): Promise<number>;
+  /**
+   * Another integration's link of the workspace to the same event (`key`), tombstoned by
+   * TodoList's own clean-up (`dashboard`) since `since`: that integration just deleted the event
+   * at Google. Null when there is none.
+   */
+  findOthersCleanup(
+    workspaceId: string,
+    integrationId: string,
+    key: CalendarLinkKey,
+    since: Date,
+  ): Promise<CalendarLinkData | null>;
+  /** One link removed (its row, nothing at Google). False when it was not there. */
+  remove(workspaceId: string, id: string): Promise<boolean>;
 }
 
 export const CALENDAR_LINK_TABLE_NAME = 'CalendarLinks';

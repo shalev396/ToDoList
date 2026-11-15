@@ -7,6 +7,10 @@
  * - a push move only, no clean-up: IA on C, IB on C, IA on D, IB on C again;
  * - the primary integration's own disconnect with "Also remove", then the other one back on C.
  * In both, no owner's to-do is soft-deleted and no other member's item is held back.
+ * - the in-flight race (re-review 3's probe P4): IB's push adopts IA's event; meanwhile the primary
+ *   moves away and IA's owner presses Remove, deleting the event; then IB's commit lands, its pull
+ *   reading the event cancelled. That cancellation is TodoList's own clean-up, not the user's: the
+ *   to-do stays and IB's next push on the calendar makes the event again.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -212,6 +216,95 @@ describe('shared calendar, the primary integration’s own disconnect with "Also
     await push(t, t.second, ib);
     await nothingLost(t, items, [ib]);
     assert.ok(mock.events(c).length >= 1);
+  });
+});
+
+describe('shared calendar, a clean-up racing another integration’s push (probe P4)', () => {
+  it('IB’s commit reads IA’s own delete as a clean-up: the to-do stays, the event comes back', async () => {
+    const { applyCommit } = await import('../testing/calendarCalls.js');
+    const { eventIdFor, opIdOf, ORIGIN } = await import('./diff.js');
+    const t = await team('race');
+    const ia = await connect(t, t.first);
+    const ib = await connect(t, t.second);
+    const c = await primary(t, t.first, { integrationId: ia, newCalendarName: 'Race' });
+    const x = await todo(t, t.second, 'Second owner’s raced to-do', 1);
+    await push(t, t.first, ia);
+    const links = await models.getCalendarLinkRepository();
+    const iaLink = await links.findByItem(t.wid, ia, x);
+    assert.ok(iaLink !== null && iaLink.pushedHash !== null);
+
+    // IB is made primary on C; its push reaches Google (the adopt: the event is live, unchanged)…
+    await primary(t, t.second, { integrationId: ib, calendarId: c });
+    const run = await (
+      await models.getSyncRunRepository()
+    ).create(t.wid, {
+      integrationId: ib,
+      trigger: 'calendar_push',
+      status: 'running',
+      startedAt: new Date(),
+    });
+    // …meanwhile an owner moves the primary to D and IA's owner presses Remove (IA's row is still
+    // live, so IA deletes the event at Google and tombstones its row).
+    await primary(t, t.first, { integrationId: ia, calendarId: ALICE.email });
+    const removed = await t.call(t.first, 'POST', `/integrations/${ia}/remove-pushed`);
+    assert.equal(removed.status, 200, removed.text);
+    assert.equal(data(removed.body)['events'], 1);
+    assert.equal(mock.events(c).length, 0, 'IA deleted the event');
+
+    // …then IB's commit lands: its op result, and its pull, which read C after IA's delete. (Real
+    // Google lists a cancelled event on a full listing too; the mock drops it there.)
+    const ibData = await (await models.getIntegrationRepository()).findById(t.wid, ib);
+    assert.ok(ibData !== null);
+    const eventId = eventIdFor(x);
+    await applyCommit(
+      ibData,
+      {
+        runId: run.id,
+        opResults: [
+          { opId: opIdOf('create', x, iaLink.pushedHash), ok: true, eventId, etag: '"adopted"' },
+        ],
+        calendars: [
+          {
+            id: c,
+            events: [
+              {
+                id: eventId,
+                status: 'cancelled',
+                etag: '"cancelled"',
+                priv: { origin: ORIGIN, todolistWs: t.wid, todolistItemId: x },
+              },
+            ],
+            nextSyncToken: null,
+          },
+        ],
+      },
+      new Date(),
+      c,
+    );
+    // The to-do stays; IB's row goes (no stop is kept), so nothing holds the event back.
+    await nothingLost(t, [x], [ia, ib]);
+    assert.equal(await links.findByItem(t.wid, ib, x), null, 'IB no longer tracks the event');
+
+    // IB is primary on C again and pushes: the event is made again, tracked by IB.
+    await primary(t, t.second, { integrationId: ib, calendarId: c });
+    await push(t, t.second, ib);
+    await nothingLost(t, [x], [ia, ib]);
+    assert.equal(mock.events(c).length, 1, 'the event is back');
+    assert.equal((await links.findByItem(t.wid, ib, x))?.tombstonedAt, null);
+  });
+
+  it('a user’s own delete in Google, with no clean-up of that event, still deletes the to-do', async () => {
+    const t = await team('user-delete');
+    const ia = await connect(t, t.first);
+    const c = await primary(t, t.first, { integrationId: ia, newCalendarName: 'Own' });
+    const x = await todo(t, t.first, 'First owner’s to-do, deleted in Google', 1);
+    await push(t, t.first, ia);
+    assert.ok(mock.deleteEvent(c, (await import('./diff.js')).eventIdFor(x)));
+    await push(t, t.first, ia);
+    // A Google-side delete of the owner's own to-do: it is gone (soft-deleted), as before.
+    assert.equal(await (await models.getItemRepository()).findById(t.wid, x), null);
+    const link = await (await models.getCalendarLinkRepository()).findByItem(t.wid, ia, x);
+    assert.equal(link?.deletedBy, 'google');
   });
 
   it('nothing but loopback was connected to', () => {
