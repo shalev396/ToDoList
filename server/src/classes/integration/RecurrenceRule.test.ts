@@ -116,3 +116,44 @@ describe('RecurrenceRule (a strict RRULE parser)', () => {
     assert.ok(open.fits(true) && open.fits(false));
   });
 });
+
+describe('RecurrenceRule against the client’s Repeat builder', () => {
+  const bases = [
+    'RRULE:FREQ=DAILY',
+    'RRULE:FREQ=MONTHLY',
+    'RRULE:FREQ=YEARLY',
+    'RRULE:FREQ=WEEKLY;BYDAY=WE,SA,SU',
+    'RRULE:FREQ=WEEKLY;INTERVAL=999;BYDAY=TH,WE',
+    'RRULE:FREQ=DAILY;INTERVAL=999',
+    'RRULE:FREQ=MONTHLY;INTERVAL=999',
+    'RRULE:FREQ=YEARLY;INTERVAL=999',
+  ];
+  const ends: { suffix: string; allDay: boolean }[] = [
+    { suffix: '', allDay: false },
+    { suffix: '', allDay: true },
+    { suffix: ';COUNT=1', allDay: false },
+    { suffix: ';COUNT=1', allDay: true },
+    { suffix: ';COUNT=999', allDay: false },
+    { suffix: ';COUNT=999', allDay: true },
+    { suffix: ';UNTIL=20270101T215959Z', allDay: false },
+    { suffix: ';UNTIL=20270101', allDay: true },
+  ];
+
+  it('parses, round-trips and fits every line the builder makes', () => {
+    for (const base of bases) {
+      for (const { suffix, allDay } of ends) {
+        const line = `${base}${suffix}`;
+        const rule = RecurrenceRule.fromLines([line]);
+        assert.equal(rule.toString(), line);
+        assert.ok(rule.fits(allDay), `${line} fits allDay=${String(allDay)}`);
+      }
+    }
+  });
+
+  it('a timed UNTIL does not fit an all-day event', () => {
+    for (const base of bases) {
+      assert.equal(RecurrenceRule.fromLines([`${base};UNTIL=20270101T215959Z`]).fits(true), false);
+      assert.equal(RecurrenceRule.fromLines([`${base};UNTIL=20270101`]).fits(false), false);
+    }
+  });
+});
