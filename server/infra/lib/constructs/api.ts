@@ -78,6 +78,13 @@ export class Api extends Construct {
     // so these routes carry no authorizer.
     const mcp = this.httpApi.addRoutes({ path: '/api/mcp', methods, integration });
     const mcpProxy = this.httpApi.addRoutes({ path: '/api/mcp/{proxy+}', methods, integration });
+    // Public OAuth discovery documents at the root (GET only, no authorizer), reached through the
+    // CloudFront /.well-known/oauth-* behavior.
+    this.httpApi.addRoutes({
+      path: '/.well-known/{proxy+}',
+      methods: [apigwv2.HttpMethod.GET],
+      integration,
+    });
     const { limits } = this.config;
     // CfnStage.routeSettings is untyped (a JSON map), so the keys are the CloudFormation spelling.
     const throttle = (rate: number, burst: number): Record<string, number> => ({

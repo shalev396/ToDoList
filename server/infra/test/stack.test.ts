@@ -171,7 +171,37 @@ for (const stage of STAGES) {
         'ANY /api/private/{proxy+}',
         'ANY /api/public/auth/{proxy+}',
         'ANY /api/public/{proxy+}',
+        'GET /.well-known/{proxy+}',
       ]);
+    });
+
+    it('adds a public GET /.well-known/{proxy+} route without an authorizer', () => {
+      template.hasResourceProperties('AWS::ApiGatewayV2::Route', {
+        RouteKey: 'GET /.well-known/{proxy+}',
+        AuthorizationType: 'NONE',
+      });
+      const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route')).filter(
+        (r) => (r['Properties'] as { RouteKey: string }).RouteKey === 'GET /.well-known/{proxy+}',
+      );
+      assert.equal(routes.length, 1);
+      assert.equal(
+        (routes[0]?.['Properties'] as Record<string, unknown>)['AuthorizerId'],
+        undefined,
+      );
+      template.resourceCountIs('AWS::ApiGatewayV2::Integration', 1);
+    });
+
+    it('routes /.well-known/oauth-* to the HTTP API, uncached', () => {
+      const config = distributionConfig(template);
+      const api = config.CacheBehaviors.find((b) => b['PathPattern'] === '/api/*');
+      const wellKnown = config.CacheBehaviors.find(
+        (b) => b['PathPattern'] === '/.well-known/oauth-*',
+      );
+      assert.ok(api && wellKnown);
+      assert.equal(wellKnown['TargetOriginId'], api['TargetOriginId']);
+      // CachingDisabled managed policy
+      assert.equal(wellKnown['CachePolicyId'], '4135ea2d-6df8-44a3-9df3-4b5a84be39ad');
+      assert.equal(wellKnown['CachePolicyId'], api['CachePolicyId']);
     });
 
     it('names the buckets after the stage domain', () => {

@@ -50,6 +50,11 @@ export function applyNagSuppressions(stack: Stack, config: StageConfig): void {
       'MCP clients are agents, not Cognito users: the app authenticates every call with a hashed per-user agent key (MCP.md section 3 and 11), rate limits it and scopes it to the key owner. A JWT authorizer would reject them.',
     );
   }
+  ack(
+    'Api/HttpApi/GET--.well-known--{proxy+}',
+    'AwsSolutions-APIG4',
+    'Public discovery documents (RFC 8414 / RFC 9728): GET only, no secrets, must be readable before any sign-in.',
+  );
   if (
     stack.node
       .tryFindChild('Api')

@@ -792,6 +792,52 @@
 				}
 			}
 		},
+		".well-knownRouteIntegrationPermission": {
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"FunctionName": {
+					"Fn::GetAtt": [
+						"Function",
+						"Arn"
+					]
+				},
+				"Principal": "apigateway.amazonaws.com",
+				"SourceArn": {
+					"Fn::Join": [
+						"",
+						[
+							"arn:aws:execute-api:us-east-1:123456789012:",
+							{
+								"Ref": "HttpApi"
+							},
+							"/*/*/.well-known/{proxy+}"
+						]
+					]
+				}
+			}
+		},
+		".well-knownRoute": {
+			"Type": "AWS::ApiGatewayV2::Route",
+			"Properties": {
+				"ApiId": {
+					"Ref": "HttpApi"
+				},
+				"AuthorizationType": "NONE",
+				"RouteKey": "GET /.well-known/{proxy+}",
+				"Target": {
+					"Fn::Join": [
+						"",
+						[
+							"integrations/",
+							{
+								"Ref": "PublicRouteIntegration"
+							}
+						]
+					]
+				}
+			}
+		},
 		"Certificate": {
 			"Type": "AWS::CertificateManager::Certificate",
 			"Properties": {
@@ -878,6 +924,23 @@
 							"Compress": true,
 							"OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
 							"PathPattern": "/api/*",
+							"TargetOriginId": "todolistdevEdgeDistributionOrigin20C9B328F",
+							"ViewerProtocolPolicy": "redirect-to-https"
+						},
+						{
+							"AllowedMethods": [
+								"GET",
+								"HEAD",
+								"OPTIONS",
+								"PUT",
+								"PATCH",
+								"POST",
+								"DELETE"
+							],
+							"CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+							"Compress": true,
+							"OriginRequestPolicyId": "b689b0a8-53d0-40ab-baf2-68738e2966ac",
+							"PathPattern": "/.well-known/oauth-*",
 							"TargetOriginId": "todolistdevEdgeDistributionOrigin20C9B328F",
 							"ViewerProtocolPolicy": "redirect-to-https"
 						},
