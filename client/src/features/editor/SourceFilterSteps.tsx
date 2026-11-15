@@ -257,6 +257,13 @@ function ConnectorChecks({
                     {t(`sources.${integration.provider}`, { defaultValue: integration.provider })}
                     {' · '}
                     <bdi>{integration.accountLabel}</bdi>
+                    {/* Your own read-only connection: its items can't be changed in that tool from here. */}
+                    {integration.mode === 'read' ? (
+                      <span className="text-muted-foreground" data-connector-read-only="">
+                        {' · '}
+                        {t('editor.source.readOnly')}
+                      </span>
+                    ) : null}
                   </span>
                 </>,
                 checked,

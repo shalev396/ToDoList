@@ -262,7 +262,8 @@ export const connect = {
       noneHint: 'Connect Google Calendar first, then come back here.',
       calendar: 'Calendar',
       createNew: 'Create a new calendar',
-      readNote: 'Events in this calendar will also show in TodoList.',
+      readNote:
+        'Events in this calendar will also show in TodoList, to everyone who sees this connection’s items.',
       newName: 'Name of the new calendar',
       loading: 'Loading your calendars…',
       loadFailed: 'Your calendars couldn’t be loaded. Try again.',

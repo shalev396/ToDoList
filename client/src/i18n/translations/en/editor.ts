@@ -59,6 +59,7 @@ export const editor = {
     connectorsHint:
       'Pick the connections this block reads, or all sources: then each person sees what they can. Adding one of yours shares its items with everyone in the workspace.',
     allSources: 'All sources',
+    readOnly: 'read-only',
     noneHint: 'No source picked: this block shows nothing. Pick a connection, or all sources.',
     foreignConnector: '{{name}}’s {{provider}}',
     foreignHint:
