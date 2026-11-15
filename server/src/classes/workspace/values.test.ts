@@ -76,6 +76,36 @@ describe('AttributeDefinition: one class per type', () => {
   });
 });
 
+describe('AttributeDefinition: patches and unknown types', () => {
+  it('each type decides what a patch may change, with the old messages', () => {
+    const select = AttributeDefinition.of(def('select', { options: ['a'] }));
+    assert.equal(select.patchError({ options: ['b'] }), null);
+    assert.equal(select.patchError({ options: [] }), 'A select needs options');
+    assert.equal(select.patchError({ min: 1 }), 'Only a number has a range');
+    assert.equal(select.patchError({ name: 'x' }), null);
+    const text = AttributeDefinition.of(def('text'));
+    assert.equal(text.patchError({ options: ['a'] }), 'Only a select has options');
+    assert.equal(text.patchError({ max: 3 }), 'Only a number has a range');
+    const number = AttributeDefinition.of(def('number', { min: 0, max: 10 }));
+    assert.equal(number.patchError({ max: 20 }), null);
+    assert.equal(number.patchError({ max: -1 }), 'max must be above min');
+    assert.equal(number.patchError({ options: ['a'] }), 'Only a select has options');
+  });
+
+  it('a stored type this code does not know fails only its own values', () => {
+    const unknown = AttributeDefinition.of({
+      ...def('text'),
+      type: 'hologram',
+    } as unknown as AttributeDef);
+    assert.match(unknown.check('x') ?? '', /does not know/);
+    assert.equal(unknown.check(null), null);
+    const defs = AttributeDefinitions.of({ attributes: [unknown.toJSON()] });
+    assert.equal(defs.toJSON().length, 2);
+    assert.deepEqual(defs.prepare({ importance: 2 }), { importance: 2 });
+    assert.throws(() => defs.prepare({ field: 'x' }), hasStatus(400));
+  });
+});
+
 describe('AttributeDefinitions', () => {
   it('puts the built-in Importance first, once', () => {
     const custom = def('text');

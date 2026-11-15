@@ -15,7 +15,6 @@ import type { TopicData, TopicPatch } from '../../models/definitions/Topic.js';
 import {
   getContainerRepository,
   getDashboardRepository,
-  getIntegrationRepository,
   getItemRepository,
   getTopicRepository,
   getWorkspaceRepository,
@@ -341,22 +340,23 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
   static async delete(caller: Caller, topicId: string): Promise<DeletedTopic> {
     assertEditor(caller, 'delete pages');
     const workspaceId = caller.workspaceId;
+    // Imported on first use: the integration classes import Topic, so a static import is a cycle.
+    const { Integration } = await import('../integration/index.js');
     const repository = await getTopicRepository();
     const found = await repository.findById(workspaceId, topicId);
     if (found === null) throw new AppError(404, 'Not found');
     const topic = new Topic(found);
-    const [dashboards, items, containers, integrations, workspaces] = await Promise.all([
+    const [dashboards, items, containers, workspaces] = await Promise.all([
       getDashboardRepository(),
       getItemRepository(),
       getContainerRepository(),
-      getIntegrationRepository(),
       getWorkspaceRepository(),
     ]);
     const result: DeletedTopic = {
       dashboards: await dashboards.softDeleteForTopic(workspaceId, topicId),
       items: await items.unsetTopic(workspaceId, topicId),
       containers: await containers.unsetTopic(workspaceId, topicId),
-      integrations: await integrations.unsetTopic(workspaceId, topicId),
+      integrations: await Integration.unsetTopicIn(workspaceId, topicId),
       rules: await workspaces.pullTopicRules(workspaceId, topicId),
     };
     await repository.delete(workspaceId, topicId);

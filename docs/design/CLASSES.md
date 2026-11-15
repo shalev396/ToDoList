@@ -1126,8 +1126,8 @@ for a `CalendarProvider`, so it gets the read-only gate for free. Changing a sou
 ## 5. Workspace and people (phase 3, built)
 
 `classes/workspace/`. Callers pass their `Caller`; its actor (user or agent key, with the request's
-address and user agent) is the one recorded in the audit log, so every workspace entry now carries
-the real ip and user agent. `Workspace` is the aggregate root: `Member`, `Invite` and `Topic` are
+address and user agent) is the one recorded in the audit log (the REST entries already carried them;
+the first-page dashboard entry and the former-member disconnect are newly filled). `Workspace` is the aggregate root: `Member`, `Invite` and `Topic` are
 entities of their own that point at it by workspace id.
 
 ```mermaid
@@ -1340,8 +1340,17 @@ How the pieces work, in short:
 - **Cascade.** `WorkspaceTeardown.run` is the template: integrations (credentials first, checked
   gone), the workspace row, items, containers, invites and members, the `workspace.delete` audit
   entry, then the emails. The two subclasses differ only in the audit meta (`{}` or
-  `{reason: 'account_deleted'}`). Dashboards are not a step: they go dark with the workspace and its
-  purge, as before.
+  `{reason: 'account_deleted'}`). The plan's "dashboards" step is held back for the owner's decision
+  in Phase 6: the old cascade never deleted dashboards, and the purge job removes only items and
+  containers, so a deleted workspace's dashboards stay orphaned in the database, exactly as before.
+- **Registry.** `Member` and the cascade import `Integration` from `integration/index.js`, which
+  registers every provider class; `IntegrationRegistry.create` throws for a connectable provider
+  without a class instead of using the fallback. `registry.test.ts` holds it in fresh processes.
+- **Statics over ids.** `Member.update/remove/leave` and `Topic.update/delete` are statics so the
+  role check (403) still comes before any lookup (404), as in the old services. `Invite` loads a
+  pending invite after the owner check, then acts on it.
+- **Topic delete.** It unsets the topic through `Integration.unsetTopicIn`; the item and container
+  halves still use their repositories until Phase 4 gives them classes.
 - **Join link.** `JoinLink` seals the token with the stage key, bound to the workspace (the crypto
   of the old `joinLinkVault`, unchanged); only its hash is searchable.
 - **Attributes and topic rules.** `AttributeDefinition` is one subclass per type (what a value may

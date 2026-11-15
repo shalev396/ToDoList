@@ -31,7 +31,6 @@ import {
   type AttributeDef,
   type AttributePatch,
   type NewAttribute,
-  numberRange,
 } from '../../types/attributes.js';
 import type { Role as RoleName } from '../../types/domain.js';
 import type { Env } from '../../types/env.d.ts';
@@ -628,30 +627,10 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
   async updateAttribute(caller: Caller, key: string, patch: AttributePatch): Promise<AttributeDef> {
     Workspace.#assertEditor(caller, 'change an attribute');
     this.#assertCaller(caller);
-    const current = this.#settings.attributes.find(key)?.toJSON();
+    const current = this.#settings.attributes.find(key);
     if (current === undefined) throw new AppError(404, 'Not found');
-    const wantsShape =
-      patch.options !== undefined || patch.min !== undefined || patch.max !== undefined;
-    if (wantsShape) {
-      const listed = current.type === 'select' || current.type === 'multiSelect';
-      if (patch.options !== undefined && !listed) {
-        throw new AppError(400, 'Only a select has options');
-      }
-      if ((patch.min !== undefined || patch.max !== undefined) && current.type !== 'number') {
-        throw new AppError(400, 'Only a number has a range');
-      }
-      if (patch.options?.length === 0) {
-        throw new AppError(400, 'A select needs options');
-      }
-      if (current.type === 'number') {
-        const { min, max } = numberRange({
-          ...current,
-          ...(patch.min === undefined ? {} : { min: patch.min }),
-          ...(patch.max === undefined ? {} : { max: patch.max }),
-        });
-        if (max <= min) throw new AppError(400, 'max must be above min');
-      }
-    }
+    const problem = current.patchError(patch);
+    if (problem !== null) throw new AppError(400, problem);
     const workspaces = await getWorkspaceRepository();
     const updated = await workspaces.updateAttribute(this.id, key, {
       ...patch,

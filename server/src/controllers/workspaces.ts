@@ -19,7 +19,6 @@ import { requireUser } from '../services/users.js';
 import type { AuthenticatedRequest, WorkspaceRequest } from '../types/express.js';
 import { parseOr400 } from '../utils/validation.js';
 
-/** Field by field, so nothing added to WorkspaceData later reaches the API by accident. */
 /** Field by field, so nothing added to a workspace later reaches the API by accident. */
 export function toWorkspaceView(workspace: Workspace): WorkspaceView {
   const { settings } = workspace;

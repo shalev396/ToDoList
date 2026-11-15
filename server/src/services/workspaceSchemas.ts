@@ -19,7 +19,7 @@ const MemberRole = z.enum(['editor', 'viewer']);
 
 export const CreateWorkspaceBody = z.strictObject({
   name: WorkspaceName,
-  /** Format (400) and uniqueness (409) are checked by createWorkspace. */
+  /** Format (400) and uniqueness (409) are checked by Workspace.create. */
   slug: z.string().max(100).optional(),
   loadDemoData: z.boolean().optional(),
   timezone: TimeZone.optional(),

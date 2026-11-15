@@ -404,6 +404,11 @@ export abstract class Integration<
     return (await getIntegrationRepository()).listOwnersForWorkspaceDeletion(workspaceId);
   }
 
+  /** A topic was deleted: the workspace's integrations whose default it was now default to none. */
+  static async unsetTopicIn(workspaceId: string, topicId: string): Promise<number> {
+    return (await getIntegrationRepository()).unsetTopic(workspaceId, topicId);
+  }
+
   // ─── What every integration is ───────────────────────────────────────────
 
   get provider(): Provider {

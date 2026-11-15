@@ -4,7 +4,7 @@ import { requireWorkspace } from '../../middlewares/requireWorkspace.js';
 import type { TopicColour, TopicIcon } from '../../types/topics.js';
 
 /**
- * Topics (H2): the pages of a workspace, as data (services/topics.ts). Every member sees them all;
+ * Topics (H2): the pages of a workspace, as data (classes/workspace/Topic.ts). Every member sees them all;
  * editors and owners add, rename, reorder and delete them. Non-members get 404.
  */
 const router = Router();

@@ -1,5 +1,5 @@
 /**
- * seedWorkspace: the demo data of one workspace, for the dev and qa stages (createWorkspace's
+ * seedWorkspace: the demo data of one workspace, for the dev and qa stages (Workspace.create's
  * "Load demo data", POST /private/workspaces {loadDemoData: true}). The demo's specifics are in
  * demoData.ts (D17).
  *

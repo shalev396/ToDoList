@@ -24,7 +24,7 @@ import type { Auditable } from '../base/contracts.js';
 import { Role } from '../base/Role.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { AuditLog } from '../AuditLog.js';
-import { Integration } from '../integration/Integration.js';
+import { Integration } from '../integration/index.js';
 import { assertOwner } from './ownerOnly.js';
 
 export interface UpdateMemberInput {

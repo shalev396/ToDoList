@@ -15,6 +15,7 @@ import {
   noonOf,
   numberRange,
   type AttributeDef,
+  type AttributePatch,
   type AttributeType,
 } from '../../types/attributes.js';
 
@@ -42,6 +43,9 @@ export abstract class AttributeDefinition {
         return new DateAttribute(data);
       case 'checkbox':
         return new CheckboxAttribute(data);
+      default:
+        // A stored type this code does not know: only its own values fail, never the workspace.
+        return new UnknownAttribute(data);
     }
   }
 
@@ -77,6 +81,24 @@ export abstract class AttributeDefinition {
     return value;
   }
 
+  /**
+   * Why a patch's shape does not fit this type (options of a select, the range of a number), or
+   * null when it does. A patch that changes neither is always fine.
+   */
+  patchError(patch: AttributePatch): string | null {
+    if (patch.options === undefined && patch.min === undefined && patch.max === undefined) {
+      return null;
+    }
+    return this.shapeError(patch);
+  }
+
+  /** The type's rule for a patch that names options or a range: by default it takes neither. */
+  protected shapeError(patch: AttributePatch): string | null {
+    if (patch.options !== undefined) return 'Only a select has options';
+    if (patch.min !== undefined || patch.max !== undefined) return 'Only a number has a range';
+    return null;
+  }
+
   toJSON(): AttributeDef {
     return structuredClone(this.#data);
   }
@@ -101,8 +123,14 @@ class RatingAttribute extends AttributeDefinition {
 class NumberAttribute extends AttributeDefinition {
   readonly type = 'number' as const;
 
-  get range(): { min: number; max: number } {
-    return numberRange(this.definition);
+  protected override shapeError(patch: AttributePatch): string | null {
+    if (patch.options !== undefined) return 'Only a select has options';
+    const { min, max } = numberRange({
+      ...this.definition,
+      ...(patch.min === undefined ? {} : { min: patch.min }),
+      ...(patch.max === undefined ? {} : { max: patch.max }),
+    });
+    return max <= min ? 'max must be above min' : null;
   }
 
   protected valueError(value: unknown): string | null {
@@ -148,6 +176,11 @@ class DateAttribute extends AttributeDefinition {
 class SelectAttribute extends AttributeDefinition {
   readonly type = 'select' as const;
 
+  protected override shapeError(patch: AttributePatch): string | null {
+    if (patch.min !== undefined || patch.max !== undefined) return 'Only a number has a range';
+    return patch.options?.length === 0 ? 'A select needs options' : null;
+  }
+
   protected valueError(value: unknown): string | null {
     return typeof value === 'string' && this.options.includes(value)
       ? null
@@ -158,11 +191,30 @@ class SelectAttribute extends AttributeDefinition {
 class MultiSelectAttribute extends AttributeDefinition {
   readonly type = 'multiSelect' as const;
 
+  protected override shapeError(patch: AttributePatch): string | null {
+    if (patch.min !== undefined || patch.max !== undefined) return 'Only a number has a range';
+    return patch.options?.length === 0 ? 'A select needs options' : null;
+  }
+
   protected valueError(value: unknown): string | null {
     return Array.isArray(value) &&
       value.length <= MAX_ATTRIBUTE_OPTIONS &&
       value.every((entry) => typeof entry === 'string' && this.options.includes(entry))
       ? null
       : `${this.key} is a list of its options`;
+  }
+}
+
+/** A stored definition of a type this code does not know: it fits no value, and nothing else. */
+class UnknownAttribute extends AttributeDefinition {
+  readonly type: AttributeType;
+
+  constructor(data: AttributeDef) {
+    super(data);
+    this.type = data.type;
+  }
+
+  protected valueError(): string | null {
+    return `${this.key} has a type this server does not know`;
   }
 }

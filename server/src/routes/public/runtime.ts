@@ -8,7 +8,7 @@ const router = Router();
 
 /**
  * What the client adapts to on this stage, and never a secret: the stage and whether a new
- * workspace can load demo data (dev and qa only, as createWorkspace decides).
+ * workspace can load demo data (dev and qa only, as Workspace.create decides).
  */
 export interface RuntimeResponseData {
   env: Env;

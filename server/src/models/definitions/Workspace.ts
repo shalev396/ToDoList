@@ -11,7 +11,7 @@ export interface TopicRule {
 export interface WorkspaceSettings {
   timezone: string;
   weekStart: WeekStart;
-  /** Container match key glob → topic; the first match wins (services/topicRules.ts). */
+  /** Container match key glob → topic; the first match wins (classes/workspace/TopicRules.ts). */
   topicRules: TopicRule[];
   /**
    * Whether agent keys with builder:publish may publish dashboards (builder_publish). Off unless an

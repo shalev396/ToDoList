@@ -14,7 +14,9 @@
  * 7. an email to every member who had integrations in it (PERMISSIONS-V2 ruling 11; best effort).
  *
  * Every step is idempotent, so an interrupted run completes on the next one. Dashboards are not a
- * step: they go dark with the workspace and its purge, as they always have.
+ * step: as before, they become unreachable with the workspace (requireWorkspace answers 404) and
+ * stay in the database, because the purge job removes only items and containers. Deleting them is
+ * held back for the owner's decision in Phase 6, since it would change behaviour.
  */
 import {
   getContainerRepository,
@@ -26,7 +28,7 @@ import { sendWorkspaceDeletedEmail } from '../../services/workspaceDeletedEmail.
 import type { Actor } from '../base/Actor.js';
 import { AuditTarget } from '../base/AuditTarget.js';
 import { AuditLog } from '../AuditLog.js';
-import { Integration } from '../integration/Integration.js';
+import { Integration } from '../integration/index.js';
 import { Invite } from './Invite.js';
 import { Member } from './Member.js';
 

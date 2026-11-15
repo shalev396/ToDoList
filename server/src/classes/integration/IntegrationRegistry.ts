@@ -1,5 +1,6 @@
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { Provider } from '../../types/domain.js';
+import { definitionOf } from './definitions/index.js';
 import type { IntegrationDefinition } from './definitions/IntegrationDefinition.js';
 import type { Integration } from './Integration.js';
 
@@ -21,7 +22,8 @@ export interface ProviderClass {
  * provider.
  *
  * A provider with no class of its own (Slack, Notion, local: in the data model, never connected)
- * gets the fallback class, which offers nothing beyond the base.
+ * gets the fallback class, which offers nothing beyond the base. A connectable provider whose class
+ * is not registered is an error, never the fallback.
  */
 export class IntegrationRegistry {
   /** The one registry (a singleton: the classes register into it as their modules load). */
@@ -71,7 +73,15 @@ export class IntegrationRegistry {
 
   /** The provider's class made from `data`. */
   create(data: IntegrationData): Integration {
-    const factory = this.#classes.get(data.provider)?.factory ?? this.#fallback;
+    const own = this.#classes.get(data.provider);
+    if (own !== undefined) return own.factory(data);
+    if (definitionOf(data.provider) !== null) {
+      // A provider people connect never gets the fallback: its class just was not loaded.
+      throw new Error(
+        `The integration class for "${data.provider}" is not registered: import the classes from classes/integration/index.js`,
+      );
+    }
+    const factory = this.#fallback;
     if (factory === null) {
       throw new Error(
         'No integration classes are registered: import them from classes/integration/index.js',

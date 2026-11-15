@@ -19,8 +19,6 @@ before(async () => {
   db = await startTestDatabase('todolist_cascade_test');
   const { syncDB } = await import('../../config/database.js');
   await syncDB();
-  // Registers the integration classes the cascade disconnects through.
-  await import('../integration/index.js');
   ({ Workspace, Member, Invite } = await import('./index.js'));
   models = await import('../../models/index.js');
 });
