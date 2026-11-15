@@ -667,12 +667,16 @@ export abstract class Integration<
   }
 
   /**
-   * The demo data's stand-in for a first connection test (seed/seedWorkspace.ts): a `pending:`
-   * placeholder account becomes `accountId`, once, so a later run finds the integration again.
-   * Null when it already has its account (or is gone); an account already connected here throws
-   * E11000, as a connection test's would.
+   * The demo data's stand-in for a first connection test (seed/seedWorkspace.ts): a demo
+   * integration's `pending:` placeholder account becomes `accountId`, once, so a later run finds
+   * it again. Null when it already has its account (or is gone); an account already connected here
+   * throws E11000, as a connection test's would. Any other integration is refused (409): its
+   * account is proven only by a connection test. dashboardInternals.test.ts pins who may call it.
    */
   async pinAccount(accountId: string): Promise<Integration | null> {
+    if (!this.demo) {
+      throw new AppError(409, 'Only a demo integration takes an account without a connection test');
+    }
     const pinned = await (
       await getIntegrationRepository()
     ).replacePendingAccount(this.workspaceId, this.id, accountId);
@@ -888,7 +892,7 @@ export abstract class Integration<
    */
   async stopSharing(caller: Caller): Promise<{ dashboards: number }> {
     this.assertOwner(caller);
-    const dashboards = await Dashboard.removeConnectorEverywhere(caller, this.id);
+    const dashboards = await Dashboard.removeConnectorEverywhere(caller, this);
     await AuditLog.record(caller, Integration.Audit.stopSharing, this, {
       provider: this.provider,
       dashboards,

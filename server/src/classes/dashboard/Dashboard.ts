@@ -46,6 +46,7 @@ import { localizeTemplate, type TemplateLanguage } from '../../builder/templates
 import { localizeViewTemplate } from '../../builder/viewTemplates.js';
 import { AppError } from '../../errors/AppError.js';
 import { ConflictError } from '../../errors/ConflictError.js';
+import { NotFoundError } from '../../errors/NotFoundError.js';
 import type {
   DashboardData,
   DashboardFilter,
@@ -82,6 +83,7 @@ import { Role } from '../base/Role.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { AuditLog } from '../AuditLog.js';
 import { DashboardPolicy } from '../policies/DashboardPolicy.js';
+import { IntegrationPolicy } from '../policies/IntegrationPolicy.js';
 import { ItemPolicy } from '../policies/ItemPolicy.js';
 import { Topic } from '../workspace/Topic.js';
 import { BlockPreviews } from './BlockPreviews.js';
@@ -164,6 +166,13 @@ export interface DashboardListFilter {
   /** A topic's id; null: the main dashboard. */
   topicId?: string | null | undefined;
   page?: DashboardPage | undefined;
+}
+
+/** The integration "stop sharing" takes off every block: whose it is, and where. */
+export interface ConnectorOwner {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly ownerUserId: string;
 }
 
 /** What a caller's `save` says of its write: only its summary. */
@@ -920,12 +929,24 @@ export class Dashboard
    * live dashboard of the workspace, draft and published copy alike (private dashboards and pages
    * the actor can't open too: the connector is theirs), so its items are private to its owner
    * again. A block that loses it shows "A source was removed" (`sourceRemoved`; one left without
-   * connectors reads nothing). Each changed dashboard gets a new version through `save` (history
+   * connectors reads nothing). Each changed dashboard gets a new version (the private commit, history
    * entry `stop_sharing`), so an edit made from an older version conflicts instead of bringing the
-   * connector back; the published copy keeps its version and loses only the connector. The caller
-   * has checked that the actor owns the integration. Returns how many dashboards changed.
+   * connector back; the published copy keeps its version and loses only the connector. It takes
+   * the integration (Integration#stopSharing passes itself, owner-checked), and holds the rule
+   * again: the caller's own, in the caller's workspace, else 404 as IntegrationPolicy answers.
+   * Returns how many dashboards changed.
    */
-  static async removeConnectorEverywhere(caller: Caller, integrationId: string): Promise<number> {
+  static async removeConnectorEverywhere(
+    caller: Caller,
+    integration: ConnectorOwner,
+  ): Promise<number> {
+    if (
+      integration.workspaceId !== caller.workspaceId ||
+      !IntegrationPolicy.isOwn(integration, caller.userId)
+    ) {
+      throw new NotFoundError();
+    }
+    const integrationId = integration.id;
     const dashboards = await getDashboardRepository();
     let changed = 0;
     for (const found of await dashboards.listWithConnector(caller.workspaceId, integrationId)) {

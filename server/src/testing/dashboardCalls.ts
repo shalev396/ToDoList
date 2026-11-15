@@ -216,14 +216,6 @@ export async function listDashboardVersions(
   return (await Dashboard.load(caller, id, Dashboard.Operation.history)).versions(caller, options);
 }
 
-export function removeConnectorEverywhere(
-  ws: WorkspaceContext,
-  actor: ActorRef,
-  integrationId: string,
-): Promise<number> {
-  return Dashboard.removeConnectorEverywhere(callerOf(ws, actor), integrationId);
-}
-
 // ─── Saved views ──────────────────────────────────────────────────────────────
 
 export async function listViews(ws: WorkspaceContext, userId: string): Promise<SavedView[]> {

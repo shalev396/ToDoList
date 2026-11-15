@@ -310,6 +310,22 @@ describe('Dashboard.listOutlines', () => {
   });
 });
 
+describe('Dashboard.removeConnectorEverywhere', () => {
+  it('takes only the caller’s own integration, in the caller’s workspace (404 otherwise)', async () => {
+    const { Dashboard } = classes;
+    const t = await team('dash-strip-guard');
+    const other = await team('dash-strip-other');
+    const theirs = { id: 'i-theirs', workspaceId: t.workspaceId, ownerUserId: t.owner.userId };
+    await assert.rejects(Dashboard.removeConnectorEverywhere(t.editor, theirs), hasStatus(404));
+    await assert.rejects(
+      Dashboard.removeConnectorEverywhere(other.owner, theirs),
+      hasStatus(404),
+      'another workspace’s',
+    );
+    assert.equal(await Dashboard.removeConnectorEverywhere(t.owner, theirs), 0);
+  });
+});
+
 describe('Dashboard.removeAllIn and View.removeAllIn', () => {
   it('remove a workspace’s dashboards (deleted ones too), histories and views, and nothing else', async () => {
     const { Dashboard, View } = classes;
