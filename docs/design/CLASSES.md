@@ -1713,6 +1713,21 @@ The rulings are in `.superpowers/sdd/2026-11-14-oop-redesign/progress.md` (the c
 - **`google_kept`:** another member's item deleted in Google stays unsent until edited (its
   tombstone never ages out); a move's create follows its delete in the ops.
 
+### Calendar phase, fix round 3
+
+- **One tracker per event:** after a create or adopt, the commit removes the other integrations'
+  live link rows to the same calendar and event (`ICalendarLinkRepository.removeOthersForEvent`,
+  rows only), so one integration's move or clean-up is never read as a Google-side delete by
+  another.
+- **Google's error reason** (`CalendarApiError.reason`, a one-word token): a 403 is a refusal for
+  good only for a permission reason; a rate-limit reason is retried like a 429.
+- **Each clean-up delete re-reads** the primary calendar and its link (`skipped` when it moved,
+  went, or is now on the current calendar); a tombstone after a delete holds only while the link
+  is on that calendar.
+- **The disconnect answers its clean-up's counts** (200; 204 without one); Google's OAuth
+  transport and `#contentsOf`'s paging fit the request's `TimeBudget`; `applyOps` always runs a
+  first op.
+
 ## Where the calendar phase left the old modules
 
 | Module                                        | State after PC                                                                                                                        |
