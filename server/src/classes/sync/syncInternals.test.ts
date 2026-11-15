@@ -5,8 +5,10 @@
  * Tests aside:
  * - only Integration.ts loads the engine (classes/sync/SyncEngine.ts) at run time: it opens a
  *   credential's read session for a run, so nothing else may start one;
- * - only the engine, its container cache, Integration.ts (its disconnect, a gone integration's
- *   run) and the purge load SyncedRows (classes/sync/SyncedRows.ts), whose writes take raw ids;
+ * - only the engine, Integration.ts (its disconnect, a gone integration's run) and the purge load
+ *   SyncedRows (classes/sync/SyncedRows.ts), whose writes take raw ids;
+ * - only GoogleCalendarIntegration and PushCommit load EventClaim (classes/calendar/EventClaim.ts),
+ *   whose `take` is a tombstone write by id;
  * - the global writes and reads are named only where they belong: `purgeDeletedBefore` by
  *   SyncedRows and the purge, `reapStuck` and `listRunningStartedBefore` by SyncRun and the purge
  *   (the models implement them);
@@ -23,11 +25,16 @@ const ENGINE = 'classes/sync/SyncEngine.ts';
 const ROWS = 'classes/sync/SyncedRows.ts';
 const INTEGRATION = 'classes/integration/Integration.ts';
 const PURGE = 'jobs/purge.ts';
+/** TodoList's claim on an event before its delete: an unguarded tombstone write by id. */
+const CLAIM = 'classes/calendar/EventClaim.ts';
+const GOOGLE = 'classes/integration/providers/GoogleCalendarIntegration.ts';
 
 /** Who may load each internal module at run time (besides tests). */
 const LOADERS: Readonly<Record<string, ReadonlySet<string>>> = {
   [ENGINE]: new Set([INTEGRATION]),
-  [ROWS]: new Set([ENGINE, 'classes/sync/ContainerCache.ts', INTEGRATION, PURGE]),
+  // ContainerCache only names its type.
+  [ROWS]: new Set([ENGINE, INTEGRATION, PURGE]),
+  [CLAIM]: new Set([GOOGLE, 'classes/calendar/PushCommit.ts']),
 };
 
 /** Global operations, and the modules (besides models/** and tests) that may name them. */
@@ -85,7 +92,7 @@ describe('the sync internals', () => {
     assert.deepEqual(violations(files), []);
   });
 
-  it('the rule catches a stray loader, a re-export and a stray name', () => {
+  it('the rule catches a stray loader (a dynamic import too), a re-export (`export *` too) and a stray name', () => {
     const tree = new Map(files);
     tree.set(
       'routes/private/stray.ts',
@@ -100,7 +107,14 @@ describe('the sync internals', () => {
       `export const go = (x: { purgeDeletedBefore(): void }) => x.purgeDeletedBefore();`,
     );
     tree.set('classes/item/types.ts', `import type { SyncedRows } from '../sync/SyncedRows.js';`);
+    tree.set(
+      'controllers/lazy.ts',
+      `export async function go() {\n  const { EventClaim } = await import('../classes/calendar/EventClaim.js');\n  return EventClaim;\n}`,
+    );
+    tree.set('classes/sync/barrel.ts', `export * from './SyncedRows.js';`);
     assert.deepEqual(violations(tree), [
+      'classes/sync/barrel.ts: re-exports classes/sync/SyncedRows.ts',
+      'controllers/lazy.ts: loads classes/calendar/EventClaim.ts',
       'mcp/tools/engine.ts: re-exports classes/sync/SyncEngine.ts',
       'routes/private/stray.ts: loads classes/sync/SyncedRows.ts',
       'services/purgeAll.ts: names \\bpurgeDeletedBefore\\b',
@@ -115,7 +129,7 @@ describe('the sync internals', () => {
     ]) {
       const text = files.get(barrel) ?? '';
       assert.equal(
-        /SyncEngine|SyncedRows/.test(text.replace(/\/\*[\s\S]*?\*\//g, '')),
+        /SyncEngine|SyncedRows|EventClaim/.test(text.replace(/\/\*[\s\S]*?\*\//g, '')),
         false,
         barrel,
       );
