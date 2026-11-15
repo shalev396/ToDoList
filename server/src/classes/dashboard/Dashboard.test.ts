@@ -8,6 +8,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { BLOCK_CATALOG } from '../../builder/catalog.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { callerFor, hasStatus, newUser } from '../../testing/workspaceFixtures.js';
 import type { DashboardDraft } from '../../types/builder.js';
@@ -224,6 +225,71 @@ describe('Dashboard#save', () => {
       2,
       'nothing more was written',
     );
+  });
+
+  it('a stale ifVersion is a 409 even when the document is also invalid', async () => {
+    const { Dashboard } = classes;
+    const t = await team('dash-save-order');
+    const created = await Dashboard.create(t.editor, { title: 'First', language: 'en' });
+    const first = await Dashboard.load(t.editor, created.id, Dashboard.Operation.edit);
+    await first.save(t.editor, { ...draftOf(created), title: 'Second' }, 1, { summary: 'rename' });
+    const current = await Dashboard.load(t.editor, created.id, Dashboard.Operation.edit);
+    const invalid = { ...draftOf(created), blocks: [{ id: 'b', type: 'nope' }] } as never;
+    await assert.rejects(
+      current.save(t.editor, invalid, 1, { summary: 'both' }),
+      (error: unknown) =>
+        hasStatus(409)(error) && (error as { currentVersion?: number }).currentVersion === 2,
+    );
+    // At the current version the same document is the 400.
+    await assert.rejects(
+      current.save(t.editor, invalid, 2, { summary: 'invalid' }),
+      hasStatus(400),
+    );
+  });
+
+  it('an agent’s save is linted in mcp mode (hard-coded text is a 400); a person’s only warns', async () => {
+    const { Dashboard } = classes;
+    const t = await team('dash-save-lint');
+    const created = await Dashboard.create(t.editor, { title: 'First', language: 'en' });
+    const hardCoded = {
+      ...draftOf(created),
+      blocks: [
+        {
+          id: 'blk_filter_1',
+          type: 'filter',
+          title: 'Any title',
+          ...BLOCK_CATALOG.filter.defaults,
+          viz: { kind: 'chips', field: 'Pick a project' },
+        },
+      ],
+    } as never;
+    const agent = await callerFor(t.workspaceId, t.editor.userId, 'agent-lint');
+    const byAgent = await Dashboard.load(agent, created.id, Dashboard.Operation.edit);
+    await assert.rejects(byAgent.save(agent, hardCoded, 1, { summary: 'agent' }), hasStatus(400));
+    assert.equal((await Dashboard.load(t.editor, created.id)).version, 1, 'nothing was written');
+    const byPerson = await Dashboard.load(t.editor, created.id, Dashboard.Operation.edit);
+    assert.equal(await byPerson.save(t.editor, hardCoded, 1, { summary: 'person' }), 2);
+  });
+
+  it('an owner’s own UI save publishes at once; an editor’s and an agent’s do not', async () => {
+    const { Dashboard } = classes;
+    const t = await team('dash-save-publish');
+    const created = await Dashboard.create(t.owner, { title: 'First', language: 'en' });
+    const save = async (caller: Caller, title: string, ifVersion: number): Promise<void> => {
+      const loaded = await Dashboard.load(caller, created.id, Dashboard.Operation.edit);
+      await loaded.save(caller, { ...draftOf(created), title }, ifVersion, { summary: title });
+    };
+    const published = async (): Promise<[number | null, string | undefined]> => {
+      const now = await Dashboard.load(t.owner, created.id);
+      return [now.publishedVersion, (await now.view(t.owner, { as: 'published' })).title];
+    };
+    await save(t.owner, 'Owner', 1);
+    assert.deepEqual(await published(), [2, 'Owner']);
+    await save(t.editor, 'Editor', 2);
+    assert.deepEqual(await published(), [2, 'Owner'], 'an editor’s save waits for publish');
+    const agent = await callerFor(t.workspaceId, t.owner.userId, 'agent-owner');
+    await save(agent, 'Agent', 3);
+    assert.deepEqual(await published(), [2, 'Owner'], 'an agent edits the draft only');
   });
 });
 
