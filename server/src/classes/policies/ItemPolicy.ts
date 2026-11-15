@@ -17,7 +17,11 @@ import { NotFoundError } from '../../errors/NotFoundError.js';
 import { MirroredItemError } from '../../errors/MirroredItemError.js';
 import type { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
-import { getDashboardRepository, getIntegrationRepository } from '../../models/index.js';
+import {
+  getContainerRepository,
+  getDashboardRepository,
+  getIntegrationRepository,
+} from '../../models/index.js';
 import { forgetForRequest, memoForRequest } from '../../services/requestMemo.js';
 import { LOCAL_CONNECTOR } from '../../types/builder.js';
 import type { Provider, Visibility } from '../../types/domain.js';
@@ -60,6 +64,10 @@ export interface BlockScope {
    * one account: each record is then kept once, from the first integration in this list.
    */
   dedup?: readonly string[];
+  /** Per connector the block reads, the external ids of the containers it narrows to. */
+  connectorScopes?: Readonly<Record<string, readonly string[]>>;
+  /** The same containers' ids, per connector (those the viewer may see). */
+  scopeContainerIds?: Readonly<Record<string, readonly string[]>>;
 }
 
 type Filter = Record<string, unknown>;
@@ -248,6 +256,43 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
     return {
       ...(connectors === undefined ? {} : { connectors }),
       ...(shared ? { dedup: read.map((integration) => integration.id) } : {}),
+    };
+  }
+
+  /**
+   * blockScope, with the block's connector scopes (plan Addendum A4): an entry applies to a
+   * connector the block reads and the viewer may see, and each scope's containers are resolved
+   * to their ids (an item points at its container by id). Without connectors (every source) or
+   * scopes, it is blockScope.
+   */
+  async scopeOf(
+    workspaceId: string,
+    connectors: readonly string[] | undefined,
+    connectorScopes: Readonly<Record<string, readonly string[]>> | undefined,
+  ): Promise<BlockScope> {
+    const scope = this.blockScope(connectors);
+    if (connectors === undefined || connectorScopes === undefined) return scope;
+    const seen = new Set(this.#access.integrations.map((integration) => integration.id));
+    const applied = Object.entries(connectorScopes).filter(
+      ([id, externalIds]) => connectors.includes(id) && seen.has(id) && externalIds.length > 0,
+    );
+    if (applied.length === 0) return scope;
+    const containers = await getContainerRepository();
+    const resolved = await Promise.all(
+      applied.map(async ([integrationId, externalIds]) => {
+        const found = await containers.list(workspaceId, {
+          integrationId,
+          externalIds: [...externalIds],
+        });
+        return [integrationId, found.map((container) => container.id)] as const;
+      }),
+    );
+    return {
+      ...scope,
+      connectorScopes: Object.fromEntries(
+        applied.map(([id, externalIds]) => [id, [...externalIds]]),
+      ),
+      scopeContainerIds: Object.fromEntries(resolved.map(([id, ids]) => [id, [...ids]])),
     };
   }
 }

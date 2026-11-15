@@ -26,6 +26,21 @@ export function storedConnectors(block: unknown): string[] | undefined {
   return (block['connectors'] as unknown[]).filter((id): id is string => typeof id === 'string');
 }
 
+/**
+ * A block's connector scopes as stored (per connector, the external ids of the containers it
+ * reads), or undefined without the field. Entries that are not lists of ids are left out.
+ */
+export function storedConnectorScopes(block: unknown): Record<string, string[]> | undefined {
+  if (!isRecord(block) || !isRecord(block['connectorScopes'])) return undefined;
+  const scopes: Record<string, string[]> = {};
+  for (const [id, value] of Object.entries(block['connectorScopes'])) {
+    if (!Array.isArray(value)) continue;
+    const ids = (value as unknown[]).filter((entry): entry is string => typeof entry === 'string');
+    if (ids.length > 0) scopes[id] = ids;
+  }
+  return scopes;
+}
+
 /** A block's connector ids as stored, as a list (none without the field): for diffs and sets. */
 export function connectorsOf(block: unknown): string[] {
   return storedConnectors(block) ?? [];
@@ -144,9 +159,20 @@ export function connectorChanges(
 export function withoutConnector(blocks: readonly unknown[], connectorId: string): unknown[] {
   return blocks.map((block) => {
     if (!isRecord(block) || !connectorsOf(block).includes(connectorId)) return block;
+    const scopes = storedConnectorScopes(block);
+    const keptScopes =
+      scopes === undefined
+        ? undefined
+        : Object.fromEntries(Object.entries(scopes).filter(([id]) => id !== connectorId));
+    const rest = Object.fromEntries(
+      Object.entries(block).filter(([key]) => key !== 'connectorScopes'),
+    );
     return {
-      ...block,
+      ...rest,
       connectors: connectorsOf(block).filter((id) => id !== connectorId),
+      ...(keptScopes === undefined || Object.keys(keptScopes).length === 0
+        ? {}
+        : { connectorScopes: keptScopes }),
       sourceRemoved: true,
     };
   });

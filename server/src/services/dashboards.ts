@@ -1019,7 +1019,7 @@ async function previews(
             ws: { id: ws.id },
             userId: actor.userId,
             access: policy.access,
-            ...policy.blockScope(block.connectors),
+            ...(await policy.scopeOf(ws.id, block.connectors, block.connectorScopes)),
             vars: draft.vars,
             now,
             timeZone: ws.settings.timezone,

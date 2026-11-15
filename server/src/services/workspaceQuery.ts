@@ -7,7 +7,7 @@
  * Errors are AppErrors: 400 for an invalid request or query (a JSON pointer and a reason, never a
  * value), 404 for a dashboard, block or view the caller cannot see.
  */
-import { storedConnectors } from '../builder/connectors.js';
+import { storedConnectorScopes, storedConnectors } from '../builder/connectors.js';
 import { assertSafeInput, parseQuery, type CompileContext } from '../builder/compile.js';
 import { QueryValidationError, fromZodError, toPointer } from '../builder/errors.js';
 import { runQuery, type RunQueryDeps } from '../builder/run.js';
@@ -52,6 +52,8 @@ interface QueryTarget {
   blockType?: BlockType;
   /** The block's (or the draft's) connectors: only these sources are read (empty: none). */
   connectors?: readonly string[];
+  /** The block's (or the draft's) connector scopes: the containers a connector narrows to. */
+  connectorScopes?: Readonly<Record<string, readonly string[]>>;
   /** The page's importance preset, as stored (checked before use). */
   importance?: unknown;
 }
@@ -125,11 +127,13 @@ async function blockQuery(
 
   const blockType = BLOCK_TYPES.find((type) => type === block['type']);
   const connectors = storedConnectors(block);
+  const connectorScopes = storedConnectorScopes(block);
   const target = {
     vars: config.vars,
     importance: config.importance,
     ...(blockType === undefined ? {} : { blockType }),
     ...(connectors === undefined ? {} : { connectors }),
+    ...(connectorScopes === undefined ? {} : { connectorScopes }),
   };
   if (block['query'] !== undefined) {
     return { ...target, query: block['query'], pointer: `/blocks/${String(index)}/query` };
@@ -151,7 +155,7 @@ async function resolveTarget(
   request: QueryRequest,
 ): Promise<QueryTarget> {
   if (request.draft !== undefined) {
-    const { blockType, connectors } = request;
+    const { blockType, connectors, connectorScopes } = request;
     return {
       query: request.draft,
       pointer: '/draft',
@@ -159,6 +163,7 @@ async function resolveTarget(
       importance: request.importance,
       ...(blockType === undefined ? {} : { blockType }),
       ...(connectors === undefined ? {} : { connectors }),
+      ...(connectorScopes === undefined ? {} : { connectorScopes }),
     };
   }
   if (request.savedQueryId !== undefined) {
@@ -214,7 +219,7 @@ export async function runWorkspaceQuery(
       ws: workspace,
       userId,
       access: seen.access,
-      ...seen.blockScope(target.connectors),
+      ...(await seen.scopeOf(workspace.id, target.connectors, target.connectorScopes)),
       vars: { ...bareVars(target.vars), ...bareVars(request.vars ?? {}) },
       now,
       timeZone: workspace.settings.timezone,

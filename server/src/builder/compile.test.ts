@@ -829,6 +829,52 @@ describe('compileQuery: block connectors (PERMISSIONS-V2)', () => {
     }
   });
 
+  it('a connector scope reads only the containers it names (plan Addendum A4)', () => {
+    const scoped = compileQuery(
+      { source: 'items' },
+      context({
+        connectors: ['i-own', 'i-shared', 'local'],
+        connectorScopes: { 'i-shared': ['cal-1', 'cal-2'], 'i-gone': ['x'] },
+        scopeContainerIds: { 'i-shared': ['c-1'] },
+      }),
+    );
+    assert.deepEqual(filterOf(scoped), {
+      $or: [
+        { integrationId: { $in: ['i-own'] } },
+        {
+          integrationId: 'i-shared',
+          $or: [
+            {
+              'source.provider': 'google_calendar',
+              'props.calendarId': { $in: ['cal-1', 'cal-2'] },
+            },
+            { containerId: { $in: ['c-1'] } },
+          ],
+        },
+        { integrationId: null },
+      ],
+    });
+    // Containers: by their own external id. A scope without its connector changes nothing.
+    const containers = compileQuery(
+      { source: 'containers' },
+      context({ connectors: ['i-shared'], connectorScopes: { 'i-shared': ['cal-1'] } }),
+    );
+    assert.deepEqual(filterOf(containers), {
+      integrationId: 'i-shared',
+      'source.externalId': { $in: ['cal-1'] },
+    });
+    const unscoped = compileQuery(
+      { source: 'items' },
+      context({ connectors: ['i-own'], connectorScopes: { 'i-shared': ['cal-1'] } }),
+    );
+    assert.deepEqual(filterOf(unscoped), { integrationId: { $in: ['i-own'] } });
+    // No connectors field: every source, scopes or not.
+    assert.equal(
+      filterOf(compileQuery({ source: 'items' }, context({ connectorScopes: { 'i-own': ['a'] } }))),
+      undefined,
+    );
+  });
+
   it('dedup keeps one copy per provider, account and external id, the first in order', () => {
     const compiled = compileQuery(
       { source: 'items' },

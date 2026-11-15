@@ -28,6 +28,8 @@ import type { ItemCopyView } from '../types/items.js';
 import type { ContainerType, ItemKind, ItemStatus, Provider } from '../types/domain.js';
 import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
 import { Topic } from '../classes/workspace/Topic.js';
+import { GoogleCalendarIntegration } from '../classes/integration/index.js';
+import { PlannedAt } from '../classes/item/PlannedAt.js';
 import { scrub } from './scrub.js';
 import { redactString } from './secretPatterns.js';
 
@@ -102,6 +104,7 @@ function toSummary(doc: Doc): ItemSummary {
       hidden: flag(overlay['hidden']),
       topicOverride: text(overlay['topicOverride']),
       calendarSync: flag(overlay['calendarSync']),
+      plannedAt: text(overlay['plannedAt']),
       editedAt: date(overlay['editedAt']),
       attrs: attrValues(overlay['attrs']),
     },
@@ -516,6 +519,8 @@ export async function deleteItem(ws: WorkspaceContext, userId: string, id: strin
   Caller.fromContext(ws, Actor.user(userId)).authorize(policy, 'manage', factsOf(doc));
   const items = await getItemRepository();
   if (!(await items.softDelete(ws.id, id))) throw new AppError(404, 'Not found');
+  // Its events on the workspace calendar go now, not at the next push (read-only: they wait).
+  await GoogleCalendarIntegration.deleteEventsOfDeletedItem(ws.id, id);
 }
 
 export async function updateOverlay(
@@ -535,6 +540,12 @@ export async function updateOverlay(
     ...(overlay.hidden === undefined ? {} : { hidden: overlay.hidden }),
     ...(overlay.topicOverride === undefined ? {} : { topicOverride: overlay.topicOverride }),
     ...(overlay.calendarSync === undefined ? {} : { calendarSync: overlay.calendarSync }),
+    ...(overlay.plannedAt === undefined
+      ? {}
+      : {
+          plannedAt:
+            overlay.plannedAt === null ? null : PlannedAt.parse(overlay.plannedAt).toString(),
+        }),
     ...(overlay.attrs === undefined
       ? {}
       : { attrs: AttributeDefinitions.of(ws.settings).prepare(overlay.attrs) }),
@@ -607,6 +618,8 @@ export async function getFacets(
     type: doc['type'] as ContainerType,
     topicId: text(doc['topicId']),
     provider: record(doc['source'])['provider'] as Provider,
+    integrationId: text(doc['integrationId']) ?? '',
+    externalId: text(record(doc['source'])['externalId']) ?? '',
   }));
   // Topic ids present (Unsorted, null, is not a value a filter offers).
   const topics = new Set<string>(sortedStrings<string>(part('topics')));

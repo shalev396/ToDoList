@@ -68,6 +68,8 @@ export const UpdateOverlayBody = z
     hidden: z.boolean().nullable().optional(),
     topicOverride: Id.nullable().optional(),
     calendarSync: z.boolean().nullable().optional(),
+    /** `YYYY-MM-DD` or `YYYY-MM-DDTHH:mm` (local); checked as a real date by PlannedAt. */
+    plannedAt: z.string().max(16).nullable().optional(),
     /** Custom attribute values by key; null clears one (types/attributes.ts). */
     attrs: AttrValues.optional(),
   })

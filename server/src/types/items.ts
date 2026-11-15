@@ -16,6 +16,12 @@ export interface ItemOverlayView {
   /** A topic id this user files the item under instead of its own. */
   topicOverride: string | null;
   calendarSync: boolean | null;
+  /**
+   * When the user plans to do it ("do it on Saturday"): a local date `YYYY-MM-DD`, or a local date
+   * and time `YYYY-MM-DDTHH:mm`, in the workspace's time zone. TodoList's own: never synced, never
+   * written to a provider; the workspace calendar's push places the item's event there.
+   */
+  plannedAt: string | null;
   editedAt: Date | null;
   /** Custom attribute values by key (dates as ISO strings); an unset one is absent. */
   attrs: Record<string, unknown>;
@@ -97,6 +103,8 @@ export interface UpdateOverlayRequestBody {
   hidden?: boolean | null;
   topicOverride?: string | null;
   calendarSync?: boolean | null;
+  /** `YYYY-MM-DD` or `YYYY-MM-DDTHH:mm` (the workspace's local time); null clears it. */
+  plannedAt?: string | null;
   /** Attribute values by key; null clears one. Unknown keys and mistyped values are 400. */
   attrs?: Record<string, string | number | boolean | string[] | null>;
 }
@@ -114,6 +122,10 @@ export interface FacetContainer {
   /** Its topic's id; null = Unsorted. */
   topicId: string | null;
   provider: Provider;
+  /** Its integration (a block's connector). */
+  integrationId: string;
+  /** Its id at the provider (a Google calendar's id): what a block's connector scope names. */
+  externalId: string;
 }
 
 /**

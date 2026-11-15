@@ -16,6 +16,12 @@ export interface ItemOverlay {
   /** A topic this user files the item under instead of its own (a topic id). */
   topicOverride: string | null;
   calendarSync: boolean | null;
+  /**
+   * When the user plans to do it: `YYYY-MM-DD` or `YYYY-MM-DDTHH:mm`, the workspace's local time
+   * (classes/item/PlannedAt.ts). Pushed to the workspace calendar; never synced or written to a
+   * provider.
+   */
+  plannedAt: string | null;
   editedAt: Date | null;
   /**
    * H5: this mirrored item is the provider copy of a local to-do (the local to-do's id). The base

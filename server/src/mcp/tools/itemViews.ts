@@ -50,6 +50,10 @@ export const ItemSummaryView = z.object({
     hidden: z.boolean().nullable(),
     topicOverride: z.string().nullable().describe('A topic id this member files it under'),
     calendarSync: z.boolean().nullable(),
+    plannedAt: z
+      .string()
+      .nullable()
+      .describe('When the member plans to do it: YYYY-MM-DD or YYYY-MM-DDTHH:mm, local time'),
     editedAt: Iso,
     attrs: z.record(z.string(), z.unknown()).describe('Custom attribute values by key'),
   }),
@@ -98,6 +102,7 @@ export function toItemSummaryView(item: ItemSummary): ItemSummaryView {
       hidden: item.overlay.hidden,
       topicOverride: item.overlay.topicOverride,
       calendarSync: item.overlay.calendarSync,
+      plannedAt: item.overlay.plannedAt,
       editedAt: iso(item.overlay.editedAt),
       attrs: { ...item.overlay.attrs },
     },

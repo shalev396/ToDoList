@@ -66,6 +66,17 @@ export interface CompileContext {
    */
   connectors?: readonly string[];
   /**
+   * A block's connector scopes (plan Addendum A4): per connector, the external ids of the
+   * containers it reads (a Google calendar's id, a project's); a connector without an entry reads
+   * all of its containers. Applies only to the block's connectors.
+   */
+  connectorScopes?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * The same containers' TodoList ids, per connector, as the caller resolved them (an item points
+   * at its container by this id): ItemPolicy#scopeOf.
+   */
+  scopeContainerIds?: Readonly<Record<string, readonly string[]>>;
+  /**
    * Items only: two integrations read here mirror one account, so each record is kept once, from
    * the first integration of this list that holds it (ItemPolicy#blockScope).
    */
@@ -671,22 +682,55 @@ class Compilation {
   }
 }
 
+/** One scoped connector: its records in the containers named (plan Addendum A4). */
+function scopedConnector(
+  source: QuerySource,
+  integrationId: string,
+  externalIds: readonly string[],
+  containerIds: readonly string[],
+): Filter {
+  if (source === 'containers') {
+    return { integrationId, 'source.externalId': { $in: [...externalIds] } };
+  }
+  return {
+    integrationId,
+    $or: [
+      // A Google Calendar event names its calendar itself (its container's external id).
+      { 'source.provider': 'google_calendar', 'props.calendarId': { $in: [...externalIds] } },
+      { containerId: { $in: [...containerIds] } },
+    ],
+  };
+}
+
 /**
  * A block's connectors as a filter: null without the field (everything the caller may see); an
- * empty list matches nothing.
+ * empty list matches nothing. A connector with a scope reads only the containers it names.
  */
-function connectorFilter(
-  source: QuerySource,
-  connectors: readonly string[] | undefined,
-): Filter | null {
+function connectorFilter(source: QuerySource, ctx: CompileContext): Filter | null {
+  const { connectors } = ctx;
   if (connectors === undefined) return null;
   const ids = connectors.filter((id) => id !== LOCAL_CONNECTOR);
+  const scopeOf = (id: string): readonly string[] | undefined =>
+    ctx.connectorScopes !== undefined && Object.hasOwn(ctx.connectorScopes, id)
+      ? ctx.connectorScopes[id]
+      : undefined;
+  const whole = ids.filter((id) => scopeOf(id) === undefined);
+  const scoped = ids.flatMap((id) => {
+    const externalIds = scopeOf(id);
+    if (externalIds === undefined) return [];
+    const containerIds =
+      ctx.scopeContainerIds !== undefined && Object.hasOwn(ctx.scopeContainerIds, id)
+        ? (ctx.scopeContainerIds[id] ?? [])
+        : [];
+    return [scopedConnector(source, id, externalIds, containerIds)];
+  });
   const local = source === 'items' && connectors.includes(LOCAL_CONNECTOR);
   // No source, only to-dos for containers, or nothing at all: an id that matches nothing.
   return (
     combine(
       [
-        ...(ids.length === 0 ? [] : [{ integrationId: { $in: ids } }]),
+        ...(whole.length === 0 ? [] : [{ integrationId: { $in: whole } }]),
+        ...scoped,
         ...(local ? [{ integrationId: null }] : []),
       ],
       '$or',
@@ -753,7 +797,7 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
   const compilation = new Compilation(source, ctx);
 
   const filters: Filter[] = [];
-  const sources = connectorFilter(source, ctx.connectors);
+  const sources = connectorFilter(source, ctx);
   if (sources !== null) filters.push(sources);
   if (parsed.containerType !== undefined) filters.push({ type: parsed.containerType });
   const where = parsed.where === undefined ? null : compilation.group(parsed.where, '/where');

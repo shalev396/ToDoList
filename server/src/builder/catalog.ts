@@ -120,6 +120,8 @@ export const FIELD_CATALOG: Readonly<Record<QuerySource, Readonly<Record<string,
     importance: { ...field('number'), computed: 'importance' },
     'overlay.pinned': field('boolean'),
     'overlay.hidden': field('boolean'),
+    /** When the user plans to do it: `YYYY-MM-DD` or `YYYY-MM-DDTHH:mm`, local (PlannedAt). */
+    'overlay.plannedAt': field('string'),
   },
   containers: {
     type: field('enum', CONTAINER_TYPES),

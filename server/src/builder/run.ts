@@ -98,6 +98,7 @@ function toItemRow(doc: Record<string, unknown>): ItemQueryRow {
       hidden: flag(overlay['hidden']),
       topicOverride: text(overlay['topicOverride']),
       calendarSync: flag(overlay['calendarSync']),
+      plannedAt: text(overlay['plannedAt']),
       editedAt: date(overlay['editedAt']),
       attrs: record(scrub(record(overlay['attrs']))),
     },

@@ -185,6 +185,28 @@ export const ConnectorsSchema = z
   .max(MAX_CONNECTORS)
   .refine((ids) => new Set(ids).size === ids.length, 'connectors must differ');
 
+/** The most containers one connector of a block may narrow to. */
+export const MAX_SCOPED_CONTAINERS = 50;
+
+/**
+ * A block's second level of sources (plan Addendum A4): per connector (an integration id), the
+ * containers it reads, by their `source.externalId` (a Google calendar's id, a Jira project…). A
+ * connector with no entry reads all of its containers; an entry applies only while its integration
+ * is one of the block's connectors. `local` has no containers.
+ */
+export const ConnectorScopesSchema = z
+  .record(
+    IdSchema,
+    z
+      .array(z.string().min(1).max(1024))
+      .min(1)
+      .max(MAX_SCOPED_CONTAINERS)
+      .refine((ids) => new Set(ids).size === ids.length, 'containers must differ'),
+  )
+  .refine((scopes) => Object.keys(scopes).length <= MAX_CONNECTORS, 'too many connector scopes')
+  .refine((scopes) => !Object.hasOwn(scopes, LOCAL_CONNECTOR), 'local to-dos have no containers');
+export type ConnectorScopes = z.infer<typeof ConnectorScopesSchema>;
+
 /** A field path: an Items/Containers field, or `props.<path>` (checked by the compiler). */
 export const FieldPathSchema = z.string().min(1).max(80);
 
@@ -410,6 +432,11 @@ const blockContentFields = {
    * source its viewer may see. Empty: nothing (the block shows "No source").
    */
   connectors: ConnectorsSchema.optional(),
+  /**
+   * Per connector, the containers it reads (ConnectorScopesSchema). Absent, or no entry for a
+   * connector: all of that connector's containers.
+   */
+  connectorScopes: ConnectorScopesSchema.optional(),
   /** Note blocks: the only user-authored free text. */
   note: z.string().max(5000).optional(),
 };
@@ -462,10 +489,15 @@ export type NewBlock = z.infer<typeof NewBlockSchema>;
 
 /**
  * `update_block`: any block field but `id` and `type`. `connectors: null` takes the field off:
- * the block reads every source its viewer may see again.
+ * the block reads every source its viewer may see again; `connectorScopes: null` reads every
+ * container of its connectors again.
  */
 export const BlockPatchSchema = z
-  .strictObject({ ...blockContentFields, connectors: ConnectorsSchema.nullable() })
+  .strictObject({
+    ...blockContentFields,
+    connectors: ConnectorsSchema.nullable(),
+    connectorScopes: ConnectorScopesSchema.nullable(),
+  })
   .partial()
   .refine((patch) => Object.keys(patch).length > 0, 'the patch changes nothing');
 export type BlockPatch = z.infer<typeof BlockPatchSchema>;
@@ -848,6 +880,8 @@ export const QueryRequestSchema = z
     blockType: z.enum(BLOCK_TYPES).optional(),
     /** Draft only: the block's connectors, so the editor's preview reads what the block will. */
     connectors: ConnectorsSchema.optional(),
+    /** Draft only: the block's connector scopes, with its connectors. */
+    connectorScopes: ConnectorScopesSchema.optional(),
     vars: QueryVarsSchema.optional(),
     /** Draft only: the importance preset to score with (the settings preview); else the page's. */
     importance: ImportanceConfigSchema.optional(),
@@ -879,6 +913,13 @@ export const QueryRequestSchema = z
         message: 'connectors go with a draft',
       });
     }
+    if (body.connectorScopes !== undefined && body.draft === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['connectorScopes'],
+        message: 'connectorScopes go with a draft',
+      });
+    }
     if (dashboard && (body.dashboardId === undefined || body.blockId === undefined)) {
       ctx.addIssue({
         code: 'custom',
@@ -904,6 +945,8 @@ export interface ItemRowOverlay {
   /** A topic id this user files the item under instead of its own. */
   topicOverride: string | null;
   calendarSync: boolean | null;
+  /** When the user plans to do it: `YYYY-MM-DD` or `YYYY-MM-DDTHH:mm`, local time. */
+  plannedAt: string | null;
   editedAt: Date | null;
   /** Custom attribute values by key (H4); the built-in Importance reads 3 when unset. */
   attrs: Record<string, unknown>;
