@@ -33,12 +33,14 @@ import { TokenFallback } from '@/features/integrations/TokenFallback';
 import { OAuthResourcePicker } from '@/features/integrations/OAuthResourcePicker';
 import {
   hasOAuthSignIn,
+  capabilitiesOf,
+  comingSoonOf,
   hasResourcePicker,
   hasTokenFallback,
   isOAuthSignIn,
   oauthMode,
 } from '@/features/integrations/oauthSetup';
-import { isComingSoon, PROVIDER_ORDER } from '@/features/integrations/providers';
+import { PROVIDER_ORDER } from '@/features/integrations/providers';
 import { latestRun } from '@/features/integrations/status';
 import { EmptyIcon, EmptyState } from '@/features/shell/EmptyState';
 import { PageContainer, PageHeader } from '@/features/shell/PageHeader';
@@ -200,6 +202,7 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
   const oauthProviders = useOAuthProviders(workspace.id, true);
   const infoOf = (provider: ConnectableProvider) =>
     oauthProviders.data?.providers.find((entry) => entry.provider === provider);
+  const capsOf = (provider: ConnectableProvider) => capabilitiesOf(oauthProviders.data, provider);
   const modeOf = (provider: ConnectableProvider) =>
     hasOAuthSignIn(provider)
       ? oauthMode(infoOf(provider), oauthProviders.isPending)
@@ -264,7 +267,7 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
     integrations.data.filter((entry) => entry.provider === provider);
   const cards = PROVIDER_ORDER.flatMap<CardEntry>((provider) => {
     // Coming soon (Moodle): one card with a badge, whatever a demo workspace holds.
-    const connected = isComingSoon(provider) ? [] : byProvider(provider);
+    const connected = comingSoonOf(capsOf(provider)) ? [] : byProvider(provider);
     if (connected.length === 0) {
       return [{ provider, integration: undefined }];
     }
@@ -356,6 +359,7 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
               key={integration?.id ?? provider}
               workspaceId={workspace.id}
               provider={provider}
+              capabilities={capsOf(provider)}
               integration={integration}
               shared={integration !== undefined && sharing.data?.has(integration.id) === true}
               run={integration === undefined ? undefined : latestRun(runs.data, integration.id)}
@@ -398,7 +402,8 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
           }}
         />
       ) : dialog?.kind === 'resources' ? (
-        hasResourcePicker(dialog.integration.provider) ? (
+        hasResourcePicker(capsOf(dialog.integration.provider as ConnectableProvider)) &&
+        (dialog.integration.provider === 'jira' || dialog.integration.provider === 'clickup') ? (
           <OAuthResourcePicker
             key={dialog.integration.id}
             workspaceId={workspace.id}

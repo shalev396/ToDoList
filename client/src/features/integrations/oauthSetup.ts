@@ -7,7 +7,9 @@
 import {
   OAUTH_SIGN_IN_PROVIDERS,
   type OAuthProviderInfo,
+  type OAuthProvidersResponse,
   type OAuthSignInProvider,
+  type ProviderCapabilities,
 } from '@api-types/integrations.ts';
 
 /**
@@ -40,20 +42,36 @@ export function oauthMode(info: OAuthProviderInfo | undefined, checking: boolean
   return info.configured ? 'connect' : 'unavailable';
 }
 
-/** Providers whose grant has resources to choose from after connecting (Jira sites, ClickUp workspaces). */
-export function hasResourcePicker(provider: string): provider is 'jira' | 'clickup' {
-  return provider === 'jira' || provider === 'clickup';
+/*
+ * What the server says each provider can do (`capabilities` of the same response). The helpers take
+ * `undefined` while that answer is loading or failed, and then claim nothing: no picker, no revoke
+ * text and no "Coming soon" badge, so a card never shows a fact the server hasn't confirmed.
+ */
+
+/** The capabilities of one provider in the response, or undefined (not loaded, or not listed). */
+export function capabilitiesOf(
+  response: OAuthProvidersResponse | undefined,
+  provider: string,
+): ProviderCapabilities | undefined {
+  return response?.capabilities.find((entry) => entry.provider === provider);
 }
 
-/** Providers whose grant we can revoke on disconnect; for the others the user revokes on the provider's page. */
-export function revokesOnDisconnect(provider: string): boolean {
-  return provider === 'linear';
+/** Providers whose OAuth grant has resources to choose from after connecting (Jira sites, ClickUp workspaces). */
+export function hasResourcePicker(caps: ProviderCapabilities | undefined): boolean {
+  return caps?.picker === 'sites' || caps?.picker === 'workspaces';
 }
 
-/** Where a user revokes the app themselves, for providers we can't revoke for them. */
-export const REVOKE_PAGES: Readonly<Record<OAuthSignInProvider, string>> = {
-  github: 'https://github.com/settings/apps/authorizations',
-  jira: 'https://id.atlassian.com/manage-profile/apps',
-  clickup: 'https://app.clickup.com/settings/apps',
-  linear: 'https://linear.app/settings/account/security',
-};
+/** Providers whose grant we revoke on disconnect; for the others the user revokes on the provider's page. */
+export function revokesOnDisconnect(caps: ProviderCapabilities | undefined): boolean {
+  return caps?.revokesOnDisconnect === true;
+}
+
+/** Where a user revokes the app themselves, for providers we can't revoke for them (null: unknown or nowhere). */
+export function revokePageOf(caps: ProviderCapabilities | undefined): string | null {
+  return caps?.revokePage ?? null;
+}
+
+/** Listed but not open yet (Moodle): a "Coming soon" badge and no way to connect. */
+export function comingSoonOf(caps: ProviderCapabilities | undefined): boolean {
+  return caps?.comingSoon === true;
+}

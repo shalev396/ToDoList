@@ -30,17 +30,19 @@ import type { IntegrationMode } from '@api-types/domain';
 import type {
   ConnectableProvider,
   IntegrationTestResult,
+  ProviderCapabilities,
   SyncRunView,
 } from '@api-types/integrations';
 import {
+  comingSoonOf,
   hasResourcePicker,
   hasTokenFallback,
-  REVOKE_PAGES,
+  revokePageOf,
   revokesOnDisconnect,
   isOAuthSignIn,
   type OAuthMode,
 } from './oauthSetup';
-import { isComingSoon, PROVIDER_REGISTRY } from './providers';
+import { PROVIDER_REGISTRY } from './providers';
 import { daysUntil, needsRenewalHint } from './status';
 import { SyncStatus } from './SyncStatus';
 import { TokenFallback } from './TokenFallback';
@@ -66,6 +68,8 @@ interface IntegrationCardProps {
   onCalendars?: ((integration: IntegrationStatusView) => void) | undefined;
   /** A connection made with OAuth: sign in again (same account). */
   onReconnect?: ((integration: IntegrationStatusView) => void) | undefined;
+  /** What the server says this provider can do; undefined until the providers answer arrives. */
+  capabilities?: ProviderCapabilities | undefined;
   /** What this stage can do about signing in, and the actions it leads to. */
   signIn: {
     mode: OAuthMode;
@@ -95,6 +99,7 @@ export function IntegrationCard({
   onReplace,
   onCalendars,
   onReconnect,
+  capabilities,
   signIn,
 }: IntegrationCardProps) {
   const { t } = useTranslation();
@@ -186,7 +191,7 @@ export function IntegrationCard({
   const renew =
     integration !== undefined && needsRenewalHint(integration.expiresAt, now) && days !== null;
   const status = integration?.status;
-  const comingSoon = isComingSoon(provider);
+  const comingSoon = comingSoonOf(capabilities);
 
   return (
     <article
@@ -412,7 +417,7 @@ export function IntegrationCard({
                     {t('connect.oauth.calendars')}
                   </Button>
                 )}
-                {!hasResourcePicker(provider) ? null : (
+                {!hasResourcePicker(capabilities) ? null : (
                   <Button
                     type="button"
                     variant="outline"
@@ -530,21 +535,25 @@ export function IntegrationCard({
           <AlertDialogHeader>
             <AlertDialogTitle>{t('connect.card.disconnectTitle', { name })}</AlertDialogTitle>
             <AlertDialogDescription>{t('connect.card.disconnectBody')}</AlertDialogDescription>
-            {integration?.authMethod === 'oauth' && isOAuthSignIn(provider) ? (
+            {integration?.authMethod === 'oauth' &&
+            isOAuthSignIn(provider) &&
+            capabilities !== undefined ? (
               <p className="text-sm text-muted-foreground" data-revoke-note>
-                {revokesOnDisconnect(provider) ? (
+                {revokesOnDisconnect(capabilities) ? (
                   t('connect.signin.revoked', { name })
                 ) : (
                   <>
                     {t('connect.signin.revokeYourself', { name })}{' '}
-                    <a
-                      href={REVOKE_PAGES[provider]}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="underline underline-offset-2"
-                    >
-                      {t('connect.signin.revokePage', { name })}
-                    </a>
+                    {revokePageOf(capabilities) === null ? null : (
+                      <a
+                        href={revokePageOf(capabilities) ?? undefined}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="underline underline-offset-2"
+                      >
+                        {t('connect.signin.revokePage', { name })}
+                      </a>
+                    )}
                   </>
                 )}
               </p>

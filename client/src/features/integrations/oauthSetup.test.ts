@@ -1,15 +1,21 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { OAuthProviderInfo } from '@api-types/integrations.ts';
+import type {
+  OAuthProviderInfo,
+  OAuthProvidersResponse,
+  ProviderCapabilities,
+} from '@api-types/integrations.ts';
 import { connect as en } from '../../i18n/translations/en/connect.ts';
 import { connect as he } from '../../i18n/translations/he/connect.ts';
 import {
+  capabilitiesOf,
+  comingSoonOf,
   hasOAuthSignIn,
   hasResourcePicker,
   hasTokenFallback,
   isOAuthSignIn,
   oauthMode,
-  REVOKE_PAGES,
+  revokePageOf,
   revokesOnDisconnect,
 } from './oauthSetup.ts';
 import { isComingSoon, PROVIDER_ORDER } from './providers.ts';
@@ -45,11 +51,79 @@ describe('who signs in, and who also takes a token', () => {
     assert.ok(['github', 'jira', 'clickup', 'linear'].every(hasTokenFallback));
     assert.ok(!hasTokenFallback('google_calendar') && !hasTokenFallback('moodle'));
   });
-  it('knows which providers pick resources and revoke', () => {
-    assert.ok(hasResourcePicker('jira') && hasResourcePicker('clickup'));
-    assert.ok(!hasResourcePicker('linear') && !hasResourcePicker('github'));
-    assert.ok(revokesOnDisconnect('linear') && !revokesOnDisconnect('jira'));
-    assert.deepEqual(Object.keys(REVOKE_PAGES).sort(), ['clickup', 'github', 'jira', 'linear']);
+});
+
+const cap = (
+  provider: ProviderCapabilities['provider'],
+  over: Partial<ProviderCapabilities> = {},
+): ProviderCapabilities => ({
+  provider,
+  authMethods: ['oauth'],
+  picker: null,
+  revokesOnDisconnect: false,
+  revokePage: null,
+  canCreate: false,
+  comingSoon: false,
+  ...over,
+});
+
+/** Shaped like the server's real answer, in CONNECTABLE_PROVIDERS order. */
+const response: OAuthProvidersResponse = {
+  stage: 'dev',
+  providers: [],
+  capabilities: [
+    cap('github', { revokePage: 'https://github.com/settings/apps/authorizations' }),
+    cap('jira', { picker: 'sites', revokePage: 'https://id.atlassian.com/manage-profile/apps' }),
+    cap('clickup', {
+      picker: 'workspaces',
+      revokePage: 'https://app.clickup.com/settings/apps',
+    }),
+    cap('linear', {
+      revokesOnDisconnect: true,
+      revokePage: 'https://linear.app/settings/account/security',
+    }),
+    cap('google_calendar', { picker: 'calendars', revokesOnDisconnect: true }),
+    cap('moodle', { authMethods: [], comingSoon: true }),
+  ],
+};
+const caps = (provider: string) => capabilitiesOf(response, provider);
+
+describe('capabilities from the providers answer', () => {
+  it('finds a provider, and nothing before the answer has arrived', () => {
+    assert.equal(caps('jira')?.provider, 'jira');
+    assert.equal(caps('nope'), undefined);
+    assert.equal(capabilitiesOf(undefined, 'jira'), undefined);
+  });
+  it('offers the resource picker to Jira and ClickUp only, not Google Calendar', () => {
+    assert.ok(hasResourcePicker(caps('jira')) && hasResourcePicker(caps('clickup')));
+    for (const provider of ['linear', 'github', 'google_calendar', 'moodle']) {
+      assert.ok(!hasResourcePicker(caps(provider)), provider);
+    }
+  });
+  it('revokes on disconnect for Linear (and Google Calendar), not for the rest', () => {
+    assert.ok(revokesOnDisconnect(caps('linear')) && revokesOnDisconnect(caps('google_calendar')));
+    for (const provider of ['github', 'jira', 'clickup', 'moodle']) {
+      assert.ok(!revokesOnDisconnect(caps(provider)), provider);
+    }
+  });
+  it('points GitHub, Jira, ClickUp and Linear at their revoke pages', () => {
+    assert.equal(revokePageOf(caps('github')), 'https://github.com/settings/apps/authorizations');
+    assert.equal(revokePageOf(caps('jira')), 'https://id.atlassian.com/manage-profile/apps');
+    assert.equal(revokePageOf(caps('clickup')), 'https://app.clickup.com/settings/apps');
+    assert.equal(revokePageOf(caps('linear')), 'https://linear.app/settings/account/security');
+    assert.equal(revokePageOf(caps('google_calendar')), null);
+    assert.equal(revokePageOf(caps('moodle')), null);
+  });
+  it('marks only Moodle as coming soon', () => {
+    assert.deepEqual(
+      PROVIDER_ORDER.filter((provider) => comingSoonOf(caps(provider))),
+      ['moodle'],
+    );
+  });
+  it('claims nothing until the answer is loaded', () => {
+    const none = capabilitiesOf(undefined, 'moodle');
+    assert.ok(!hasResourcePicker(none) && !revokesOnDisconnect(none) && !comingSoonOf(none));
+    assert.equal(revokePageOf(none), null);
   });
 });
 
