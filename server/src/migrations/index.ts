@@ -12,6 +12,7 @@ import { calendarLinkDeleteAnswered } from './calendarLinkDeleteAnswered.js';
 import { dropAreaScope } from './dropAreaScope.js';
 import { integrationOwners } from './integrationOwners.js';
 import { introduceTopics } from './introduceTopics.js';
+import { orphanedDashboards } from './orphanedDashboards.js';
 import { orphanedIntegrations } from './orphanedIntegrations.js';
 import { primaryCalendar } from './primaryCalendar.js';
 import { primaryCalendarRead } from './primaryCalendarRead.js';
@@ -34,6 +35,7 @@ export const MIGRATIONS: readonly Migration[] = [
   primaryCalendar,
   primaryCalendarRead,
   calendarLinkDeleteAnswered,
+  orphanedDashboards,
 ];
 
 interface MigrationRecord {
