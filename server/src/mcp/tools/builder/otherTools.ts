@@ -4,7 +4,8 @@
  */
 import { z } from 'zod';
 
-import { Dashboard, History, Persona } from '../../../classes/dashboard/index.js';
+import { Dashboard, Persona } from '../../../classes/dashboard/index.js';
+import { MAX_UNDO_STEPS } from '../../../classes/dashboard/limits.js';
 import { AppError } from '../../../errors/AppError.js';
 import { VarNameSchema } from '../../../types/builder.js';
 import { DASHBOARD_PAGES } from '../../../types/domain.js';
@@ -210,12 +211,12 @@ export const builderInstantiatePersona = defineTool({
 export const builderUndo = defineTool({
   name: 'builder_undo',
   title: 'Undo',
-  description: `Reverts this agent's own last changes to the draft (steps, 1 to ${String(History.MAX_UNDO_STEPS)}), past anyone else's, as one new version. Refused when a later change edited the same blocks, or when there is nothing of this agent's to undo.`,
+  description: `Reverts this agent's own last changes to the draft (steps, 1 to ${String(MAX_UNDO_STEPS)}), past anyone else's, as one new version. Refused when a later change edited the same blocks, or when there is nothing of this agent's to undo.`,
   toolset: 'builder',
   inputSchema: z.strictObject({
     dashboardId: DashboardId,
     expectedVersion: ExpectedVersion,
-    steps: z.number().int().min(1).max(History.MAX_UNDO_STEPS).default(1),
+    steps: z.number().int().min(1).max(MAX_UNDO_STEPS).default(1),
     dryRun: DryRun,
   }),
   outputSchema: WriteOutput,

@@ -99,6 +99,7 @@ import {
   publishedCopy,
 } from './dashboardRules.js';
 import { Layout } from './Layout.js';
+import { MAX_UNDO_STEPS } from './limits.js';
 import {
   NewDashboard,
   type CreateDashboardInput,
@@ -271,11 +272,6 @@ export class Dashboard
   /** The draft's grid. */
   get layout(): Layout {
     return this.#layout;
-  }
-
-  /** Its version history. */
-  get history(): History<DashboardDraft> {
-    return this.#history;
   }
 
   get deletedAt(): Date | null {
@@ -767,8 +763,8 @@ export class Dashboard
   ): Promise<{ before: DashboardDraft; state: DashboardDraft; summary: string }> {
     this.#allow(caller, Dashboard.Operation.undo);
     const steps = input.steps ?? 1;
-    if (!Number.isInteger(steps) || steps < 1 || steps > History.MAX_UNDO_STEPS) {
-      throw new AppError(400, `steps: from 1 to ${String(History.MAX_UNDO_STEPS)}`);
+    if (!Number.isInteger(steps) || steps < 1 || steps > MAX_UNDO_STEPS) {
+      throw new AppError(400, `steps: from 1 to ${String(MAX_UNDO_STEPS)}`);
     }
     this.#assertVersion(input.expectedVersion);
     const trail = await this.#history.read();

@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { callerFor, hasStatus, newUser } from '../../testing/workspaceFixtures.js';
+import type { DashboardDraft } from '../../types/builder.js';
 import type { DashboardView } from '../../types/dashboards.js';
 import type { Caller } from '../base/Caller.js';
 import type * as DashboardModule from './index.js';
@@ -223,6 +224,52 @@ describe('Dashboard#save', () => {
       2,
       'nothing more was written',
     );
+  });
+});
+
+describe('History#read: the trail', () => {
+  it('rebuilds a past state, undoes and redoes as the dashboard does, and is deeply frozen', async () => {
+    const { Dashboard } = classes;
+    const { History } = await import('./History.js');
+    const t = await team('dash-trail');
+    const created = await Dashboard.create(t.editor, { title: 'A', language: 'en' });
+    await (
+      await Dashboard.load(t.editor, created.id, Dashboard.Operation.edit)
+    ).applyOps(t.editor, { expectedVersion: 1, ops: [RENAME('B')] });
+    const history = History.of<DashboardDraft>(t.workspaceId, created.id);
+    const head = (await Dashboard.load(t.editor, created.id)).toView('draft');
+    const state = draftOf(head);
+    const trail = await history.read();
+    assert.equal(trail.newest, 2);
+    assert.equal(trail.stateAt(1, [], { version: 2, state })?.title, 'A');
+    const undone = trail.undo({ version: 2, state }, 1, null, []);
+    assert.deepEqual([undone.state.title, undone.summary], ['A', 'undo:v2']);
+    assert.throws(() => trail.undo({ version: 2, state }, 1, 'agent-1', []), /Nothing to undo/);
+    assert.throws(() => trail.redo({ version: 2, state }, null), /Nothing to redo/);
+
+    await (
+      await Dashboard.load(t.editor, created.id, Dashboard.Operation.undo)
+    ).undo(t.editor, { expectedVersion: 2 });
+    const afterUndo = await history.read();
+    const back = draftOf((await Dashboard.load(t.editor, created.id)).toView('draft'));
+    const redone = afterUndo.redo({ version: 3, state: back }, null);
+    assert.deepEqual([redone.state.title, redone.summary], ['B', 'redo:v2']);
+
+    // Deeply immutable: the list, each entry, its patches and its snapshot.
+    const latest = afterUndo.latest;
+    assert.ok(latest);
+    assert.ok(Object.isFrozen(afterUndo.entries) && Object.isFrozen(latest));
+    assert.ok(Object.isFrozen(latest.patch) && Object.isFrozen(latest.inverse));
+    assert.throws(() => {
+      latest.patch.push({ op: 'remove', path: '/title' });
+    }, TypeError);
+    const first = afterUndo.entries.at(-1);
+    const snapshot = first?.snapshot;
+    assert.ok(snapshot);
+    assert.throws(() => {
+      snapshot['title'] = 'Changed';
+    }, TypeError);
+    assert.equal((await history.read()).latest?.patch.length, latest.patch.length);
   });
 });
 

@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { TEMPLATE_LANGUAGES } from '../builder/templates.js';
 import { DashboardVarsSchema, LayoutsSchema, VarNameSchema } from '../types/builder.js';
 import { DASHBOARD_PAGES, VISIBILITIES } from '../types/domain.js';
-import { History } from '../classes/dashboard/History.js';
+import { MAX_UNDO_STEPS } from '../classes/dashboard/limits.js';
 
 /** Ops in one request; each is parsed by the Logic Bridge. */
 export const MAX_OPS_PER_REQUEST = 50;
@@ -82,7 +82,7 @@ export const OpsBody = z.strictObject({
 
 export const UndoBody = z.strictObject({
   expectedVersion: Version,
-  steps: z.int().min(1).max(History.MAX_UNDO_STEPS).optional(),
+  steps: z.int().min(1).max(MAX_UNDO_STEPS).optional(),
 });
 
 export const RedoBody = z.strictObject({ expectedVersion: Version });

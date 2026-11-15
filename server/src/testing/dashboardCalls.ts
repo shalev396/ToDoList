@@ -12,7 +12,6 @@ import type { ActorRef } from '../classes/base/Actor.js';
 import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
 import {
   Dashboard,
-  History,
   Persona,
   View,
   type CreateDashboardInput,
@@ -49,7 +48,7 @@ export type BuilderActor = ActorRef;
 
 export type { DashboardOpsResult } from '../classes/dashboard/index.js';
 
-export const { KEEP_VERSIONS, SNAPSHOT_EVERY, MAX_UNDO_STEPS } = History;
+export { KEEP_VERSIONS, MAX_UNDO_STEPS, SNAPSHOT_EVERY } from '../classes/dashboard/limits.js';
 
 function callerOf(ws: WorkspaceContext, actor: ActorRef): Caller {
   return Caller.fromContext(ws, actor);

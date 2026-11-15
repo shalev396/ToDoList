@@ -1,8 +1,9 @@
 /**
- * The dashboard classes (docs/design/CLASSES.md §6): Dashboard (with its History and Layout),
- * View (with its Query), Persona, and the Operation each of them checks before reading. The
- * collaborators a dashboard composes (DashboardConnectors, BlockPreviews, DocCheck) are used
- * through it.
+ * The dashboard classes (docs/design/CLASSES.md §6): Dashboard (with its Layout), NewDashboard,
+ * View (with its Query), Persona, and the Operation each of them checks before reading. History
+ * (DashboardVersions) is internal to Dashboard and NewDashboard: not exported here
+ * (dashboardInternals.test.ts); its limits are in limits.ts. The collaborators a dashboard composes
+ * (DashboardConnectors, BlockPreviews, DashboardDryRun, DocCheck) are used through it.
  */
 export {
   Dashboard,
@@ -15,15 +16,6 @@ export {
   type SaveChange,
   type UndoInput,
 } from './Dashboard.js';
-export {
-  History,
-  HistoryTrail,
-  type HistoryAuthor,
-  type HistoryDiff,
-  type HistoryHead,
-  type HistoryRestore,
-  type HistoryWrite,
-} from './History.js';
 export { Layout } from './Layout.js';
 export {
   NewDashboard,

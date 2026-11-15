@@ -28,11 +28,24 @@ import type { PatchOperation } from '../../builder/ops.js';
 import { AppError } from '../../errors/AppError.js';
 import type { DashboardVersionData } from '../../models/definitions/DashboardVersion.js';
 import { getDashboardVersionRepository } from '../../models/index.js';
+import { KEEP_VERSIONS, SNAPSHOT_EVERY } from './limits.js';
 
 /** A deep copy as plain JSON: what history patches are diffed from. */
 function plain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
+
+/** Freezes a value and everything it holds (a Date's own fields; its time stays its slot). */
+function deepFreeze<T>(value: T): T {
+  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const inner of Object.values(value)) deepFreeze(inner);
+  }
+  return value;
+}
+
+/** HistoryTrail's maker, handed to this module by the class itself: only History#read reads one. */
+let newTrail: <TDoc>(entries: readonly DashboardVersionData[]) => HistoryTrail<TDoc>;
 
 /** Who wrote a version: a person, or an agent key acting for them. */
 export interface HistoryAuthor {
@@ -73,14 +86,20 @@ export interface HistoryRestore<TDoc> {
 
 /**
  * One read of a history, newest first (everything pruning leaves): rebuilding a past state,
- * planning an undo or a redo. Immutable; reading again is a new trail.
+ * planning an undo or a redo. Deeply immutable (its entries, their patches and snapshots); reading
+ * again is a new trail. Only History#read makes one (a private constructor, its maker module-scoped).
  */
 export class HistoryTrail<TDoc> {
+  static {
+    newTrail = <T>(entries: readonly DashboardVersionData[]): HistoryTrail<T> =>
+      new HistoryTrail<T>(entries);
+  }
+
   readonly #entries: readonly DashboardVersionData[];
 
-  /** Made by History#read only. */
-  constructor(entries: readonly DashboardVersionData[]) {
-    this.#entries = Object.freeze([...entries]);
+  private constructor(entries: readonly DashboardVersionData[]) {
+    this.#entries = deepFreeze(structuredClone([...entries]));
+    Object.freeze(this);
   }
 
   get entries(): readonly DashboardVersionData[] {
@@ -151,11 +170,6 @@ export class HistoryTrail<TDoc> {
 }
 
 export class History<TDoc> {
-  /** Versions kept per document, besides the ones a write keeps (DATA.md §3.12, MCP.md §13). */
-  static readonly KEEP_VERSIONS = 50;
-  /** A whole copy of the document is kept at version 1 and every 10th version. */
-  static readonly SNAPSHOT_EVERY = 10;
-  static readonly MAX_UNDO_STEPS = 20;
   /** More than pruning ever leaves, with room for writes racing a prune. */
   static readonly #READ_LIMIT = 200;
 
@@ -187,7 +201,7 @@ export class History<TDoc> {
 
   /** The history as it is now, newest first (everything pruning leaves). */
   async read(): Promise<HistoryTrail<TDoc>> {
-    return new HistoryTrail<TDoc>(await this.page(History.#READ_LIMIT));
+    return newTrail<TDoc>(await this.page(History.#READ_LIMIT));
   }
 
   /** The newest `limit` entries, newest first. */
@@ -221,9 +235,7 @@ export class History<TDoc> {
       patch: [...write.patch],
       inverse: [...write.inverse],
       snapshot:
-        write.version % History.SNAPSHOT_EVERY === 0
-          ? (write.doc as Record<string, unknown>)
-          : null,
+        write.version % SNAPSHOT_EVERY === 0 ? (write.doc as Record<string, unknown>) : null,
       actorUserId: write.author.userId,
       actorAgentId: write.author.agentId,
       summary: write.summary,
@@ -239,6 +251,6 @@ export class History<TDoc> {
   async prune(keepVersions: readonly number[]): Promise<void> {
     await (
       await getDashboardVersionRepository()
-    ).pruneKeeping(this.#workspaceId, this.#documentId, History.KEEP_VERSIONS, keepVersions);
+    ).pruneKeeping(this.#workspaceId, this.#documentId, KEEP_VERSIONS, keepVersions);
   }
 }
