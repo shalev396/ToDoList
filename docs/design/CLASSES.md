@@ -12,16 +12,16 @@ It is updated every phase.
 - **Built** (exists in the code): green, solid border.
 - **Planned**: grey, dashed border, with the phase that builds it.
 
-| Phase | What it builds                                                                                                                                                                                               | State     |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
-| 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test | **built** |
-| 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`)                                                                                                      | planned   |
-| 2     | Provider subclasses and capability interfaces, `IntegrationRegistry`, `OAuthFlow`                                                                                                                            | planned   |
-| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects; `User` reworked                                                                                                                     | planned   |
-| 4     | `Item` hierarchy, `Container`, `ItemQuery`, `CreateQuota`                                                                                                                                                    | planned   |
-| 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                    | planned   |
-| 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                          | planned   |
-| 7     | The legacy list emptied, dead services deleted                                                                                                                                                               | planned   |
+| Phase | What it builds                                                                                                                                                                                                   | State     |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test     | **built** |
+| 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry` | **built** |
+| 2     | `updateTask`/`writableFields`, `ResourcePicker`, `BoardProvider`, the one `static definition` per provider, headers to the adapters, `OAuthFlow`                                                                 | planned   |
+| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects; `User` reworked                                                                                                                         | planned   |
+| 4     | `Item` hierarchy, `Container`, `ItemQuery`, `CreateQuota`                                                                                                                                                        | planned   |
+| 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                        | planned   |
+| 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                              | planned   |
+| 7     | The legacy list emptied, dead services deleted                                                                                                                                                                   | planned   |
 
 **How the boundary is held.** `server/legacy-db-importers.mjs` names:
 
@@ -33,7 +33,7 @@ It is updated every phase.
   `local.ts`, `stageMaintenance.ts`);
 - the test helpers production code never loads (`src/testing/**`, `__tests__/**`);
 - `LEGACY_DB_IMPORTERS`, the modules that still reach the database until their phase moves them
-  (35 after phase 0, down from 42).
+  (24 after phase 1; 35 after phase 0, down from 42).
 
 ESLint (`@typescript-eslint/no-restricted-imports`, type imports allowed) and
 `src/classes/classBoundary.test.ts` (which also resolves paths, sees dynamic imports and names
@@ -329,32 +329,42 @@ classDiagram
   class WorkspaceEntity~TData~ {
     <<abstract>>
   }
-  class Integration~TConfig,TSecret~ {
+  class Integration~TConfig,TSecret,TWriter~ {
     <<abstract>>
     -credential: Credential~TSecret~
     #auth: AuthStrategy~TSecret~
-    #adapter: SyncAdapter~TConfig, TSecret~
+    #adapter: ProviderAdapter
     +config: TConfig
     +mode: Mode
-    +setMode(caller, mode) Promise
-    +saveCredential(caller, secret) Promise
-    +stopSharing(caller) Promise
+    +allowsWrites: boolean
+    +toView() IntegrationStatusView
+    +readConfig(caller)
+    +update(caller, input) Promise~Integration~
+    +setMode(caller, mode) Promise~Integration~
+    +saveCredential(caller, body) Promise
+    +testConnection(caller) Promise
     +requestSync(caller) Promise
-    +toView() IntegrationStatus
-    +sync(run) Promise
-    +testConnection() Promise
+    +stopSharing(caller) Promise
     +disconnect(caller) Promise
-    #probe()* Promise
-    #withWriteSession(caller, fn) Promise
+    +assertWritable(caller)
+    +needsWriteConsent() Promise~boolean~
     #withReadSession(fn) Promise
+    #withWriteSession(caller, fn) Promise
+    #createWriter(secret)* Promise~TWriter~
+    #probe(adapter, context)* Promise
+    #onConnected() Promise
+    #checkSelection(config) Promise
+    #learnedLabel(accountLabel) string
     +from(data)$ Integration
     +findOwn(caller, id)$ Integration
+    +listOwn(caller)$ Integration[]
     +listVisible(caller)$ Integration[]
-    +connect(caller, provider, input)$ Integration
-    +connectOAuth()$ Integration
-    +forWorker()$ Integration
+    +connectWithKey(caller, input)$ Integration
+    +connectOAuth(caller, conn)$ ConnectedIntegration
+    +forWorker(id)$ Integration
     +listForDispatch()$ Integration[]
-    +capabilitiesOf(provider)$ Capability[]
+    +disconnectAllOf(workspaceId, actor, member)$ number
+    +withSyncSecret(id, fn)$ Promise
   }
   WorkspaceEntity <|-- Integration
   class Owned {
@@ -376,13 +386,18 @@ classDiagram
 
   class Mode {
     <<value object>>
+    +read$
+    +readWrite$
     +allowsWrites: boolean
   }
   class Credential~TSecret~ {
     <<internal>>
-    +seal(integration, secret)$ Credential
+    +seal(input, actor)$ Promise
+    +of(integrationId)$ Credential
+    +meta(workspaceId, id)$ Promise
+    +destroy(workspaceId, id)$ Promise
     +open(fn) Promise
-    +refreshIfStale(auth) Promise
+    +refreshIfStale(auth, workspaceId) Promise
   }
   class KeyProvider {
     <<interface>>
@@ -390,18 +405,23 @@ classDiagram
   Credential ..> KeyProvider
   class AuthStrategy~TSecret~ {
     <<abstract>>
-    +kind: string
-    +parseCredential(raw) TSecret
+    +kind: AuthKind
+    +methods: AuthMethod[]
+    +handles(method) boolean
+    +parseCredential(method, raw)
     +headers(secret, purpose?) Headers
-    +refresh?(secret) Promise
-    +revoke?(secret) Promise
   }
-  class OAuthAuth~TSecret~
+  class OAuthAuth~TSecret~ {
+    +refreshPolicy: stored | per_call
+    +needsRefresh(secret, now) boolean
+    +refresh(secret) Promise
+  }
   class ApiKeyAuth~TSecret~
   class ServiceAccountAuth
   AuthStrategy <|-- OAuthAuth
   AuthStrategy <|-- ApiKeyAuth
   AuthStrategy <|-- ServiceAccountAuth
+  Credential ..> OAuthAuth : refreshIfStale
   class SyncAdapter~TConfig,TSecret~ {
     <<strategy>>
   }
@@ -426,19 +446,23 @@ classDiagram
     +url
   }
   TaskProvider ..> ItemCopy : createTask
+  class CreateFunnel {
+    <<interface>>
+    +createOptions(caller, query)
+  }
   class TaskProvider {
     <<interface>>
-    +taskKinds
-    +createOptions(caller, query)
-    +createTask(caller, todo, target) ItemCopy
+    +createTask(caller, request) CreatedTask
   }
   class CalendarProvider {
     <<interface>>
     +listCalendars(caller)
-    +insertEvent(caller, todo, calendarId)
-    +push(caller, opts)
-    +dryRun(caller, narrowing)
+    +insertEvent(caller, calendarId, event)
+    +dryRun(caller, narrowing, now)
+    +push(caller, request)
   }
+  CreateFunnel <|-- TaskProvider
+  CreateFunnel <|-- CalendarProvider
   class ResourcePicker~R~ {
     <<interface>>
     +pickerResources(caller) R[]
@@ -446,7 +470,7 @@ classDiagram
   }
   class Revocable {
     <<interface>>
-    +revoke(caller)
+    +revoke(by)
   }
   class BoardProvider {
     <<interface>>
@@ -456,33 +480,48 @@ classDiagram
     <<interface>>
   }
 
-  class JiraIntegration
-  class ClickUpIntegration
+  class TrackerIntegration~TConfig,TSecret~ {
+    <<abstract>>
+    +createOptions(caller, query)
+    +createTask(caller, request)
+    #readOptions(session, query)*
+    #prepare(session, target, fields)*
+    #readClient(transport)
+    #writeBases()
+  }
+  Integration <|-- TrackerIntegration
+  TaskProvider <|.. TrackerIntegration
+  class JiraIntegration {
+    +grantResources()
+  }
+  class ClickUpIntegration {
+    +grantResources()
+  }
   class LinearIntegration
   class GitHubIntegration
   class GoogleCalendarIntegration
   class MoodleIntegration {
     comingSoon = true
   }
-  Integration <|-- JiraIntegration
-  Integration <|-- ClickUpIntegration
-  Integration <|-- LinearIntegration
-  Integration <|-- GitHubIntegration
+  class UnlistedIntegration {
+    <<null object>>
+  }
+  TrackerIntegration <|-- JiraIntegration
+  TrackerIntegration <|-- ClickUpIntegration
+  TrackerIntegration <|-- LinearIntegration
+  TrackerIntegration <|-- GitHubIntegration
   Integration <|-- GoogleCalendarIntegration
   Integration <|-- MoodleIntegration
-  TaskProvider <|.. JiraIntegration
+  Integration <|-- UnlistedIntegration
   ResourcePicker <|.. JiraIntegration
   SupportsOAuth <|.. JiraIntegration
   SupportsApiKey <|.. JiraIntegration
-  TaskProvider <|.. ClickUpIntegration
   ResourcePicker <|.. ClickUpIntegration
   SupportsOAuth <|.. ClickUpIntegration
   SupportsApiKey <|.. ClickUpIntegration
-  TaskProvider <|.. LinearIntegration
   Revocable <|.. LinearIntegration
   SupportsOAuth <|.. LinearIntegration
   SupportsApiKey <|.. LinearIntegration
-  TaskProvider <|.. GitHubIntegration
   BoardProvider <|.. GitHubIntegration
   SupportsOAuth <|.. GitHubIntegration
   SupportsApiKey <|.. GitHubIntegration
@@ -495,6 +534,10 @@ classDiagram
 
   class IntegrationRegistry {
     <<registry>>
+    +instance$
+    +register(provider, factory)
+    +registerFallback(factory)
+    +create(data) Integration
   }
   Integration ..> IntegrationRegistry : from()
   class OAuthFlow {
@@ -510,36 +553,62 @@ classDiagram
   class SoftDeletable:::built
   class Viewable:::built
   class Revocable:::built
-  class Integration:::planned
-  class Mode:::planned
-  class Credential:::planned
+  class Integration:::built
+  class Mode:::built
+  class Credential:::built
   class KeyProvider:::planned
-  class AuthStrategy:::planned
-  class OAuthAuth:::planned
-  class ApiKeyAuth:::planned
-  class ServiceAccountAuth:::planned
+  class AuthStrategy:::built
+  class OAuthAuth:::built
+  class ApiKeyAuth:::built
+  class ServiceAccountAuth:::built
   class SyncAdapter:::planned
-  class SupportsOAuth:::planned
-  class SupportsApiKey:::planned
-  class TaskProvider:::planned
-  class CalendarProvider:::planned
+  class SupportsOAuth:::built
+  class SupportsApiKey:::built
+  class CreateFunnel:::built
+  class TaskProvider:::built
+  class CalendarProvider:::built
   class ResourcePicker:::planned
   class BoardProvider:::planned
   class CourseProvider:::planned
-  class JiraIntegration:::planned
-  class ClickUpIntegration:::planned
-  class LinearIntegration:::planned
-  class GitHubIntegration:::planned
-  class GoogleCalendarIntegration:::planned
-  class MoodleIntegration:::planned
-  class IntegrationRegistry:::planned
+  class TrackerIntegration:::built
+  class JiraIntegration:::built
+  class ClickUpIntegration:::built
+  class LinearIntegration:::built
+  class GitHubIntegration:::built
+  class GoogleCalendarIntegration:::built
+  class MoodleIntegration:::built
+  class UnlistedIntegration:::built
+  class IntegrationRegistry:::built
   class OAuthFlow:::planned
   class ItemCopy:::planned
 ```
 
-The write gate is the `protected` `withWriteSession`: only provider subclasses reach a writer, and
-only inside their interface methods. It refuses demo data first (`provider_writes_off`), then a
-read-only integration (`ReadOnlyIntegrationError`).
+The write gate is the `protected` `withWriteSession`: only provider subclasses reach a writer
+(`classes/integration/writers/`: the tracker write client, the Calendar API writer and the push's
+ops), and only inside their capability methods. In order, it refuses another member (404), demo
+data or a fixtures stage's tracker (`provider_writes_off`), then a read-only integration
+(`ReadOnlyIntegrationError`, 409 `integration_read_only`); only then does it open the credential
+and make the writer (`createWriter`, the provider's own). `assertWritable` runs the same checks so
+callers refuse before they reserve or record anything. `writePaths.test.ts` holds that nothing
+outside `classes/integration/**` loads a writer, and `vaultImports.test.ts` that only
+`Integration.ts` uses `Credential`.
+
+What phase 1 built, and the seams phase 2 fills:
+
+- `TaskProvider` has `createOptions` (through `CreateFunnel`) and `createTask`; `updateTask` and
+  `writableFields` arrive in phase 2, and the compiler will then require them of every tracker.
+- `CalendarProvider` has `listCalendars`, `insertEvent`, `dryRun` and `push`; `updateEvent`,
+  `deleteEvent` and `createCalendar` arrive in phase 2.
+- `ResourcePicker` is planned: Jira and ClickUp expose `grantResources()` today (the OAuth grant's
+  sites and workspaces), and Google its `listCalendars`.
+- The per-provider tables (`RULES`, `CREDENTIAL_SCHEMAS`, `OAUTH_PROVIDER_DEFS`, the create
+  switches) still live in `services/integrationConfig.ts`, `services/oauth/providers.ts` and
+  `services/providerCreate/*`; the classes call them. Phase 2 folds them into one
+  `static definition` per class, and hands the adapters their headers from `auth.headers(...)`.
+- The sync engine reaches a credential through `Integration.withSyncSecret` (a read session) until
+  phase 5 moves it behind `Integration.sync()`.
+- `Revocable.revoke(by)` takes an `AuditScope`, which a `Caller` is: a member's integrations are
+  disconnected by whoever ends the membership, who has no standing of the member's own.
 
 ## 4. Items, containers and the calendar (phases 4 and 5)
 
@@ -1067,6 +1136,26 @@ classDiagram
 The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
 SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 
+## Where phase 1 left the old modules
+
+| Module                                                      | State after phase 1                                                                                                |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `services/integrations.ts`                                  | **removed**: `Integration` (connect within caps, update, disconnect template, providers by member)                 |
+| `services/integrationConnect.ts`                            | **removed**: `Integration.connectOAuth`                                                                            |
+| `services/integrationCredentials.ts`                        | **removed**: `Integration#saveCredential`                                                                          |
+| `services/integrationOwnership.ts`                          | **removed**: `Integration.findOwn`, `findOwnIncludingDeleted`, `listOwn`, `listVisible`                            |
+| `services/integrationTest.ts`                               | **removed**: `Integration#testConnection` (template over `probe`) and `classes/integration/connectionTest.ts`      |
+| `services/sharing.ts`                                       | **removed**: `Integration#stopSharing`, `Integration.sharedOwnIds`                                                 |
+| `services/crypto/credentialVault.ts`, `credentialWriter.ts` | **removed**: `Credential` (`open`, `seal`, `refreshIfStale`)                                                       |
+| `services/providerCreate/session.ts`                        | **removed**: the tracker read and write sessions (`TrackerIntegration`)                                            |
+| `services/providerCreate/writeClient.ts`                    | moved to `classes/integration/writers/trackerWriter.ts`                                                            |
+| `gcal/calendarApi.ts`                                       | moved to `classes/integration/writers/calendarApi.ts` (the push's ops: `writers/calendarOps.ts`)                   |
+| `gcal/oauthCalendar.ts`                                     | **removed**: `GoogleCalendarIntegration` (calendars, insert, push, pull, revoke)                                   |
+| `services/oauth/grants.ts`                                  | **removed**: Jira/ClickUp `grantResources`, `LinearIntegration#revoke`, `classes/integration/grantSelection.ts`    |
+| `services/gcalSync.ts`, `gcal/scheduledSync.ts`             | thin over `GoogleCalendarIntegration` (`dryRun`, `push`); off the legacy list                                      |
+| `services/providerCreate/service.ts`                        | the copy bookkeeping stays (items, quota: phase 4 `Todo.copyTo`); the writes go through `createTask`/`insertEvent` |
+| `services/syncRuns.ts`                                      | the run history stays (phase 5); "sync now" is `Integration#requestSync`                                           |
+
 ## Where phase 0 left the old modules
 
 | Module                                    | State after phase 0                                                                                  |
@@ -1074,8 +1163,8 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 | `services/itemAccess.ts`                  | **removed**: its rules and share facts are `ItemPolicy`                                              |
 | `services/accessFilter.ts`                | thin delegation to `ItemPolicy` (the builder's compile test calls these names); re-exports the types |
 | `services/workspaceContext.ts`            | thin delegation to `Caller.enter` (tests resolve a context by this name)                             |
-| `services/integrationOwnership.ts`        | the loads stay (phase 1 moves them to `Integration.findOwn`); the rule is `IntegrationPolicy`        |
-| `services/sharing.ts`                     | stop sharing still orchestrates there; the share facts are `ItemPolicy`                              |
+| `services/integrationOwnership.ts`        | the loads stayed until phase 1 (`Integration.findOwn`); the rule is `IntegrationPolicy`              |
+| `services/sharing.ts`                     | stop sharing orchestrated there until phase 1 (`Integration#stopSharing`)                            |
 | `assertRole` (`services/integrations.ts`) | **removed**: `caller.require(minRole)`                                                               |
 | `assertOwner` (`services/workspaces.ts`)  | `caller.authorize(WorkspacePolicy.instance, 'manage', …)`                                            |
 | the 8 audit helpers and inline appends    | **removed**: `AuditLog.record` is the only writer                                                    |
