@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, X } from 'lucide-react';
 import { useCreateOptions, useCreateTargets } from '@/api/queries/providerCreate';
@@ -40,6 +40,11 @@ export interface CopyTargetsProps {
   hasDueDate: boolean;
   value: Funnels;
   onChange: (next: Funnels) => void;
+  /**
+   * A repeating to-do: every chip is off, under `note`, and `lead` (the workspace calendar) is the
+   * only target. The section shows even without chips.
+   */
+  locked?: { note: string; lead: ReactNode } | undefined;
 }
 
 /** One step of an open funnel: its label, and the picker (or the toggle) for it. */
@@ -272,6 +277,7 @@ function Chip({
   state,
   hasDueDate,
   isPrivate,
+  locked,
   update,
   remove,
   add,
@@ -281,6 +287,8 @@ function Chip({
   state: FunnelState | undefined;
   hasDueDate: boolean;
   isPrivate: boolean;
+  /** Off for a repeating to-do (the section says why). */
+  locked: boolean;
   update: (next: FunnelState) => void;
   remove: () => void;
   add: () => void;
@@ -291,6 +299,16 @@ function Chip({
   const selected = state !== undefined;
   const path = state === undefined ? '' : pathLabel(state);
   const missingDue = selected && needsDueDate(target.provider) && !hasDueDate;
+  if (locked) {
+    return (
+      <li className="min-w-0" data-chip={target.provider} data-chip-state="locked">
+        <span className="inline-flex min-h-11 max-w-full items-center gap-1.5 rounded-full border bg-background px-3 text-sm text-muted-foreground opacity-60 pointer-fine:min-h-8">
+          <SourceDot source={target.provider} />
+          <span className="truncate">{source}</span>
+        </span>
+      </li>
+    );
+  }
   return (
     <li
       className="min-w-0"
@@ -394,6 +412,7 @@ export function CopyTargets({
   onChange,
   isPrivate = false,
   preselect = null,
+  locked,
 }: CopyTargetsProps) {
   const { t } = useTranslation();
   const targets = useCreateTargets(workspaceId, true);
@@ -419,7 +438,8 @@ export function CopyTargets({
     }
   }, [preselect, info, value, onChange, userId]);
 
-  if (info === undefined || info.targets.length === 0) {
+  const chips: readonly CreateTargetInfo[] = info?.targets ?? [];
+  if (locked === undefined && chips.length === 0) {
     return null;
   }
   const set = (id: string, next: FunnelState | null) => {
@@ -433,8 +453,19 @@ export function CopyTargets({
       data-also-create=""
     >
       <h3 className="text-sm font-medium">{t('items.newTodo.alsoIn')}</h3>
-      <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
-        {info.targets.map((target) => (
+      {locked === undefined ? null : (
+        <>
+          <p className="text-[13px] text-muted-foreground" data-calendar-only="">
+            {locked.note}
+          </p>
+          {locked.lead}
+        </>
+      )}
+      <ul
+        className="m-0 flex list-none flex-wrap gap-2 p-0"
+        aria-disabled={locked === undefined ? undefined : true}
+      >
+        {chips.map((target) => (
           <Chip
             key={target.integrationId}
             workspaceId={workspaceId}
@@ -442,6 +473,7 @@ export function CopyTargets({
             state={value[target.integrationId]}
             hasDueDate={hasDueDate}
             isPrivate={isPrivate}
+            locked={locked !== undefined}
             update={(next) => {
               set(target.integrationId, next);
             }}

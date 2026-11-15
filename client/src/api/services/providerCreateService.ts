@@ -22,6 +22,8 @@ export interface CreateItemBody {
   topicId?: string | null;
   priority?: number | null;
   idempotencyKey?: string;
+  /** A repeating to-do: one `RRULE:` line; it is created in the workspace calendar only. */
+  recurrence?: string[];
 }
 
 /** `POST …/items`: a local to-do. */

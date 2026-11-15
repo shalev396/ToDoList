@@ -1,7 +1,8 @@
 import { useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Check } from 'lucide-react';
-import { errorMessage } from '@/api/errors';
+import { Check, ExternalLink } from 'lucide-react';
+import { apiErrorCode, errorMessage } from '@/api/errors';
+import { usePrimaryCalendar } from '@/api/queries/integrations';
 import { useCreateLocalItem } from '@/api/queries/providerCreate';
 import { useMe } from '@/api/queries/user';
 import { Button } from '@/components/ui/button';
@@ -14,16 +15,24 @@ import { dateInZone, instantInZone } from '@/features/items/zonedDate';
 import { CopyTargets, type Funnels } from './CopyTargets';
 import { isReady } from './funnel';
 import { ResultRow } from './ResultRow';
+import { RepeatControl } from './RepeatControl';
+import { RepeatTarget } from './RepeatTarget';
+import { NO_REPEAT, buildRecurrence, isRepeating, repeatBlockOf, type Repeat } from './recurrence';
 import { newRequestId, useCopyRunner } from './useCopyRunner';
 
 /** The note reaches a provider cut at this length. */
 export const NOTE_MAX = 500;
 
+/** How a repeating to-do's create went: made (with its event's link), or made but not shown yet. */
+type RecurringResult = { kind: 'created'; url: string } | { kind: 'notStored' };
+
 /**
- * "New to-do" (H5): title, note, due date and page, then "Also create in" with a chip per own
- * integration. Save creates the local to-do, then each target in parallel; the results stream in
- * under the form ("Created in Jira · ABC-123" with its link, a plain failure with Retry, or
- * "Needs permission" with the re-consent). Saving never waits on a provider.
+ * "New to-do" (H5): title, note, due date, Repeat and page, then "Also create in" with a chip per
+ * own integration. Save creates the local to-do, then each target in parallel; the results stream
+ * in under the form ("Created in Jira · ABC-123" with its link, a plain failure with Retry, or
+ * "Needs permission" with the re-consent). Saving never waits on a provider. A repeating to-do
+ * (plan Addendum A3) is created as a repeating event in the workspace calendar only: no local
+ * to-do, the other targets are off.
  */
 export function NewTodoSheet({
   open,
@@ -53,6 +62,12 @@ export function NewTodoSheet({
   const [funnels, setFunnels] = useState<Funnels>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [repeat, setRepeat] = useState<Repeat>(NO_REPEAT);
+  const [repeatTarget, setRepeatTarget] = useState(true);
+  const [recurring, setRecurring] = useState<RecurringResult | null>(null);
+  // One key per repeating to-do: a retry after a lost answer is the same event, never a second.
+  const recurringKey = useRef<string | null>(null);
+  const primary = usePrimaryCalendar(workspace?.id ?? '');
 
   const reset = () => {
     setTitle('');
@@ -63,6 +78,10 @@ export function NewTodoSheet({
     setFunnels({});
     setError(null);
     setSaving(false);
+    setRepeat(NO_REPEAT);
+    setRepeatTarget(true);
+    setRecurring(null);
+    recurringKey.current = null;
     runner.reset();
     todoId.current = null;
   };
@@ -70,7 +89,36 @@ export function NewTodoSheet({
   const canCreate = role === 'editor' || role === 'owner';
   const dueAt = day === '' ? null : instantInZone(day, time === '' ? '12:00' : time, timeZone);
   const selected = Object.values(funnels);
-  const unready = selected.some((funnel) => !isReady(funnel, dueAt !== null));
+  const repeating = isRepeating(repeat);
+  const recurrence = buildRecurrence(repeat, { dueDate: day, allDay: time === '', timeZone });
+  const repeatBlocked = primary.isError ? 'unset' : repeatBlockOf(primary.data);
+  const unready = repeating
+    ? recurrence === null || !repeatTarget || repeatBlocked !== null
+    : selected.some((funnel) => !isReady(funnel, dueAt !== null));
+
+  /** A repeating to-do: one event in the workspace calendar, stored at once as its item. */
+  const saveRepeating = async (lines: string[]) => {
+    recurringKey.current ??= newRequestId();
+    try {
+      const item = await createItem.mutateAsync({
+        title: title.trim(),
+        ...(note.trim() === '' ? {} : { note: note.trim() }),
+        ...(dueAt === null ? {} : { dueAt, allDay: time === '' }),
+        ...(topicId === '' ? {} : { topicId }),
+        recurrence: lines,
+        idempotencyKey: recurringKey.current,
+      });
+      setRecurring({ kind: 'created', url: item.openIn.url });
+    } catch (failure) {
+      if (apiErrorCode(failure) === 'created_not_stored') {
+        setRecurring({ kind: 'notStored' });
+      } else {
+        setError(errorMessage(t, failure, 'items.newTodo.saveError'));
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -83,6 +131,14 @@ export function NewTodoSheet({
     }
     setError(null);
     setSaving(true);
+    if (repeating) {
+      if (recurrence !== null) {
+        await saveRepeating(recurrence);
+      } else {
+        setSaving(false);
+      }
+      return;
+    }
     try {
       const item = await createItem.mutateAsync({
         title: title.trim(),
@@ -130,7 +186,52 @@ export function NewTodoSheet({
           <SheetTitle>{t('items.newTodo.title')}</SheetTitle>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-          {runner.results === null ? (
+          {recurring !== null ? (
+            <div
+              className="flex flex-col gap-3"
+              data-new-todo-results=""
+              data-recurring={recurring.kind}
+            >
+              <h3 className="text-sm font-medium">{t('items.newTodo.results.title')}</h3>
+              <div
+                className="flex flex-wrap items-center gap-2 rounded-md border p-3 text-sm"
+                role="status"
+              >
+                <Check className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                {recurring.kind === 'created' ? (
+                  <>
+                    <span className="min-w-0 flex-1">{t('items.newTodo.repeat.created')}</span>
+                    {recurring.url.startsWith('https://') ? (
+                      <a
+                        href={recurring.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
+                      >
+                        {t('items.newTodo.results.open')}
+                        <ExternalLink aria-hidden="true" className="size-3.5" />
+                      </a>
+                    ) : null}
+                  </>
+                ) : (
+                  <span className="min-w-0 flex-1">
+                    {t('items.newTodo.repeat.createdNotStored')}
+                  </span>
+                )}
+              </div>
+              <Button
+                type="button"
+                className="self-end"
+                onClick={() => {
+                  onOpenChange(false);
+                  reset();
+                }}
+                data-new-todo-done=""
+              >
+                {t('items.newTodo.done')}
+              </Button>
+            </div>
+          ) : runner.results === null ? (
             <form
               onSubmit={(event) => {
                 void save(event);
@@ -192,6 +293,7 @@ export function NewTodoSheet({
                   />
                 </div>
               </div>
+              <RepeatControl value={repeat} onChange={setRepeat} dueDate={day} />
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor={`${ids}-topic`}>{t('items.newTodo.topic')}</Label>
                 <SelectField
@@ -208,6 +310,31 @@ export function NewTodoSheet({
                   hasDueDate={dueAt !== null}
                   value={funnels}
                   onChange={setFunnels}
+                  locked={
+                    repeating
+                      ? {
+                          note: t('items.newTodo.repeat.calendarOnly'),
+                          lead: (
+                            <>
+                              <RepeatTarget
+                                workspaceId={workspace.id}
+                                checked={repeatTarget}
+                                onCheckedChange={setRepeatTarget}
+                              />
+                              {repeatTarget || repeatBlocked !== null ? null : (
+                                <p
+                                  className="text-[13px] text-destructive"
+                                  role="status"
+                                  data-repeat-needs-target=""
+                                >
+                                  {t('items.newTodo.repeat.needsTarget')}
+                                </p>
+                              )}
+                            </>
+                          ),
+                        }
+                      : undefined
+                  }
                 />
               )}
               {error === null ? null : (
