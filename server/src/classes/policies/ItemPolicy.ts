@@ -5,8 +5,9 @@
  * A workspace is shared as a whole (every member sees every topic), but integrations are not:
  * what a member can see = their own integrations' items ∪ the items of integrations attached as a
  * connector on any block of the workspace (share-on-attach) ∪ the local to-dos they may see
- * (shared ones, and their own private ones). A calendar push copies only the member's own: their
- * integrations and their own to-dos (ruling 12).
+ * (shared ones, and their own private ones). The workspace calendar's push sends what its owner may
+ * see (ruling 12 as amended by the calendar phase: shared integrations and shared to-dos too, never
+ * another member's private to-do).
  *
  * The share facts are resolved from the data on every request, never from a stored flag that
  * could drift; a request that needs them twice resolves them once (requestMemo.ts), so "Stop
@@ -142,7 +143,11 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
     return new ItemPolicy(access);
   }
 
-  /** Only the subject's own: their live integrations and their own local to-dos (ruling 12). */
+  /**
+   * Only the subject's own: their live integrations and their own local to-dos. The calendar push
+   * used it before the calendar phase widened ruling 12; kept for the agreement test, which checks
+   * the decisions and the filters agree on this narrower access too.
+   */
   static async ownFor(subject: AccessSubject): Promise<ItemPolicy> {
     const own = await (
       await getIntegrationRepository()

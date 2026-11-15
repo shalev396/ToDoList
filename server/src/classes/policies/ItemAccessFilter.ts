@@ -1,8 +1,8 @@
 /**
  * The MongoDB filters every item and container read starts from, for one resolved access (a value
  * object: ItemPolicy holds one, and the query builder makes one from its context). Pure: no
- * database, no request state, so the builder's compiler (and what validates a query with it, like
- * a provider definition's push filter) loads nothing of the database.
+ * database, no request state, so the builder's compiler (and what validates a query with it)
+ * loads nothing of the database.
  *
  * What a member can see = their own integrations' items ∪ the shared integrations' items ∪ the
  * local to-dos they may see (shared ones, and their own private ones); a provider copy of a local
@@ -24,7 +24,8 @@ export interface VisibleIntegration {
  * What the caller may see of a workspace's items and containers:
  * - `integrations`: their own live integrations plus the shared ones (attached to a block);
  * - `local`: local to-dos, `visible` (shared ones and their own) or `own` (only their own: a
- *   calendar push copies nobody else's data, ruling 12).
+ *   narrower access the agreement test also checks; the calendar push now reads what its owner may
+ *   see, ruling 12 as amended).
  */
 export interface ItemAccess {
   userId: string;

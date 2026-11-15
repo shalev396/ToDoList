@@ -5,8 +5,9 @@ import { requireWorkspace } from '../../middlewares/requireWorkspace.js';
 /**
  * The Google Calendar push: the one sanctioned write, onto the member's own calendar through
  * their Google sign-in (OAuth). Behind requireWorkspace; only
- * the integration's owner pushes, and only their own items (their integrations and their own
- * to-dos: PERMISSIONS-V2 ruling 12). Another member's integration, a deleted one or one from
+ * the owner of the integration the workspace's primary calendar is on pushes (409
+ * `calendar_not_primary` for any other), the dated items they may see (PERMISSIONS-V2 ruling 12,
+ * as amended by the calendar phase). Another member's integration, a deleted one or one from
  * another workspace is 404.
  */
 const router = Router();

@@ -19,7 +19,7 @@ A **workspace** is shared as a whole: there is no topic or area scoping any more
 ## Data visibility: share-on-attach
 
 - Items from my integration are **private to me** until **I** attach that integration as a connector to some block in the workspace. From then on its items are visible to all workspace members: in blocks, views, the item sheet, search and MCP. This is the **share** moment.
-- The first time I attach one of my integrations, the UI confirms it: "Adding _Jira_ to a block shares its items with everyone in _Study group_." I can unshare at any time: remove it from every block, or use "Stop sharing" on my integration, which removes my connector from all blocks.
+- The first time I attach one of my integrations, the UI confirms it: "Adding _Jira_ to a block shares its items with everyone in _Study group_. Their dated items are also sent to the workspace calendar, a Google calendar the workspace owner chose." I can unshare at any time: remove it from every block, or use "Stop sharing" on my integration, which removes my connector from all blocks.
 - My own integrations are always visible **to me** everywhere: search, lists, MCP, calendar push.
 - Local to-dos keep today's rule: the creator's are private unless shared (an existing flag).
 
@@ -41,7 +41,9 @@ A **workspace** is shared as a whole: there is no topic or area scoping any more
 9. **A viewer connects an integration.** Refused. Viewers can't build blocks, so the data would have nowhere to go. They can be promoted to editor.
 10. **A role is downgraded from editor to viewer.** Their integrations stay connected and their connectors stay on blocks, but they can't add new ones until they're editor again.
 11. **The workspace is deleted.** Every member's integrations in it are disconnected and their credentials hard-deleted. Members get an email: "Workspace X was deleted; your connections to it were removed."
-12. **Calendar push (Google).** I can push only **my own** integrations' items and my own local to-dos to **my** calendar. Shared items from other members are not copied to my calendar, so nobody's data leaves their control through someone else's account.
+12. **Calendar push (Google)** (amended by the calendar phase, 2026-11-15). The workspace has **one** primary calendar: a Google calendar a workspace owner chose, on a Google Calendar integration they own. Its push sends every dated item **its owner may see**: their own integrations' items and to-dos, **the shared integrations' items** (share-on-attach) and **the to-dos shared with the workspace**. Never another member's private to-do, and never a Google Calendar event (it is one already). Sharing a connector therefore also sends its dated items to that Google calendar, and the share confirmation says so.
+    - Changes made in that Google calendar (by its owner, or by anyone it is shared with) may change only the owner's **own** items: their to-dos and their own integrations' items. For another member's shared item, a move or rename in Google is pushed back over, and a delete only stops sending that item (TodoList's link goes); their item is never edited or deleted from Google.
+    - Nothing is ever written to a provider from the calendar: a move in Google becomes the item's planned date (`overlay.plannedAt`).
 13. **Facets and filter options** (provider, project, course lists). In the editor's Source step I see **my** integrations plus integrations already shared in the workspace. A filter block offers only values present in its listening blocks' data.
 14. **The item sheet via a direct URL** (`?item=` or the deep link). Allowed when the item comes from my integration, from a shared integration, or is a local to-do I can see. Otherwise 404.
 15. **MCP agents** act as their user, with the same rules:

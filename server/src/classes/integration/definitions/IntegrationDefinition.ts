@@ -151,7 +151,7 @@ export interface DefinitionSpec<TSecret extends SecretJson, TAuth extends AuthSe
   auth: TAuth;
   /** The non-secret config's strict schema (with loopback sites allowed in tests). */
   config(allowLocal: boolean): z.ZodType<Record<string, unknown>>;
-  /** What a valid config becomes before it is stored (Google: its push filter compiled). */
+  /** What a valid config becomes before it is stored (Google: its retired keys dropped). */
   normalizeConfig?(config: Record<string, unknown>): Record<string, unknown>;
   connection: ConnectionRules;
   /** The sync's strategy object for this provider (sync/providers/*). */

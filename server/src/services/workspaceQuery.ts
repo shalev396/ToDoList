@@ -198,7 +198,7 @@ async function repositoryDeps(): Promise<RunQueryDeps> {
 /**
  * Runs one query request (`body` as received) for `userId` in `workspace`. Request vars override
  * the dashboard's default vars; time zone and week start come from the workspace settings.
- * `policy` defaults to what `userId` may see; a calendar push passes their own only (ruling 12).
+ * `policy` defaults to what `userId` may see (ItemPolicy.for).
  */
 export async function runWorkspaceQuery(
   workspace: WorkspaceContext,
