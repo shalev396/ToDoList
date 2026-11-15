@@ -312,6 +312,22 @@ classDiagram
     +integrationId: string
     +scope: string
   }
+  class FieldNotWritableError {
+    422 field_not_writable
+    +fields
+    +openIn
+  }
+  class ProviderPartialWriteError {
+    409 provider_partial_write
+    +written
+    +refused
+  }
+  class ProviderItemMissingError {
+    404 provider_item_missing
+  }
+  class EventHasGuestsError {
+    409 event_has_guests
+  }
   class SecretLeakError
   Error <|-- AppError
   Error <|-- SecretLeakError
@@ -325,6 +341,10 @@ classDiagram
   AppError <|-- ProviderComingSoonError
   AppError <|-- StatusNotAvailableError
   AppError <|-- ScopeMissingError
+  AppError <|-- FieldNotWritableError
+  AppError <|-- ProviderPartialWriteError
+  AppError <|-- ProviderItemMissingError
+  AppError <|-- EventHasGuestsError
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
   class AppError:::built
@@ -338,14 +358,30 @@ classDiagram
   class ProviderComingSoonError:::built
   class StatusNotAvailableError:::built
   class ScopeMissingError:::built
+  class FieldNotWritableError:::built
+  class ProviderPartialWriteError:::built
+  class ProviderItemMissingError:::built
+  class EventHasGuestsError:::built
   class SecretLeakError:::built
 ```
 
 The 409 domain errors are siblings of `ConflictError`, not children: a `catch (ConflictError)`
 answers the version-conflict body (`currentVersion`), which they are not. The error handler answers
-every `AppError` by `instanceof`. Write-back adds two (phase 2b): `StatusNotAvailableError` (the
-provider has no transition, status or state for the asked status on this item) and
-`ScopeMissingError` (the grant predates a scope the operation needs: `calendar.app.created`).
+every `AppError` by `instanceof`. Write-back adds six (phase 2b and its fix round):
+
+- `StatusNotAvailableError`: the provider has no transition, status or state for the asked status
+  on this item;
+- `ScopeMissingError`: the grant predates a scope the operation needs (`calendar.app.created`);
+- `FieldNotWritableError`: a changed field the provider doesn't take for the item (it lacks it,
+  only reads it, the item's kind takes no write-back, or it isn't on the edit screen);
+- `ProviderPartialWriteError`: a write-back of several provider calls stopped part-way; what
+  landed is kept and audited;
+- `ProviderItemMissingError`: the item is gone at the provider;
+- `EventHasGuestsError`: an event with other guests, changed without saying whether to notify
+  them.
+
+Their extra properties (`fields`, `openIn`, `written`, `refused`) are for the Phase 4 route to
+answer; the error handler answers `{message, code}` today.
 
 ## 3. Integrations (phases 1, 2a and 2W)
 
@@ -413,6 +449,7 @@ classDiagram
     +create: CreateRules
     +writableFields: WritableField[]
     +writableKinds: ItemKind[]
+    +reachableStatuses: ItemStatus[]
     +picker: PickerKind
     +revokePage
     +comingSoon
@@ -555,8 +592,9 @@ classDiagram
     <<interface>>
     +listCalendars(caller)
     +insertEvent(caller, calendarId, event, recurrence?)
-    +updateEvent(caller, calendarId, eventId, patch) WrittenEvent
-    +deleteEvent(caller, calendarId, eventId)
+    +updateEvent(caller, item, patch, notice?) WrittenEvent
+    +deleteEvent(caller, item, notice?)
+    +deleteLinkedEvent(caller, link)
     +createCalendar(caller, name) GoogleCalendarEntry
     +dryRun(caller, narrowing, now)
     +push(caller, request)
@@ -564,8 +602,14 @@ classDiagram
   class TaskEdit {
     <<value object>>
     +parse(patch)$ TaskEdit
-    +touches(fields) boolean
-    +split(item, writable, timeZone) SplitEdit
+    +fields
+    +against(item, writable, timeZone) ProviderEdit
+  }
+  class WriteLedger {
+    +confirm(fields, values) Promise
+    +fields
+    +values
+    +isEmpty
   }
   class EventEdit {
     <<value object>>
@@ -581,6 +625,7 @@ classDiagram
     +toString() string
   }
   TaskProvider ..> TaskEdit : updateTask
+  TrackerIntegration ..> WriteLedger : updateTask
   CalendarProvider ..> EventEdit : updateEvent
   CalendarProvider ..> RecurrenceRule : insertEvent
   CreateFunnel <|-- TaskProvider
@@ -608,7 +653,8 @@ classDiagram
     +createOptions(caller, query)
     +createTask(caller, request)
     +updateTask(caller, item, patch) ItemData
-    #applyUpdate(session, item, patch)* MirroredItemPatch
+    #checkUpdate(item, patch)
+    #applyUpdate(session, item, patch, ledger)*
     #answerOf(result) record
     #confirmedStatus(status, raw) MirroredItemPatch
     #readOptions(session, query)*
@@ -724,6 +770,7 @@ classDiagram
   class SyncRequest:::built
   class UnofferedAuth:::built
   class TaskEdit:::built
+  class WriteLedger:::built
   class EventEdit:::built
   class RecurrenceRule:::built
   class ItemCopy:::planned
@@ -752,25 +799,37 @@ What the tests hold:
     in `TrackerIntegration`'s template, inside a `withWriteSession(…)` call; the provider classes
     only declare it;
   - MCP code never names `setMode`, `checkMode` or `UpdateIntegrationBody`.
-- The write allow-lists, by method and exact path, refuse everything else before it is sent:
-  `writers/trackerWriter.update.test.ts` (Jira `PUT …/issue/{id}` and `POST …/transitions` at the
-  integration's own sites only, ClickUp `PUT /task/{id}`, GitHub `PATCH /issues/{n}`, Linear only
-  the named `issueUpdate` document besides `issueCreate`) and `writers/calendarApi.test.ts`
-  (`POST /calendars`, events insert, patch and delete; never a calendar's delete or ACL).
-- `writeBack.trackers.test.ts` and `writeBack.calendar.test.ts`: per provider, the exact requests
-  a write-back sends (lookups as reads, then the allow-listed writes), that a field the provider
-  lacks and TodoList's own fields stay here and are never sent, what the item holds afterwards,
-  and every refusal before anything is written (read-only: zero non-GET; `status_not_available`;
-  a pull request; `scope_missing`; an invalid RRULE).
+- The write allow-lists refuse everything else before it is sent:
+  - `writers/trackerWriter.update.test.ts`: by method, exact path and **body keys** (Jira
+    `PUT …/issue/{id}` with `fields.summary|duedate|priority.id` and `POST …/transitions` with
+    `transition.id`, at the integration's own sites only; ClickUp `PUT /task/{id}` with its seven
+    keys; GitHub `PATCH /issues/{n}` with `title|state|state_reason`; Linear only the named
+    `issueUpdate` document, variables `{id, input}` with `title|stateId|dueDate|priority`). A
+    trash, an archive, a body, assignees or a project move never pass.
+  - `writers/calendarApi.test.ts`: `POST /calendars`, events insert, patch and delete (those two
+    with `sendUpdates=all|none` only); never a calendar's delete or ACL. The URL must be exactly
+    as sent: a `.`/`..` segment (`%2e%2e` too) or an empty one is refused.
+- `writeBack.trackers.test.ts` and `writeBack.calendar.test.ts`, per provider:
+  - the exact requests a write-back sends (lookups as reads, then the allow-listed writes) and what
+    the item holds afterwards;
+  - each provider call audited as it lands; a Jira edit stopped part-way keeps and audits what
+    landed (`provider_partial_write`);
+  - every refusal before anything is opened or written (`field_not_writable`,
+    `status_not_available`, a value the provider can't hold; read-only: zero non-GET, and an
+    unchanged field is no write; `scope_missing`; an invalid RRULE; `event_has_guests`);
+  - an event only through this integration's item on a calendar it reads, or its own
+    CalendarLink: another integration's, another workspace's, a raw event id or an unselected
+    calendar is 404 with zero non-GET requests.
 - `vaultImports.test.ts`: only `Integration.ts` uses `Credential`, and only `Integration.ts` and
   `sync/secrets.ts` name `Integration.withSyncSecret` (MCP code never does).
   An alias does not get round them: a factory renamed with `as`, bound to another name,
   destructured from an `await import(…)` or re-exported fails, as does a dynamic import with no
   literal target inside `classes/integration/`.
 - `integration.test.ts`: for every provider class, without a database, each write it can make
-  (`createOptions`, `createTask`, `updateTask`, `insertEvent` with and without a recurrence,
-  `updateEvent`, `deleteEvent`, `createCalendar`, `push`) is refused while read-only before
-  anything is read or sent.
+  without reading an item first (`createOptions`, `createTask`, `insertEvent` with and without a
+  recurrence, `createCalendar`, `push`) is refused while read-only before anything is sent. The
+  writes keyed by an item read it first (the gate waits for what actually changes): the
+  write-back tests hold them with a database.
 - `definitions/definitions.test.ts`: the definitions name each connectable provider once, each
   its class's own; every OAuth app's token and revoke URL is on the HTTP layer's allow-list
   (`OAUTH_TOKEN_ENDPOINTS`, written out there on purpose: no definition can widen it) and its
@@ -827,48 +886,57 @@ What the tests hold:
   They get the protected members they need as functions; the credential never leaves
   `Integration.ts`. `toStatusView` is gone (`toView`).
 
-**What phase 2W (write-back, "phase 2b") built:**
+**What phase 2W (write-back, "phase 2b", and its fix round) built:**
 
-- **`TaskProvider.updateTask(caller, item, patch)`**, required by the compiler of every tracker,
-  is a template method in `TrackerIntegration`: (1) the edit is validated (`TaskEdit`, a value
-  object; an edit of a field the provider holds refuses a read-only integration first, before
-  anything is read; the overlay's topic and custom attributes are checked against the workspace);
-  (2) the item is read (this integration's live mirrored item, else 404) and the edit split into
-  the changed fields the provider takes (its definition's `writableFields`, for the item's kind)
-  and what stays here; (3) only with something for the provider, the write session; (4) the
-  provider class's `applyUpdate` sends it (its status lookup through the read client first, then
-  its exact update requests through the write client) and returns what the provider confirmed;
-  (5) the confirmed fields and the local ones are saved through the item repository's
-  `updateMirrored` (clearing `source.hash`, so the next sync rewrites what the provider holds) and
-  `setOverlay`, and the write is audited as `integration.write` (field names only). A kind that
-  takes no write-back (a GitHub pull request or draft) refuses an edit of a provider field with
-  the mirrored-item 409.
-- **`writableFields`** per definition (`IntegrationDefinition.writableFields`, `writableKinds`):
-  Jira `title, status, dueAt, priority` (issues); ClickUp `title, status, dueAt, startAt,
-priority` (tasks); Linear `title, status, dueAt, priority` (issues); GitHub `title, status`
-  (issues); Google Calendar `title, startAt, endAt` (events); Moodle none.
-- **Status write-back** through provider lookups: Jira's transitions by status category (none:
-  `StatusNotAvailableError`, 422 `status_not_available`; Jira and ClickUp have no "cancelled"),
-  ClickUp's list statuses by type, Linear's team workflow states by type (the registered
-  `IssueTeamStates` query), GitHub's issue state with `state_reason` ("in progress" is a board
-  column: 422).
-- **`CalendarProvider`**: `updateEvent` (`EventEdit`: title, description, the time given whole;
-  the event's item follows), `deleteEvent` (its item goes too), `createCalendar`
-  (`calendars.insert`; a grant without `calendar.app.created` is `ScopeMissingError`, 409
-  `scope_missing`, before anything is opened), and `insertEvent(…, recurrence)` with one RRULE
-  line parsed by `RecurrenceRule` (FREQ, INTERVAL, BYDAY, BYMONTHDAY, COUNT, UNTIL; anything else
-  400).
-- **Capabilities**: `ProviderCapabilities` gains `canUpdate` and `writableFields` (additive).
+- **`TaskProvider.updateTask(caller, item, patch)`**, over a mirrored item's provider fields only,
+  required by the compiler of every tracker, is a template method in `TrackerIntegration`:
+  1. validate the edit (`TaskEdit`: provider fields only, a one-line title; 400 naming the field)
+     and the item (this integration's live mirrored item, else 404);
+  2. compare it with the item: an unchanged field is dropped (an edit that changes nothing is no
+     write and no write gate); a changed field the provider doesn't take for the item's kind is
+     422 `field_not_writable`; then `checkUpdate` (the provider's static rules: a status outside
+     its `reachableStatuses`, a value it can't hold) and the write gate, all before anything is
+     opened;
+  3. the write session;
+  4. `applyUpdate`: the provider class's lookups (reads), then its exact update requests; each
+     call that goes through is confirmed to a `WriteLedger`, which audits it at once
+     (`integration.write`, field names only);
+  5. save what the provider confirmed (`updateMirrored`, clearing `source.hash` so the next sync
+     rewrites what the provider holds).
+
+  A later call that fails after an earlier one landed: what landed is saved and audited
+  (`partial: true`), and the answer is 409 `provider_partial_write`. TodoList's own fields (the
+  overlay) are not this method's: they stay on the item's overlay path, under the item policy.
+
+- **`writableFields`, `writableKinds`, `reachableStatuses`** per definition (`write` rules):
+  Jira `title, status, dueAt, priority` (issues; open, in progress, done); ClickUp `title, status,
+dueAt, startAt, priority` (tasks; open, in progress, done); Linear `title, status, dueAt,
+priority` (issues; all four); GitHub `title, status` (issues; open, done, cancelled); Google
+  Calendar `title, startAt, endAt` (events; no status); Moodle none.
+- **Status write-back** through provider lookups: Jira's transitions by status category, with
+  their fields (one that needs a field filled in is skipped), ClickUp's list statuses by type,
+  Linear's team workflow states by type (the registered `IssueTeamStates` query), GitHub's issue
+  state with `state_reason` ("open" refused while a board column says in progress). Jira also
+  reads the issue's edit metadata first: each field on its edit screen, the priority by the id it
+  allows.
+- **`CalendarProvider`**: `updateEvent(caller, item, patch, notice?)` and `deleteEvent(caller,
+item, notice?)` by this integration's event item on a calendar it reads (never a raw id; an
+  event with other guests needs `notifyGuests`, sent as `sendUpdates`); `deleteLinkedEvent(caller,
+link)` by its CalendarLink on the push target (tombstoned after); `createCalendar`
+  (`calendars.insert`; `scope_missing` without `calendar.app.created`); `insertEvent(…,
+recurrence)` with one RRULE line parsed by `RecurrenceRule`.
+- **Capabilities**: `ProviderCapabilities` gains `canUpdate`, `writableFields`, `writableKinds`
+  and `reachableStatuses` (additive), so the ItemSheet can drive its fields and status choices.
 
 **The seams left open:**
 
-- No route calls `updateTask`, `updateEvent`, `deleteEvent` or `createCalendar` yet: the item REST
-  route, MCP and the ItemSheet UI arrive in phase 4; the primary calendar, its Share dialog and
-  the push rule in the post-phase-3 calendar phase.
-- An item field the provider lacks (Jira's start date, GitHub's due date) is saved on the
-  mirrored item as a local value, but the sync owns those columns: the record's next change at
-  the provider rewrites them. Phase 4 decides (disable those fields, or teach the sync to keep
-  them).
+- No route calls `updateTask`, `updateEvent`, `deleteEvent`, `deleteLinkedEvent` or
+  `createCalendar` yet: the item REST route, MCP (item ids only) and the ItemSheet UI arrive in
+  phase 4; the primary calendar, its Share dialog and the push rule in the post-phase-3 calendar
+  phase.
+- A field the provider lacks (Jira's or Linear's start date, GitHub's priority) is refused by
+  `updateTask`, not kept on the synced columns (the sync would rewrite them). Phase 4 keeps such
+  values truly local as overlay overrides, merged on read, beside `overlay.plannedAt`.
 - The sync engine reaches a credential through `Integration.withSyncSecret` (a read session) until
   phase 5 moves it behind `Integration.sync()`. Only `sync/secrets.ts` names it, by test.
 - `Revocable.revoke(caller)` is its owner's (it checks), over the protected `revokeGrant()` hook,
@@ -1409,9 +1477,10 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `models/definitions/Item.ts`, `models/mongoose/Item.ts` | `updateMirrored(workspaceId, integrationId, id, patch, {resync})`: a write-back on a live mirrored item of that integration (never a local one); `resync` clears `source.hash` |
 | `sync/http.ts`                                          | `HttpRequest.method` names `PUT` and `PATCH` too: only the write client sends them, for its allow-listed updates; the read client still sends GET and POST only                |
-| `services/providerCreate/ids.ts`                        | patterns for a ClickUp task id, a GitHub issue number and a Google event id                                                                                                    |
-| `types/integrations.ts`                                 | `WRITABLE_FIELDS` / `WritableField`; `ProviderCapabilities.canUpdate` and `writableFields` (additive)                                                                          |
-| `types/errorCodes.ts`                                   | `status_not_available`, `scope_missing` (the client translates both)                                                                                                           |
+| `services/providerCreate/ids.ts`                        | patterns for a ClickUp task id, a GitHub issue number and a Google event id; a calendar id is never `.` or `..`                                                                |
+| `types/integrations.ts`                                 | `WRITABLE_FIELDS` / `WritableField`; `ProviderCapabilities.canUpdate`, `writableFields`, `writableKinds`, `reachableStatuses` (additive)                                       |
+| `types/errorCodes.ts`                                   | `status_not_available`, `scope_missing`, `field_not_writable`, `provider_partial_write`, `provider_item_missing`, `event_has_guests` (the client translates each)              |
+| `sync/providers/google_calendar.ts`                     | an event's item carries `props.guestsCount` (attendees beyond the calendar's owner)                                                                                            |
 
 ## Where phase 2a left the old modules
 
