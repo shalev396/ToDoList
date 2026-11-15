@@ -5,8 +5,10 @@
  * It takes exactly the parts the Repeat control can produce, each at most once, upper case:
  * - FREQ: DAILY, WEEKLY, MONTHLY or YEARLY (required);
  * - INTERVAL: 1 … 999;
- * - BYDAY: days (MO … SU), each with an ordinal (-5 … -1, 1 … 5) only when MONTHLY or YEARLY;
+ * - BYDAY: days (MO … SU), each with an ordinal (-5 … -1, 1 … 5) only when MONTHLY;
  * - BYMONTHDAY: -31 … -1, 1 … 31 (never with WEEKLY);
+ * - a YEARLY rule takes neither BYDAY nor BYMONTHDAY: without BYMONTH (not taken) they would mean
+ *   every month, or a weekday of the year; a yearly to-do repeats on its start date.
  * - COUNT: 1 … 999, or UNTIL: a date (YYYYMMDD) or a UTC time (YYYYMMDDTHHMMSSZ), never both.
  *
  * Anything else is refused with a 400 that never quotes the value: another part (BYSETPOS,
@@ -86,19 +88,18 @@ export class RecurrenceRule {
     this.count = RecurrenceRule.#whole(parts, 'COUNT');
     const days = parts.get('BYDAY');
     this.byDay = Object.freeze(days === undefined ? [] : listOf(days, DAY, 'BYDAY'));
-    if (
-      this.byDay.some((day) => day.length > 2) &&
-      this.freq !== 'MONTHLY' &&
-      this.freq !== 'YEARLY'
-    ) {
-      throw refuse('a BYDAY ordinal needs FREQ=MONTHLY or YEARLY');
+    if (this.freq === 'YEARLY' && this.byDay.length > 0) {
+      throw refuse('FREQ=YEARLY repeats on its start date: BYDAY is not taken with it');
+    }
+    if (this.byDay.some((day) => day.length > 2) && this.freq !== 'MONTHLY') {
+      throw refuse('a BYDAY ordinal needs FREQ=MONTHLY');
     }
     const monthDays = parts.get('BYMONTHDAY');
     this.byMonthDay = Object.freeze(
       monthDays === undefined ? [] : listOf(monthDays, MONTH_DAY, 'BYMONTHDAY').map(Number),
     );
-    if (this.byMonthDay.length > 0 && this.freq === 'WEEKLY') {
-      throw refuse('BYMONTHDAY is not taken with FREQ=WEEKLY');
+    if (this.byMonthDay.length > 0 && (this.freq === 'WEEKLY' || this.freq === 'YEARLY')) {
+      throw refuse('BYMONTHDAY is taken with FREQ=DAILY or MONTHLY only');
     }
     const until = parts.get('UNTIL');
     if (until !== undefined && this.count !== null)
