@@ -414,6 +414,82 @@ describe('commit: a mirrored item’s overrides are what was pushed (Phase 4a, I
   });
 });
 
+describe('commit: a title that matches a secret pattern (N1)', () => {
+  it('settles on the redacted title the plan pushed: no extra push', async () => {
+    const { projectEvent, hashEvent } = await import('./diff.js');
+    const { toPushItem } = await import('./commit.js');
+    const { redactString } = await import('../services/secretPatterns.js');
+    const items = await fx.models.getItemRepository();
+    const secretTitle = `Rotate ghp_${'a'.repeat(24)} now`;
+    assert.notEqual(redactString(secretTitle), secretTitle);
+    await items.bulkUpsert(fx.workspaceId, [
+      {
+        integrationId: fx.integrationId,
+        kind: 'issue',
+        topicId: 'personal',
+        title: secretTitle,
+        status: 'open',
+        source: {
+          provider: 'github',
+          accountId: 'acct',
+          externalId: 'GH-SECRET-1',
+          key: null,
+          url: 'https://github.com/octo/hello/issues/2',
+          updatedAtSource: null,
+          etag: null,
+          hash: 'h-secret',
+        },
+      },
+    ]);
+    const [doc] = await items.aggregate<{ _id: string }>(fx.workspaceId, [
+      { $match: { 'source.externalId': 'GH-SECRET-1' } },
+    ]);
+    assert.ok(doc);
+    const due = new Date(T0 + 5 * 86_400_000);
+    const stored = await items.setOverlay(fx.workspaceId, doc._id, { overrides: { dueAt: due } });
+    assert.ok(stored);
+    // What the plan pushes: the title redacted.
+    const pushed = projectEvent(
+      { ...toPushItem(stored), title: redactString(stored.title) },
+      fx.workspaceId,
+      'Asia/Jerusalem',
+    );
+    assert.ok(pushed !== null);
+    assert.ok(!pushed.summary.includes('ghp_'));
+    await (
+      await fx.models.getCalendarLinkRepository()
+    ).upsert(
+      fx.workspaceId,
+      fx.integrationId,
+      { calendarId: 'primary', googleEventId: eventIdFor(doc._id) },
+      {
+        itemId: doc._id,
+        direction: 'to_google',
+        lastEtag: '"g1"',
+        lastItemUpdatedAt: stored.updatedAt,
+        pushedHash: 'x',
+      },
+    );
+    await commit({
+      calendars: [
+        {
+          id: 'primary',
+          events: [
+            slim(doc._id, {
+              summary: pushed.summary,
+              description: 'Edited in Google',
+              start: pushed.start,
+              end: pushed.end,
+              updated: new Date(Date.now() + 60_000).toISOString(),
+            }),
+          ],
+        },
+      ],
+    });
+    assert.equal((await linkOf(doc._id)).pushedHash, hashEvent(pushed));
+  });
+});
+
 describe('commit: another member’s shared item never changes from Google (I6)', () => {
   async function theirs(title: string): Promise<ItemData> {
     const created = await fx.item(title, 3, { ownerUserId: 'u-another-member' });

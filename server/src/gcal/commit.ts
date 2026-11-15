@@ -98,7 +98,7 @@ export function toPushItem(item: ItemData): PushItem {
   const effective = Overrides.from(item.overlay.overrides).effective(item);
   return {
     id: item.id,
-    title: effective.title,
+    title: redactString(effective.title),
     startAt: effective.startAt,
     dueAt: effective.dueAt,
     endAt: item.endAt,

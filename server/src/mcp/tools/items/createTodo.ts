@@ -62,7 +62,7 @@ export const createTodo = defineTool({
     readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: false,
-    openWorldHint: false,
+    openWorldHint: true,
   },
   scopes: ['items:write'],
   minRole: 'editor',
