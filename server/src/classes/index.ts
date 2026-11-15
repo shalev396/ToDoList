@@ -8,3 +8,5 @@ export * from './integration/index.js';
 export * from './workspace/index.js';
 export * from './item/index.js';
 export * from './mcp/index.js';
+export * from './sync/index.js';
+export * from './calendar/index.js';
