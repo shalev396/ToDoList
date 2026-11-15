@@ -214,4 +214,25 @@ interface StateWithEditor {
 
 export const selectEditor = (state: StateWithEditor) => state.editor;
 
+/** What the header says about saving the dashboard. */
+export type EditorStatus = 'idle' | 'saving' | 'saved' | 'error';
+
+/**
+ * The header's save status for the editor's state (`open`: the editor is on this dashboard).
+ * "Saving" starts when the debounced save does, never while a change merely waits for it; a failed
+ * save outranks a stale "Saved".
+ */
+export function editorStatus(editor: EditorState, open: boolean): EditorStatus {
+  if (!open) {
+    return 'idle';
+  }
+  if (editor.saving) {
+    return 'saving';
+  }
+  if (editor.failed) {
+    return 'error';
+  }
+  return editor.saved ? 'saved' : 'idle';
+}
+
 export default editorSlice.reducer;

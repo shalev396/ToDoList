@@ -259,6 +259,13 @@ function FunnelPanel({
 }
 
 /** One chip of "Also create in": idle, being asked, or done with its short path. */
+/**
+ * The "switch it to Read & write" hint: for a read-only target its owner can switch (never demo
+ * data, which stays read-only; that one says it can't be written to).
+ */
+const readOnlyHint = (target: CreateTargetInfo): boolean =>
+  !target.writable && target.mode === 'read' && target.canSwitchMode;
+
 function Chip({
   workspaceId,
   target,
@@ -304,7 +311,7 @@ function Chip({
             target.writable
               ? undefined
               : t(
-                  target.mode === 'read'
+                  readOnlyHint(target)
                     ? 'items.newTodo.readOnlyTarget'
                     : 'items.newTodo.notWritable',
                 )
@@ -348,7 +355,7 @@ function Chip({
           </button>
         ) : null}
       </div>
-      {target.mode === 'read' ? (
+      {readOnlyHint(target) ? (
         <p className="ms-3 mt-1 text-xs text-muted-foreground" data-read-only-hint="">
           {t('items.newTodo.readOnlyTarget')}
         </p>

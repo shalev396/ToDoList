@@ -307,26 +307,31 @@ export function IntegrationCard({
             </label>
             <span className="text-muted-foreground">
               {t(
-                integration.mode === 'read'
-                  ? 'connect.card.modeHintRead'
-                  : 'connect.card.modeHintReadWrite',
+                !integration.canSwitchMode
+                  ? 'connect.card.modeHintDemo'
+                  : integration.mode === 'read'
+                    ? 'connect.card.modeHintRead'
+                    : 'connect.card.modeHintReadWrite',
                 { name },
               )}
             </span>
           </div>
-          <Switch
-            id={`mode-${integration.id}`}
-            data-mode-switch
-            checked={integration.mode === 'read_write'}
-            disabled={update.isPending}
-            onCheckedChange={(checked) => {
-              if (checked) {
-                setConfirmingWrite(true);
-              } else {
-                void setMode('read');
-              }
-            }}
-          />
+          {/* Demo data stays read-only: no switch is offered for it. */}
+          {!integration.canSwitchMode ? null : (
+            <Switch
+              id={`mode-${integration.id}`}
+              data-mode-switch
+              checked={integration.mode === 'read_write'}
+              disabled={update.isPending}
+              onCheckedChange={(checked) => {
+                if (checked) {
+                  setConfirmingWrite(true);
+                } else {
+                  void setMode('read');
+                }
+              }}
+            />
+          )}
         </div>
       )}
       {run === undefined ? null : <SyncStatus run={run} />}

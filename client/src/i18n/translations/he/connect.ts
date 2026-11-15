@@ -62,6 +62,7 @@ export const connect = {
     modeReadWrite: 'קריאה וכתיבה',
     modeHintRead: 'TodoList רק קורא מ-{{name}}. שום דבר לא משתנה שם.',
     modeHintReadWrite: 'TodoList יכול ליצור פריטים ב-{{name}}.',
+    modeHintDemo: 'נתוני הדגמה: TodoList רק קורא אותם, וכך זה נשאר.',
     modeConfirmTitle: 'לאפשר ל-TodoList לכתוב ב-{{name}}?',
     modeConfirmBody: 'אחרי זה TodoList יוכל ליצור פריטים ב-{{name}}.',
     modeConfirmGcal: 'הוא גם יוכל לדחוף את האירועים שלכם ליומן Google.',

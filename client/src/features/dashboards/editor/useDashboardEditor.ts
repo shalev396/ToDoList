@@ -14,7 +14,7 @@ import {
 } from '@/api/queries/dashboards';
 import { getDashboard } from '@/api/services/dashboardService';
 import type { AppDispatch, RootState } from '@/store';
-import { editorOpened, selectEditor } from '@/store/editorSlice';
+import { editorOpened, editorStatus, selectEditor, type EditorStatus } from '@/store/editorSlice';
 import type { Breakpoint } from '../grid/constants';
 import { withPending } from '../grid/layouts';
 import { createEditorWrites, type EditorNotice, type EditorServer } from './editorWrites';
@@ -23,7 +23,7 @@ import { historyAvailability } from './history';
 /** Layout changes are saved this long after the last one (one save per burst of moves). */
 export const AUTOSAVE_DELAY_MS = 800;
 
-export type EditorStatus = 'idle' | 'saving' | 'saved' | 'error';
+export type { EditorStatus };
 
 export interface DashboardEditor {
   /** The stored layouts with the changes not saved yet on top: what the grid shows. */
@@ -241,15 +241,7 @@ export function useDashboardEditor({
     redo,
     flush,
     // "Saving" starts when the debounced save does, not when a change is merely waiting for it.
-    status: !open
-      ? 'idle'
-      : editor.saving
-        ? 'saving'
-        : editor.failed
-          ? 'error'
-          : editor.saved
-            ? 'saved'
-            : 'idle',
+    status: editorStatus(editor, open),
     busy,
     canUndo: active && !busy && availability.canUndo,
     canRedo: active && !busy && availability.canRedo,

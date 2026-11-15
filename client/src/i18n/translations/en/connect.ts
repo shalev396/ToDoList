@@ -61,6 +61,7 @@ export const connect = {
     modeReadWrite: 'Read & write',
     modeHintRead: 'TodoList only reads from {{name}}. Nothing is changed there.',
     modeHintReadWrite: 'TodoList can create items in {{name}}.',
+    modeHintDemo: 'Demo data: TodoList only reads it, and it stays that way.',
     modeConfirmTitle: 'Let TodoList write to {{name}}?',
     modeConfirmBody: 'TodoList will then be able to create items in {{name}}.',
     modeConfirmGcal: 'It will also be able to push your events to Google Calendar.',

@@ -6,6 +6,7 @@ import reducer, {
   conflictResolved,
   editorClosed,
   editorOpened,
+  editorStatus,
   initialEditorState,
   layoutChanged,
   pendingDropped,
@@ -173,6 +174,20 @@ describe('editorSlice', () => {
 
   it('a pending change alone is not "saving": only a started save is', () => {
     assert.equal(withPending().saving, false);
+  });
+
+  it('the header status: saving only once the save runs, a failure over a stale Saved', () => {
+    // A change waiting for the autosave debounce: nothing to say yet (no early "Saving…").
+    assert.equal(editorStatus(withPending(), true), 'idle');
+    const saving = reducer(withPending(), saveStarted());
+    assert.equal(editorStatus(saving, true), 'saving');
+    const saved = reducer(saving, saveSucceeded({ version: 4, revision: 1 }));
+    assert.equal(editorStatus(saved, true), 'saved');
+    const failed = reducer(reducer(saved, saveStarted()), saveFailed());
+    assert.equal(editorStatus(failed, true), 'error');
+    // Another dashboard (or none) open: this one says nothing.
+    assert.equal(editorStatus(saved, false), 'idle');
+    assert.equal(editorStatus(initialEditorState, true), 'idle');
   });
 
   it('a conflict is held while it is recovered, then cleared with the version recovered to', () => {

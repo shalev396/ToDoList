@@ -68,6 +68,8 @@ export function ConnectDialog({ workspaceId, provider, existingId, onClose }: Co
   const [integrationId, setIntegrationId] = useState<string | null>(existingId ?? null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** The save itself failed (not a field left empty, nor a test or sync afterwards). */
+  const [saveFailed, setSaveFailed] = useState(false);
   const [missing, setMissing] = useState<string[]>([]);
   const [test, setTest] = useState<IntegrationTestResult | null>(null);
   const create = useCreateIntegration(workspaceId);
@@ -100,6 +102,8 @@ export function ConnectDialog({ workspaceId, provider, existingId, onClose }: Co
     ];
     setMissing(absent);
     if (absent.length > 0) {
+      // Nothing was sent: the message says which fields, the save status stays as it was.
+      setSaveFailed(false);
       setError(t('connect.dialog.fillRequired'));
       return;
     }
@@ -108,6 +112,7 @@ export function ConnectDialog({ workspaceId, provider, existingId, onClose }: Co
     const values = { ...plain, ...secrets };
     setBusy(true);
     setError(null);
+    setSaveFailed(false);
     try {
       let id = integrationId;
       if (id === null) {
@@ -126,6 +131,7 @@ export function ConnectDialog({ workspaceId, provider, existingId, onClose }: Co
       await refresh();
       setPhase('saved');
     } catch (failure) {
+      setSaveFailed(true);
       setError(
         errorMessage(
           t,
@@ -284,7 +290,7 @@ export function ConnectDialog({ workspaceId, provider, existingId, onClose }: Co
               <ExternalLink aria-hidden="true" className="size-3.5" />
             </a>
             <DialogFooter>
-              <SaveStatus state={busy ? 'saving' : error !== null ? 'error' : 'idle'} />
+              <SaveStatus state={busy ? 'saving' : saveFailed ? 'error' : 'idle'} />
               <Button type="button" variant="ghost" onClick={onClose}>
                 {t('connect.cancel')}
               </Button>
