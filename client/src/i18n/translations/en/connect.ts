@@ -215,8 +215,10 @@ export const connect = {
     stop: 'Cancel',
     failed_one: '{{count}} event couldn’t be removed at Google. TodoList no longer tracks it.',
     failed_other: '{{count}} events couldn’t be removed at Google. TodoList no longer tracks them.',
-    skipped_one: '{{count}} event is on the current workspace calendar and was left in place.',
-    skipped_other: '{{count}} events are on the current workspace calendar and were left in place.',
+    skipped_one:
+      '{{count}} event was left in place: it’s on the current workspace calendar, or it was moved or deleted in the meantime.',
+    skipped_other:
+      '{{count}} events were left in place: they’re on the current workspace calendar, or were moved or deleted in the meantime.',
     needsWrite: 'Switch to Read & write first',
     progress: 'Removed {{events}}; {{remaining}} left',
     continue: 'Continue',
@@ -260,6 +262,7 @@ export const connect = {
       noneHint: 'Connect Google Calendar first, then come back here.',
       calendar: 'Calendar',
       createNew: 'Create a new calendar',
+      readNote: 'Events in this calendar will also show in TodoList.',
       newName: 'Name of the new calendar',
       loading: 'Loading your calendars…',
       loadFailed: 'Your calendars couldn’t be loaded. Try again.',
@@ -295,6 +298,7 @@ export const connect = {
     read: 'Read events from',
     primary: 'primary',
     readOnly: 'read only',
+    workspaceCalendar: 'workspace calendar, always read',
     loading: 'Loading your calendars…',
     loadFailed: 'Your calendars couldn’t be loaded. Try again.',
     save: 'Save calendars',

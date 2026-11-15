@@ -258,6 +258,12 @@ export function PrimaryCalendarPicker({
                 onName={setName}
               />
             )}
+            {integrationId === '' ? null : (
+              // The workspace calendar is always one its connection reads (owner ruling R1).
+              <p data-primary-read-note className="text-[13px] text-muted-foreground">
+                {t('connect.primary.picker.readNote')}
+              </p>
+            )}
             {oldIntegrationId === null || saved ? null : (
               <RemoveOldCheckbox
                 id="primary-remove-old"

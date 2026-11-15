@@ -4,6 +4,7 @@ import { errorMessage } from '@/api/errors';
 import {
   useGoogleCalendars,
   useIntegrationConfig,
+  usePrimaryCalendar,
   useUpdateIntegration,
 } from '@/api/queries/integrations';
 import { FormError } from '@/components/auth/auth-ui';
@@ -59,6 +60,10 @@ export function GcalCalendarPicker({
   const calendars = useGoogleCalendars(workspaceId, integration.id);
   const config = useIntegrationConfig(workspaceId, integration.id);
   const update = useUpdateIntegration(workspaceId);
+  const primary = usePrimaryCalendar(workspaceId);
+  // The workspace calendar is always read by its connection: its box stays ticked.
+  const workspaceCalendar =
+    primary.data?.integrationId === integration.id ? primary.data.calendarId : null;
   const [edited, setEdited] = useState<Choice | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -76,7 +81,12 @@ export function GcalCalendarPicker({
     }
     // The settings this picker doesn't edit are kept as they are.
     const next: GoogleCalendarConfig = {
-      calendars: choice.read.map((id) => ({
+      calendars: [
+        ...choice.read,
+        ...(workspaceCalendar === null || choice.read.includes(workspaceCalendar)
+          ? []
+          : [workspaceCalendar]),
+      ].map((id) => ({
         id,
         mode: stored.calendars.find((calendar) => calendar.id === id)?.mode ?? 'read',
       })),
@@ -123,7 +133,8 @@ export function GcalCalendarPicker({
               <legend className="mb-1 text-sm font-medium">{t('connect.oauth.read')}</legend>
               {calendars.data.map((calendar) => {
                 const id = `gcal-read-${calendar.id}`;
-                const checked = choice.read.includes(calendar.id);
+                const pinned = calendar.id === workspaceCalendar;
+                const checked = pinned || choice.read.includes(calendar.id);
                 return (
                   <div
                     key={calendar.id}
@@ -132,6 +143,7 @@ export function GcalCalendarPicker({
                     <Checkbox
                       id={id}
                       checked={checked}
+                      disabled={pinned}
                       onCheckedChange={(value) => {
                         change({
                           ...choice,
@@ -147,6 +159,14 @@ export function GcalCalendarPicker({
                       {calendar.primary ? (
                         <span className="ms-1.5 text-[13px] text-muted-foreground">
                           ({t('connect.oauth.primary')})
+                        </span>
+                      ) : null}
+                      {pinned ? (
+                        <span
+                          data-workspace-calendar
+                          className="ms-1.5 text-[13px] text-muted-foreground"
+                        >
+                          ({t('connect.oauth.workspaceCalendar')})
                         </span>
                       ) : null}
                     </label>
