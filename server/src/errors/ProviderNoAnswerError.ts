@@ -8,8 +8,9 @@ import { AppError } from './AppError.js';
 export class ProviderNoAnswerError extends AppError {
   readonly provider: string;
 
-  constructor(provider: string) {
-    super(502, `${provider} did not answer: the change may have been made there`, {
+  /** `message` replaces the default text (a provider's own wording); the code stays. */
+  constructor(provider: string, message?: string) {
+    super(502, message ?? `${provider} did not answer: the change may have been made there`, {
       code: 'provider_no_answer',
     });
     this.name = 'ProviderNoAnswerError';

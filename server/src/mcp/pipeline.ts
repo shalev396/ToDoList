@@ -111,7 +111,29 @@ function failure(tool: string, error: unknown): ToolCall {
     return { result: errorResult(redactString(error.message)), status: 'error' };
   }
   logger.error(`[mcp] tool ${tool} failed`, error);
-  return { result: errorResult(INTERNAL_ERROR_MESSAGE), status: 'error' };
+  const outcome = error instanceof AppError ? providerOutcome(error) : null;
+  return { result: errorResult(outcome ?? INTERNAL_ERROR_MESSAGE), status: 'error' };
+}
+
+/** A provider id as an error names it (`jira`, `google_calendar`): one plain token, else none. */
+const PROVIDER_NAME = /^[a-z][a-z0-9_]{0,39}$/;
+
+/**
+ * The two server errors whose outcome the agent must know, like the REST codes it keeps: a write
+ * the provider never answered may have been made there (`provider_no_answer`); a provider that
+ * could not be reached changed nothing (`provider_unreachable`). Fixed text naming the provider
+ * (when the error carries its id), nothing else of the error. Null for any other server error.
+ */
+function providerOutcome(error: AppError): string | null {
+  const named = (error as { provider?: unknown }).provider;
+  const provider = typeof named === 'string' && PROVIDER_NAME.test(named) ? named : 'the provider';
+  if (error.code === 'provider_no_answer') {
+    return `${provider} did not answer: the change may have been made at ${provider}. Check there before you try again.`;
+  }
+  if (error.code === 'provider_unreachable') {
+    return `${provider} could not be reached: nothing was changed. Try again in a moment.`;
+  }
+  return null;
 }
 
 async function execute<I extends z.ZodObject, O extends z.ZodObject>(

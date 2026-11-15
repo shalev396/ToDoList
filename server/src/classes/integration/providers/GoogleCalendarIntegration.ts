@@ -31,6 +31,7 @@ import { CleanupIncompleteError } from '../../../errors/CleanupIncompleteError.j
 import { EventHasGuestsError } from '../../../errors/EventHasGuestsError.js';
 import { NotFoundError } from '../../../errors/NotFoundError.js';
 import { ProviderItemMissingError } from '../../../errors/ProviderItemMissingError.js';
+import { ProviderNoAnswerError } from '../../../errors/ProviderNoAnswerError.js';
 import { ScopeMissingError } from '../../../errors/ScopeMissingError.js';
 import { WrittenNotStoredError } from '../../../errors/WrittenNotStoredError.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
@@ -233,11 +234,9 @@ function calendarFailure(error: unknown, write = false): Error {
   }
   const { status } = error;
   if (status === null || status >= 500) {
-    return new AppError(
-      502,
-      'Google Calendar did not answer. Try again in a moment.',
-      write ? { code: 'provider_no_answer' } : {},
-    );
+    const silent = 'Google Calendar did not answer. Try again in a moment.';
+    // A write: it may have been made there (provider_no_answer, which MCP names too).
+    return write ? new ProviderNoAnswerError('google_calendar', silent) : new AppError(502, silent);
   }
   if (status === 401) return new AppError(409, RECONNECT, refused);
   if (rateLimited(error)) {

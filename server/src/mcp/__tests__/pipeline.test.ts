@@ -258,6 +258,44 @@ describe('errors', () => {
     assert.match(logs, /fake_failing failed/);
   });
 
+  it('a write the provider never answered says it may have been made there, nothing else', async () => {
+    const { ProviderNoAnswerError } = await import('../../errors/ProviderNoAnswerError.js');
+    let text = '';
+    await captureStderr(async () => {
+      const result = await pipeline.runTool(
+        failing(new ProviderNoAnswerError('jira', 'socket hang up at jira-internal.example')),
+        context(),
+        { note: 'x' },
+      );
+      assert.equal(result.isError, true);
+      text = JSON.stringify(result.content);
+    });
+    assert.match(text, /jira did not answer: the change may have been made at jira\./);
+    assert.equal(text.includes('jira-internal'), false);
+  });
+
+  it('a provider that could not be reached says nothing was changed, nothing else', async () => {
+    const { ProviderUnreachableError } = await import('../../errors/ProviderUnreachableError.js');
+    const { AppError } = await import('../../errors/AppError.js');
+    const texts: string[] = [];
+    await captureStderr(async () => {
+      for (const error of [
+        new ProviderUnreachableError('linear'),
+        // No provider on the error: named generically, and its own text never shown.
+        new AppError(502, 'connect ECONNREFUSED jira-host.example', {
+          code: 'provider_unreachable',
+        }),
+      ]) {
+        const result = await pipeline.runTool(failing(error), context(), { note: 'x' });
+        assert.equal(result.isError, true);
+        texts.push(JSON.stringify(result.content));
+      }
+    });
+    assert.match(texts[0] ?? '', /linear could not be reached: nothing was changed\./);
+    assert.match(texts[1] ?? '', /the provider could not be reached: nothing was changed\./);
+    assert.equal(texts[1]?.includes('ECONNREFUSED'), false);
+  });
+
   it('gives an "Open in" link for a mirrored item', async () => {
     const { MirroredItemError } = await import('../../models/errors.js');
     const result = await pipeline.runTool(

@@ -33,6 +33,7 @@ import { WrittenNotStoredError } from '../../errors/WrittenNotStoredError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ProviderItemMissingError } from '../../errors/ProviderItemMissingError.js';
 import { ProviderNoAnswerError } from '../../errors/ProviderNoAnswerError.js';
+import { ProviderUnreachableError } from '../../errors/ProviderUnreachableError.js';
 import { ProviderPartialWriteError } from '../../errors/ProviderPartialWriteError.js';
 import { ScopeMissingError } from '../../errors/ScopeMissingError.js';
 import { StatusNotAvailableError } from '../../errors/StatusNotAvailableError.js';
@@ -142,9 +143,7 @@ function writeFailure(provider: string, failure: WriteFailure): AppError {
       return new AppError(422, `${provider} rejected this change`);
     case 'unreachable':
       // Never sent (netGuard or the allow-list): nothing was changed there.
-      return new AppError(502, `${provider} could not be reached. Try again in a moment.`, {
-        code: 'provider_unreachable',
-      });
+      return new ProviderUnreachableError(provider);
     case 'not_found':
       return new ProviderItemMissingError(provider);
   }
@@ -165,9 +164,7 @@ function lookupFailure(error: ProviderHttpError): AppError {
       return new AppError(429, `${provider} is busy. Try again in a moment.`);
     default:
       // A read before any write: nothing was changed there.
-      return new AppError(502, `${provider} could not be reached. Try again in a moment.`, {
-        code: 'provider_unreachable',
-      });
+      return new ProviderUnreachableError(provider);
   }
 }
 
