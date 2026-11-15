@@ -6,6 +6,7 @@
 import { compileQuery, parseQuery } from '../../builder/compile.js';
 import { OpValidationError, QueryValidationError } from '../../builder/errors.js';
 import { validationContext } from '../../builder/validate.js';
+import { stableStringify } from '../../sync/hash.js';
 import type { Query as QueryJson } from '../../types/builder.js';
 
 /** Freezes a value and everything it holds. */
@@ -52,11 +53,12 @@ export class Query {
     return structuredClone(this.#json);
   }
 
+  /** The same query, compared canonically: the order of an object's keys doesn't count. */
   equals(other: Query | null | undefined): boolean {
     return (
       other !== null &&
       other !== undefined &&
-      JSON.stringify(other.#json) === JSON.stringify(this.#json)
+      stableStringify(other.#json) === stableStringify(this.#json)
     );
   }
 }

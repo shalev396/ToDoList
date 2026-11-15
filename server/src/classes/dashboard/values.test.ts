@@ -57,6 +57,10 @@ describe('Layout', () => {
       layout.equals(Layout.of({ lg: [{ i: 'a', x: 0, y: 0, w: 1, h: 1 }], md: [], sm: [] })),
     );
     assert.ok(!layout.equals(Layout.EMPTY));
+    assert.ok(
+      layout.equals(Layout.of({ sm: [], md: [], lg: [{ h: 1, w: 1, y: 0, x: 0, i: 'a' }] })),
+      'key order does not count',
+    );
   });
 });
 
@@ -111,6 +115,7 @@ describe('Query', () => {
     assert.equal(query.toJSON().source, 'items');
     assert.ok(query.equals(Query.parse({ source: 'items', limit: 5 })));
     assert.ok(!query.equals(Query.parse({ source: 'items', limit: 6 })));
+    assert.ok(query.equals(Query.parse({ limit: 5, source: 'items' })), 'key order does not count');
   });
 
   it('refuses one that does not compile, with a pointer under /query', () => {

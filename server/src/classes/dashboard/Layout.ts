@@ -5,6 +5,7 @@
  */
 import type { Breakpoint } from '../../builder/ops.js';
 import type { DashboardLayouts } from '../../models/definitions/Dashboard.js';
+import { stableStringify } from '../../sync/hash.js';
 
 /** Freezes a value and everything it holds. */
 function deepFreeze<T>(value: T): T {
@@ -65,12 +66,12 @@ export class Layout {
     return structuredClone(this.#layouts);
   }
 
-  /** The same placements at every breakpoint. */
+  /** The same placements at every breakpoint (compared canonically: key order doesn't count). */
   equals(other: Layout | null | undefined): boolean {
     return (
       other !== null &&
       other !== undefined &&
-      JSON.stringify(other.#layouts) === JSON.stringify(this.#layouts)
+      stableStringify(other.#layouts) === stableStringify(this.#layouts)
     );
   }
 }
