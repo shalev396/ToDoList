@@ -18,6 +18,14 @@ export interface AuthorizationServerMetadata {
   token_endpoint_auth_methods_supported: string[];
   client_id_metadata_document_supported: boolean;
   scopes_supported: AgentScope[];
+  /**
+   * OpenID discovery fields. MCP clients try the root RFC 8414 form first, but the dev/QA gate lets
+   * only /api through, so they fall back to `{issuer}/.well-known/openid-configuration` and parse
+   * it with an OIDC schema that requires these. No ID tokens are issued: the key set is empty.
+   */
+  jwks_uri: string;
+  subject_types_supported: string[];
+  id_token_signing_alg_values_supported: string[];
 }
 
 export interface ProtectedResourceMetadata {
@@ -41,6 +49,9 @@ export function authorizationServerMetadata(): AuthorizationServerMetadata {
     token_endpoint_auth_methods_supported: ['none'],
     client_id_metadata_document_supported: true,
     scopes_supported: [...AGENT_SCOPES],
+    jwks_uri: `${issuer}/jwks`,
+    subject_types_supported: ['public'],
+    id_token_signing_alg_values_supported: ['RS256'],
   };
 }
 

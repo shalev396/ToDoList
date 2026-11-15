@@ -36,6 +36,10 @@ router.use(noStore);
 router.get('/.well-known/oauth-authorization-server', McpOAuthController.authorizationServer);
 router.get('/.well-known/openid-configuration', McpOAuthController.authorizationServer);
 router.get('/resource-metadata', McpOAuthController.protectedResource(false));
+// The OpenID discovery form names a key set; no ID tokens are issued, so it is empty.
+router.get('/jwks', (_req, res) => {
+  res.json({ keys: [] });
+});
 router.get('/resource-metadata/readonly', McpOAuthController.protectedResource(true));
 
 // ─── Endpoints ──────────────────────────────────────────────────────────────

@@ -240,7 +240,15 @@ describe('discovery', () => {
       token_endpoint_auth_methods_supported: ['none'],
       client_id_metadata_document_supported: true,
       scopes_supported: [...AGENT_SCOPES],
+      // OpenID discovery fields: MCP clients parse the openid-configuration form (the one under /api
+      // that passes the dev/QA gate) with an OIDC schema that requires these three.
+      jwks_uri: `${issuer}/jwks`,
+      subject_types_supported: ['public'],
+      id_token_signing_alg_values_supported: ['RS256'],
     });
+    const jwks = await request('GET', '/api/mcp/oauth/jwks');
+    assert.equal(jwks.status, 200);
+    assert.deepEqual(jwks.body, { keys: [] });
 
     const { READ_ONLY_SCOPES } = await import('../auth/scopes.js');
     for (const [readonly, forms] of [
