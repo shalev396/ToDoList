@@ -474,4 +474,16 @@ describe('rate limits', () => {
     }
     assert.ok(limited > 0, 'expected a 429 within 40 registrations');
   });
+
+  it('token and revoke are not limited by register traffic', async () => {
+    const token = await request('POST', '/api/mcp/oauth/token', {
+      form: { grant_type: 'password', client_id: 'x' },
+    });
+    assert.equal(token.status, 400);
+    assert.equal(token.body?.['error'], 'unsupported_grant_type');
+    const revoke = await request('POST', '/api/mcp/oauth/revoke', {
+      form: { token: 'unknown', client_id: 'x' },
+    });
+    assert.equal(revoke.status, 200);
+  });
 });

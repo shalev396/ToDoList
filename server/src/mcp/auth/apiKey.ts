@@ -93,8 +93,8 @@ function withinFailureLimit(
 }
 
 /**
- * Express middleware: authenticates the agent key or grant token for this endpoint (`resourceOf`), or answers 401. `failures` (the per-address
- * failed-authentication limiter) is consulted only when the key fails, so it counts failures alone
+ * Express middleware: authenticates the agent key or grant token for this endpoint (`resourceOf`),
+ * or answers 401. `failures` (the per-address failed-authentication limiter) is consulted only when the key fails, so it counts failures alone
  * and never stands in the way of a key that authenticates; over its limit, it answers 429 itself.
  */
 export function createMcpAuth(
@@ -112,7 +112,8 @@ export function createMcpAuth(
       next();
       return;
     }
-    if (await withinFailureLimit(failures, req, res))
+    if (await withinFailureLimit(failures, req, res)) {
       sendUnauthorized(res, presented, req.body, resource);
+    }
   };
 }

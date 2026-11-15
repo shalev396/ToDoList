@@ -32,8 +32,14 @@ export const privateLimiter = limiter(200);
  */
 export const authLimiter = limiter(100);
 
-/** MCP sign-in's register and token endpoints (/api/mcp/oauth): public, so keep them tight. */
+/** MCP sign-in's client registration (/api/mcp/oauth/register): public, so keep it tight. */
 export const mcpOAuthLimiter = limiter(30);
+
+/**
+ * MCP sign-in's token and revoke endpoints. Hosted agents (Claude.ai) call them from the vendor's
+ * server addresses, so many members share one IP: a generous budget, apart from register's.
+ */
+export const mcpTokenLimiter = limiter(600);
 
 /** OAuth callbacks (/api/public/oauth): a browser lands there once per connection. */
 export const oauthLimiter = limiter(60);

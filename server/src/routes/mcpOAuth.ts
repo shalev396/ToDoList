@@ -2,7 +2,7 @@ import { Router, type ErrorRequestHandler, type RequestHandler } from 'express';
 
 import { McpOAuthController } from '../controllers/index.js';
 import { OAuthError } from '../errors/OAuthError.js';
-import { mcpOAuthLimiter, oauthLimiter } from '../middlewares/rateLimit.js';
+import { mcpOAuthLimiter, mcpTokenLimiter, oauthLimiter } from '../middlewares/rateLimit.js';
 
 /**
  * MCP sign-in, the agent's side (OAuth 2.1 with PKCE). Public: no Cognito, no `{ data }` envelope;
@@ -47,10 +47,10 @@ router.post('/register', mcpOAuthLimiter, McpOAuthController.register);
 router.get('/authorize', oauthLimiter, McpOAuthController.authorize);
 
 /** POST /token: a form; the code or refresh_token grant. */
-router.post('/token', mcpOAuthLimiter, McpOAuthController.token);
+router.post('/token', mcpTokenLimiter, McpOAuthController.token);
 
 /** POST /revoke: RFC 7009, 200 even for an unknown token. */
-router.post('/revoke', McpOAuthController.revoke);
+router.post('/revoke', mcpTokenLimiter, McpOAuthController.revoke);
 
 router.use(oauthErrors);
 
