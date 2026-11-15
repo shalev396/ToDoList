@@ -1196,6 +1196,23 @@ describe('runIntegrationSync: transports and secrets', () => {
     assert.equal(transport.calls.length, 0);
   });
 
+  it('a live run takes a test transport only under node:test: elsewhere it fails before any request', async () => {
+    const usage = stubVault({ token: 'FAKE-token-0000000000' });
+    const s = await setup();
+    const transport = await fakeTransport('v1');
+    const context = process.env['NODE_TEST_CONTEXT'];
+    Reflect.deleteProperty(process.env, 'NODE_TEST_CONTEXT');
+    let summary: SyncRunSummary;
+    try {
+      summary = await run(s.integration.id, { trigger: 'manual', mode: 'live', transport });
+    } finally {
+      process.env['NODE_TEST_CONTEXT'] = context;
+    }
+    assert.deepEqual([summary.status, summary.error?.code], ['failed', 'internal']);
+    assert.equal(transport.calls.length, 0, 'nothing reached the stand-in');
+    assert.equal(usage.loads, 0, 'no credential was opened');
+  });
+
   it('an unknown or unsafe fixture set fails the run as fixtures_missing', async () => {
     const s = await setup();
     for (const fixtureSet of ['v9', '../v1', '..', '']) {
