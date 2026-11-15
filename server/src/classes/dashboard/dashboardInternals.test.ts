@@ -52,7 +52,18 @@ const GUARDED_NAMES: readonly { pattern: RegExp; allowed: ReadonlySet<string> }[
   { pattern: /\bremoveConnectorEverywhere\b/, allowed: new Set([DASHBOARD, INTEGRATION]) },
   { pattern: /\bremoveOrphans\b/, allowed: new Set([DASHBOARD, PURGE]) },
   { pattern: /\breferencedWorkspaceIds\b/, allowed: new Set([DASHBOARD, HISTORY, VIEW]) },
+  // The repository's global id list: the sweep's classes only (models/** is exempt).
+  { pattern: /\blistWorkspaceIds\b/, allowed: new Set([DASHBOARD, HISTORY, VIEW]) },
+  // The load gate by name too: a local `export { History }` in an allowed loader would otherwise
+  // hand the class on without any import edge to History.ts.
+  {
+    pattern: /\bHistory\.of\b|\bHistoryTrail\b/,
+    allowed: new Set([HISTORY, DASHBOARD, NEW_DASHBOARD, DRY_RUN]),
+  },
 ];
+
+/** The load gate, by name: History.of is how a trail is read and written. */
+const HISTORY_NAMES = /\bHistory\.of\b|\bHistoryTrail\b/;
 
 const isTest = (file: string): boolean =>
   file.endsWith('.test.ts') || file.startsWith('testing/') || file.includes('/__tests__/');
@@ -99,6 +110,10 @@ describe('the dashboard internals', () => {
       pattern.test(nameText(scan(files.get(file) ?? '')));
     assert.ok(names(SEED, /\blistOutlines\b/) && names(SEED, /\bpinAccount\b/));
     assert.ok(names(PURGE, /\bremoveOrphans\b/) && names(CASCADE, /\bremoveAllIn\b/));
+    assert.ok(names(DASHBOARD, /\bHistory\.of\b/) && names(HISTORY, /\bHistoryTrail\b/));
+    for (const file of [DASHBOARD, HISTORY, VIEW]) {
+      assert.ok(names(file, /\blistWorkspaceIds\b/), file);
+    }
   });
 
   it('only their legitimate callers load them, and the guarded names are named only there', () => {
@@ -131,6 +146,35 @@ describe('the dashboard internals', () => {
       'mcp/tools/peek.ts: names \\blistOutlines\\b',
       'routes/private/stray.ts: loads classes/dashboard/History.ts',
       'services/pin.ts: names \\bpinAccount\\b',
+    ]);
+  });
+
+  it('a local re-export from an allowed loader does not smuggle History out', () => {
+    const tree = new Map(files);
+    tree.set(
+      DASHBOARD,
+      `${files.get(DASHBOARD) ?? ''}
+export { History };
+`,
+    );
+    tree.set(
+      'routes/private/smuggled.ts',
+      `import { History } from '../../classes/dashboard/Dashboard.js';
+export const go = () => History.of('w', 'd');`,
+    );
+    tree.set(
+      'controllers/trail.ts',
+      `import { HistoryTrail } from '../classes/dashboard/Dashboard.js';
+export const go = (t: HistoryTrail<object>) => t;`,
+    );
+    tree.set(
+      'services/ids.ts',
+      `export const go = (r: { listWorkspaceIds(): string[] }) => r.listWorkspaceIds();`,
+    );
+    assert.deepEqual(violations(tree), [
+      `controllers/trail.ts: names ${HISTORY_NAMES.source}`,
+      `routes/private/smuggled.ts: names ${HISTORY_NAMES.source}`,
+      `services/ids.ts: names ${/\blistWorkspaceIds\b/.source}`,
     ]);
   });
 
