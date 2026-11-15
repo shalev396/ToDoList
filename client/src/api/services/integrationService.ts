@@ -30,6 +30,7 @@ import type {
   UpdateIntegrationResponseData,
 } from '@api-types/api-contracts';
 import type { OAuthSignInProvider } from '@api-types/integrations';
+import type { CleanupProgress } from '@api-types/primaryCalendar.ts';
 
 /** Integrations (server/src/routes/private/integrations.ts). Never a secret in a response. */
 function wsPath(workspaceId: string): string {
@@ -109,10 +110,15 @@ export async function deleteIntegration(
   options: { removeAdded?: boolean } = {},
   config?: ApiRequestConfig,
 ) {
-  await api.delete(integrationPath(workspaceId, integrationId), {
-    ...config,
-    ...(options.removeAdded === true ? { params: { removeAdded: true } } : {}),
-  });
+  const response = await api.delete<ApiSuccessResponse<CleanupProgress> | ''>(
+    integrationPath(workspaceId, integrationId),
+    {
+      ...config,
+      ...(options.removeAdded === true ? { params: { removeAdded: true } } : {}),
+    },
+  );
+  // 200 with the clean-up's counts when "also remove" ran; 204 (no body) otherwise.
+  return typeof response.data === 'object' ? response.data.data : null;
 }
 
 /**

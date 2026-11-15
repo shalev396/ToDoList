@@ -208,15 +208,13 @@ export const connect = {
     confirmTitle_one: 'Delete {{count}} event TodoList added from Google Calendar?',
     confirmTitle_other: 'Delete {{count}} events TodoList added from Google Calendar?',
     confirmBody:
-      'Only events TodoList added; the workspace calendar’s own events are never touched.',
+      'Only events TodoList added to earlier calendars. The current workspace calendar is never touched.',
     confirmDelete: 'Delete',
     removing: 'Removing…',
     removingSoFar: 'Removing… {{done}} so far',
     stop: 'Cancel',
-    failed_one:
-      '{{count}} event couldn’t be removed at Google (no permission). TodoList no longer tracks it.',
-    failed_other:
-      '{{count}} events couldn’t be removed at Google (no permission). TodoList no longer tracks them.',
+    failed_one: '{{count}} event couldn’t be removed at Google. TodoList no longer tracks it.',
+    failed_other: '{{count}} events couldn’t be removed at Google. TodoList no longer tracks them.',
     skipped_one: '{{count}} event is on the current workspace calendar and was left in place.',
     skipped_other: '{{count}} events are on the current workspace calendar and were left in place.',
     needsWrite: 'Switch to Read & write first',
@@ -225,6 +223,11 @@ export const connect = {
     done_one: 'Removed {{count}} event from Google Calendar.',
     done_other: 'Removed {{count}} events from Google Calendar.',
     error: 'The events couldn’t be removed. Try again.',
+    removedSummary: 'Removed {{events}} and {{calendars}} TodoList added.',
+    removedEvents_one: '{{count}} event',
+    removedEvents_other: '{{count}} events',
+    removedCalendars_one: '{{count}} calendar',
+    removedCalendars_other: '{{count}} calendars',
   },
   primary: {
     title: 'Workspace calendar',
@@ -397,9 +400,9 @@ export const templates = {
   share: {
     title: 'Share your connections?',
     body_one:
-      'Adding {{names}} shares its items with everyone in {{workspace}}. Their dated items are also sent to the workspace calendar, a Google calendar the workspace owner chose.',
+      'Adding {{names}} shares its items with everyone in {{workspace}}. Its dated items are also sent to the workspace calendar, a Google calendar a workspace owner chose.',
     body_other:
-      'Adding {{names}} shares their items with everyone in {{workspace}}. Their dated items are also sent to the workspace calendar, a Google calendar the workspace owner chose.',
+      'Adding {{names}} shares their items with everyone in {{workspace}}. Their dated items are also sent to the workspace calendar, a Google calendar a workspace owner chose.',
     share: 'Share and create',
     without: 'Create without them',
     cancel: 'Cancel',

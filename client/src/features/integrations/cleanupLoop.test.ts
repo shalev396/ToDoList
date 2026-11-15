@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import type { CleanupProgress } from '@api-types/primaryCalendar.ts';
 import {
   addProgress,
+  finishProgress,
   madeProgress,
   MAX_CLEANUP_CALLS,
   NO_PROGRESS,
@@ -109,5 +110,28 @@ describe('runCleanup', () => {
     }, always);
     assert.equal(calls, MAX_CLEANUP_CALLS);
     assert.equal(result.kind, 'incomplete');
+  });
+});
+
+describe('finishProgress', () => {
+  it('adds the last answer to the earlier totals and leaves nothing remaining', () => {
+    const all = finishProgress(
+      progress({ events: 5, calendars: 1, failed: 1, skipped: 2, remaining: 4 }),
+      progress({ events: 3, calendars: 1, failed: 2, skipped: 1 }),
+    );
+    assert.deepEqual(
+      all,
+      progress({ events: 8, calendars: 2, failed: 3, skipped: 2, remaining: 0 }),
+    );
+  });
+  it('keeps the totals when the server sent no counts (204)', () => {
+    const totals = progress({ events: 5 });
+    assert.deepEqual(finishProgress(totals, null), totals);
+  });
+  it('reports a one-call disconnect on its own', () => {
+    assert.deepEqual(
+      finishProgress(NO_PROGRESS, progress({ events: 2, failed: 1 })),
+      progress({ events: 2, failed: 1 }),
+    );
   });
 });

@@ -47,6 +47,14 @@ export function addProgress(total: CleanupProgress, next: CleanupProgress): Clea
   };
 }
 
+/** The whole run once its last call completed: the earlier calls' totals plus the last answer's own counts (null: none). */
+export function finishProgress(
+  totals: CleanupProgress,
+  last: CleanupProgress | null,
+): CleanupProgress {
+  return last === null ? totals : addProgress(totals, { ...last, remaining: 0 });
+}
+
 /**
  * Calls `step` again by itself while each "cleanup_incomplete" answer made progress. It stops, with
  * the totals so far, on no progress, an error, `shouldContinue()` turning false (Cancel, unmount)

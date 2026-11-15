@@ -66,7 +66,7 @@ export const editor = {
     aMember: 'A member',
     shareTitle: 'Share {{name}} with the workspace?',
     shareBody:
-      'Adding {{name}} shares its items with everyone in {{workspace}}. Their dated items are also sent to the workspace calendar, a Google calendar the workspace owner chose.',
+      'Adding {{name}} shares its items with everyone in {{workspace}}. Their dated items are also sent to the workspace calendar, a Google calendar a workspace owner chose.',
     shareConfirm: 'Share',
     shareCancel: 'Cancel',
   },

@@ -45,6 +45,7 @@ import {
   isOAuthSignIn,
   type OAuthMode,
 } from './oauthSetup';
+import { finishProgress } from './cleanupLoop';
 import { PROVIDER_REGISTRY } from './providers';
 import { CleanupNote, CleanupProgressLine, CleanupRunning } from './CleanupNote';
 import { daysUntil, needsRenewalHint } from './status';
@@ -207,8 +208,20 @@ export function IntegrationCard({
     }
     setConfirming(false);
     if (result.kind === 'done') {
-      if (result.totals.failed > 0) {
-        toast.warning(t('connect.pushed.failed', { count: result.totals.failed }));
+      const all = finishProgress(result.totals, result.value);
+      if (withRemoval) {
+        toast.success(
+          t('connect.pushed.removedSummary', {
+            events: t('connect.pushed.removedEvents', { count: all.events }),
+            calendars: t('connect.pushed.removedCalendars', { count: all.calendars }),
+          }),
+        );
+      }
+      if (all.failed > 0) {
+        toast.warning(t('connect.pushed.failed', { count: all.failed }));
+      }
+      if (all.skipped > 0) {
+        toast.info(t('connect.pushed.skipped', { count: all.skipped }));
       }
       return;
     }
