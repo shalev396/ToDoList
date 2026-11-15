@@ -2,7 +2,7 @@
  * AuditLog.page (audit_log_query's reads) on a throwaway MongoDB: newest first, paged by an opaque
  * cursor until the end (null), filtered by action and agent key, a malformed cursor is a 400, and
  * the integrations its entries are about come with it (a deleted one too; an item a calendar push
- * wrote names its integration in its meta).
+ * wrote names its integration in its meta), and the page is immutable.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -97,6 +97,18 @@ describe('AuditLog.page', () => {
     );
     assert.equal(last.nextCursor, null);
     assert.equal(last.entries[0] && last.integrationOf(last.entries[0]), undefined);
+
+    // A value: the page, its list and what it says of an integration cannot change.
+    assert.ok(Object.isFrozen(first) && Object.isFrozen(first.entries));
+    assert.throws(() => {
+      (first.entries as AuditLogClass[]).push(push);
+    }, TypeError);
+    const about = first.integrationOf(push);
+    assert.ok(about && Object.isFrozen(about));
+    assert.throws(() => {
+      (about as { ownerUserId: string }).ownerUserId = 'u-someone-else';
+    }, TypeError);
+    assert.equal(first.integrationOf(push)?.ownerUserId, 'u-other');
 
     const byAgent = await AuditLog.page(workspaceId, { limit: 10, actorAgentId: 'agent-1' });
     assert.equal(byAgent.entries.length, 2);

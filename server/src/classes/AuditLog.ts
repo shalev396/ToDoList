@@ -37,25 +37,39 @@ export interface AuditPageQuery {
 /** What a page tells of an integration an entry is about: whose it is, and its provider. */
 export type AuditedIntegration = Pick<IntegrationData, 'id' | 'provider' | 'ownerUserId'>;
 
+/** AuditPage's maker, handed to this module by the class itself: only AuditLog.page makes one. */
+let newAuditPage: (
+  entries: readonly AuditLog[],
+  nextCursor: string | null,
+  integrations: ReadonlyMap<string, AuditedIntegration>,
+) => AuditPage;
+
 /**
  * One page of the audit log, as a value: its entries (newest first), the cursor of the next page
  * (null at the end), and the integrations its entries are about (deleted ones too), so a reader
- * can apply who may see what of them.
+ * can apply who may see what of them. Immutable (the entries are entities, frozen inside; the
+ * list and each integration are frozen); only AuditLog.page makes one.
  */
 export class AuditPage {
+  static {
+    newAuditPage = (entries, nextCursor, integrations): AuditPage =>
+      new AuditPage(entries, nextCursor, integrations);
+  }
+
   readonly #entries: readonly AuditLog[];
   readonly #nextCursor: string | null;
-  readonly #integrations: ReadonlyMap<string, AuditedIntegration>;
+  readonly #integrations: ReadonlyMap<string, Readonly<AuditedIntegration>>;
 
-  /** Made by AuditLog.page only. */
-  constructor(
+  private constructor(
     entries: readonly AuditLog[],
     nextCursor: string | null,
     integrations: ReadonlyMap<string, AuditedIntegration>,
   ) {
     this.#entries = Object.freeze([...entries]);
     this.#nextCursor = nextCursor;
-    this.#integrations = new Map(integrations);
+    this.#integrations = new Map(
+      [...integrations].map(([id, integration]) => [id, Object.freeze({ ...integration })]),
+    );
     Object.freeze(this);
   }
 
@@ -68,7 +82,7 @@ export class AuditPage {
   }
 
   /** The integration this entry is an event of, when it is one and still known. */
-  integrationOf(entry: AuditLog): AuditedIntegration | undefined {
+  integrationOf(entry: AuditLog): Readonly<AuditedIntegration> | undefined {
     const id = entry.integrationId;
     return id === null ? undefined : this.#integrations.get(id);
   }
@@ -190,7 +204,7 @@ export class AuditLog extends WorkspaceEntity<AuditLogData> {
     );
     const nextCursor =
       rows.length > query.limit && last !== undefined ? AuditLog.#encodeCursor(last) : null;
-    return new AuditPage(entries, nextCursor, integrations);
+    return newAuditPage(entries, nextCursor, integrations);
   }
 
   get action(): string {
