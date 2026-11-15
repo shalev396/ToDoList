@@ -15,6 +15,7 @@ import {
   type ItemSweepOptions,
   type ItemUpsert,
   type LocalItemPatch,
+  type MirroredItemPatch,
   type SweepWindow,
 } from '../definitions/Item.js';
 import type { AggregateOptions } from '../definitions/common.js';
@@ -158,6 +159,18 @@ const LOCAL_PATCH_KEYS: readonly (keyof LocalItemPatch)[] = [
   'containerId',
   'props',
   'visibility',
+  'closedAt',
+];
+
+const MIRRORED_PATCH_KEYS: readonly (keyof MirroredItemPatch)[] = [
+  'title',
+  'status',
+  'statusRaw',
+  'priority',
+  'startAt',
+  'dueAt',
+  'endAt',
+  'allDay',
   'closedAt',
 ];
 
@@ -437,6 +450,26 @@ export const ItemRepository: IItemRepository = {
       throw new MirroredItemError(mirrored._id, mirrored.source.provider, mirrored.source.url);
     }
     return null;
+  },
+
+  async updateMirrored(workspaceId, integrationId, id, patch, options) {
+    const set = {
+      ...setFields(patch, MIRRORED_PATCH_KEYS),
+      ...(options.resync ? { 'source.hash': null } : {}),
+    };
+    if (Object.keys(set).length === 0) return this.findById(workspaceId, id);
+    const doc = await ItemMongoModel.findOneAndUpdate(
+      {
+        _id: id,
+        workspaceId,
+        integrationId,
+        deletedAt: null,
+        'source.provider': { $ne: 'local' },
+      },
+      { $set: set },
+      { new: true, runValidators: true },
+    ).lean<ItemFields>();
+    return doc ? toItemData(doc) : null;
   },
 
   async setOverlay(workspaceId, id, overlay) {

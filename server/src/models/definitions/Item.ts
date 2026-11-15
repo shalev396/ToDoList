@@ -152,6 +152,23 @@ export interface LocalItemPatch {
 }
 
 /**
+ * What a write-back sets on a mirrored item (plan Addendum A1): the fields its provider confirmed
+ * (and, for fields its provider lacks, the values kept here). Never its source, kind, links or
+ * overlay.
+ */
+export interface MirroredItemPatch {
+  title?: string;
+  status?: ItemStatus;
+  statusRaw?: string | null;
+  priority?: number | null;
+  startAt?: Date | null;
+  dueAt?: Date | null;
+  endAt?: Date | null;
+  allDay?: boolean;
+  closedAt?: Date | null;
+}
+
+/**
  * One provider record mapped by a sync: every field the sync owns. Fields left out are written as
  * null / empty, so a value cleared at the source is cleared here too. The overlay, visibility,
  * owner and linked items belong to users and are never written.
@@ -217,6 +234,18 @@ export interface IItemRepository {
   createLocal(workspaceId: string, input: CreateLocalItemInput): Promise<ItemData>;
   /** Local items only: a mirrored item throws MirroredItemError (edit it at the source). */
   updateLocal(workspaceId: string, id: string, patch: LocalItemPatch): Promise<ItemData | null>;
+  /**
+   * A write-back on a live mirrored item of `integrationId` (never a local one): only the fields
+   * given change. With `resync`, its `source.hash` is cleared, so the next sync of the record
+   * writes every field the provider holds. Null when there is no such item.
+   */
+  updateMirrored(
+    workspaceId: string,
+    integrationId: string,
+    id: string,
+    patch: MirroredItemPatch,
+    options: { resync: boolean },
+  ): Promise<ItemData | null>;
   /** Only the overlay fields given change. Works on mirrored and local items. */
   setOverlay(
     workspaceId: string,

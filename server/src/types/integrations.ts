@@ -26,6 +26,22 @@ export type ConnectableProvider = (typeof CONNECTABLE_PROVIDERS)[number];
  */
 export const COMING_SOON_PROVIDERS = ['moodle'] as const satisfies readonly ConnectableProvider[];
 
+/**
+ * The fields of an item (the Item model's own) that a mirrored item may write back to its provider
+ * when its integration is read & write (plan Addendum A1). Each provider's definition names the
+ * ones its API really has (`writableFields`); every other field of the item stays in TodoList.
+ * `dueAt` carries `allDay` with it, and so does an event's time (`startAt`, `endAt`).
+ */
+export const WRITABLE_FIELDS = [
+  'title',
+  'status',
+  'dueAt',
+  'startAt',
+  'endAt',
+  'priority',
+] as const;
+export type WritableField = (typeof WRITABLE_FIELDS)[number];
+
 // ─── Non-secret config, per provider ────────────────────────────────────────
 
 export interface JiraConfig {
