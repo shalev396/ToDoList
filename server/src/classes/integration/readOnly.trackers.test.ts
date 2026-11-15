@@ -238,8 +238,14 @@ describe('a to-do integration while read-only', () => {
     });
     assert.equal(refused.status, 409, refused.text);
     assert.equal(refused.body?.['code'], 'integration_read_only');
-    const viaAgent = await tool('update_todo', { id: item.id, title: 'Renamed by an agent' });
+    const viaAgent = await tool('update_todo', {
+      id: item.id,
+      title: 'Renamed by an agent',
+      confirm: true,
+    });
     assert.equal(viaAgent.isError, true);
+    // The read-only gate answers (not the confirm gate before it).
+    assert.match(JSON.stringify(viaAgent.content), /read-only/);
     assert.deepEqual(writes(), before);
     assert.equal((await items.findById(wid, item.id))?.title, 'Synced task');
   });
