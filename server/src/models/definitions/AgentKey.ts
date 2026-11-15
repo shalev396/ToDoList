@@ -64,8 +64,14 @@ export interface GrantRotation {
   accessExpiresAt: Date;
   refreshHash: string;
   refreshExpiresAt: Date;
+  /** The refresh token that stays recognised as "just replaced" (reuse detection). */
   prevRefreshHash: string;
   prevRotatedAt: Date;
+  /**
+   * A second refresh token that still works as the current one (the winner of a doubled
+   * refresh); null clears it.
+   */
+  altRefreshHash: string | null;
   /** When the last `agent_key.oauth_refresh` audit entry was written; unchanged when omitted. */
   refreshAuditedAt?: Date;
 }
@@ -73,10 +79,13 @@ export interface GrantRotation {
 /** A grant found by a presented refresh token. */
 export interface GrantByRefresh {
   key: AgentKeyData;
-  /** Which refresh token of the grant was presented: the current one or the one before it. */
-  match: 'current' | 'previous';
+  /**
+   * Which refresh token of the grant was presented: the current one, the one before it, or the
+   * alternate (a doubled refresh's other result, valid like the current one).
+   */
+  match: 'current' | 'previous' | 'alternate';
   prevRotatedAt: Date | null;
-  /** The grant's current refresh hash: what a rotation expects. */
+  /** The grant's current refresh hash: what a rotation expects. It crosses to the class here only. */
   currentRefreshHash: string;
   refreshAuditedAt: Date | null;
 }
@@ -98,12 +107,15 @@ export interface IAgentKeyRepository {
   revokeForUser(workspaceId: string, userId: string): Promise<number>;
   /** Records a use (`lastUsedAt`) without touching `updatedAt`. */
   touch(workspaceId: string, id: string, at: Date): Promise<void>;
-  /** Usable keys and grants (not revoked, not past `expiresAt`): the per-user cap counts these. */
+  /**
+   * Usable keys and grants (not revoked, not past `expiresAt`, a grant's refresh token not
+   * expired): the per-user cap counts these.
+   */
   countForUser(workspaceId: string, userId: string): Promise<number>;
   /** Global: the key behind a presented hash, revoked or expired too (the caller checks). */
   findByHash(keyHash: string): Promise<AgentKeyData | null>;
   createGrant(workspaceId: string, input: CreateGrantInput): Promise<AgentKeyData>;
-  /** Global: the grant behind a presented refresh hash, its current or its previous one. */
+  /** Global: the grant behind a presented refresh hash (current, previous or alternate). */
   findByRefreshHash(hash: string): Promise<GrantByRefresh | null>;
   /**
    * Atomic: moves the grant to `next` only while its current refresh hash is still

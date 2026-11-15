@@ -1,7 +1,8 @@
 /**
  * Agent-key authentication (MCP.md §4 option A, DATA.md §3.14). Agents send
- * `Authorization: Bearer elk_…`; the key is hashed with SHA-256 and looked up by its hash, the
- * only form ever stored. A missing, malformed, unknown, expired or revoked key, or one whose user
+ * `Authorization: Bearer elk_…` (a key) or `Bearer elo_…` (a sign-in grant's access token); the
+ * token is hashed with SHA-256 and looked up by its hash, the only form ever stored. A missing,
+ * malformed, unknown, expired or revoked token, or one whose user
  * is no longer an active member, gets the same 401: `WWW-Authenticate: Bearer` and a generic
  * JSON-RPC error that never says which check failed.
  */
@@ -32,7 +33,7 @@ export function bearerKey(authorization: string | undefined): {
   };
 }
 
-/** The agent behind a raw key, or null (AgentKey.authenticate): the key's own rules live there. */
+/** The agent behind a raw key or access token, or null (AgentKey.authenticate has the rules). */
 export function authenticateAgentKey(
   rawKey: string,
   now: Date = new Date(),

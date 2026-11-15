@@ -8,7 +8,10 @@ import {
 } from '../definitions/AgentKey.js';
 import { setFields, uuidIdField } from './common.js';
 
-/** Repository-only fields: hashes and the authorization request never leave this file. */
+/**
+ * Repository-only fields: no hash is mapped into AgentKeyData. (`findByRefreshHash` hands the
+ * class the current refresh hash, which a rotation needs; the others stay here.)
+ */
 type AgentKeyFields = Omit<AgentKeyData, 'id' | 'kind'> & {
   _id: string;
   /** Absent on rows from before grants: those are keys. */
@@ -17,6 +20,7 @@ type AgentKeyFields = Omit<AgentKeyData, 'id' | 'kind'> & {
   refreshHash?: string;
   prevRefreshHash?: string;
   prevRotatedAt?: Date;
+  altRefreshHash?: string;
   refreshAuditedAt?: Date;
   sourceRequestId?: string;
 };
@@ -42,6 +46,7 @@ const agentKeySchema = new mongoose.Schema<AgentKeyFields>(
     refreshHash: { type: String },
     prevRefreshHash: { type: String },
     prevRotatedAt: { type: Date },
+    altRefreshHash: { type: String },
     refreshAuditedAt: { type: Date },
     sourceRequestId: { type: String },
     expiresAt: { type: Date, default: null },
@@ -54,6 +59,7 @@ const agentKeySchema = new mongoose.Schema<AgentKeyFields>(
 agentKeySchema.index({ keyHash: 1 }, { unique: true }); // lookup on every MCP call
 agentKeySchema.index({ refreshHash: 1 }, { unique: true, sparse: true }); // a refresh lookup
 agentKeySchema.index({ prevRefreshHash: 1 }, { sparse: true }); // a retried refresh
+agentKeySchema.index({ altRefreshHash: 1 }, { sparse: true }); // a doubled refresh's other token
 agentKeySchema.index({ sourceRequestId: 1 }, { sparse: true }); // revoking a grant by its request
 agentKeySchema.index({ workspaceId: 1, userId: 1, revokedAt: 1 });
 // Expiry reminders. No TTL: keys are kept for the audit trail.
@@ -64,7 +70,7 @@ agentKeySchema.index(
 
 export const AgentKeyMongoModel = mongoose.model<AgentKeyFields>('AgentKey', agentKeySchema);
 
-/** Everything but the hashes, which never leave the repository. Rows from before grants are keys. */
+/** Everything but the hashes. Rows from before grants are keys. */
 function toAgentKeyData(doc: AgentKeyFields): AgentKeyData {
   return {
     id: doc._id,
@@ -147,11 +153,16 @@ export const AgentKeyRepository: IAgentKeyRepository = {
   },
 
   async countForUser(workspaceId, userId) {
+    const now = new Date();
     return AgentKeyMongoModel.countDocuments({
       workspaceId,
       userId,
       revokedAt: null,
-      $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+      $and: [
+        { $or: [{ expiresAt: null }, { expiresAt: { $gt: now } }] },
+        // A grant whose refresh token ran out can never be used again.
+        { $or: [{ refreshExpiresAt: null }, { refreshExpiresAt: { $gt: now } }] },
+      ],
     });
   },
 
@@ -183,12 +194,17 @@ export const AgentKeyRepository: IAgentKeyRepository = {
 
   async findByRefreshHash(hash) {
     const doc = await AgentKeyMongoModel.findOne({
-      $or: [{ refreshHash: hash }, { prevRefreshHash: hash }],
+      $or: [{ refreshHash: hash }, { prevRefreshHash: hash }, { altRefreshHash: hash }],
     }).lean<AgentKeyFields>();
     if (doc?.refreshHash === undefined) return null;
     return {
       key: toAgentKeyData(doc),
-      match: doc.refreshHash === hash ? 'current' : 'previous',
+      match:
+        doc.refreshHash === hash
+          ? 'current'
+          : doc.altRefreshHash === hash
+            ? 'alternate'
+            : 'previous',
       prevRotatedAt: doc.prevRotatedAt ?? null,
       currentRefreshHash: doc.refreshHash,
       refreshAuditedAt: doc.refreshAuditedAt ?? null,
@@ -207,10 +223,12 @@ export const AgentKeyRepository: IAgentKeyRepository = {
           refreshExpiresAt: next.refreshExpiresAt,
           prevRefreshHash: next.prevRefreshHash,
           prevRotatedAt: next.prevRotatedAt,
+          ...(next.altRefreshHash === null ? {} : { altRefreshHash: next.altRefreshHash }),
           ...(next.refreshAuditedAt === undefined
             ? {}
             : { refreshAuditedAt: next.refreshAuditedAt }),
         },
+        ...(next.altRefreshHash === null ? { $unset: { altRefreshHash: '' } } : {}),
       },
     );
     return result.modifiedCount > 0;

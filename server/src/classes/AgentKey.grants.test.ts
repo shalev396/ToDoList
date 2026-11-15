@@ -154,6 +154,51 @@ describe('AgentKey grants', () => {
     await assertInvalidGrant(AgentKey.refresh(rotated.refreshToken, CLIENT, later));
   });
 
+  it('a doubled refresh keeps both results working; older tokens still revoke', async () => {
+    const t0 = new Date();
+    const hour = new Date(t0.getTime() + 60 * MIN);
+    const doubled = async (): Promise<{
+      issued: IssuedTokens;
+      results: IssuedTokens[];
+    }> => {
+      const { tokens } = await grant('doubled');
+      const results = await Promise.all([
+        AgentKey.refresh(tokens.refreshToken, CLIENT, t0),
+        AgentKey.refresh(tokens.refreshToken, CLIENT, t0),
+      ]);
+      assert.notEqual(results[0].refreshToken, results[1].refreshToken);
+      return { issued: tokens, results };
+    };
+
+    // Each result's refresh token works an hour later, whichever one the client kept.
+    for (const keep of [0, 1]) {
+      const { results } = await doubled();
+      const kept = results[keep];
+      assert.ok(kept);
+      const next = await AgentKey.refresh(kept.refreshToken, CLIENT, hour);
+      assert.ok(await AgentKey.authenticate(next.accessToken, hour, {}));
+    }
+
+    // The original token, shown after the grace window, is still a reuse: the grant ends.
+    const { issued, results } = await doubled();
+    await assertInvalidGrant(
+      AgentKey.refresh(issued.refreshToken, CLIENT, new Date(t0.getTime() + 31_000)),
+    );
+    for (const result of results) {
+      await assertInvalidGrant(AgentKey.refresh(result.refreshToken, CLIENT, hour));
+    }
+  });
+
+  it('a token two rotations old is refused', async () => {
+    const { tokens } = await grant('two-old');
+    const t0 = new Date();
+    const one = await AgentKey.refresh(tokens.refreshToken, CLIENT, t0);
+    await AgentKey.refresh(one.refreshToken, CLIENT, new Date(t0.getTime() + MIN));
+    await assertInvalidGrant(
+      AgentKey.refresh(tokens.refreshToken, CLIENT, new Date(t0.getTime() + 2 * MIN)),
+    );
+  });
+
   it('a refresh token unused for 90 days is refused; the 365-day cap holds even when used daily', async () => {
     const unused = await grant('idle');
     const t0 = new Date();
@@ -208,6 +253,15 @@ describe('AgentKey grants', () => {
     assert.ok(first);
     await AgentKey.revoke(caller, first.key.id);
     await AgentKey.create(caller, { name: 'fits now', scopes: ['read'] });
+  });
+
+  it('a grant whose refresh token has expired no longer counts toward the cap', async () => {
+    const team = await newTeam('grants-cap-expired');
+    const keys = await getAgentKeyRepository();
+    await issue(team, CLIENT, new Date(Date.now() - 91 * DAY));
+    assert.equal(await keys.countForUser(team.workspace.id, team.editor.id), 0);
+    await issue(team);
+    assert.equal(await keys.countForUser(team.workspace.id, team.editor.id), 1);
   });
 
   it('a refresh with another clientId is invalid_grant', async () => {

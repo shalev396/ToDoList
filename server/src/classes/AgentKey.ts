@@ -17,6 +17,7 @@ import { randomBytes } from 'node:crypto';
 import { LIMITS } from '../config/limits.js';
 import { AppError } from '../errors/AppError.js';
 import { NotFoundError } from '../errors/NotFoundError.js';
+import { OAuthError } from '../errors/OAuthError.js';
 import { resolvePrincipal, type AuthenticatedAgent } from '../mcp/auth/principal.js';
 import { ROLE_SCOPES } from '../mcp/auth/scopes.js';
 import type { AgentKeyData } from '../models/definitions/AgentKey.js';
@@ -24,7 +25,6 @@ import { getAgentKeyRepository } from '../models/index.js';
 import type { AgentKeyView } from '../routes/private/agentKeys.js';
 import { sha256Hex } from '../services/crypto/hashing.js';
 import type { AgentScope } from '../types/domain.js';
-import { OAuthError } from '../errors/OAuthError.js';
 import { Actor, type ActorOrigin } from './base/Actor.js';
 import { AuditTarget } from './base/AuditTarget.js';
 import type { Caller } from './base/Caller.js';
@@ -358,6 +358,10 @@ export class AgentKey
       const accessToken = newToken(ACCESS_PREFIX);
       const refreshToken = newToken(REFRESH_PREFIX);
       const capMs = data.expiresAt?.getTime() ?? now.getTime() + GRANT_MAX_MS;
+      // The token a refresh replaces becomes `prev` (reuse detection). A retry of `prev` within the
+      // grace window (a doubled refresh) instead keeps the superseded current token alive as the
+      // alternate: whichever response the client kept, its refresh token works.
+      const retried = found.match === 'previous';
       const audit =
         found.refreshAuditedAt === null ||
         now.getTime() - found.refreshAuditedAt.getTime() >= REFRESH_AUDIT_INTERVAL_MS;
@@ -366,8 +370,9 @@ export class AgentKey
         accessExpiresAt: new Date(now.getTime() + ACCESS_TTL_SECONDS * 1000),
         refreshHash: hashAgentKey(refreshToken),
         refreshExpiresAt: new Date(Math.min(now.getTime() + REFRESH_TTL_MS, capMs)),
-        prevRefreshHash: found.currentRefreshHash,
-        prevRotatedAt: now,
+        prevRefreshHash: presented,
+        prevRotatedAt: retried ? (found.prevRotatedAt ?? now) : now,
+        altRefreshHash: retried ? found.currentRefreshHash : null,
         ...(audit ? { refreshAuditedAt: now } : {}),
       });
       if (!rotated) continue;
