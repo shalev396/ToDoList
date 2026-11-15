@@ -1,7 +1,7 @@
 /**
  * The OAuth providers besides Google Calendar: what each one asks for and how it names the
  * connected account. Everything specific to a provider is here, so the flow (service.ts), the
- * routes and the integration rules (integrationConnect.ts) stay generic.
+ * routes and the integration rules (Integration.connectOAuth) stay generic.
  *
  * Endpoints, parameters and lifetimes verified against the providers' documentation
  * (INTEGRATIONS-SETUP.md):
@@ -25,8 +25,6 @@ export interface ProviderIdentity {
   config: Record<string, unknown>;
   /** The default topic (slug) a new connection starts in. */
   topicSlug: string;
-  /** GitHub: the login whose own repositories are personal. */
-  githubLogin?: string;
 }
 
 export interface OAuthProviderDef {
@@ -162,9 +160,9 @@ export const OAUTH_PROVIDER_DEFS: Readonly<Record<OAuthProviderId, OAuthProvider
       return {
         accountId: login.toLowerCase(),
         label: login,
+        // A user's own repositories are personal (GitHubIntegration adds the topic rule).
         config: { owner: login, ownerType: 'user' },
         topicSlug: 'personal',
-        githubLogin: login,
       };
     },
   },

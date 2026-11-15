@@ -445,6 +445,7 @@ describe('credential route', () => {
         'expiresAt',
         'id',
         'lastSyncAt',
+        'mode',
         'provider',
         'status',
       ]);

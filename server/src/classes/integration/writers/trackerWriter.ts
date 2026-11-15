@@ -1,7 +1,9 @@
 /**
- * The write client (H5, D19): the ONLY code that sends a provider anything but a read, and the
+ * The write client (H5, D19): the ONLY code that sends a tracker anything but a read, and the
  * only thing it can send is the request that CREATES one item. It is not the read-only sync
- * client (sync/http.ts), which stays read-only.
+ * client (sync/http.ts), which stays read-only. Only the integration classes reach it, inside
+ * their write session (Integration#withWriteSession: never for demo data or a read-only
+ * integration); writePaths.test.ts holds that.
  *
  * - There is no generic request method. Each create is a typed function; the request is built
  *   here from typed fields (title ≤ 255 characters, plain-text description, due date, optional
@@ -23,11 +25,13 @@ import {
   type HttpRequest,
   type HttpResponse,
   type Transport,
-} from '../../sync/http.js';
-import { checkedId, splitRepo } from './ids.js';
-import { localDateString } from '../../sync/providers/trackerCommon.js';
+} from '../../../sync/http.js';
+import { checkedId, splitRepo } from '../../../services/providerCreate/ids.js';
+import { localDateString } from '../../../sync/providers/trackerCommon.js';
+import { cleanTitle, TITLE_MAX } from '../../../services/providerCreate/fields.js';
+import type { JiraSiteBase } from '../../../services/providerCreate/jiraSites.js';
 
-export const TITLE_MAX = 255;
+export { cleanTitle, TITLE_MAX };
 const DESCRIPTION_MAX = 5000;
 
 /** The one Linear mutation the write client can send. */
@@ -136,13 +140,6 @@ export function guardedTransport(inner: Transport, jiraBases: readonly string[] 
 }
 
 // ─── request building (typed fields only) ───────────────────────────────────
-
-/** The title as sent: trimmed, at most TITLE_MAX characters; null when nothing is left. */
-export function cleanTitle(title: string): string | null {
-  const trimmed = title.trim();
-  if (trimmed === '') return null;
-  return Array.from(trimmed).slice(0, TITLE_MAX).join('').trim();
-}
 
 /** A control character (below U+0020) anywhere in the text. */
 function hasControlCharacter(text: string): boolean {
@@ -321,13 +318,6 @@ async function post(
 }
 
 const isResult = (value: HttpResponse | WriteResult): value is WriteResult => 'kind' in value;
-
-export interface JiraSiteBase {
-  /** `https://api.atlassian.com/ex/jira/<cloudId>` (OAuth) or the site's own `https://<host>`. */
-  base: string;
-  /** The site's browse URL (`https://<host>`), for the link. */
-  siteUrl: string;
-}
 
 /** The write endpoints. One instance per transport; holds no credential. */
 export interface WriteClient {

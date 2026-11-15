@@ -130,7 +130,7 @@ before(async () => {
   ownerId = (me.body?.['data'] as { id: string }).id;
   useAdapter(liveAdapter('linear', 'apiKey'));
   useAdapter(liveAdapter('jira', 'token'));
-  const { setLiveTransportForTests } = await import('../../services/integrationTest.js');
+  const { setLiveTransportForTests } = await import('../../classes/integration/connectionTest.js');
   setLiveTransportForTests((timeoutMs) => {
     transportTimeouts.push(timeoutMs);
     return stubProvider;
@@ -140,7 +140,8 @@ before(async () => {
 after(async () => {
   // The harness always stops, even when setup failed: a running mongod keeps the process alive.
   try {
-    const { setLiveTransportForTests } = await import('../../services/integrationTest.js');
+    const { setLiveTransportForTests } =
+      await import('../../classes/integration/connectionTest.js');
     setLiveTransportForTests(null);
     for (const [provider, adapter] of originals) {
       unregisterAdapter(provider);

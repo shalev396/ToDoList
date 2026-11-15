@@ -2,7 +2,6 @@ import { type RequestHandler } from 'express';
 
 import { LIMITS } from '../config/limits.js';
 import { takeSensitiveBody } from '../middlewares/sensitiveBody.js';
-import { toIntegrationStatus } from '../models/definitions/Integration.js';
 import type {
   CreateIntegrationResponseData,
   GetIntegrationConfigResponseData,
@@ -12,34 +11,19 @@ import type {
   TestIntegrationResponseData,
   UpdateIntegrationResponseData,
 } from '../routes/private/integrations.js';
+import { Integration } from '../classes/integration/index.js';
 import { CreateIntegrationBody, UpdateIntegrationBody } from '../services/integrationConfig.js';
-import { saveIntegrationCredential } from '../services/integrationCredentials.js';
-import { listOwnIntegrations } from '../services/integrationOwnership.js';
-import {
-  createIntegration,
-  disconnectIntegration,
-  readIntegrationConfig,
-  updateIntegration,
-  type IntegrationActor,
-} from '../services/integrations.js';
-import { sharedOwnIntegrationIds, stopSharingIntegration } from '../services/sharing.js';
-import { testIntegrationConnection } from '../services/integrationTest.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
 
-/** The UI: a person, no agent. */
-function uiActor(req: WorkspaceRequest): IntegrationActor {
-  return req.caller.actor;
-}
-
-// Every integration answer is toIntegrationStatus(), to its owner only: nothing else of it.
+// Every integration answer is its status view (Integration#toView), to its owner only.
 
 /** The caller's own integrations only: other members' show as provider icons on Members. */
 const list: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
-  const data: ListIntegrationsResponseData = (
-    await listOwnIntegrations(request.workspace, request.user.id)
-  ).map(toIntegrationStatus);
+  const data: ListIntegrationsResponseData = (await Integration.listOwn(request.caller)).map(
+    (integration) => integration.toView(),
+  );
   res.success(data);
 };
 
@@ -47,7 +31,7 @@ const list: RequestHandler = async (req, res): Promise<void> => {
 const sharing: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
   const data: IntegrationSharingResponseData = {
-    shared: await sharedOwnIntegrationIds(request.workspace, request.user.id),
+    shared: await Integration.sharedOwnIds(request.caller),
   };
   res.success(data);
 };
@@ -55,8 +39,8 @@ const sharing: RequestHandler = async (req, res): Promise<void> => {
 const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateIntegrationBody, req.body);
   const request = req as WorkspaceRequest;
-  const created = await createIntegration(request.workspace, uiActor(request), body);
-  const data: CreateIntegrationResponseData = toIntegrationStatus(created);
+  const created = await Integration.connectWithKey(request.caller, body);
+  const data: CreateIntegrationResponseData = created.toView();
   res.success(data, 201);
 };
 
@@ -64,22 +48,15 @@ const create: RequestHandler = async (req, res): Promise<void> => {
 const saveCredential: RequestHandler = async (req, res): Promise<void> => {
   const secret = takeSensitiveBody(req);
   const request = req as WorkspaceRequest;
-  await saveIntegrationCredential(
-    request.workspace,
-    uiActor(request),
-    routeParam(req, 'iid'),
-    secret,
-  );
+  const integration = await Integration.findOwn(request.caller, routeParam(req, 'iid'));
+  await integration.saveCredential(request.caller, secret);
   res.status(204).end();
 };
 
 const test: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
-  const outcome = await testIntegrationConnection(
-    request.workspace,
-    uiActor(request),
-    routeParam(req, 'iid'),
-  );
+  const integration = await Integration.findOwn(request.caller, routeParam(req, 'iid'));
+  const outcome = await integration.testConnection(request.caller);
   if ('retryAfterMs' in outcome) {
     res.set('Retry-After', String(Math.ceil(outcome.retryAfterMs / 1000)));
     res.error(
@@ -95,41 +72,42 @@ const test: RequestHandler = async (req, res): Promise<void> => {
 /** The non-secret config only, validated again (its owner; 404 for anyone else). */
 const config: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
-  const data = (await readIntegrationConfig(
-    request.workspace,
-    request.user.id,
-    routeParam(req, 'iid'),
-  )) as GetIntegrationConfigResponseData;
+  const integration = await Integration.findOwn(request.caller, routeParam(req, 'iid'));
+  const data = integration.readConfig(request.caller) as GetIntegrationConfigResponseData;
   res.success(data);
 };
 
+/**
+ * The label, topic, config and expiry (`integration.update`) and the mode (`integration.mode`), each
+ * audited on its own. Its owner only; 404 for anyone else.
+ */
 const update: RequestHandler = async (req, res): Promise<void> => {
-  const body = parseOr400(UpdateIntegrationBody, req.body);
+  const { mode, ...fields } = parseOr400(UpdateIntegrationBody, req.body);
   const request = req as WorkspaceRequest;
-  const updated = await updateIntegration(
-    request.workspace,
-    uiActor(request),
-    routeParam(req, 'iid'),
-    body,
-  );
-  const data: UpdateIntegrationResponseData = toIntegrationStatus(updated);
+  let integration = await Integration.findOwn(request.caller, routeParam(req, 'iid'));
+  if (Object.values(fields).some((value) => value !== undefined)) {
+    integration = await integration.update(request.caller, fields);
+  }
+  if (mode !== undefined) integration = await integration.setMode(request.caller, mode);
+  const data: UpdateIntegrationResponseData = integration.toView();
   res.success(data);
 };
 
 const remove: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
-  await disconnectIntegration(request.workspace, uiActor(request), routeParam(req, 'iid'));
+  const integration = await Integration.findOwnIncludingDeleted(
+    request.caller,
+    routeParam(req, 'iid'),
+  );
+  await integration.disconnect(request.caller);
   res.status(204).end();
 };
 
 /** "Stop sharing": its connectors come off every block (its owner; 404 for anyone else). */
 const stopSharing: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
-  const data: StopSharingResponseData = await stopSharingIntegration(
-    request.workspace,
-    uiActor(request),
-    routeParam(req, 'iid'),
-  );
+  const integration = await Integration.findOwn(request.caller, routeParam(req, 'iid'));
+  const data: StopSharingResponseData = await integration.stopSharing(request.caller);
   res.success(data);
 };
 

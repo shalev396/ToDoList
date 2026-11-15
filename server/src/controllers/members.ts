@@ -16,7 +16,7 @@ import {
   updateMember,
   type MemberWithUser,
 } from '../services/workspaces.js';
-import { providersByMember } from '../services/integrations.js';
+import { Integration } from '../classes/integration/index.js';
 import { findUser } from '../services/users.js';
 import type { Provider } from '../types/domain.js';
 import type { WorkspaceRequest } from '../types/express.js';
@@ -39,7 +39,7 @@ function toMemberView(
 
 const list: RequestHandler = async (req, res): Promise<void> => {
   const { workspace } = req as WorkspaceRequest;
-  const providers = await providersByMember(workspace.id);
+  const providers = await Integration.providersByMember(workspace.id);
   const data: ListMembersResponseData = (await listMembers(workspace)).map((member) =>
     toMemberView(member, providers),
   );
@@ -60,7 +60,7 @@ const update: RequestHandler = async (req, res): Promise<void> => {
   const person = await findUser(memberId);
   const data: UpdateMemberResponseData = toMemberView(
     { membership, name: person?.name ?? null, email: person?.email ?? null },
-    await providersByMember(workspace.id),
+    await Integration.providersByMember(workspace.id),
   );
   res.success(data);
 };

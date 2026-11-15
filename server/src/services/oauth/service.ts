@@ -5,10 +5,10 @@
  * - start (owner): a single-use 10-minute state bound to user, workspace and provider, a browser
  *   nonce for the HttpOnly cookie, PKCE S256 where the provider supports it, read-only scopes;
  * - callback (public): the state checks (claimCallback), the code exchange at the allow-listed
- *   token URL, the account read, then connectOAuthIntegration, the one shared integration writer;
+ *   token URL, the account read, then Integration.connectOAuth, the one shared integration writer;
  *   always a redirect to the fixed client page with `?connected=` or `?oauth_error=` and no token;
  * - the grant's resources (Jira sites, ClickUp workspaces) for the owner to pick from;
- * - disconnect: the grant is revoked where the provider has an endpoint (Linear).
+ * - disconnect: the grant is revoked where the provider has an endpoint (LinearIntegration).
  * Nothing secret reaches a log, an error or a response: a failure logs its class name and status.
  */
 import { z } from 'zod';
@@ -19,11 +19,13 @@ import { ProviderHttpError } from '../../sync/http.js';
 import type { OAuthProviderId } from '../../sync/providers/oauthEndpoints.js';
 import { oauthEndpoints } from '../../sync/providers/oauthEndpoints.js';
 import type { WorkspaceContext } from '../accessFilter.js';
-import { connectOAuthIntegration } from '../integrationConnect.js';
-import { findOwnIntegration } from '../integrationOwnership.js';
-import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
+import { Actor, type ActorOrigin, type ActorRef } from '../../classes/base/Actor.js';
 import { Caller } from '../../classes/base/Caller.js';
-import type { IntegrationActor } from '../integrations.js';
+import {
+  ClickUpIntegration,
+  Integration,
+  JiraIntegration,
+} from '../../classes/integration/index.js';
 import { googleOAuthCredentials } from '../googleOAuthClient.js';
 import { logger } from '../logger.js';
 import { oauthAppCredentials, oauthClient } from './client.js';
@@ -43,7 +45,6 @@ import type {
   OAuthProvidersResponse,
   OAuthResource,
 } from '../../types/integrations.js';
-import { readGrantResources } from './grants.js';
 import { OAUTH_PROVIDER_DEFS, type OAuthProviderDef } from './providers.js';
 
 export type { OAuthProviderInfo, OAuthProvidersResponse, OAuthResource };
@@ -84,7 +85,7 @@ export const providerRedirectUri = (provider: OAuthProviderId): string =>
  */
 export async function startProviderOAuth(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
+  actor: ActorRef,
   provider: OAuthProviderId,
   input: StartProviderOAuthInput,
   now: Date = new Date(),
@@ -93,9 +94,10 @@ export async function startProviderOAuth(
   if (input.includeWrite === true && def.writeScopes.length === 0) {
     throw new AppError(400, `includeWrite: ${provider} has no scope to ask for`);
   }
-  if (input.integrationId === undefined) Caller.fromContext(ctx, actor).require('editor');
+  const caller = Caller.fromContext(ctx, actor);
+  if (input.integrationId === undefined) caller.require('editor');
   else {
-    const existing = await findOwnIntegration(ctx, actor.userId, input.integrationId);
+    const existing = await Integration.findOwn(caller, input.integrationId);
     if (existing.provider !== provider || existing.authMethod !== 'oauth') {
       throw new AppError(400, `integrationId: not a ${provider} connected with OAuth`);
     }
@@ -151,9 +153,9 @@ async function connect(
 ): Promise<string> {
   // The member who started the flow, from the callback request (the audit log's address).
   const actor = Actor.user(record.userId, origin);
-  // Still a member; the role (a new integration needs an editor) is connectOAuthIntegration's.
-  const ctx = (await Caller.enter(record.workspaceId, actor))?.context ?? null;
-  if (ctx === null) throw new OAuthFailure('oauth_not_editor');
+  // Still a member; the role (a new integration needs an editor) is Integration.connectOAuth's.
+  const caller = await Caller.enter(record.workspaceId, actor);
+  if (caller === null) throw new OAuthFailure('oauth_not_editor');
   const credentials = await oauthAppCredentials(def.id);
   if (credentials === null) throw new OAuthFailure('oauth_failed');
   const client = oauthClient(def.id);
@@ -172,16 +174,14 @@ async function connect(
   }
   const identity = await def.identify(client, grant.accessToken);
   const scopes = (grant.scope ?? '').split(/[\s,]+/).filter((scope) => scope !== '');
-  const { integration } = await connectOAuthIntegration(ctx, actor, {
+  const { integration } = await Integration.connectOAuth(caller, {
     provider: def.id,
     accountId: identity.accountId,
     label: identity.label,
     config: identity.config,
     topicSlug: identity.topicSlug,
-    mode: 'read',
     secret: oauthSecretFromGrant(grant, null, now),
     scopes,
-    githubLogin: identity.githubLogin,
     reconnectIntegrationId: record.integrationId,
   });
   return integration.id;
@@ -280,13 +280,19 @@ export async function listOAuthResources(
   userId: string,
   integrationId: string,
 ): Promise<OAuthResource[]> {
-  const integration = await findOwnIntegration(ctx, userId, integrationId);
+  const integration = await Integration.findOwn(
+    Caller.fromContext(ctx, Actor.user(userId)),
+    integrationId,
+  );
   const { provider } = integration;
-  if (integration.authMethod !== 'oauth' || (provider !== 'jira' && provider !== 'clickup')) {
+  if (
+    integration.authMethod !== 'oauth' ||
+    !(integration instanceof JiraIntegration || integration instanceof ClickUpIntegration)
+  ) {
     throw new AppError(409, 'Only a Jira or ClickUp connected with OAuth lists its resources');
   }
   try {
-    return await readGrantResources(integration.id, provider);
+    return await integration.grantResources();
   } catch (error) {
     if (error instanceof ProviderHttpError && error.code === 'auth_failed') {
       throw new AppError(409, `${provider} refused the connection: reconnect it`);

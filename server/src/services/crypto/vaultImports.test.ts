@@ -1,12 +1,13 @@
 /**
  * DATA.md §3.5 / DECISIONS D14, as a test over the import graph of server/src:
- * - only the allow-listed modules (and tests) import the credential vault, and no file re-exports
- *   it; outside the allow-list, non-test code may not even name it;
- * - sync/secrets.ts, the sync's one door to the vault, is imported only by sync/runSync.ts (and
- *   tests), and only they name its exports;
- * - nothing under src/mcp/ names the vault, the credential writer or the Credential repository,
- *   anywhere in its source (an import clause alone misses namespace imports, destructured dynamic
- *   imports and re-exports);
+ * - the credential (classes/integration/Credential.ts: the one encrypt and the one decrypt path)
+ *   is imported only by Integration.ts (and tests), whose read and write sessions are the only way
+ *   to it; no file re-exports it; outside the allow-list, non-test code may not even name it;
+ * - sync/secrets.ts, the sync's one door to a credential (through the integration's read
+ *   session), is imported only by sync/runSync.ts (and tests), and only they name its exports;
+ * - nothing under src/mcp/ names the credential or the Credential repository, anywhere in its
+ *   source (an import clause alone misses namespace imports, destructured dynamic imports and
+ *   re-exports);
  * - every dynamic import in non-test code takes one string literal, so this graph sees every edge
  *   and esbuild bundles every module (a variable specifier is resolved at run time, next to the
  *   Lambda bundle, where the file does not exist).
@@ -30,8 +31,11 @@ import {
   stripComments,
 } from '../../testing/importGraph.js';
 
-const VAULT = 'services/crypto/credentialVault.ts';
-const WRITER = 'services/crypto/credentialWriter.ts';
+/** The credential: the only code that seals or opens a provider secret. */
+const VAULT = 'classes/integration/Credential.ts';
+/** The integration base: its read and write sessions are the only way to a credential. */
+const INTEGRATION = 'classes/integration/Integration.ts';
+const INTEGRATIONS = 'classes/integration/index.ts';
 const SECRETS = 'sync/secrets.ts';
 const RUN_SYNC = 'sync/runSync.ts';
 const MODELS = 'models/index.ts';
@@ -45,31 +49,21 @@ const CREDENTIAL_MODULES = new Set([
   'models/definitions/Credential.ts',
 ]);
 
-/** The modules that may decrypt (besides tests): sync, "test connection", the Calendar push. */
-const VAULT_IMPORTERS = new Set([
-  SECRETS, // withProviderSecret: the sync's only way to a secret
-  'sync/worker.ts',
-  RUN_SYNC,
-  'services/integrationTest.ts', // "test connection" for the integrations routes (to come)
-  'gcal/oauthCalendar.ts', // Google Calendar OAuth: calendar picker, Calendar API push, revoke
-  'services/oauth/grants.ts', // GitHub/Jira/ClickUp/Linear OAuth: the grant's resources, revoke
-  'services/providerCreate/session.ts', // H5: the funnel's reads and the one create, per user action
-]);
+/**
+ * The modules that may use the credential (besides tests): the integration base, whose protected
+ * read and write sessions hand the secret to provider subclasses for one call. The sync, "test
+ * connection", the funnel, the creates and the Calendar push all go through those sessions.
+ */
+const VAULT_IMPORTERS = new Set([INTEGRATION]);
 
 /** Besides tests, only these import services/crypto/envelope.ts (its `open` decrypts). */
-const ENVELOPE_IMPORTERS = new Set([
-  VAULT,
-  WRITER,
-  KEY_PROVIDERS,
-  STAGE_KEY_PROVIDER,
-  JOIN_LINK_VAULT,
-]);
+const ENVELOPE_IMPORTERS = new Set([VAULT, KEY_PROVIDERS, STAGE_KEY_PROVIDER, JOIN_LINK_VAULT]);
 
 /** Besides tests, only these name `findSealed` (the one read that returns the ciphertext). */
 const FIND_SEALED_USERS = new Set([VAULT, ...CREDENTIAL_MODULES]);
 
 /** Besides tests, only these name `stageKeyProvider` (the key that opens every credential). */
-const STAGE_KEY_PROVIDER_USERS = new Set([VAULT, WRITER, STAGE_KEY_PROVIDER, JOIN_LINK_VAULT]);
+const STAGE_KEY_PROVIDER_USERS = new Set([VAULT, STAGE_KEY_PROVIDER, JOIN_LINK_VAULT]);
 
 /** secrets.ts hands out decrypted secrets: besides tests, only runSync.ts imports it. */
 const SECRETS_IMPORTERS = new Set([RUN_SYNC]);
@@ -89,11 +83,14 @@ const SECRETS_EXPORTS: readonly { name: string; pattern: RegExp; allowed: Readon
     },
   ];
 
-const NAMES_VAULT = /credentialVault/i;
+/** The credential's module, or its doors by name. */
+const NAMES_VAULT = /integration\/Credential\b|\bCredential\.(?:of|seal|meta|destroy)\b/;
 
 /** What MCP code may not name: matched against its whole source, comments left out. */
 const MCP_FORBIDDEN =
-  /credentialVault|credentialWriter|getCredentialRepository|CredentialRepository|CredentialMongoModel|models\/mongoose\/Credential|CREDENTIAL_TABLE_NAME/i;
+  /integration\/Credential|credentialVault|credentialWriter|getCredentialRepository|CredentialRepository|CredentialMongoModel|models\/mongoose\/Credential|CREDENTIAL_TABLE_NAME/i;
+/** The credential class by name (the word "credential" in a message is fine). */
+const MCP_FORBIDDEN_NAME = /\bCredential\b/;
 /** The Credential model or collection by name, e.g. mongoose.model('Credential'). */
 const CREDENTIAL_MODEL_NAME = /^Credentials?$/;
 
@@ -121,7 +118,7 @@ export function violations(files: ReadonlyMap<string, string>): string[] {
       }
       const reachesVault = edges.some((edge) => edge.target === VAULT) || NAMES_VAULT.test(text);
       if (file !== VAULT && !VAULT_IMPORTERS.has(file) && reachesVault) {
-        report(`only ${[...VAULT_IMPORTERS].join(', ')} may import the vault`);
+        report(`only ${[...VAULT_IMPORTERS].join(', ')} may import the credential`);
       }
       for (const edge of edges) {
         const vaultDoor =
@@ -129,7 +126,7 @@ export function violations(files: ReadonlyMap<string, string>): string[] {
           edge.target === SECRETS ||
           NAMES_VAULT.test(edge.specifier ?? '');
         if (edge.kind === 'export' && vaultDoor) {
-          report(`re-exports ${edge.specifier ?? ''}: the vault is never handed on`);
+          report(`re-exports ${edge.specifier ?? ''}: the credential is never handed on`);
         }
         if (edge.target === SECRETS && file !== SECRETS && !SECRETS_IMPORTERS.has(file)) {
           report(`only ${[...SECRETS_IMPORTERS].join(', ')} may import ${SECRETS}`);
@@ -158,11 +155,11 @@ export function violations(files: ReadonlyMap<string, string>): string[] {
     if (file.startsWith('mcp/')) {
       const touchesCredentials =
         MCP_FORBIDDEN.test(text) ||
+        MCP_FORBIDDEN_NAME.test(text) ||
         scanned.literals.some((value) => CREDENTIAL_MODEL_NAME.test(value)) ||
         edges.some(
           (edge) =>
             edge.target === VAULT ||
-            edge.target === WRITER ||
             (edge.target !== null && CREDENTIAL_MODULES.has(edge.target)) ||
             // `export *` of the models barrel hands on getCredentialRepository without naming it.
             (edge.kind === 'export' && edge.clause.startsWith('*') && edge.target === MODELS),
@@ -178,7 +175,7 @@ export function violations(files: ReadonlyMap<string, string>): string[] {
 /** Stand-ins for the modules the synthetic trees point at, so their specifiers resolve. */
 const STUBS: Record<string, string> = {
   [VAULT]: '',
-  [WRITER]: '',
+  [INTEGRATIONS]: '',
   [SECRETS]: '',
   [RUN_SYNC]: '',
   [MODELS]: '',
@@ -349,23 +346,28 @@ describe('the import rules, on synthetic trees (one per known bypass)', () => {
   it('export *: nothing re-exports the vault or secrets.ts, and MCP code never re-exports the models barrel', () => {
     assert.deepEqual(
       flagged({
-        // Allow-listed files may import the vault, but never hand it on.
-        'sync/worker.ts': `export * from '../services/crypto/credentialVault.js';`,
+        // An allow-listed file may import the credential, but never hand it on.
+        'classes/integration/Integration.ts': `export * from './Credential.js';`,
         'sync/runSync.ts': `export { withProviderSecret } from './secrets.js';`,
-        'routes/types.ts': `export type { HmacKeyring } from '../services/crypto/credentialVault.js';`,
+        'routes/types.ts': `export type { SealInput } from '../classes/integration/Credential.js';`,
         'mcp/tools/barrel.ts': `export * from '../../models/index.js';`,
         'mcp/tools/index.ts': `export * from './fine.js';`,
         'mcp/tools/fine.ts': '',
         'routes/models.ts': `export * from '../models/index.js';`,
       }),
-      ['mcp/tools/barrel.ts', 'routes/types.ts', 'sync/runSync.ts', 'sync/worker.ts'],
+      [
+        'classes/integration/Integration.ts',
+        'mcp/tools/barrel.ts',
+        'routes/types.ts',
+        'sync/runSync.ts',
+      ],
     );
   });
 
   it('a template literal specifier', () => {
     assert.deepEqual(
       flagged({
-        'routes/private/leak.ts': `const vault = await import(${BACKTICK}../../services/crypto/credentialVault.js${BACKTICK});`,
+        'routes/private/leak.ts': `const vault = await import(${BACKTICK}../../classes/integration/Credential.js${BACKTICK});`,
         'mcp/tools/template.ts': `const model = await import(${BACKTICK}../../models/mongoose/Credential.js${BACKTICK});`,
       }),
       ['mcp/tools/template.ts', 'routes/private/leak.ts'],
@@ -375,8 +377,8 @@ describe('the import rules, on synthetic trees (one per known bypass)', () => {
   it('a comment marker inside a string', () => {
     assert.deepEqual(
       flagged({
-        'routes/private/sneaky.ts': `const open = '/*';\nimport { decryptForSync } from '../../services/crypto/credentialVault.js';\nconst close = '*/';`,
-        'mcp/tools/sneaky.ts': `const open = "/*";\nimport { storeCredential } from '../../services/crypto/credentialWriter.js';\nconst close = "*/";`,
+        'routes/private/sneaky.ts': `const open = '/*';\nimport { Credential } from '../../classes/integration/Credential.js';\nconst close = '*/';`,
+        'mcp/tools/sneaky.ts': `const open = "/*";\nimport { Credential } from '../../classes/integration/Credential.js';\nconst close = "*/";`,
       }),
       ['mcp/tools/sneaky.ts', 'routes/private/sneaky.ts'],
     );
@@ -400,7 +402,7 @@ describe('the import rules, on synthetic trees (one per known bypass)', () => {
     assert.deepEqual(
       flagged({
         // The old secrets.ts pattern: invisible to the graph, and left unbundled by esbuild.
-        'sync/secrets.ts': `const VAULT_MODULE = '../services/crypto/credentialVault.js';\nexport const load = () => import(VAULT_MODULE);`,
+        'sync/secrets.ts': `const CLASSES = '../classes/integration/index.js';\nexport const load = () => import(CLASSES);`,
         'services/plugins.ts': `export const load = (name: string) => import(${BACKTICK}./plugins/\${name}.js${BACKTICK});`,
         'services/concat.ts': `export const load = (b: string) => import('./a' + b);`,
         'services/required.ts': `export const load = (name: string) => require(name);`,
@@ -432,19 +434,20 @@ describe('the import rules, on synthetic trees (one per known bypass)', () => {
   it('naming the vault outside the allow-list counts as importing it', () => {
     assert.deepEqual(
       flagged({
-        'services/loader.ts': `const VAULT = '../services/crypto/credentialVault.js';`,
-        'services/escaped.ts': String.raw`const VAULT = './credential\u0056ault.js';`,
-        'services/comment.ts': `// credentialVault.ts is not imported here\nexport const x = 1;`,
+        'services/loader.ts': `const VAULT = '../classes/integration/Credential.js';`,
+        'services/escaped.ts': String.raw`const VAULT = '../classes/integration/\u0043redential.js';`,
+        'services/caller.ts': `export const open = (id: string) => Credential.of(id);`,
+        'services/comment.ts': `// classes/integration/Credential.ts is not imported here\nexport const x = 1;`,
       }),
-      ['services/escaped.ts', 'services/loader.ts'],
+      ['services/caller.ts', 'services/escaped.ts', 'services/loader.ts'],
     );
   });
 
   it('the envelope, findSealed and stageKeyProvider have their own allow-lists', () => {
     assert.deepEqual(
       flagged({
-        'services/crypto/credentialVault.ts': `import { open } from './envelope.js';
-import { stageKeyProvider } from './stageKeyProvider.js';
+        'classes/integration/Credential.ts': `import { open } from '../../services/crypto/envelope.js';
+import { stageKeyProvider } from '../../services/crypto/stageKeyProvider.js';
 repo.findSealed();`,
         'services/crypto/keyProviders.ts': `import { aadFor } from './envelope.js';`,
         'services/crypto/envelope.test.ts': `import { open } from './envelope.js';
@@ -463,9 +466,9 @@ export const x = 1;`,
   it('allows what the rules allow', () => {
     assert.deepEqual(
       flagged({
-        'sync/worker.ts': `import { decryptForSync } from '../services/crypto/credentialVault.js';`,
-        'sync/secrets.ts': `const vault = await import('../services/crypto/credentialVault.js');`,
-        'sync/worker.test.ts': `import { decryptForSync } from '../services/crypto/credentialVault.js';`,
+        'classes/integration/Integration.ts': `import { Credential } from './Credential.js';`,
+        'sync/secrets.ts': `const { Integration } = await import('../classes/integration/index.js');`,
+        'sync/worker.test.ts': `import { Credential } from '../classes/integration/Credential.js';`,
         'mcp/tools/items.ts': `import { getItemRepository } from '../../models/index.js';`,
         'services/workspaces.ts': `import { getCredentialRepository } from '../models/index.js';`,
       }),
@@ -481,13 +484,14 @@ describe('server/src import graph', () => {
     edges.some((edge) => edge.from === from && edge.target === target);
 
   it('sees the real tree (the scan is not vacuous)', () => {
-    assert.ok(files.has(VAULT) && files.has(WRITER) && files.has(SECRETS));
-    assert.ok(has('services/crypto/credentialVault.test.ts', VAULT));
-    assert.ok(has(WRITER, 'services/crypto/envelope.ts'));
+    assert.ok(files.has(VAULT) && files.has(INTEGRATION) && files.has(SECRETS));
+    assert.ok(has('classes/integration/Credential.test.ts', VAULT));
+    assert.ok(has(VAULT, ENVELOPE));
+    assert.ok(has(INTEGRATION, VAULT));
     assert.ok(has('app.ts', 'routes/index.ts'));
     assert.ok(has(RUN_SYNC, SECRETS));
-    // A literal specifier: esbuild bundles the vault into the Lambda layer.
-    assert.ok(has(SECRETS, VAULT));
+    // A literal specifier: esbuild bundles the integration classes into the Lambda layer.
+    assert.ok(has(SECRETS, INTEGRATIONS));
   });
 
   it('scans every file to its end without losing track of a string, template or comment', () => {

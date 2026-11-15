@@ -1,10 +1,10 @@
-/** An integration as the MCP tools show it: the status shape only (MCP.md §5.3), ISO dates. */
+/**
+ * An integration as the MCP tools show it: the status shape only (MCP.md §5.3), ISO dates. The
+ * mode is REST only: MCP sees whether a create target is writable.
+ */
 import { z } from 'zod';
 
-import {
-  toIntegrationStatus,
-  type IntegrationData,
-} from '../../../models/definitions/Integration.js';
+import type { Integration } from '../../../classes/integration/index.js';
 import { PROVIDERS, PUBLIC_INTEGRATION_STATUSES } from '../../../types/domain.js';
 
 export const IntegrationStatus = z.object({
@@ -17,8 +17,8 @@ export const IntegrationStatus = z.object({
 });
 export type IntegrationStatus = z.output<typeof IntegrationStatus>;
 
-export function toIntegrationStatusView(integration: IntegrationData): IntegrationStatus {
-  const view = toIntegrationStatus(integration);
+export function toIntegrationStatusView(integration: Integration): IntegrationStatus {
+  const view = integration.toView();
   return {
     id: view.id,
     provider: view.provider,

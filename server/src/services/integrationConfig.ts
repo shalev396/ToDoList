@@ -2,7 +2,8 @@
  * Per-provider shapes for the integrations routes (BACKEND.md §4, DATA.md §3.4–3.5, §8):
  * - the non-secret config: one strict zod schema per provider;
  * - the credential JSON: one strict schema per auth method;
- * - what a new integration starts with: auth method, topic, mode, account key and label.
+ * - what a new integration starts with: auth method, topic, account key and label (every new
+ *   integration is read-only: the mode is never an input, Integration sets it).
  * Pure: no I/O, no Express. MCP tools can reuse it.
  *
  * Errors are AppError(400). A config error names the field the way zod describes it (what was
@@ -19,7 +20,7 @@ import { loopbackAllowedForTests } from '../config/testSwitches.js';
 import { AppError } from '../errors/AppError.js';
 import { ProviderComingSoonError } from '../errors/ProviderComingSoonError.js';
 import { PENDING_ACCOUNT_PREFIX, type IntegrationData } from '../models/definitions/Integration.js';
-import { AUTH_METHODS, type AuthMethod, type IntegrationMode } from '../types/domain.js';
+import { AUTH_METHODS, INTEGRATION_MODES, type AuthMethod } from '../types/domain.js';
 import type { DefaultTopicSlug } from '../types/topics.js';
 import {
   COMING_SOON_PROVIDERS,
@@ -79,20 +80,26 @@ const ExpiresAt = z
   .transform((value) => new Date(value))
   .nullable();
 
+/**
+ * Label, topic, config, expiresAt and the mode: never the provider, the account, the status or a
+ * secret. `mode` switches between read-only (`read`) and `read_write` (its owner's switch).
+ */
 export const UpdateIntegrationBody = z
   .strictObject({
     label: Label.optional(),
     topicId: z.string().min(1).max(100).nullable().optional(),
     config: ConfigObject.optional(),
     expiresAt: ExpiresAt.optional(),
+    mode: z.enum(INTEGRATION_MODES).optional(),
   })
   .refine(
     (body) =>
       body.label !== undefined ||
       body.topicId !== undefined ||
       body.config !== undefined ||
-      body.expiresAt !== undefined,
-    'Send a label, a topic, a config or expiresAt',
+      body.expiresAt !== undefined ||
+      body.mode !== undefined,
+    'Send a label, a topic, a config, expiresAt or a mode',
   );
 
 // ─── Config, per provider ───────────────────────────────────────────────────
@@ -393,7 +400,8 @@ export interface ConnectionPlan {
   /** The topic asked for (null = none); absent: the workspace's topic with `defaultTopic`. */
   topicId?: string | null;
   defaultTopic: DefaultTopicSlug;
-  mode: IntegrationMode;
+  /** Always read-only: a new integration never starts read & write (Integration sets it). */
+  mode: 'read';
   accountId: string;
   label: string;
   config: Record<string, unknown>;

@@ -1,5 +1,5 @@
 /**
- * Keeps a decrypted secret inside the credential vault (DATA.md §0, §7). decryptForSync runs its
+ * Keeps a decrypted secret inside the credential (DATA.md §0, §7). Credential#open runs its
  * callback's result through carriesSecret (a hit is refused) and what the callback throws through
  * redactSecrets. Pure functions over the secret's values: nothing here decrypts or keeps anything.
  * The identity fields stored beside a secret are labels, and are neither looked for nor redacted.
@@ -193,7 +193,7 @@ function rebuilt(error: Error, values: readonly string[], depth = 0): Error {
 }
 
 /**
- * What an error thrown inside decryptForSync becomes before it leaves the vault: every secret
+ * What an error thrown inside Credential#open becomes before it leaves the credential: every secret
  * value in its message, stack, other text fields and cause chain (and an AggregateError's errors)
  * replaced with [REDACTED]. It stays the same object, so its class, name, code and other fields
  * still say what failed (the sync engine classifies ProviderHttpError by class and code). An

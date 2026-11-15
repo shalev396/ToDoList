@@ -1,14 +1,15 @@
 /**
- * The Google Calendar push's writes through the Calendar API (the one sanctioned provider write):
+ * The Google Calendar push's writes through the Calendar API, reached only inside
+ * GoogleCalendarIntegration's write session (never for a read-only integration):
  * events.insert, events.patch (with `If-Match`) and events.delete, nothing else, on
  * `<calendar base>/calendars/<id>/events…` only. The base is Google's (googleEndpoints), or a
  * test's stand-in. No redirect is followed, a call gives up after 15 s, and a
  * failure is a CalendarApiError with the HTTP status only: never a token, a body or a URL.
  */
-import { loopbackAllowedForTests } from '../config/testSwitches.js';
-import { assertPublicHttpsUrl } from '../services/netGuard.js';
-import { googleEndpoints } from '../sync/providers/googleEndpoints.js';
-import type { EventBody } from './diff.js';
+import { loopbackAllowedForTests } from '../../../config/testSwitches.js';
+import { assertPublicHttpsUrl } from '../../../services/netGuard.js';
+import { googleEndpoints } from '../../../sync/providers/googleEndpoints.js';
+import type { EventBody } from '../../../gcal/diff.js';
 
 const TIMEOUT_MS = 15_000;
 const MAX_BODY_CHARS = 1_000_000;

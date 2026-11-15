@@ -13,19 +13,24 @@
  *   code is exchanged with the verifier and the client secret, the account read (`sub`, `email`)
  *   and the integration created or reconnected: one per Google account per workspace (many-to-one:
  *   the same `sub` is a reconnect, another `sub` a new integration). `{refreshToken, scope}` is
- *   sealed with storeCredential.
+ *   sealed (Integration.connectOAuth). Like every new connection it is read-only until its owner
+ *   switches it to read & write.
  * - It always answers with a redirect to the fixed client page `/<lng>/integrations`, with
  *   `?connected=<iid>` or `?oauth_error=<code>`: never a token, a code or a caller-supplied URL.
  *   The access token lives for this one request and is dropped.
  */
 import { z } from 'zod';
 
-import { Actor, type ActorOrigin } from '../classes/base/Actor.js';
+import { Actor, type ActorOrigin, type ActorRef } from '../classes/base/Actor.js';
 import { Caller } from '../classes/base/Caller.js';
+import {
+  Integration,
+  isCalendarProvider,
+  type GoogleCalendarEntry,
+} from '../classes/integration/index.js';
 
 import { AppError } from '../errors/AppError.js';
 import { type OAuthStateData } from '../models/definitions/OAuthState.js';
-import { listOAuthCalendars, type GoogleCalendarEntry } from '../gcal/oauthCalendar.js';
 import { ProviderHttpError, type ReadOnlyClient } from '../sync/http.js';
 import { googleEndpoints } from '../sync/providers/googleEndpoints.js';
 import type { WorkspaceContext } from './accessFilter.js';
@@ -35,9 +40,6 @@ import {
   googleTokenClient,
   REQUIRED_CALENDAR_SCOPES,
 } from './googleOAuthClient.js';
-import { connectOAuthIntegration } from './integrationConnect.js';
-import { findOwnIntegration } from './integrationOwnership.js';
-import type { IntegrationActor } from './integrations.js';
 import { logger } from './logger.js';
 import {
   callbackUrl,
@@ -94,14 +96,15 @@ export function oauthRedirectUri(domainName?: string): string {
  */
 export async function startGoogleCalendarOAuth(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
+  actor: ActorRef,
   input: StartOAuthInput,
   now: Date = new Date(),
 ): Promise<OAuthStart> {
   let loginHint: string | null = null;
-  if (input.integrationId === undefined) Caller.fromContext(ctx, actor).require('editor');
+  const caller = Caller.fromContext(ctx, actor);
+  if (input.integrationId === undefined) caller.require('editor');
   else {
-    const existing = await findOwnIntegration(ctx, actor.userId, input.integrationId);
+    const existing = await Integration.findOwn(caller, input.integrationId);
     if (existing.provider !== PROVIDER || existing.authMethod !== 'oauth') {
       throw new AppError(400, 'integrationId: not a Google Calendar connected with Google');
     }
@@ -192,9 +195,9 @@ async function revokeQuietly(client: ReadOnlyClient, token: string): Promise<voi
 async function connect(record: OAuthStateData, code: string, origin: ActorOrigin): Promise<string> {
   // The member who started the flow, from the callback request (the audit log's address).
   const actor = Actor.user(record.userId, origin);
-  // Still a member; the role (a new integration needs an editor) is connectOAuthIntegration's.
-  const ctx = (await Caller.enter(record.workspaceId, actor))?.context ?? null;
-  if (ctx === null) throw new OAuthFailure('oauth_not_editor');
+  // Still a member; the role (a new integration needs an editor) is Integration.connectOAuth's.
+  const caller = await Caller.enter(record.workspaceId, actor);
+  if (caller === null) throw new OAuthFailure('oauth_not_editor');
   const credentials = await googleOAuthCredentials();
   if (credentials === null) throw new OAuthFailure('oauth_failed');
   const client = googleTokenClient();
@@ -221,13 +224,13 @@ async function connect(record: OAuthStateData, code: string, origin: ActorOrigin
       ? { calendars: [] }
       : { calendars: [{ id: primary, mode: 'two_way' }], targetCalendarId: primary };
 
-  const { integration } = await connectOAuthIntegration(ctx, actor, {
+  // Read-only like every new connection: its owner switches it to read & write to push.
+  const { integration } = await Integration.connectOAuth(caller, {
     provider: PROVIDER,
     accountId: account.sub,
     label: account.email,
     config,
     topicSlug: 'personal',
-    mode: 'read_write',
     secret: { refreshToken, scope: scopes.join(' ') },
     scopes,
     reconnectIntegrationId: record.integrationId,
@@ -279,12 +282,13 @@ export async function listGoogleCalendars(
   userId: string,
   integrationId: string,
 ): Promise<GoogleCalendarEntry[]> {
-  const integration = await findOwnIntegration(ctx, userId, integrationId);
-  if (integration.provider !== PROVIDER || integration.authMethod !== 'oauth') {
+  const caller = Caller.fromContext(ctx, Actor.user(userId));
+  const integration = await Integration.findOwn(caller, integrationId);
+  if (!isCalendarProvider(integration) || integration.authMethod !== 'oauth') {
     throw new AppError(409, 'Only a Google Calendar connected with Google lists its calendars');
   }
   try {
-    return await listOAuthCalendars(integration);
+    return await integration.listCalendars(caller);
   } catch (error) {
     if (error instanceof ProviderHttpError && error.code === 'auth_failed') {
       throw new AppError(409, 'Google refused the connection: reconnect Google Calendar');

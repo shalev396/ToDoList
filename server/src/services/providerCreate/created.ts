@@ -14,8 +14,8 @@ import { OAUTH_ENDPOINTS } from '../../sync/providers/oauthEndpoints.js';
 import type { MappedItem } from '../../sync/types.js';
 import { checkedId, splitRepo } from './ids.js';
 import { pickJiraSite } from './jiraSites.js';
-import type { CreateSession } from './session.js';
-import type { CreatedRecord } from './writeClient.js';
+import type { TrackerReadSession as CreateSession } from '../../classes/integration/TrackerIntegration.js';
+import type { CreatedRecord } from '../../classes/integration/index.js';
 
 export interface ReadBackEnv {
   timeZone: string;

@@ -82,6 +82,12 @@ before(async () => {
   const connected = /connected=([0-9a-f-]{36})/.exec(landed.headers.get('location') ?? '');
   assert.ok(connected, landed.headers.get('location') ?? '');
   iid = connected[1] ?? '';
+  // Every connection starts read-only; these tests create events, so its owner switches it on.
+  const switched = await api.call('PATCH', `${W()}/integrations/${iid}`, {
+    token,
+    body: { mode: 'read_write' },
+  });
+  assert.equal(switched.status, 200, switched.text);
 });
 
 after(async () => {

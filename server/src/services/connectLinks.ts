@@ -17,14 +17,13 @@ import { environment } from '../config/environment.js';
 import { AppError } from '../errors/AppError.js';
 import { getReplayNonceRepository } from '../models/index.js';
 import { CONNECTABLE_PROVIDERS, type ConnectableProvider } from '../types/integrations.js';
-import { Actor } from '../classes/base/Actor.js';
+import { Actor, type ActorRef } from '../classes/base/Actor.js';
 import { AuditTarget } from '../classes/base/AuditTarget.js';
 import { Caller } from '../classes/base/Caller.js';
 import { AuditLog } from '../classes/AuditLog.js';
 import type { WorkspaceContext } from './accessFilter.js';
 import { sha256Hex } from './crypto/hashing.js';
 import { assertProviderOpen } from './integrationConfig.js';
-import type { IntegrationActor } from './integrations.js';
 
 export const CONNECT_LINK_TTL_MS = 10 * 60 * 1000;
 export const CONNECT_LINK_ACTION = 'integration.connect_link';
@@ -58,7 +57,7 @@ export function connectLinkUrl(
 /** Editor or owner: a new single-use link for the provider, valid for 10 minutes from `now`. */
 export async function createConnectLink(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
+  actor: ActorRef,
   provider: ConnectableProvider,
   now: Date,
 ): Promise<ConnectLink> {

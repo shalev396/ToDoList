@@ -5,6 +5,7 @@
  * This is the one place TodoList writes to a provider, and only ever to CREATE an item after an
  * explicit user action. It never edits, closes or deletes anything there.
  */
+import type { IntegrationMode } from './domain.js';
 import type { ItemCopyView } from './items.js';
 
 /** Providers a to-do can be created in. Moodle and Drive have no item to create. */
@@ -25,8 +26,14 @@ export interface CreateTargetInfo {
   authMethod: string;
   /** An OAuth Jira or Linear grant without its write scope: creating asks for consent first. */
   needsConsent: boolean;
-  /** false: this server cannot create there (off, or a token connection on a fixtures stage). */
+  /**
+   * false: nothing can be created there now. Either the integration is read-only (`mode` is
+   * `read`: its owner switches it to read & write on the Integrations page), or this server
+   * cannot create there (demo data, or a token connection on a fixtures stage).
+   */
   writable: boolean;
+  /** The integration's mode: `read` (the default) or `read_write`. */
+  mode: IntegrationMode;
   /**
    * The integration is shared (a connector on some block): every member sees the items it
    * holds, so a private to-do's new copy shows among them (PERMISSIONS-V2 share-on-attach).

@@ -195,7 +195,9 @@ export const PENDING_ACCOUNT_PREFIX = 'pending:';
 /**
  * Everything the API and UI may show of an integration (DATA.md §0, §7), and only to its owner
  * (PERMISSIONS-V2 ruling 1). `authMethod` (never a secret) tells the UI how the owner reconnects:
- * Google sign-in or a form. MCP shows the same minus `authMethod`
+ * Google sign-in or a form. `mode` says whether TodoList may change anything at the provider
+ * (`read`, the default of every new connection) or may create and push there (`read_write`, the
+ * owner's switch). MCP shows the same minus `authMethod` and `mode`
  * (mcp/tools/integrations/views.ts). Whether it is shared is its own call (GET …/sharing).
  */
 export interface IntegrationStatusView {
@@ -204,6 +206,7 @@ export interface IntegrationStatusView {
   authMethod: AuthMethod;
   accountLabel: string;
   status: PublicIntegrationStatus;
+  mode: IntegrationMode;
   expiresAt: Date | null;
   lastSyncAt: Date | null;
 }
@@ -223,6 +226,7 @@ export function toIntegrationStatus(data: IntegrationData): IntegrationStatusVie
     authMethod: data.authMethod,
     accountLabel: data.label,
     status: PUBLIC_STATUS[data.status],
+    mode: data.mode,
     expiresAt: data.expiresAt,
     lastSyncAt: data.lastSyncAt,
   };

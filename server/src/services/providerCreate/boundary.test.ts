@@ -1,6 +1,7 @@
 /**
- * H5 import boundary: only services/providerCreate/** may import the write client, so nothing in
- * sync, the controllers or the MCP tools can reach a provider's create endpoints on its own.
+ * H5 import boundary: only the integration classes (classes/integration/**) may import the write
+ * client, so nothing in sync, the controllers or the MCP tools can reach a provider's create
+ * endpoints on its own (writePaths.test.ts holds the full rule).
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,6 +10,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SRC = fileURLToPath(new URL('../../', import.meta.url));
+/** The write client's module path, built so this file does not name it itself. */
+const WRITE_CLIENT = ['writers', 'trackerWriter'].join('/');
 
 function* sources(dir: string): Generator<string> {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -19,12 +22,12 @@ function* sources(dir: string): Generator<string> {
 }
 
 describe('the write client', () => {
-  it('is imported only from services/providerCreate', () => {
+  it('is imported only from classes/integration', () => {
     const outside: string[] = [];
     for (const file of sources(SRC)) {
       const relative = path.relative(SRC, file).split(path.sep).join('/');
-      if (relative.startsWith('services/providerCreate/')) continue;
-      if (readFileSync(file, 'utf8').includes('providerCreate/writeClient')) outside.push(relative);
+      if (relative.startsWith('classes/integration/')) continue;
+      if (readFileSync(file, 'utf8').includes(WRITE_CLIENT)) outside.push(relative);
     }
     assert.deepEqual(outside, []);
   });

@@ -1,6 +1,6 @@
 /**
- * gcal-dispatch: only live OAuth Google Calendar integrations with a push target get a
- * background job, one each, carrying the integration id and nothing else.
+ * gcal-dispatch: only live, read & write OAuth Google Calendar integrations with a push target
+ * get a background job, one each, carrying the integration id and nothing else.
  */
 import { after, afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +10,7 @@ import type { JobRunner, SyncJob } from '../services/syncJobs.js';
 import { findSecrets } from '../services/secretPatterns.js';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import { runJobInProcess } from '../testing/testSeams.js';
-import type { IntegrationStatus } from '../types/domain.js';
+import type { IntegrationMode, IntegrationStatus } from '../types/domain.js';
 
 let db: TestDatabase;
 let integrations: IIntegrationRepository;
@@ -25,6 +25,7 @@ interface Variant {
   authMethod?: 'oauth' | 'service_account' | 'api_token_basic';
   target?: string | null;
   credentialId?: string | null;
+  mode?: IntegrationMode;
 }
 
 before(async () => {
@@ -52,6 +53,8 @@ before(async () => {
       label: accountId,
       authMethod: over.authMethod ?? 'oauth',
       topicId: 'personal',
+      // Pushing writes to the calendar: only a read & write integration is scheduled.
+      mode: over.mode ?? 'read_write',
       status: over.status ?? 'active',
       credentialId: over.credentialId === undefined ? `cred-${accountId}` : over.credentialId,
       config: over.target === null ? {} : { targetCalendarId: over.target ?? 'primary' },
@@ -68,6 +71,8 @@ before(async () => {
   await make('g-no-credential', { credentialId: null });
   await make('g-service-account', { authMethod: 'service_account' });
   await make('g-jira', { provider: 'jira', authMethod: 'api_token_basic' });
+  // Read-only (the default of every connection): never pushed on a schedule.
+  await make('g-read-only', { mode: 'read' });
   const deleted = await make('g-deleted');
   await integrations.softDelete(workspaceId, deleted.id);
   // Its owner left: never scheduled again (PERMISSIONS-V2 ruling 6).
@@ -78,6 +83,7 @@ before(async () => {
     label: 'g-owner-left',
     authMethod: 'oauth',
     topicId: 'personal',
+    mode: 'read_write',
     status: 'active',
     credentialId: 'cred-g-owner-left',
     config: { targetCalendarId: 'primary' },

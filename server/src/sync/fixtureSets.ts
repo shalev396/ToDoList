@@ -4,7 +4,7 @@
  * or `<adapter.fixturesDir>/<set>/` for the one adapter that overrides it (the test adapter).
  *
  * The same rule runSync.ts applies to its runs, for code outside the engine: the integrations'
- * "test connection" (services/integrationTest.ts). It has to live in this folder: the root is
+ * "test connection" (Integration#testConnection). It has to live in this folder: the root is
  * resolved from this module's own URL, which is src/sync/ in the source tree and index.mjs in
  * the bundle.
  */

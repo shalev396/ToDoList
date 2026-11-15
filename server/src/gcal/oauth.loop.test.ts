@@ -133,7 +133,8 @@ describe('Google Calendar with OAuth, against the mock', () => {
     assert.equal(integration.accountId, ALICE.sub);
     assert.equal(integration.label, ALICE.email);
     assert.equal(integration.status, 'active');
-    assert.equal(integration.mode, 'read_write');
+    // Read-only, like every new connection: nothing is pushed until its owner switches it.
+    assert.equal(integration.mode, 'read');
     assert.deepEqual(integration.config, {
       calendars: [{ id: ALICE.email, mode: 'two_way' }],
       targetCalendarId: ALICE.email,
@@ -149,6 +150,10 @@ describe('Google Calendar with OAuth, against the mock', () => {
       ALICE.email,
       'connected',
     ]);
+    // The pushes below write to the calendar: its owner switches it to read & write.
+    const switched = await call('PATCH', integrationsPath(`/${iid}`), { mode: 'read_write' });
+    assert.equal(switched.status, 200, switched.text);
+    assert.equal((switched.body?.['data'] as Record<string, unknown>)['mode'], 'read_write');
   });
 
   it('lists the account’s calendars for the picker', async () => {

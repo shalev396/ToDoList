@@ -8,6 +8,10 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 
+import type { ActorRef } from '../../classes/base/Actor.js';
+import type { WorkspaceContext } from '../../classes/base/Caller.js';
+import type { SealInput, SecretJson } from '../../classes/integration/Credential.js';
+import type { OAuthConnection } from '../../classes/integration/index.js';
 import type { HttpRequest, HttpResponse } from '../../sync/http.js';
 import type * as Models from '../../models/index.js';
 import { startApiHarness, type ApiHarness } from '../../testing/apiHarness.js';
@@ -154,6 +158,34 @@ const EXPECTED: Record<MockOAuthProvider, { accountId: string; label: string }> 
   clickup: { accountId: '4242', label: 'mock-clickup' },
   linear: { accountId: 'mock-linear-user', label: 'Mock Linear' },
 };
+
+/** Integration.connectOAuth by the name the shared connect function had. */
+async function connectThroughClass(): Promise<{
+  connectOAuthIntegration: (
+    ctx: WorkspaceContext,
+    actor: ActorRef,
+    conn: OAuthConnection,
+  ) => Promise<unknown>;
+}> {
+  const { Integration } = await import('../../classes/integration/index.js');
+  const { Caller } = await import('../../classes/base/Caller.js');
+  return {
+    connectOAuthIntegration: (ctx, actor, conn) =>
+      Integration.connectOAuth(Caller.fromContext(ctx, actor), conn),
+  };
+}
+
+/** The credential's two doors, by the names the vault and the writer had. */
+async function credentialDoors(): Promise<{
+  decryptForSync: <T>(id: string, fn: (secret: SecretJson) => Promise<T>) => Promise<T>;
+  storeCredential: (input: SealInput) => Promise<void>;
+}> {
+  const { Credential } = await import('../../classes/integration/Credential.js');
+  return {
+    decryptForSync: (id, fn) => Credential.of(id).open(fn),
+    storeCredential: (input) => Credential.seal(input),
+  };
+}
 
 describe('the authorize URL', () => {
   for (const provider of MOCK_OAUTH_PROVIDERS) {
@@ -334,7 +366,7 @@ describe('ownership (PERMISSIONS-V2)', () => {
   });
 
   it('connectOAuthIntegration refuses a reconnect target that is not the member’s own', async () => {
-    const { connectOAuthIntegration } = await import('../integrationConnect.js');
+    const { connectOAuthIntegration } = await connectThroughClass();
     const { OAuthFailure } = await import('./common.js');
     const { getWorkspaceContext } = await import('../workspaceContext.js');
     const owners = await connectThrough('clickup');
@@ -350,7 +382,6 @@ describe('ownership (PERMISSIONS-V2)', () => {
           label: 'x',
           config: {},
           topicSlug: 'work',
-          mode: 'read',
           secret: { accessToken: 'FAKE-access' },
           scopes: [],
           reconnectIntegrationId: owners,
@@ -362,7 +393,7 @@ describe('ownership (PERMISSIONS-V2)', () => {
 
   it('25 OAuth connects at once, 4 short of a member’s cap: at most 4 are created', async () => {
     const { LIMITS } = await import('../../config/limits.js');
-    const { connectOAuthIntegration } = await import('../integrationConnect.js');
+    const { connectOAuthIntegration } = await connectThroughClass();
     const { OAuthFailure } = await import('./common.js');
     const { getWorkspaceContext } = await import('../workspaceContext.js');
     const repository = await models.getIntegrationRepository();
@@ -394,7 +425,6 @@ describe('ownership (PERMISSIONS-V2)', () => {
             label: `Race ${String(n)}`,
             config: {},
             topicSlug: 'work',
-            mode: 'read',
             secret: { accessToken: 'FAKE-access' },
             scopes: [],
           },
@@ -640,7 +670,7 @@ describe('minor behaviours', () => {
 describe('refresh and rotation', () => {
   /** The access token a sync would use now (a snapshot taken inside the vault's callback). */
   async function accessTokenNow(integrationId: string): Promise<string> {
-    const { decryptForSync } = await import('../crypto/credentialVault.js');
+    const { decryptForSync } = await credentialDoors();
     let seen = '';
     await decryptForSync(integrationId, (secret) => {
       seen = secret['accessToken'] ?? '';
@@ -651,8 +681,7 @@ describe('refresh and rotation', () => {
 
   /** The stored access token reaches its expiry: what time does to a real grant. */
   async function expire(provider: MockOAuthProvider, integrationId: string): Promise<void> {
-    const { decryptForSync } = await import('../crypto/credentialVault.js');
-    const { storeCredential } = await import('../crypto/credentialWriter.js');
+    const { decryptForSync, storeCredential } = await credentialDoors();
     let copy: Record<string, string> = {};
     await decryptForSync(integrationId, (secret) => {
       copy = { ...secret };

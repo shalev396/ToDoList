@@ -1,7 +1,8 @@
 /**
  * The funnel's choices (H5): the options of one step (sites, projects, issue types, a Jira Team
  * field, ClickUp workspaces, spaces, folders and lists, Linear teams, projects and states, GitHub
- * repositories and labels, Google calendars), given the earlier answers.
+ * repositories and labels), given the earlier answers, for the tracker classes
+ * (classes/integration/providers/*: `readOptions`). Google calendars are GoogleCalendarIntegration's.
  *
  * Every call is a GET (or an allow-listed GraphQL read) through the read client; none writes.
  * Answers are kept for a minute per user, integration and step, since a user opens the same
@@ -9,17 +10,15 @@
  * provider says is trusted as a path.
  */
 import { AppError } from '../../errors/AppError.js';
-import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { OAUTH_ENDPOINTS } from '../../sync/providers/oauthEndpoints.js';
 import { asObject, asString } from '../../sync/providers/trackerCommon.js';
-import { listOAuthCalendars } from '../../gcal/oauthCalendar.js';
 import type {
   CreateOption,
   CreateOptionsQuery,
   CreateOptionsResponseData,
 } from '../../types/providerCreate.js';
 import { checkedId, isValidId, splitRepo } from './ids.js';
-import { withCreateSession, type CreateSession } from './session.js';
+import type { TrackerReadSession as CreateSession } from '../../classes/integration/TrackerIntegration.js';
 import { jiraSitesOf, pickJiraSite } from './jiraSites.js';
 
 const CACHE_MS = 60_000;
@@ -36,6 +35,19 @@ function remember(key: string, value: CreateOptionsResponseData): CreateOptionsR
   }
   cache.set(key, { at: Date.now(), value });
   return value;
+}
+
+/**
+ * One step's options for a user: the answer kept for a minute under `key` (user, integration and
+ * step), else `compute`'s.
+ */
+export async function cachedCreateOptions(
+  key: string,
+  compute: () => Promise<CreateOptionsResponseData>,
+): Promise<CreateOptionsResponseData> {
+  const hit = cache.get(key);
+  if (hit !== undefined && Date.now() - hit.at < CACHE_MS) return hit.value;
+  return remember(key, await compute());
 }
 
 /** Tests only: forgets every kept answer. */
@@ -90,7 +102,7 @@ export async function readJiraTeamField(
   return { fieldId: (field['fieldId'] ?? field['key']) as string, options };
 }
 
-async function jiraOptions(
+export async function jiraOptions(
   session: CreateSession,
   query: CreateOptionsQuery,
 ): Promise<CreateOptionsResponseData> {
@@ -140,7 +152,7 @@ async function jiraOptions(
 
 // ─── ClickUp ────────────────────────────────────────────────────────────────
 
-async function clickupOptions(
+export async function clickupOptions(
   session: CreateSession,
   query: CreateOptionsQuery,
 ): Promise<CreateOptionsResponseData> {
@@ -186,7 +198,7 @@ async function clickupOptions(
 
 // ─── Linear ─────────────────────────────────────────────────────────────────
 
-async function linearOptions(
+export async function linearOptions(
   session: CreateSession,
   query: CreateOptionsQuery,
 ): Promise<CreateOptionsResponseData> {
@@ -240,7 +252,7 @@ async function linearOptions(
 
 // ─── GitHub ─────────────────────────────────────────────────────────────────
 
-async function githubOptions(
+export async function githubOptions(
   session: CreateSession,
   query: CreateOptionsQuery,
 ): Promise<CreateOptionsResponseData> {
@@ -293,54 +305,4 @@ async function githubOptions(
     };
   }
   throw new AppError(400, 'step: not a GitHub step');
-}
-
-// ─── entry ──────────────────────────────────────────────────────────────────
-
-/** The steps each provider's funnel uses. */
-const STEPS: Readonly<Record<string, readonly string[]>> = {
-  jira: ['site', 'project', 'issueType', 'team'],
-  clickup: ['workspace', 'space', 'folder', 'list'],
-  linear: ['linearTeam', 'linearProject', 'state'],
-  github: ['repo', 'label'],
-  google_calendar: ['calendar'],
-};
-
-/** One step's options for the caller (the integration is already known to be theirs). */
-export async function readCreateOptions(
-  integration: IntegrationData,
-  userId: string,
-  query: CreateOptionsQuery,
-): Promise<CreateOptionsResponseData> {
-  if (!(STEPS[integration.provider] ?? []).includes(query.step)) {
-    throw new AppError(400, 'step: not a step of this provider');
-  }
-  const key = `${userId}|${integration.id}|${JSON.stringify(query)}`;
-  const hit = cache.get(key);
-  if (hit !== undefined && Date.now() - hit.at < CACHE_MS) return hit.value;
-  if (integration.provider === 'google_calendar') {
-    const calendars = await listOAuthCalendars(integration);
-    return remember(key, {
-      options: calendars
-        .filter((entry) => entry.accessRole === 'owner' || entry.accessRole === 'writer')
-        .map((entry) => ({
-          id: entry.id,
-          name: entry.summary,
-          ...(entry.primary ? { hint: 'primary' } : {}),
-        })),
-    });
-  }
-  const value = await withCreateSession(integration, { reading: true }, (session) => {
-    switch (integration.provider) {
-      case 'jira':
-        return jiraOptions(session, query);
-      case 'clickup':
-        return clickupOptions(session, query);
-      case 'linear':
-        return linearOptions(session, query);
-      default:
-        return githubOptions(session, query);
-    }
-  });
-  return remember(key, value);
 }

@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 import { AppError } from '../../../errors/AppError.js';
-import { listOwnIntegrations } from '../../../services/integrationOwnership.js';
+import { Integration } from '../../../classes/integration/index.js';
+import { toolCaller } from '../../auth/principal.js';
 import { requestIntegrationSync } from '../../../services/syncRuns.js';
 import { defineTool } from '../../tool.js';
 import { IntegrationId } from './views.js';
@@ -44,9 +45,7 @@ export const syncNow = defineTool({
   async handler(ctx, input) {
     const ids =
       input.integrationIds === undefined
-        ? (await listOwnIntegrations(ctx.workspace, ctx.principal.userId)).map(
-            (integration) => integration.id,
-          )
+        ? (await Integration.listOwn(toolCaller(ctx))).map((integration) => integration.id)
         : [...new Set(input.integrationIds)];
     const runIds: string[] = [];
     const skipped: Skipped[] = [];

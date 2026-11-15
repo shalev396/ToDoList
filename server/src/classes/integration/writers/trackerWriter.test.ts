@@ -11,7 +11,7 @@ import {
   type HttpRequest,
   type HttpResponse,
   type Transport,
-} from '../../sync/http.js';
+} from '../../../sync/http.js';
 import {
   LINEAR_ISSUE_CREATE_DOCUMENT,
   clickupPriority,
@@ -25,8 +25,8 @@ import {
   linearIssueInput,
   toAdf,
   type CreateFields,
-} from './writeClient.js';
-import { splitRepo } from './ids.js';
+} from './trackerWriter.js';
+import { splitRepo } from '../../../services/providerCreate/ids.js';
 
 const FIELDS: CreateFields = {
   title: '  Buy milk  ',

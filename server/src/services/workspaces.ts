@@ -10,7 +10,8 @@ import { randomInt } from 'node:crypto';
 
 import { environment } from '../config/environment.js';
 import { LIMITS } from '../config/limits.js';
-import { Actor } from '../classes/base/Actor.js';
+import { Actor, type ActorRef } from '../classes/base/Actor.js';
+import { Integration } from '../classes/integration/index.js';
 import { AuditTarget } from '../classes/base/AuditTarget.js';
 import { AuditLog } from '../classes/AuditLog.js';
 import { Caller } from '../classes/base/Caller.js';
@@ -44,7 +45,6 @@ import type { Env } from '../types/env.d.ts';
 import { openJoinToken, sealJoinToken } from './crypto/joinLinkVault.js';
 import { canonicalTimeZone } from '../utils/timeZone.js';
 import type { WorkspaceContext } from './accessFilter.js';
-import { disconnectMemberIntegrations, type IntegrationActor } from './integrations.js';
 import { hashInviteToken, INVITE_TOKEN_PATTERN, newInviteToken } from './inviteTokens.js';
 import { logger } from './logger.js';
 import { sendWorkspaceDeletedEmail } from './workspaceDeletedEmail.js';
@@ -933,14 +933,10 @@ async function assertNotLastOwner(member: MembershipData, message: string): Prom
  * owner's removeMember (which resumes it for a former member), and meanwhile the sync dispatcher
  * skips integrations whose owner is no longer a member. `actor`: who ended it, for the audit.
  */
-async function endMembership(
-  workspaceId: string,
-  userId: string,
-  actor: IntegrationActor,
-): Promise<void> {
+async function endMembership(workspaceId: string, userId: string, actor: ActorRef): Promise<void> {
   await (await getMembershipRepository()).revoke(workspaceId, userId);
   await (await getAgentKeyRepository()).revokeForUser(workspaceId, userId);
-  await disconnectMemberIntegrations({ id: workspaceId }, actor, userId);
+  await Integration.disconnectAllOf(workspaceId, actor, userId);
 }
 
 /** Active members with their name and email, oldest first. Any member may list them. */
@@ -1007,8 +1003,8 @@ export async function removeMember(
   assertOwner(callerOf(ctx, actorUserId, actorAgentId));
   const member = await (await getMembershipRepository()).find(ctx.id, userId);
   if (member === null) {
-    const finished = await disconnectMemberIntegrations(
-      ctx,
+    const finished = await Integration.disconnectAllOf(
+      ctx.id,
       { userId: actorUserId, agentId: actorAgentId },
       userId,
     );

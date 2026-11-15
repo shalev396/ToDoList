@@ -52,6 +52,12 @@ async function connect(): Promise<string> {
   const landed = await fetch(back, { redirect: 'manual', headers: { cookie } });
   const id = /connected=([0-9a-f-]{36})$/.exec(landed.headers.get('location') ?? '')?.[1];
   assert.ok(id !== undefined, landed.headers.get('location') ?? '');
+  // Every connection starts read-only; these tests push, so its owner switches it on.
+  const switched = await api.call('PATCH', `/api/private/workspaces/${wid}/integrations/${id}`, {
+    token,
+    body: { mode: 'read_write' },
+  });
+  assert.equal(switched.status, 200, switched.text);
   return id;
 }
 

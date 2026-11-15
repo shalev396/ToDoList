@@ -5,8 +5,16 @@ import { hasStatus } from '../../testing/workspaceFixtures.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import type * as Models from '../../models/index.js';
 import type { IntegrationData } from '../../models/index.js';
-import type * as Vault from './credentialVault.js';
-import type * as Writer from './credentialWriter.js';
+import type { ActorRef } from '../base/Actor.js';
+import type { SealInput, SecretJson } from './Credential.js';
+
+/** The credential's two doors, by the names the vault and the writer had. */
+interface Vault {
+  decryptForSync<T>(integrationId: string, fn: (secret: SecretJson) => Promise<T>): Promise<T>;
+}
+interface Writer {
+  storeCredential(input: SealInput, actor?: ActorRef): Promise<void>;
+}
 
 const JIRA_SECRET = { email: 'dev@example.test', token: 'ATATT3xFAKEjiraTokenFAKE0123456789' };
 /** A second real secret beside the token: `email` is an identity field, a label (IDENTITY_FIELDS). */
@@ -20,15 +28,24 @@ const LABELLED_SECRET = {
 };
 
 let db: TestDatabase;
-let vault: typeof Vault;
-let writer: typeof Writer;
+let vault: Vault;
+let writer: Writer;
 let models: typeof Models;
 let accounts = 0;
 
 before(async () => {
   db = await startTestDatabase('todolist_vault_test');
-  vault = await import('./credentialVault.js');
-  writer = await import('./credentialWriter.js');
+  const { Credential } = await import('./Credential.js');
+  vault = {
+    decryptForSync<T>(integrationId: string, fn: (secret: SecretJson) => Promise<T>): Promise<T> {
+      return Credential.of(integrationId).open(fn);
+    },
+  };
+  writer = {
+    storeCredential(input: SealInput, actor?: ActorRef): Promise<void> {
+      return Credential.seal(input, actor);
+    },
+  };
   models = await import('../../models/index.js');
 });
 
@@ -54,7 +71,7 @@ async function newIntegration(
 async function store(
   integration: IntegrationData,
   secret: Record<string, string>,
-  extra: Partial<Writer.StoreCredentialInput> = {},
+  extra: Partial<SealInput> = {},
 ): Promise<void> {
   await writer.storeCredential({
     workspaceId: integration.workspaceId,
@@ -228,7 +245,7 @@ describe('credentialWriter → credentialVault', () => {
     }
 
     // The secret inside something else is refused too.
-    const smuggled: ((secret: Vault.SecretJson) => unknown)[] = [
+    const smuggled: ((secret: SecretJson) => unknown)[] = [
       (secret): unknown => ({ headers: [`Basic token=${secret['token'] ?? ''}`] }),
       (secret): unknown => new Map([['projects', secret['projectsToken']]]),
       (secret): unknown => Buffer.from(secret['token'] ?? ''),
@@ -313,7 +330,7 @@ describe('credentialWriter → credentialVault', () => {
   it('a credential that cannot be opened: callers get a generic message, the log names the error', async () => {
     const throttled = await newIntegration('w-vault');
     await store(throttled, JIRA_SECRET);
-    const { stageKeyProvider } = await import('./stageKeyProvider.js');
+    const { stageKeyProvider } = await import('../../services/crypto/stageKeyProvider.js');
     const keyProvider = stageKeyProvider();
     const decryptDataKey = Object.getOwnPropertyDescriptor(keyProvider, 'decryptDataKey');
     Object.defineProperty(keyProvider, 'decryptDataKey', {

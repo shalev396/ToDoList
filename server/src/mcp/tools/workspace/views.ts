@@ -9,7 +9,7 @@ import { AppError } from '../../../errors/AppError.js';
 import type { InviteData } from '../../../models/index.js';
 import { listMembers, type MemberWithUser } from '../../../services/workspaces.js';
 import type { WorkspaceContext } from '../../../services/accessFilter.js';
-import { providersByMember } from '../../../services/integrations.js';
+import { Integration } from '../../../classes/integration/index.js';
 import { INVITE_STATUSES, PROVIDERS, ROLES, type Provider } from '../../../types/domain.js';
 
 export const MemberView = z.object({
@@ -71,5 +71,5 @@ export const MemberUserId = z
 export async function findMemberView(ws: WorkspaceContext, userId: string): Promise<MemberView> {
   const member = (await listMembers(ws)).find((m) => m.membership.userId === userId);
   if (member === undefined) throw new AppError(404, 'Member not found');
-  return toMemberView(member, await providersByMember(ws.id));
+  return toMemberView(member, await Integration.providersByMember(ws.id));
 }

@@ -42,7 +42,7 @@ function integration(status: IntegrationStatus): IntegrationData {
 }
 
 describe('toIntegrationStatus', () => {
-  it('returns exactly id, provider, authMethod, accountLabel, status, expiresAt and lastSyncAt', () => {
+  it('returns exactly id, provider, authMethod, accountLabel, status, mode, expiresAt and lastSyncAt', () => {
     const data = integration('active');
     const view = toIntegrationStatus(data);
     assert.deepEqual(Object.keys(view).sort(), [
@@ -51,6 +51,7 @@ describe('toIntegrationStatus', () => {
       'expiresAt',
       'id',
       'lastSyncAt',
+      'mode',
       'provider',
       'status',
     ]);
@@ -60,6 +61,7 @@ describe('toIntegrationStatus', () => {
       authMethod: data.authMethod,
       accountLabel: 'Work Jira',
       status: 'connected',
+      mode: 'read',
       expiresAt: data.expiresAt,
       lastSyncAt: data.lastSyncAt,
     });

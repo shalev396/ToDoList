@@ -40,6 +40,7 @@ const STATUS_KEYS = [
   'expiresAt',
   'id',
   'lastSyncAt',
+  'mode',
   'provider',
   'status',
 ];

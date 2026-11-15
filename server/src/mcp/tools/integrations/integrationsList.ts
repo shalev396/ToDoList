@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
-import { listOwnIntegrations } from '../../../services/integrationOwnership.js';
+import { Integration } from '../../../classes/integration/index.js';
 import { ItemPolicy } from '../../../classes/policies/ItemPolicy.js';
+import { toolCaller } from '../../auth/principal.js';
 import { defineTool } from '../../tool.js';
 import { IntegrationStatus, toIntegrationStatusView } from './views.js';
 
@@ -27,7 +28,7 @@ export const integrationsList = defineTool({
   scopes: ['integrations:read'],
   minRole: 'viewer',
   async handler(ctx) {
-    const integrations = await listOwnIntegrations(ctx.workspace, ctx.principal.userId);
+    const integrations = await Integration.listOwn(toolCaller(ctx));
     const shared = await ItemPolicy.sharedConnectorIds(ctx.workspace.id);
     return {
       output: {

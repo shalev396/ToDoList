@@ -113,7 +113,14 @@ async function connect(
   );
   const connected = /connected=([\w-]+)/.exec(callback.headers.get('location') ?? '');
   assert.ok(connected, callback.headers.get('location') ?? '');
-  return connected[1] ?? '';
+  const id = connected[1] ?? '';
+  // Every connection starts read-only; these tests create, so its owner switches it on.
+  const switched = await api.call('PATCH', `${W()}/integrations/${id}`, {
+    token: as,
+    body: { mode: 'read_write' },
+  });
+  assert.equal(switched.status, 200, switched.text);
+  return id;
 }
 
 async function todo(extra: Json = {}, as = token): Promise<string> {

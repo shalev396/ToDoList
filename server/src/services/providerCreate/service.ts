@@ -3,12 +3,13 @@
  * writes to a provider, and only to CREATE one item after an explicit user action.
  *
  * Gates, in order: an editor or above; the to-do is the caller's own; the integration is the
- * caller's own (anyone else's is a 404); creating is on for it on this server (mode.ts); a to-do
- * with a copy already pending, created or unknown at this integration answers that copy instead
- * of making another (unless `retryAnyway`); the caller is under the hourly limit, reserved
- * atomically BEFORE the provider is called; the same `requestId` never creates twice. Then the
- * typed request goes through the write client (writeClient.ts). A request that was sent and got
- * no answer is `unknown` and is never retried.
+ * caller's own (anyone else's is a 404); a to-do with a copy already pending, created or unknown
+ * at this integration answers that copy instead of making another (unless `retryAnyway`);
+ * creating is on for it on this server (mode.ts) and it is read & write (Integration's write
+ * gate); the caller is under the hourly limit, reserved atomically BEFORE the provider is called;
+ * the same `requestId` never creates twice. Then the integration creates it (TaskProvider
+ * createTask, CalendarProvider insertEvent), through its write session and the write client. A
+ * request that was sent and got no answer is `unknown` and is never retried.
  *
  * Right after the provider answers, the create is audited and the copy's status recorded (no
  * title or token in the entry). Reading the item back and storing it as a mirrored copy come
@@ -16,20 +17,13 @@
  */
 import { LIMITS } from '../../config/limits.js';
 import { AppError } from '../../errors/AppError.js';
-import { CalendarApiError, type PlainEventBody } from '../../gcal/calendarApi.js';
-import { insertOAuthEvent } from '../../gcal/oauthCalendar.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import {
   effectiveCopyStatus,
   type ItemCopy,
   type ItemData,
 } from '../../models/definitions/Item.js';
-import {
-  getCreateQuotaRepository,
-  getCredentialRepository,
-  getIntegrationRepository,
-  getItemRepository,
-} from '../../models/index.js';
+import { getCreateQuotaRepository, getItemRepository } from '../../models/index.js';
 import { ProviderHttpError } from '../../sync/http.js';
 import { mapCalendarEvent } from '../../sync/providers/google_calendar.js';
 import type { MappedItem } from '../../sync/types.js';
@@ -45,39 +39,32 @@ import {
   type CreateTarget,
   type CreateTargetsResponseData,
 } from '../../types/providerCreate.js';
-import { Actor } from '../../classes/base/Actor.js';
+import { Actor, type ActorRef } from '../../classes/base/Actor.js';
 import { AuditTarget } from '../../classes/base/AuditTarget.js';
 import { AuditLog } from '../../classes/AuditLog.js';
 import { Caller } from '../../classes/base/Caller.js';
-import { IntegrationPolicy } from '../../classes/policies/IntegrationPolicy.js';
+import {
+  Integration,
+  isCalendarProvider,
+  isCreateFunnel,
+  isTaskProvider,
+  type CreatedRecord,
+  type CreateFields,
+  type PlainEventBody,
+  type WriteResult,
+} from '../../classes/integration/index.js';
 import { ItemPolicy } from '../../classes/policies/ItemPolicy.js';
 import type { WorkspaceContext } from '../accessFilter.js';
 import { sha256Hex } from '../crypto/hashing.js';
-import type { IntegrationActor } from '../integrations.js';
-import { findOwnIntegration } from '../integrationOwnership.js';
 import { logger } from '../logger.js';
-import { isOAuthProviderId, OAUTH_PROVIDER_DEFS } from '../oauth/providers.js';
-import { readBackClickup, readBackGithub, readBackJira, readBackLinear } from './created.js';
-import { readCreateOptions, readJiraTeamField } from './funnel.js';
-import { checkedId, splitRepo } from './ids.js';
-import { jiraSitesOf, pickJiraSite } from './jiraSites.js';
+import { cleanTitle } from './fields.js';
+import { checkedId } from './ids.js';
+import { jiraSitesOf } from './jiraSites.js';
 import { markAsCopy, storeMirroredItem } from './mirror.js';
-import { writeModeFor } from './mode.js';
-import { withCreateSession, type CreateSession } from './session.js';
-import {
-  cleanTitle,
-  clickupTaskBody,
-  githubIssueBody,
-  jiraIssueBody,
-  linearIssueInput,
-  type CreateFields,
-  type CreatedRecord,
-  type WriteResult,
-} from './writeClient.js';
 
 const AUDIT_ACTION = 'provider.create';
 const HOUR_MS = 60 * 60 * 1000;
-/** The read-back and the mirror each may take this long; then the create is reported as is. */
+/** The mirror may take this long; then the create is reported as is. */
 const READ_BACK_BUDGET_MS = 5_000;
 const GITHUB_INSTALLATIONS_URL = 'https://github.com/settings/installations';
 const NOTE_MAX = 500;
@@ -87,31 +74,21 @@ export const isCreatableProvider = (value: string): value is CreatableProvider =
 
 // ─── what the chips show ────────────────────────────────────────────────────
 
-/** Does this OAuth Jira or Linear grant lack the scope that creates items? */
-async function lacksWriteScope(integration: IntegrationData): Promise<boolean> {
-  const { provider } = integration;
-  if (integration.authMethod !== 'oauth' || !isOAuthProviderId(provider)) return false;
-  const needed = OAUTH_PROVIDER_DEFS[provider].writeScopes;
-  if (needed.length === 0) return false;
-  const meta = await (
-    await getCredentialRepository()
-  ).findMeta(integration.workspaceId, integration.id);
-  const granted = new Set(meta?.scopes ?? []);
-  return needed.some((scope) => !granted.has(scope));
-}
-
-/** The caller's own integrations that can create items, one chip each. */
+/**
+ * The caller's own integrations that can create items, one chip each. `writable` is false when
+ * nothing can be created there now: read-only (`mode`), or creating is off for it on this server.
+ */
 export async function listCreateTargets(
   ctx: WorkspaceContext,
   userId: string,
 ): Promise<CreateTargetsResponseData> {
-  const integrations = await (await getIntegrationRepository()).list(ctx.id);
+  const caller = Caller.fromContext(ctx, Actor.user(userId));
   const targets: CreateTargetsResponseData['targets'] = [];
-  for (const integration of integrations) {
+  for (const integration of await Integration.listVisible(caller)) {
     const { provider } = integration;
     if (
       !isCreatableProvider(provider) ||
-      !IntegrationPolicy.isOwn(integration, userId) ||
+      !integration.isOwnedBy(userId) ||
       integration.status !== 'active'
     ) {
       continue;
@@ -123,42 +100,35 @@ export async function listCreateTargets(
       provider,
       label: integration.label,
       authMethod: integration.authMethod,
-      needsConsent: await lacksWriteScope(integration),
-      writable: writeModeFor(integration) !== 'off',
+      needsConsent: await integration.needsWriteConsent(),
+      writable: integration.allowsWrites,
+      mode: integration.mode.name,
       shared: await ItemPolicy.isShared(integration),
     });
   }
   return { targets };
 }
 
-/** The caller's own integration, or a 404 (someone else's, or not there). */
-async function ownIntegration(
-  ctx: WorkspaceContext,
-  userId: string,
-  integrationId: string,
-): Promise<IntegrationData> {
-  return findOwnIntegration(ctx, userId, integrationId);
-}
-
-const writesOff = (): AppError =>
-  new AppError(409, 'Creating in providers is off on this server', { code: 'provider_writes_off' });
-
-/** One funnel step's choices. Editor or above; the integration is the caller's own and writable. */
+/**
+ * One funnel step's choices. Editor or above; the integration is the caller's own (404), and could
+ * be written to now: 409 `provider_writes_off` (demo data, fixtures), 409 `integration_read_only`.
+ */
 export async function createOptions(
   ctx: WorkspaceContext,
   userId: string,
   integrationId: string,
   query: CreateOptionsQuery,
 ): Promise<CreateOptionsResponseData> {
-  Caller.fromContext(ctx, Actor.user(userId)).require('editor');
-  const integration = await ownIntegration(ctx, userId, integrationId);
-  if (!isCreatableProvider(integration.provider)) {
+  const caller = Caller.fromContext(ctx, Actor.user(userId));
+  caller.require('editor');
+  const integration = await Integration.findOwn(caller, integrationId);
+  if (!isCreatableProvider(integration.provider) || !isCreateFunnel(integration)) {
     throw new AppError(409, 'Nothing can be created in this provider');
   }
   // Nothing is read at a provider that cannot be written to.
-  if (writeModeFor(integration) === 'off') throw writesOff();
+  integration.assertWritable(caller);
   try {
-    return await readCreateOptions(integration, userId, query);
+    return await integration.createOptions(caller, query);
   } catch (error) {
     if (error instanceof AppError) throw error;
     if (error instanceof ProviderHttpError && error.code === 'auth_failed') {
@@ -240,8 +210,8 @@ type AuditResult = 'created' | 'unknown' | 'refused' | 'not_sent';
 /** One audit entry per create attempt that reached a decision: provider, result, key; no content. */
 async function auditCreate(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
-  integration: IntegrationData,
+  actor: ActorRef,
+  integration: Pick<IntegrationData, 'id' | 'provider'>,
   result: AuditResult,
   record: CreatedRecord | null,
 ): Promise<void> {
@@ -283,113 +253,18 @@ async function loadTodo(ctx: WorkspaceContext, userId: string, id: string): Prom
   return todo;
 }
 
-function assertTargetMatches(integration: IntegrationData, target: CreateTarget): void {
+function assertTargetMatches(
+  integration: Pick<IntegrationData, 'provider'>,
+  target: CreateTarget,
+): void {
   if (integration.provider !== target.provider) {
     throw new AppError(400, 'target: not a target of this integration');
   }
 }
 
-/** A request already prepared (validated, built) and ready to send, with its read-back. */
-interface Prepared {
-  write: () => Promise<WriteResult>;
-  readBack: (record: CreatedRecord) => Promise<MappedItem | null>;
-}
-
-/** Validates the target and builds the one create for this provider. Throws AppError (400) before anything is sent. */
-async function prepare(
-  ctx: WorkspaceContext,
-  session: CreateSession,
-  target: CreateTarget,
-  fields: CreateFields,
-): Promise<Prepared> {
-  const { integration, headers, write, read } = session;
-  const env = { timeZone: ctx.settings.timezone };
-  switch (target.provider) {
-    case 'jira': {
-      const site = pickJiraSite(integration, target.siteId);
-      const projectId = checkedId('jiraId', target.projectId, 'projectId');
-      const issueTypeId = checkedId('jiraId', target.issueTypeId, 'issueTypeId');
-      let teamToSend = target.team;
-      if (target.team !== undefined) {
-        // Only the project's own Team field may be written, and only one of its choices.
-        const team = await readJiraTeamField(session, site, projectId, issueTypeId);
-        const chosen = target.team;
-        if (
-          team?.fieldId !== chosen.fieldId ||
-          (team.options.length > 0 && !team.options.some((option) => option.id === chosen.id))
-        ) {
-          throw new AppError(400, 'team: not the Team field of this project');
-        }
-        // No listed choices: nothing to verify the id against, so no team is sent.
-        if (team.options.length === 0) teamToSend = undefined;
-      }
-      let assigneeAccountId: string | undefined;
-      if (target.assignMe === true) {
-        const { data } = await read.getJson<{ accountId?: string }>(
-          `${site.base}/rest/api/3/myself`,
-          headers,
-        );
-        if (typeof data.accountId === 'string') assigneeAccountId = data.accountId;
-      }
-      const body = jiraIssueBody(fields, {
-        projectId,
-        issueTypeId,
-        team: teamToSend,
-        assigneeAccountId,
-      });
-      return {
-        write: () => write.createJiraIssue(site, headers, body),
-        readBack: (record) => readBackJira(session, record, site.id, env),
-      };
-    }
-    case 'clickup': {
-      const listId = checkedId('clickupId', target.listId, 'listId');
-      const body = clickupTaskBody(fields);
-      return {
-        write: () => write.createClickupTask(listId, headers, body),
-        readBack: (record) => readBackClickup(session, record, env),
-      };
-    }
-    case 'linear': {
-      const input = linearIssueInput(fields, target);
-      return {
-        write: () => write.createLinearIssue(headers, input),
-        readBack: (record) => readBackLinear(session, record, env),
-      };
-    }
-    case 'github': {
-      const { owner, name } = splitRepo(target.repo);
-      const repo = `${owner}/${name}`;
-      const labels = target.labels ?? [];
-      if (labels.length > 0) {
-        // A label that does not exist would be created by GitHub: a second write. Never.
-        const { data } = await read.getJson<{ name?: unknown }[]>(
-          `https://api.github.com/repos/${owner}/${name}/labels?per_page=100`,
-          headers,
-        );
-        const known = new Set(
-          (Array.isArray(data) ? data : []).flatMap((label) =>
-            typeof label.name === 'string' ? [label.name] : [],
-          ),
-        );
-        if (!labels.every((label) => known.has(label))) {
-          throw new AppError(400, 'labels: not labels of this repository');
-        }
-      }
-      const body = githubIssueBody(fields, labels);
-      return {
-        write: () => write.createGithubIssue(repo, headers, body),
-        readBack: (record) => readBackGithub(session, repo, record, env),
-      };
-    }
-    default:
-      throw new AppError(400, 'target: nothing is created this way');
-  }
-}
-
 /** The failure a refusal is, in the words the UI maps. */
 export function failureFor(
-  integration: IntegrationData,
+  integration: Pick<IntegrationData, 'provider' | 'authMethod'>,
   reason: Extract<WriteResult, { kind: 'refused' }>['reason'],
 ): CreateFailure | 'needs_permission' {
   switch (reason) {
@@ -462,21 +337,24 @@ async function within<T>(work: Promise<T>, ms: number): Promise<T | null> {
 
 /**
  * Creates the to-do's copy in one provider. Editor or above, the caller's own to-do and
- * integration. 409 `provider_writes_off` when creating is off for it here, 429
+ * integration. 409 `provider_writes_off` when creating is off for it here, 409
+ * `integration_read_only` while it is read-only (nothing is reserved or sent), 429
  * `create_rate_limited` past the hourly limit, 400 for a bad target, `needs_due_date` for a
  * calendar event without a due date. Everything the provider decides comes back as an outcome.
  */
 export async function createCopy(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
+  actor: ActorRef,
   todoId: string,
   body: CreateCopyRequestBody,
   now: Date = new Date(),
 ): Promise<CreateCopyOutcome> {
-  Caller.fromContext(ctx, actor).require('editor');
+  const caller = Caller.fromContext(ctx, actor);
+  caller.require('editor');
   const requestId = checkedId('requestId', body.requestId, 'requestId');
   const todo = await loadTodo(ctx, actor.userId, todoId);
-  const integration = await ownIntegration(ctx, actor.userId, body.integrationId);
+  const integration = await Integration.findOwn(caller, body.integrationId);
+  const data = integration.toJSON();
   if (!isCreatableProvider(integration.provider)) {
     throw new AppError(409, 'Nothing can be created in this provider');
   }
@@ -498,7 +376,8 @@ export async function createCopy(
   );
   if (active !== undefined && body.retryAnyway !== true) return outcomeOf(active);
 
-  if (writeModeFor(integration) === 'off') throw writesOff();
+  // The write gate's checks, before anything is reserved: writes on here, and read & write.
+  integration.assertWritable(caller);
   const fields = fieldsOf(todo, ctx);
   if (isCalendar && todo.dueAt === null) {
     throw new AppError(400, 'A calendar event needs a due date', { code: 'needs_due_date' });
@@ -594,7 +473,7 @@ export async function createCopy(
 
   let needsScope: boolean;
   try {
-    needsScope = await lacksWriteScope(integration);
+    needsScope = await integration.needsWriteConsent();
   } catch (error) {
     await release();
     await items.removeCopy(ctx.id, todo.id, requestId).catch(() => undefined);
@@ -624,7 +503,7 @@ export async function createCopy(
         status: 'created',
         externalId: result.record.id,
         key: result.record.key,
-        url: safeCopyUrl(integration, result.record.url),
+        url: safeCopyUrl(data, result.record.url),
       });
     } else if (result.kind === 'unknown') {
       await auditCreate(ctx, actor, integration, 'unknown', null);
@@ -637,27 +516,30 @@ export async function createCopy(
   };
 
   try {
-    if (isCalendar && body.target.provider === 'google_calendar') {
+    if (
+      isCalendar &&
+      body.target.provider === 'google_calendar' &&
+      isCalendarProvider(integration)
+    ) {
       const calendarId = checkedId('calendarId', body.target.calendarId, 'calendarId');
       const event = calendarEvent(todo, fields, eventIdFor(requestId));
       if (event === null) {
         throw new AppError(400, 'A calendar event needs a title and a due date');
       }
-      const result = await sendCalendar(integration, calendarId, event);
+      const result = await integration.insertEvent(caller, calendarId, event);
       await settle(result);
       if (result.kind === 'created') {
-        state.mapped = readBackCalendar(ctx, integration, calendarId, event, result);
+        state.mapped = readBackCalendar(ctx, data, calendarId, event, result);
       }
-    } else {
-      await withCreateSession(integration, { reading: false }, async (session): Promise<void> => {
-        const prepared = await prepare(ctx, session, body.target, fields);
-        const result = await prepared.write();
-        await settle(result);
-        if (result.kind === 'created') {
-          // Best effort: one attempt, a short budget; the create is already recorded.
-          state.mapped = await within(prepared.readBack(result.record), READ_BACK_BUDGET_MS);
-        }
+    } else if (isTaskProvider(integration)) {
+      const created = await integration.createTask(caller, {
+        target: body.target,
+        fields,
+        settle,
       });
+      state.mapped = created.mapped;
+    } else {
+      throw new AppError(400, 'target: nothing is created this way');
     }
   } catch (error) {
     if (state.result !== null) {
@@ -690,7 +572,7 @@ export async function createCopy(
     return { status: 'unknown', copy: viewOf({ ...pending, status: 'unknown' }) };
   }
   if (result.kind === 'refused') {
-    const failure = failureFor(integration, result.reason);
+    const failure = failureFor(data, result.reason);
     const copy = viewOf({ ...pending, status: 'failed' });
     if (failure === 'needs_permission') {
       return {
@@ -708,9 +590,7 @@ export async function createCopy(
   let externalId = record.id;
   try {
     const stored =
-      mapped === null
-        ? null
-        : await within(storeMirroredItem(integration, mapped), READ_BACK_BUDGET_MS);
+      mapped === null ? null : await within(storeMirroredItem(data, mapped), READ_BACK_BUDGET_MS);
     if (stored !== null) {
       // The to-do's sharing is read now: it may have changed during the create.
       const fresh = await items.findById(ctx.id, todo.id);
@@ -731,41 +611,12 @@ export async function createCopy(
       status: 'created',
       externalId,
       key: record.key,
-      url: safeCopyUrl(integration, record.url),
+      url: safeCopyUrl(data, record.url),
     }),
   };
 }
 
 // ─── Google Calendar ────────────────────────────────────────────────────────
-
-async function sendCalendar(
-  integration: IntegrationData,
-  calendarId: string,
-  event: PlainEventBody,
-): Promise<WriteResult> {
-  try {
-    const written = await insertOAuthEvent(integration, calendarId, event);
-    const eid = Buffer.from(`${written.id} ${calendarId}`).toString('base64url');
-    return {
-      kind: 'created',
-      record: {
-        id: written.id,
-        key: null,
-        url: `https://calendar.google.com/calendar/event?eid=${eid}`,
-      },
-    };
-  } catch (error) {
-    // Only an answer from Google is about the event; a grant or refresh that fails before
-    // anything is sent is not, so it propagates (and is reported as not sent).
-    if (!(error instanceof CalendarApiError)) throw error;
-    const { status } = error;
-    if (status === null || status >= 500) return { kind: 'unknown' };
-    if (status === 401) return { kind: 'refused', reason: 'auth' };
-    if (status === 403) return { kind: 'refused', reason: 'forbidden' };
-    if (status === 429) return { kind: 'refused', reason: 'rate_limited' };
-    return { kind: 'refused', reason: 'rejected' };
-  }
-}
 
 /** The event as the calendar sync maps it, stored at once. */
 function readBackCalendar(

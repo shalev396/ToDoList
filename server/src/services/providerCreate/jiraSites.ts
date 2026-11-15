@@ -7,9 +7,16 @@ import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { OAUTH_ENDPOINTS } from '../../sync/providers/oauthEndpoints.js';
 import { asObject, asString } from '../../sync/providers/trackerCommon.js';
 import { isValidId } from './ids.js';
-import type { JiraSiteBase } from './writeClient.js';
 
 const NAME_MAX = 200;
+
+/** Where a Jira site is called and linked. */
+export interface JiraSiteBase {
+  /** `https://api.atlassian.com/ex/jira/<cloudId>` (OAuth) or the site's own `https://<host>`. */
+  base: string;
+  /** The site's browse URL (`https://<host>`), for the link. */
+  siteUrl: string;
+}
 
 function isHttpsUrl(value: string): boolean {
   try {

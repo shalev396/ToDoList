@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { UpdateMemberBody } from '../../../services/workspaceSchemas.js';
 import { updateMember } from '../../../services/workspaces.js';
-import { providersByMember } from '../../../services/integrations.js';
+import { Integration } from '../../../classes/integration/index.js';
 import { findUser } from '../../../services/users.js';
 import { confirmField } from '../../middleware/confirm.js';
 import { toolCaller } from '../../auth/principal.js';
@@ -72,7 +72,7 @@ export const workspaceUpdateMember = defineTool({
         applied: true,
         member: toMemberView(
           { membership, name: person?.name ?? null, email: person?.email ?? null },
-          await providersByMember(ctx.workspace.id),
+          await Integration.providersByMember(ctx.workspace.id),
         ),
         change,
         summary: 'The member was updated.',

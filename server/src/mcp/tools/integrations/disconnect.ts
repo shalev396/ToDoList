@@ -1,7 +1,6 @@
 import { z } from 'zod';
 
-import { findOwnIntegration } from '../../../services/integrationOwnership.js';
-import { disconnectIntegration } from '../../../services/integrations.js';
+import { Integration } from '../../../classes/integration/index.js';
 import { ItemPolicy } from '../../../classes/policies/ItemPolicy.js';
 import { toolCaller } from '../../auth/principal.js';
 import { confirmField } from '../../middleware/confirm.js';
@@ -34,11 +33,7 @@ export const integrationsDisconnect = defineTool({
   // Its owner at any role, as in the UI (ruling 10): a viewer keeps control of their own.
   minRole: 'viewer',
   async preview(ctx, input) {
-    const integration = await findOwnIntegration(
-      ctx.workspace,
-      ctx.principal.userId,
-      input.integrationId,
-    );
+    const integration = await Integration.findOwn(toolCaller(ctx), input.integrationId);
     return {
       output: {
         applied: false,
@@ -51,13 +46,10 @@ export const integrationsDisconnect = defineTool({
     };
   },
   async handler(ctx, input) {
-    const integration = await findOwnIntegration(
-      ctx.workspace,
-      ctx.principal.userId,
-      input.integrationId,
-    );
+    const caller = toolCaller(ctx);
+    const integration = await Integration.findOwn(caller, input.integrationId);
     const shared = await ItemPolicy.isShared(integration);
-    await disconnectIntegration(ctx.workspace, toolCaller(ctx).actor, integration.id);
+    await integration.disconnect(caller);
     return {
       output: {
         applied: true,

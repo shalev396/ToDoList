@@ -7,7 +7,7 @@ import {
 import { requireWorkspace } from '../../middlewares/requireWorkspace.js';
 import { sensitiveBody } from '../../middlewares/sensitiveBody.js';
 import type { IntegrationStatusView } from '../../models/definitions/Integration.js';
-import type { AuthMethod } from '../../types/domain.js';
+import type { AuthMethod, IntegrationMode } from '../../types/domain.js';
 import type {
   ConnectableProvider,
   IntegrationConfigs,
@@ -20,8 +20,8 @@ import type {
 /**
  * Integrations (BACKEND.md §4, DATA.md §0, §3.4–3.5, §4, §7, PERMISSIONS-V2). An integration
  * belongs to one member inside one workspace and is only ever shown to them, as
- * `IntegrationStatusView`: `{id, provider, authMethod, accountLabel, status, expiresAt,
- * lastSyncAt, shared}`. The secret goes one way, in the body of `PUT …/credential` (write-only,
+ * `IntegrationStatusView`: `{id, provider, authMethod, accountLabel, status, mode, expiresAt,
+ * lastSyncAt}`. The secret goes one way, in the body of `PUT …/credential` (write-only,
  * 204, never logged).
  *
  * Behind requireWorkspace: non-members get 404. Editors and owners connect their own
@@ -238,9 +238,13 @@ router.get(
 
 /**
  * Its owner. At least one change. The config is validated again and must stay on the same account
- * (site, owner). Never the provider, the status or the secret.
+ * (site, owner). Never the provider, the status or the secret. `mode` switches the integration
+ * between read-only (`read`, the default of every new connection: nothing is ever changed at the
+ * provider) and `read_write` (creating to-dos there and pushing to Google Calendar); demo data
+ * refuses `read_write` (400). Audited as `integration.mode`.
  */
 export interface UpdateIntegrationRequestBody {
+  mode?: IntegrationMode;
   label?: string;
   /** A topic of the workspace; null = none (Unsorted). */
   topicId?: string | null;

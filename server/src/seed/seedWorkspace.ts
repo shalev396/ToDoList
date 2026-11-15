@@ -4,9 +4,10 @@
  * demoData.ts (D17).
  *
  * It goes through the same services a person's clicks do, acting as the workspace's owner:
- * 1. one integration per demo account (integrations.ts), on a stable account, marked `demo` (it
- *    never syncs, is never tested against its provider and is never written to), with a FAKE
- *    credential (integrationCredentials.ts: sealed like any other, never stored in plaintext);
+ * 1. one integration per demo account (Integration.connectWithKey), on a stable account, marked
+ *    `demo` (it never syncs, is never tested against its provider and is never written to: it
+ *    stays read-only), with a FAKE credential (Integration#saveCredential: sealed like any other,
+ *    never stored in plaintext);
  * 2. the demo area rules (`shalev396/*` → personal, `Braude*` → college);
  * 3. local to-dos (items.ts): overdue, today, later this week and undated;
  * 4. the template dashboards (dashboards.ts), published;
@@ -44,13 +45,12 @@ import {
   planConnection,
   type ConnectionInput,
 } from '../services/integrationConfig.js';
-import { saveIntegrationCredential } from '../services/integrationCredentials.js';
-import { createIntegration, type IntegrationActor } from '../services/integrations.js';
 import { createItem } from '../services/items.js';
 import { DEFAULT_TOPIC_SLUGS, type DefaultTopicSlug } from '../types/topics.js';
 import { ensureDefaultTopics } from '../services/topics.js';
 import { updateWorkspace } from '../services/workspaces.js';
-import { Actor } from '../classes/base/Actor.js';
+import { Actor, type ActorRef } from '../classes/base/Actor.js';
+import { Integration } from '../classes/integration/index.js';
 import { Caller } from '../classes/base/Caller.js';
 import { fixtureSetDir } from '../sync/fixtureSets.js';
 import type { Transport } from '../sync/http.js';
@@ -136,7 +136,7 @@ function demoAccountId(spec: DemoIntegration): string {
 /** The demo integration, found by its account (or as the seed left it unpinned), else connected. */
 async function ensureIntegration(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
+  actor: ActorRef,
   spec: DemoIntegration,
 ): Promise<IntegrationData> {
   const integrations = await getIntegrationRepository();
@@ -150,7 +150,11 @@ async function ensureIntegration(
     existing.find(
       (found) => isPlaceholderAccountId(found.accountId) && found.label === spec.label,
     ) ??
-    (await createIntegration(ctx, actor, connectionOf(spec), { demo: true }));
+    (
+      await Integration.connectWithKey(Caller.fromContext(ctx, actor), connectionOf(spec), {
+        demo: true,
+      })
+    ).toJSON();
   if (integration.accountId === accountId) return integration;
   const pinned = await integrations.replacePendingAccount(ctx.id, integration.id, accountId);
   if (pinned === null) throw new Error(`seedWorkspace: could not set the ${spec.key} account`);
@@ -160,17 +164,15 @@ async function ensureIntegration(
 /** A FAKE credential, through the credential PUT's service, unless the integration has one. */
 async function ensureCredential(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
+  actor: ActorRef,
   { spec, integration }: Connected,
 ): Promise<void> {
   const credentials = await getCredentialRepository();
   if ((await credentials.findMeta(ctx.id, integration.id)) !== null) return;
-  await saveIntegrationCredential(
-    ctx,
-    actor,
-    integration.id,
-    fakeCredential(spec.authMethod, spec.key),
-  );
+  const caller = Caller.fromContext(ctx, actor);
+  await (
+    await Integration.findOwn(caller, integration.id)
+  ).saveCredential(caller, fakeCredential(spec.authMethod, spec.key));
 }
 
 /** The ids of the workspace's default topics, by slug (the seed makes sure all three exist). */
@@ -254,7 +256,7 @@ async function ensureTodos(
  */
 async function leaveMinimalShape(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
+  actor: ActorRef,
   language: TemplateLanguage,
 ): Promise<TopicIds> {
   const all = await ensureDefaultTopics(ctx.id, DEFAULT_TOPIC_SLUGS, language);
@@ -285,7 +287,7 @@ async function leaveMinimalShape(
 /** The demo dashboards from their templates (published: the owner creates them). */
 async function ensureDashboards(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
+  actor: ActorRef,
   language: TemplateLanguage,
   topics: TopicIds,
 ): Promise<number> {
@@ -318,7 +320,7 @@ async function ensureDashboards(
  */
 async function ensureConnectorBlocks(
   ctx: WorkspaceContext,
-  actor: IntegrationActor,
+  actor: ActorRef,
   connected: readonly Connected[],
   language: TemplateLanguage,
 ): Promise<void> {
@@ -481,7 +483,7 @@ export async function seedWorkspace(
   if (workspace === null) throw new Error('seedWorkspace: no such workspace');
   const first = (await Caller.enter(workspaceId, Actor.user(workspace.ownerId)))?.context;
   if (first?.role !== 'owner') throw new Error('seedWorkspace: the workspace has no owner');
-  const actor: IntegrationActor = { userId: workspace.ownerId, agentId: null };
+  const actor: ActorRef = { userId: workspace.ownerId, agentId: null };
 
   const topics = await leaveMinimalShape(first, actor, options.language ?? 'en');
   // Read again: the context carries the settings.

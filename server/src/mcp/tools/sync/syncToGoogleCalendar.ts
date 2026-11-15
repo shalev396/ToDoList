@@ -3,7 +3,8 @@ import { z } from 'zod';
 import { AppError } from '../../../errors/AppError.js';
 import type { PlanNarrowing } from '../../../gcal/plan.js';
 import { gcalSync } from '../../../services/gcalSync.js';
-import { listOwnIntegrations } from '../../../services/integrationOwnership.js';
+import { Integration } from '../../../classes/integration/index.js';
+import { toolCaller } from '../../auth/principal.js';
 import { RuleGroupSchema } from '../../../types/builder.js';
 import { defineTool } from '../../tool.js';
 
@@ -49,7 +50,7 @@ export const syncToGoogleCalendar = defineTool({
   minRole: 'editor',
   async handler(ctx, input) {
     // The member's own calendar only, with their own items only (ruling 12).
-    const integrations = await listOwnIntegrations(ctx.workspace, ctx.principal.userId);
+    const integrations = await Integration.listOwn(toolCaller(ctx));
     const integration = integrations.find(
       (candidate) =>
         candidate.provider === 'google_calendar' &&

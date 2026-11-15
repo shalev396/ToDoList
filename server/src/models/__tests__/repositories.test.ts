@@ -290,10 +290,10 @@ describe('IntegrationRepository', () => {
       { _id: created.id as never },
       { $unset: { ownerUserId: '' } },
     );
-    const { isOwnIntegration } = await import('../../services/integrationOwnership.js');
+    const { IntegrationPolicy } = await import('../../classes/policies/IntegrationPolicy.js');
     const stored = await IntegrationRepository.findById('w-int-unmigrated', created.id);
     assert.ok(stored);
-    assert.equal(isOwnIntegration(stored, 'u-owner'), false);
+    assert.equal(IntegrationPolicy.isOwn(stored, 'u-owner'), false);
     assert.deepEqual(await IntegrationRepository.listForOwner('w-int-unmigrated', 'u-owner'), []);
   });
 

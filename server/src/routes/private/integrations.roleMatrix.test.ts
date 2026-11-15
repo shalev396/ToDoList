@@ -181,7 +181,7 @@ async function workspace(
   integrationOwner: string = ownerId,
 ): Promise<Fixture> {
   const models = await import('../../models/index.js');
-  const { storeCredential } = await import('../../services/crypto/credentialWriter.js');
+  const { Credential } = await import('../../classes/integration/Credential.js');
   fixtures += 1;
   const workspace = await (
     await models.getWorkspaceRepository()
@@ -204,7 +204,7 @@ async function workspace(
     topicId: 'work',
     config: { baseUrl: `https://site-${String(fixtures)}.atlassian.net` },
   });
-  await storeCredential({
+  await Credential.seal({
     workspaceId: workspace.id,
     integrationId: integration.id,
     provider: 'jira',

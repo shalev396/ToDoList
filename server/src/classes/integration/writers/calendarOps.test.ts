@@ -3,8 +3,8 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { CalendarApiError, type CalendarWriter, type WrittenEvent } from './calendarApi.js';
-import type { EventBody, WireOp } from './diff.js';
-import { applyOps } from './oauthCalendar.js';
+import type { EventBody, WireOp } from '../../../gcal/diff.js';
+import { applyOps } from './calendarOps.js';
 
 const event = (id: string): EventBody => ({
   id,
