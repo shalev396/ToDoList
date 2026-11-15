@@ -20,18 +20,7 @@ import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { ItemPolicy, type ItemFacts } from '../policies/ItemPolicy.js';
 import { Topic } from '../workspace/Topic.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
-import type {
-  SourceAccount,
-  SourceDeleteResult,
-  SweepOptions,
-} from '../../models/definitions/common.js';
-import type {
-  ItemBulkUpsertResult,
-  ItemData,
-  ItemOverlayPatch,
-  ItemSweepOptions,
-  ItemUpsert,
-} from '../../models/definitions/Item.js';
+import type { ItemData, ItemOverlayPatch } from '../../models/definitions/Item.js';
 import { getItemRepository } from '../../models/index.js';
 import { scrub } from '../../services/scrub.js';
 import { redactString } from '../../services/secretPatterns.js';
@@ -131,72 +120,6 @@ export abstract class Item
    */
   static async unsetTopicIn(workspaceId: string, topicId: string): Promise<number> {
     return (await getItemRepository()).unsetTopic(workspaceId, topicId);
-  }
-
-  // ─── What a sync writes (the engine behind Integration#sync) ─────────────
-
-  /** One page of an integration's mapped items, bulk-upserted on their natural key. */
-  static async upsertSynced(
-    workspaceId: string,
-    items: readonly ItemUpsert[],
-  ): Promise<ItemBulkUpsertResult> {
-    return (await getItemRepository()).bulkUpsert(workspaceId, items);
-  }
-
-  /** Items its provider says are deleted, by external id, soft-deleted at `at`. */
-  static async deleteSynced(
-    workspaceId: string,
-    account: SourceAccount,
-    externalIds: readonly string[],
-    at: Date,
-  ): Promise<SourceDeleteResult> {
-    return (await getItemRepository()).softDeleteBySource(workspaceId, account, externalIds, at);
-  }
-
-  /** A full listing's sweep: the resource's items not seen since `before` (in its window). */
-  static async sweepUnseen(
-    workspaceId: string,
-    integrationId: string,
-    resource: string,
-    before: Date,
-    options: ItemSweepOptions,
-  ): Promise<number> {
-    return (await getItemRepository()).sweepUnseen(
-      workspaceId,
-      integrationId,
-      resource,
-      before,
-      options,
-    );
-  }
-
-  /** The items of resources an integration no longer lists, soft-deleted. */
-  static async sweepOrphanedResources(
-    workspaceId: string,
-    integrationId: string,
-    resources: readonly string[],
-    options: SweepOptions,
-  ): Promise<number> {
-    return (await getItemRepository()).sweepOrphanedResources(
-      workspaceId,
-      integrationId,
-      resources,
-      options,
-    );
-  }
-
-  /** Every item of an integration, soft-deleted (a disconnect, or what a run wrote after one). */
-  static async softDeleteAllOf(
-    workspaceId: string,
-    integrationId: string,
-    at?: Date,
-  ): Promise<number> {
-    return (await getItemRepository()).softDeleteForIntegration(workspaceId, integrationId, at);
-  }
-
-  /** GLOBAL, every workspace (the purge only): items soft-deleted before `before`, hard-deleted. */
-  static async purgeDeletedBefore(before: Date): Promise<number> {
-    return (await getItemRepository()).purgeDeletedBefore(before);
   }
 
   // ─── What every item is ───────────────────────────────────────────────────

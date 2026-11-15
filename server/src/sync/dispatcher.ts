@@ -4,11 +4,10 @@
  * `error`, not failed on auth, and with a credential. Expired and paused ones, those whose last
  * error is `auth_failed`, and those without a credential yet (R6) wait for the user (a reconnect,
  * or the credential). Each run is a background job carrying ids and the mode only
- * (SyncRun.request, services/syncJobs.ts). An integration whose owner is no longer an active
+ * (Integration.requestRun, SyncRun.request, services/syncJobs.ts). An integration whose owner is no longer an active
  * member of its workspace is never dispatched (ownedByMembers). Every read and write is a class's.
  */
 import { Integration } from '../classes/integration/index.js';
-import { SyncRun } from '../classes/sync/SyncRun.js';
 import { Member } from '../classes/workspace/index.js';
 import { logger } from '../services/logger.js';
 import type { SyncTrigger } from '../types/domain.js';
@@ -66,8 +65,8 @@ export async function dispatchAllSyncs(trigger: SyncTrigger = 'schedule'): Promi
     ENQUEUE_CONCURRENCY,
     async (integration) => {
       try {
-        // The system's, on behalf of no member: SyncRun.request with no caller.
-        await SyncRun.request(null, integration, trigger);
+        // The system's, on behalf of no member; read again by id, as a run is queued.
+        await Integration.requestRun(integration.id, trigger);
         return true;
       } catch (error) {
         logger.error('sync dispatch: could not queue a run', {

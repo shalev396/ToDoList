@@ -4,7 +4,7 @@
  * manual sync is allowed again, and queueing the run.
  */
 import type { Caller } from '../base/Caller.js';
-import { SyncRun, type SyncRequestTarget } from '../sync/SyncRun.js';
+import { SyncRun, type SyncRunOwner } from '../sync/SyncRun.js';
 import { LIMITS } from '../../config/limits.js';
 import { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
@@ -16,8 +16,10 @@ export type SyncHold = 'demo' | 'paused' | 'expired' | 'reconnect' | 'no_credent
 /** What a sync request needs of the integration (its credential check is Integration's). */
 export interface SyncSubject {
   readonly data: IntegrationData;
-  /** The integration itself, as a background sync is queued for it. */
-  readonly target: SyncRequestTarget;
+  /** The integration whose runs are read. */
+  readonly target: SyncRunOwner;
+  /** Queues its manual run for `caller` (Integration.requestRun): the run's id. */
+  requestRun(caller: Caller): Promise<string>;
   readonly usesFixtures: boolean;
   hasCredential(): Promise<boolean>;
 }
@@ -63,13 +65,13 @@ export class SyncRequest {
   }
 
   /**
-   * Queues the manual run for its owner (SyncRun.request). A failure to start it (on Lambda, the
-   * async invoke of the function itself) is not the request's: 503, the detail in the log.
+   * Queues the manual run for its owner (Integration.requestRun). A failure to start it (on Lambda,
+   * the async invoke of the function itself) is not the request's: 503, the detail in the log.
    */
   async enqueue(caller: Caller): Promise<string> {
     const integrationId = this.#subject.data.id;
     try {
-      return (await SyncRun.request(caller, this.#subject.target, 'manual')).id;
+      return await this.#subject.requestRun(caller);
     } catch (error) {
       logger.error('could not queue a manual sync', { integrationId, error });
       throw new AppError(503, 'Could not queue the sync. Try again later.');

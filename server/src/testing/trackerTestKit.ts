@@ -17,7 +17,7 @@ import type { Clock, Transport } from '../sync/http.js';
 import { registerAdapter, unregisterAdapter } from '../sync/registry.js';
 import type { Provider } from '../types/domain.js';
 import { fixtureSetDir } from '../sync/fixtureSets.js';
-import type { SyncRunOptions } from '../classes/sync/SyncEngine.js';
+import type { SyncRunOptions } from '../classes/sync/index.js';
 import {
   fixtureTransport,
   loadFixtureSet,

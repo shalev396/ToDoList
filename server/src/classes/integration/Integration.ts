@@ -44,17 +44,17 @@ import {
   type IntegrationPatch,
   type IntegrationStatusView,
 } from '../../models/definitions/Integration.js';
-import type { WorkspaceData } from '../../models/definitions/Workspace.js';
 import { getIntegrationRepository, getWorkspaceRepository } from '../../models/index.js';
 import { removeConnectorEverywhere } from '../../services/dashboards.js';
 import { EMPTY_UPDATE_MESSAGE } from '../../services/integrationConfig.js';
 import { logger } from '../../services/logger.js';
 import { writeModeFor } from '../../services/providerCreate/mode.js';
-import { Container } from '../item/Container.js';
-import { Item } from '../item/Item.js';
 import { SyncCursors } from '../sync/SyncCursors.js';
-import { SyncEngine, type SyncRunOptions, type SyncTarget } from '../sync/SyncEngine.js';
-import type { SyncRun } from '../sync/SyncRun.js';
+import { SyncedRows } from '../sync/SyncedRows.js';
+import { SyncEngine, type SyncTarget } from '../sync/SyncEngine.js';
+import type { SyncRunOptions } from '../sync/SyncOptions.js';
+import { skippedRun, zeroCounts } from '../sync/syncRecords.js';
+import { SyncRun } from '../sync/SyncRun.js';
 import { Topic } from '../workspace/Topic.js';
 import '../../sync/providers/index.js';
 import { getAdapter } from '../../sync/registry.js';
@@ -64,9 +64,11 @@ import {
   PROVIDERS,
   type AuthMethod,
   type IntegrationMode,
+  type IntegrationStatus,
   type ItemKind,
   type ItemStatus,
   type Provider,
+  type SyncTrigger,
 } from '../../types/domain.js';
 import type {
   IntegrationTestResult,
@@ -131,6 +133,12 @@ export interface WriteSession<TSecret extends SecretJson, TWriter> extends ReadS
 }
 
 export { CREDENTIAL_MISSING, type ConnectedIntegration, type OAuthConnection };
+
+/** Codes of a run for an integration that waits for the user: it is not synced. */
+const HELD_RUN_CODES: Partial<Record<IntegrationStatus, 'skipped_paused' | 'skipped_expired'>> = {
+  paused: 'skipped_paused',
+  expired: 'skipped_expired',
+};
 
 const writesOff = (): AppError =>
   new AppError(409, 'Creating in providers is off on this server', { code: 'provider_writes_off' });
@@ -770,56 +778,95 @@ export abstract class Integration<
 
   /**
    * One sync of one integration, by id, whoever started it: the sync worker (a job naming its
-   * queued run) or the demo seed (a trigger). The integration and its workspace are loaded first.
-   * Gone (disconnected, or its organization deleted): nothing is synced, and a queued or running
-   * run named by `runId` ends `failed` with `integration_deleted` (SyncEngine.endRunOfGone).
-   * Otherwise its `sync`.
+   * queued run) or the demo seed (a trigger). Gone (disconnected): nothing is synced, and a queued
+   * or running run named by `runId` ends `failed` with `integration_deleted`. Otherwise its `sync`.
    */
   static async runSync(integrationId: string, options: SyncRunOptions): Promise<SyncRunSummary> {
     const now = options.now ?? new Date();
-    const integrations = await getIntegrationRepository();
-    const data = await integrations.findByIdForWorker(integrationId);
-    const workspace =
-      data === null ? null : await (await getWorkspaceRepository()).findById(data.workspaceId);
-    if (data === null || workspace === null) {
-      if (options.runId === undefined) return SyncEngine.skippedRun();
-      const found = data ?? (await integrations.findIncludingDeletedForWorker(integrationId));
-      return SyncEngine.endRunOfGone(integrationId, found, options.runId, now);
-    }
-    return Integration.from(data).sync(workspace, options, now);
+    const data = await (await getIntegrationRepository()).findByIdForWorker(integrationId);
+    if (data === null) return Integration.#endRunOfGone(integrationId, null, options, now);
+    return Integration.from(data).sync(options, now);
+  }
+
+  /**
+   * Queues one background sync of the integration `integrationId` and starts its job
+   * (SyncRun.request), for `caller` (its owner: "Sync now") or the system (null: the dispatcher).
+   * The integration is read again by id (global), so one disconnected meanwhile is never queued.
+   */
+  static async requestRun(
+    integrationId: string,
+    trigger: SyncTrigger,
+    caller: Caller | null = null,
+  ): Promise<SyncRun> {
+    const integration = await Integration.forWorker(integrationId);
+    if (integration === null) throw new Error('Integration.requestRun: integration not found');
+    return SyncRun.request(caller, integration, trigger);
   }
 
   /**
    * One sync of this integration (BACKEND.md §5, DATA.md §4), a template method; its provider's
    * adapter is the strategy that fetches and maps, the engine (SyncEngine) does the rest:
-   * 1. a paused or expired integration is not synced: its run ends `failed` at once;
-   * 2. its run opens (SyncRun: a new one, or the queued one its job names);
-   * 3. inside its read session (fixtures: an empty secret), for each resource the adapter lists:
-   *    fetch and map, then Container and Item upserts, its cursor (SyncCursors), and a sweep of
-   *    what a full listing no longer has; then the resources no longer listed;
-   * 4. the run finishes (succeeded, partial or failed), then the integration's status and the
+   * 1. its workspace is read here (its time zone, its topic rules); gone: its run ends as above;
+   * 2. a paused or expired integration is not synced: its run ends `failed` at once;
+   * 3. its run opens (SyncRun.openFor: a new one, or the queued one its job names);
+   * 4. inside its read session (fixtures: an empty secret), for each resource the adapter lists:
+   *    fetch and map, then the container and item upserts (SyncedRows), its cursor (SyncCursors),
+   *    and a sweep of what a full listing no longer has; then the resources no longer listed;
+   * 5. the run finishes (succeeded, partial or failed), then the integration's status and the
    *    `sync.run` audit entry. A run that throws before its final write ends failed (never left
    *    `running`), and the throw goes on to the caller.
    */
   async sync(
-    workspace: WorkspaceData,
     options: SyncRunOptions,
     now: Date = options.now ?? new Date(),
   ): Promise<SyncRunSummary> {
     const data = this.toJSON();
-    const held = SyncEngine.holdOf(this.status);
-    if (held !== null) return SyncEngine.skipHeld(data, options, now, held);
-    const clock = { now, wallStart: Date.now() };
-    const run: SyncRun | null = await SyncEngine.openRun(data, options, now);
-    if (run === null) return SyncEngine.skippedRun();
-    const engine = new SyncEngine(this.#syncTarget(), run, workspace, options, clock);
-    try {
-      return await engine.execute();
-    } catch (thrown) {
-      // Whatever threw, the run ends failed with finishedAt; the throw goes on to the caller.
-      await engine.abandon(thrown);
-      throw thrown;
+    const workspace = await (await getWorkspaceRepository()).findById(this.workspaceId);
+    if (workspace === null) return Integration.#endRunOfGone(this.id, data, options, now);
+    const held = HELD_RUN_CODES[this.status];
+    if (held !== undefined) {
+      const error = SyncRun.error(held);
+      const counts = zeroCounts();
+      const run = await SyncRun.skipFor(this, options, now, error, { ...counts });
+      if (run === null) return skippedRun();
+      logger.info('sync skipped', { runId: run.id, integrationId: this.id, code: held });
+      return { runId: run.id, status: 'failed', counts, error };
     }
+    const clock = { now, wallStart: Date.now() };
+    const run = await SyncRun.openFor(this, options, now);
+    if (run === null) return skippedRun();
+    return SyncEngine.execute(this.#syncTarget(), run, workspace, options, clock);
+  }
+
+  /**
+   * The integration (or its workspace) is gone: nothing is synced. A run named by `runId` that is
+   * still `queued` or `running` ends `failed` with `integration_deleted`, so it is never left open;
+   * one left `running` by a crash may have revived rows after the disconnect deleted them, so they
+   * are deleted again. Anything else is a no-op (`skipped`). `found` is the integration when it is
+   * known (its workspace is the one gone); otherwise it is looked up, deleted ones included.
+   */
+  static async #endRunOfGone(
+    integrationId: string,
+    found: IntegrationData | null,
+    options: SyncRunOptions,
+    now: Date,
+  ): Promise<SyncRunSummary> {
+    if (options.runId === undefined) return skippedRun();
+    const data =
+      found ??
+      (await (await getIntegrationRepository()).findIncludingDeletedForWorker(integrationId));
+    if (data === null) return skippedRun();
+    const run = await SyncRun.claim(data, options.runId);
+    if (run === null) return skippedRun();
+    const wasRunning = run.status === 'running';
+    const error = SyncRun.error('integration_deleted');
+    const counts = zeroCounts();
+    if (!(await run.cancel(error, now, { counts: { ...counts }, failures: [] }))) {
+      return skippedRun();
+    }
+    if (wasRunning) await SyncedRows.of(data).softDeleteAll(now);
+    logger.info('sync run ended: the integration is gone', { runId: run.id, integrationId });
+    return { runId: run.id, status: 'failed', counts, error };
   }
 
   /**
@@ -889,8 +936,7 @@ export abstract class Integration<
       await AuditLog.record(by, Integration.Audit.disconnect, this, { provider: this.provider });
     }
     await Credential.destroy(workspaceId, id);
-    await Item.softDeleteAllOf(workspaceId, id);
-    await Container.softDeleteAllOf(workspaceId, id);
+    await SyncedRows.of(this).softDeleteAll();
   }
 
   // ─── The sessions (the only way to the credential) ───────────────────────
@@ -1108,17 +1154,18 @@ export abstract class Integration<
     return {
       data: this.toJSON(),
       target: this,
+      requestRun: async (caller): Promise<string> =>
+        (await Integration.requestRun(this.id, 'manual', caller)).id,
       usesFixtures: this.usesFixtures,
       hasCredential: () => this.#hasCredential(),
     };
   }
 
-  /** What the sync engine needs (SyncEngine): its data, its adapter, its own status writes. */
+  /** What the sync engine needs (SyncEngine): its data and its own status writes. */
   #syncTarget(): SyncTarget {
     const { workspaceId, id } = this;
     return {
       data: this.toJSON(),
-      adapter: this.adapter,
       reload: async (): Promise<IntegrationData | null> =>
         (await getIntegrationRepository()).findByIdForWorker(id),
       recordSyncResult: async (result): Promise<void> => {

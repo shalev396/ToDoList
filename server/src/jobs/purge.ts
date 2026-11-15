@@ -7,13 +7,12 @@
  *   at the source, or deleted by a user), in every workspace.
  *
  * Global maintenance on purpose: it runs from the `purge` direct-invoke action only (lambda.ts),
- * through the classes' explicitly global reads and writes: SyncRun.reapStuck (the reaper),
- * Item.purgeDeletedBefore and Container.purgeDeletedBefore. Dashboard versions are pruned where
- * they always are, on each save, not here.
+ * through the classes' explicitly global reads and writes: SyncRun.reapStuck (the reaper) and
+ * SyncedRows.purgeDeletedBefore (internal to the sync: only this job may name it). Dashboard
+ * versions are pruned where they always are, on each save, not here.
  */
 import { Integration } from '../classes/integration/index.js';
-import { Container, Item } from '../classes/item/index.js';
-import { SyncEngine } from '../classes/sync/SyncEngine.js';
+import { SyncedRows } from '../classes/sync/SyncedRows.js';
 import { SyncRun } from '../classes/sync/SyncRun.js';
 import { logger } from '../services/logger.js';
 
@@ -49,7 +48,9 @@ async function endStaleRuns(now: Date): Promise<number> {
     async (run) => {
       if (await Integration.isConnected(run.integrationId)) return;
       // Disconnected: what the dead run wrote or revived after the disconnect is deleted again.
-      await SyncEngine.deleteWritesOf({ id: run.integrationId, workspaceId: run.workspaceId }, now);
+      await SyncedRows.of({ id: run.integrationId, workspaceId: run.workspaceId }).softDeleteAll(
+        now,
+      );
     },
   );
   if (reaped.length > 0) logger.warn('sync runs timed out', { count: reaped.length });
@@ -59,7 +60,6 @@ async function endStaleRuns(now: Date): Promise<number> {
 export async function purgeDeleted(now: Date = new Date()): Promise<PurgeResult> {
   const timedOutRuns = await endStaleRuns(now);
   const before = new Date(now.getTime() - PURGE_AFTER_DAYS * DAY_MS);
-  const items = await Item.purgeDeletedBefore(before);
-  const containers = await Container.purgeDeletedBefore(before);
+  const { items, containers } = await SyncedRows.purgeDeletedBefore(before);
   return { before, items, containers, timedOutRuns };
 }

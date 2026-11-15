@@ -21,7 +21,7 @@
  */
 import { GCAL_RUN_ACTION } from '../../infra/lib/constants.js';
 import { Integration } from '../classes/integration/index.js';
-import type { SyncRunOptions } from '../classes/sync/SyncEngine.js';
+import type { SyncRunOptions } from '../classes/sync/index.js';
 import { runScheduledGcalSync } from '../gcal/scheduledSync.js';
 import { logger } from '../services/logger.js';
 import type { SyncJob } from '../services/syncJobs.js';

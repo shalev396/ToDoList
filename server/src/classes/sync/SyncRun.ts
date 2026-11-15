@@ -42,6 +42,7 @@ import { startSyncRunJob } from '../../services/syncJobs.js';
 import { syncModeFor } from '../../sync/syncMode.js';
 import type { SyncErrorCode } from '../../sync/types.js';
 import type { AuthMethod, SyncRunStatus, SyncTrigger } from '../../types/domain.js';
+import type { SyncRunOptions } from './SyncOptions.js';
 import type { SyncRunView } from '../../types/integrations.js';
 
 /** The only text a failed run stores or shows: fixed per code (BACKEND.md §6). */
@@ -221,6 +222,43 @@ export class SyncRun
       await run.fail(SyncRun.error('enqueue_failed'), new Date());
       throw error;
     }
+    return run;
+  }
+
+  /**
+   * The run a sync opens: a new one (`begin`, for a trigger), or the queued one its job names
+   * (`start`; `retry` when Lambda runs the job again). Null when that run is not `owner`'s.
+   */
+  static async openFor(
+    owner: SyncRunOwner,
+    request: SyncRunOptions,
+    now: Date,
+  ): Promise<SyncRun | null> {
+    if (request.runId === undefined) return SyncRun.begin(owner, request.trigger, now);
+    const run = await SyncRun.claim(owner, request.runId);
+    if (run === null) return null;
+    if (run.status === 'queued') await run.start(now);
+    else await run.retry(now);
+    return run;
+  }
+
+  /**
+   * The run of a sync that does not happen (a paused or expired integration): a new one created
+   * `failed` (`skipNew`), or the job's own run ended at once (`skip`). Null when that run is not
+   * `owner`'s.
+   */
+  static async skipFor(
+    owner: SyncRunOwner,
+    request: SyncRunOptions,
+    now: Date,
+    error: ErrorInfo,
+    counts: Record<string, number>,
+  ): Promise<SyncRun | null> {
+    if (request.runId === undefined) {
+      return SyncRun.skipNew(owner, request.trigger, now, error, counts);
+    }
+    const run = await SyncRun.claim(owner, request.runId);
+    await run?.skip(now, error, counts);
     return run;
   }
 

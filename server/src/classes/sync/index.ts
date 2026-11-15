@@ -1,7 +1,8 @@
 /**
- * The sync classes (docs/design/CLASSES.md §6): SyncRun (the state machine of one run), the
+ * The sync classes (docs/design/CLASSES.md §7): SyncRun (the state machine of one run), the
  * cursors (SyncCursor, a value object, and SyncCursors, SyncStates' only reader and writer) and
- * the engine behind Integration#sync (SyncEngine).
+ * how a sync is asked for (SyncOptions). The engine behind Integration#sync (SyncEngine) and the
+ * rows it writes (SyncedRows) are internal: not exported here (syncInternals.test.ts).
  */
 export {
   IllegalSyncRunTransitionError,
@@ -15,13 +16,4 @@ export {
 } from './SyncRun.js';
 export { SyncCursor } from './SyncCursor.js';
 export { SyncCursors } from './SyncCursors.js';
-export {
-  FAILED_RUNS_BEFORE_ERROR,
-  FULL_SYNC_INTERVAL_MS,
-  MAX_RECORDED_FAILURES,
-  SyncEngine,
-  type RunClock,
-  type SyncOptions,
-  type SyncRunOptions,
-  type SyncTarget,
-} from './SyncEngine.js';
+export type { RunClock, SyncOptions, SyncRunOptions } from './SyncOptions.js';
