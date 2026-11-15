@@ -37,6 +37,7 @@ import {
   MAX_REDIRECTS,
   publicOnlyLookup,
   RedirectNotFollowedError,
+  ResponseTooLargeError,
   type LiveTransportOptions,
 } from './live.js';
 
@@ -86,6 +87,8 @@ interface Received {
 }
 
 const received: Received[] = [];
+/** Bytes `/big/chunked` has written. */
+let bigSent = 0;
 let serverA: Server;
 let serverB: Server;
 let portA: number;
@@ -131,6 +134,24 @@ function handler(server: 'A' | 'B'): (request: IncomingMessage, response: Server
       } else if (url.pathname === '/no-location') {
         response.writeHead(302);
         response.end();
+      } else if (url.pathname === '/big/chunked') {
+        // Endless 64 KiB chunks (up to 64 MiB), written only as the client reads.
+        response.writeHead(200, { 'content-type': 'application/json' });
+        const chunk = Buffer.alloc(64 * 1024, 0x20);
+        const pump = (): void => {
+          while (bigSent < 64 * 1024 * 1024 && !response.destroyed) {
+            bigSent += chunk.length;
+            if (!response.write(chunk)) {
+              response.once('drain', pump);
+              return;
+            }
+          }
+          response.end();
+        };
+        pump();
+      } else if (url.pathname === '/big/length') {
+        response.writeHead(200, { 'content-length': String(10 * 1024 * 1024) });
+        response.write('{');
       } else if (url.pathname === '/echo') {
         response.writeHead(200, { 'content-type': 'application/json' });
         response.end(JSON.stringify({ server, headers: request.headers }));
@@ -713,6 +734,46 @@ describe('publicOnlyLookup', () => {
       (await ask(privateLoopback, 'localhost', { all: true })).error instanceof
         DestinationRefusedError,
     );
+  });
+});
+
+describe('liveTransport: maxBodyBytes', () => {
+  const CAP = 64 * 1024;
+
+  it('an over-cap chunked body is cut off without reading it all', async () => {
+    bigSent = 0;
+    await assert.rejects(
+      transport({ maxBodyBytes: CAP }).send({
+        method: 'GET',
+        url: `${baseA}/big/chunked`,
+        headers: {},
+      }),
+      ResponseTooLargeError,
+    );
+    assert.ok(bigSent < 16 * 1024 * 1024, `the server wrote ${String(bigSent)} bytes`);
+  });
+
+  it('an over-cap content-length is refused at once', async () => {
+    await assert.rejects(
+      transport({ maxBodyBytes: CAP }).send({
+        method: 'GET',
+        url: `${baseA}/big/length`,
+        headers: {},
+      }),
+      ResponseTooLargeError,
+    );
+  });
+
+  it('an under-cap body is unchanged, and without the option nothing is capped', async () => {
+    const small = await transport({ maxBodyBytes: CAP }).send({
+      method: 'GET',
+      url: `${baseA}/small`,
+      headers: {},
+    });
+    assert.equal(small.status, 200);
+    assert.deepEqual(JSON.parse(small.body), { data: { path: '/small' } });
+    const uncapped = await transport().send({ method: 'GET', url: `${baseA}/small`, headers: {} });
+    assert.equal(uncapped.body, small.body);
   });
 });
 

@@ -111,7 +111,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** A CIMD client id: an https URL with a path, no fragment, that netGuard allows. */
+/** A CIMD client id: an https URL with a path, no fragment (the host is checked when it is fetched). */
 function metadataUrl(clientId: string): URL | null {
   if (!clientId.startsWith('https://') || clientId.length > 2048) return null;
   let url: URL;
@@ -127,7 +127,10 @@ type MetadataFetch = (url: URL) => Promise<unknown>;
 
 /** The real fetch: GET through the SSRF-safe transport, 200 only, JSON, at most 64 KiB. */
 const liveMetadataFetch: MetadataFetch = async (url) => {
-  const response = await liveTransport({ timeoutMs: FETCH_TIMEOUT_MS }).send({
+  const response = await liveTransport({
+    timeoutMs: FETCH_TIMEOUT_MS,
+    maxBodyBytes: DOCUMENT_MAX_BYTES,
+  }).send({
     method: 'GET',
     url: url.href,
     headers: { accept: 'application/json' },

@@ -69,7 +69,21 @@ export class RedirectNotFollowedError extends RedirectRefusedError {
   }
 }
 
+/** A response body over `maxBodyBytes`: refused by its content-length, or cut off while read. */
+export class ResponseTooLargeError extends Error {
+  constructor() {
+    super('The response body is larger than allowed');
+    this.name = 'ResponseTooLargeError';
+  }
+}
+
 export interface LiveTransportOptions {
+  /**
+   * The most body bytes to accept. Default: unlimited (the body is read whole). When set, a
+   * larger content-length is refused at once, and a body is read as a stream and cancelled the
+   * moment it passes the cap: a ResponseTooLargeError, never the whole body in memory.
+   */
+  maxBodyBytes?: number;
   /** For the whole request, redirects included (default 30 s). */
   timeoutMs?: number;
   /**
@@ -143,12 +157,42 @@ function withoutCredentials(headers: Record<string, string>): Record<string, str
   );
 }
 
-async function toHttpResponse(response: Response): Promise<HttpResponse> {
+/** The body as text; with `maxBodyBytes`, streamed and counted, cancelled once over the cap. */
+async function readBody(response: Response, maxBodyBytes: number | undefined): Promise<string> {
+  if (maxBodyBytes === undefined) return response.text();
+  const declared = Number(response.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > maxBodyBytes) {
+    await response.body?.cancel();
+    throw new ResponseTooLargeError();
+  }
+  if (response.body === null) return '';
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let total = 0;
+  let text = '';
+  for (;;) {
+    const chunk = (await reader.read()) as { done: boolean; value?: Uint8Array };
+    if (chunk.done) break;
+    const value = chunk.value ?? new Uint8Array();
+    total += value.byteLength;
+    if (total > maxBodyBytes) {
+      await reader.cancel();
+      throw new ResponseTooLargeError();
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+async function toHttpResponse(
+  response: Response,
+  maxBodyBytes: number | undefined,
+): Promise<HttpResponse> {
   const headers: Record<string, string> = {};
   response.headers.forEach((value, key) => {
     headers[key.toLowerCase()] = value;
   });
-  return { status: response.status, headers, body: await response.text() };
+  return { status: response.status, headers, body: await readBody(response, maxBodyBytes) };
 }
 
 export function liveTransport(options: LiveTransportOptions = {}): Transport {
@@ -200,7 +244,7 @@ export function liveTransport(options: LiveTransportOptions = {}): Transport {
         }
         const location = follows ? response.headers.get('location') : null;
         if (!REDIRECT_STATUSES.has(response.status) || location === null) {
-          return toHttpResponse(response);
+          return toHttpResponse(response, options.maxBodyBytes);
         }
         // Not read: the connection goes back to the pool.
         await response.body?.cancel();
