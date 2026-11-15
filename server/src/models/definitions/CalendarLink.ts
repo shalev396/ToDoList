@@ -23,6 +23,12 @@ export interface CalendarLinkData {
   pushedHash: string | null;
   tombstonedAt: Date | null;
   deletedBy: CalendarLinkDeletedBy | null;
+  /**
+   * A `dashboard` tombstone is TodoList's claim on the event (EventClaim, taken before its DELETE
+   * is sent); this is when Google answered that DELETE (made or refused for good), or when a read
+   * showed it was made. Null while the claim stands unanswered, and for every other row.
+   */
+  deleteAnsweredAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -42,6 +48,7 @@ export interface CalendarLinkPatch {
   pushedHash?: string | null;
   tombstonedAt?: Date | null;
   deletedBy?: CalendarLinkDeletedBy | null;
+  deleteAnsweredAt?: Date | null;
 }
 
 export interface ICalendarLinkRepository {
@@ -85,8 +92,8 @@ export interface ICalendarLinkRepository {
     key: CalendarLinkKey,
   ): Promise<CalendarLinkData | null>;
   /**
-   * Tombstones a live link. With `calendarId`, only while the link is still on that calendar (a
-   * push that moved it meanwhile keeps it live).
+   * Tombstones a live link (its `deleteAnsweredAt` cleared). With `calendarId`, only while the link
+   * is still on that calendar (a push that moved it meanwhile keeps it live).
    */
   tombstone(
     workspaceId: string,
@@ -109,23 +116,38 @@ export interface ICalendarLinkRepository {
    */
   removeForIntegration(workspaceId: string, integrationId: string): Promise<number>;
   /**
-   * Another integration's link of the workspace to the same event (`key`), tombstoned `dashboard`
+   * Another integration's claim on the same event (`key`): its link tombstoned `dashboard`
    * (TodoList itself deleted the event, or is deleting it: a clean-up step, a to-do's delete, a
-   * push's delete or move) since `since`. Null when there is none.
+   * push's delete or move) whose DELETE was answered since `answeredSince`, or is unanswered and
+   * was claimed since `claimedSince`. Null when there is none.
    */
-  findOthersDeleted(
+  findOthersStanding(
     workspaceId: string,
     integrationId: string,
     key: CalendarLinkKey,
-    since: Date,
+    since: { answeredSince: Date; claimedSince: Date },
   ): Promise<CalendarLinkData | null>;
+  /** The claim tombstoned at `tombstonedAt` was answered now: `deleteAnsweredAt` set, once. */
+  settle(workspaceId: string, id: string, tombstonedAt: Date): Promise<boolean>;
+  /** The integration's claims whose DELETE is still unanswered, claimed before `before`. */
+  listUnsettledClaims(
+    workspaceId: string,
+    integrationId: string,
+    before: Date,
+  ): Promise<CalendarLinkData[]>;
   /** Whether another integration of the workspace holds a live link to the same event. */
   hasOtherLive(workspaceId: string, integrationId: string, key: CalendarLinkKey): Promise<boolean>;
   /**
    * A `dashboard` tombstone taken back (a claimed delete that was not made): the link is live
-   * again, only while it is still that tombstone on `calendarId`. Null otherwise.
+   * again, only while it is still that very claim (its `tombstonedAt`) on `calendarId`. Null
+   * otherwise.
    */
-  release(workspaceId: string, id: string, calendarId: string): Promise<CalendarLinkData | null>;
+  release(
+    workspaceId: string,
+    id: string,
+    calendarId: string,
+    tombstonedAt: Date,
+  ): Promise<CalendarLinkData | null>;
   /** One link removed (its row, nothing at Google). False when it was not there. */
   remove(workspaceId: string, id: string): Promise<boolean>;
 }

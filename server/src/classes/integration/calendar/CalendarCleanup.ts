@@ -48,8 +48,9 @@ export interface CleanupSubject {
   /** Whether a calendar is the current workspace calendar, which this clean-up never touches. */
   isProtected(calendarId: string): boolean;
   /**
-   * One pushed event deleted (audited), then its link tombstoned; `skipped` when the link, re-read
-   * just before, moved, went or is now on the current workspace calendar.
+   * One pushed event's link claimed (tombstoned, EventClaim), then the event deleted (audited) and
+   * the claim settled; `skipped` when the link, re-read just before, moved, went or is now on the
+   * current workspace calendar, or when the claim fails (no longer this integration's).
    */
   deleteLink(link: CalendarLinkData): Promise<StepOutcome>;
   /** The calendars TodoList created on it. */

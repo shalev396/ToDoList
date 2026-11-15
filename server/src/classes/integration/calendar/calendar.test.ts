@@ -68,6 +68,7 @@ const link = (itemId: string, calendarId = 'c'): CalendarLinkData => ({
   pushedHash: null,
   tombstonedAt: null,
   deletedBy: null,
+  deleteAnsweredAt: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),
 });

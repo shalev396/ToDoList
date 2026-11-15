@@ -2,7 +2,7 @@
  * The Google Calendar push's ops applied through the calendar writer (calendarApi.ts), as
  * Code.gs's applyOps_ does it: a create that exists already is patched, an update carries
  * `If-Match` (412 is a conflict), a delete of a gone event is done, ops past the deadline are
- * deferred to the next run. Only GoogleCalendarIntegration's write session hands it a writer.
+ * deferred to the next run, and an op Google gave no answer to is told apart (`no_answer`). Only GoogleCalendarIntegration's write session hands it a writer.
  */
 import type { WireOp } from '../../../gcal/diff.js';
 import { CalendarApiError, type CalendarWriter } from './calendarApi.js';
@@ -59,6 +59,18 @@ async function applyOp(
 }
 
 /**
+ * How an op failed: `conflict` (412), `rate_limited` (429), `no_answer` (no answer, a timeout, a
+ * 5xx: it may have been made; a claimed delete is then resolved by a read), `error` otherwise.
+ */
+function failureCode(error: unknown): string {
+  const status = statusOf(error);
+  if (status === 412) return 'conflict';
+  if (status === 429) return 'rate_limited';
+  if (error instanceof CalendarApiError && (status === null || status >= 500)) return 'no_answer';
+  return 'error';
+}
+
+/**
  * Every op, in order, while one more call (taking up to `ceilingMs`) still ends by `deadline`
  * (epoch ms); what is left is deferred. The first op always runs, so every push makes progress.
  * Never throws.
@@ -81,12 +93,7 @@ export async function applyOps(
     try {
       results.push(await applyOp(writer, op, fits));
     } catch (error) {
-      const status = statusOf(error);
-      results.push({
-        opId: op.opId,
-        ok: false,
-        code: status === 412 ? 'conflict' : status === 429 ? 'rate_limited' : 'error',
-      });
+      results.push({ opId: op.opId, ok: false, code: failureCode(error) });
     }
   }
   return results;

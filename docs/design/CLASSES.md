@@ -1151,9 +1151,13 @@ classDiagram
   }
   Calendar <|-- PushCalendar
   class EventClaim {
-    claim before delete
+    internal: claim before delete
     +take(link)$ EventClaim
+    +stands(link, runCreatedAt)$ boolean
+    +reconcile(ws, integrationId, olderThanMs, read)$
+    +settle()
     +release()
+    +resolve(read) settled | released | kept
   }
   PushCommit ..> EventClaim : a claim drops an adopt
   class CalendarLink {
@@ -1935,12 +1939,18 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
   (a method object; closes its `SyncRun` with `succeed`). `gcal/plan.ts` and `gcal/commit.ts` are
   gone; `gcal/diff.ts` and `calendarApi.ts` stay pure. `GoogleCalendarIntegration` keeps `push`,
   `dryRun` and `insertEvent`.
-- **Carried fixes:** a clean-up racing another integration's push (fix round 1: every TodoList
-  delete of a pushed event claims its own link first, `EventClaim`, so its tombstone exists while
-  the DELETE is in flight; a push whose adopt is committed while another integration's claim on
-  that event stands, from a minute before its run was created, drops its own link, so none of its
-  pulls reads that delete as the user's, and its next push makes the event again); a 403 without
-  a permission reason in a clean-up says it will be retried; the
+- **Carried fixes:** a clean-up racing another integration's push (fix rounds 1 and 2: every
+  TodoList delete of a pushed event claims its own link first, `EventClaim`, so its tombstone exists
+  while the DELETE is in flight, and settles the claim with the time Google answered,
+  `deleteAnsweredAt`; a DELETE with no answer is resolved by one read of the event, and kept when
+  the read fails too, for the next push to reconcile; a push whose write is committed while another
+  integration's claim stands for its run, answered after the run was created or unanswered and
+  claimed at most a minute before it, drops its own link, so none of its pulls reads that delete as
+  the user's, and its next push, created after the answer, makes the event again and tracks it;
+  an integration's own claim is never revived by its own push. Until that next push the event is
+  untracked: a user's delete of it is undone, and an item that leaves the push set meanwhile can
+  leave the event in Google; PERMISSIONS-V2 ruling 12 says exactly this); a 403 without a
+  permission reason in a clean-up says it will be retried; the
   `CalendarLinks (workspaceId, calendarId, googleEventId)` index; MCP names `provider_no_answer`
   ("may have been made at …") and `provider_unreachable` ("nothing was changed"); a partial write's
   `details.kept` names only the edit's own local fields.

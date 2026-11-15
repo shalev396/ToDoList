@@ -30,6 +30,7 @@ const calendarLinkSchema = new mongoose.Schema<CalendarLinkFields>(
     pushedHash: { type: String, default: null },
     tombstonedAt: { type: Date, default: null },
     deletedBy: { type: String, enum: DELETED_BY, default: null },
+    deleteAnsweredAt: { type: Date, default: null },
   },
   { timestamps: true, collection: CALENDAR_LINK_TABLE_NAME },
 );
@@ -41,7 +42,7 @@ calendarLinkSchema.index(
   { partialFilterExpression: { tombstonedAt: null } },
 ); // live links for diffing
 // One event across the workspace's integrations: one tracker per event (removeOthersForEvent,
-// hasOtherLive) and another integration's delete of it (findOthersDeleted) are point lookups, not
+// hasOtherLive) and another integration's claim on it (findOthersStanding) are point lookups, not
 // a seek per integration.
 calendarLinkSchema.index({ workspaceId: 1, calendarId: 1, googleEventId: 1 });
 
@@ -59,6 +60,7 @@ const PATCH_KEYS: readonly (keyof CalendarLinkPatch)[] = [
   'pushedHash',
   'tombstonedAt',
   'deletedBy',
+  'deleteAnsweredAt',
 ];
 
 function toCalendarLinkData(doc: CalendarLinkFields): CalendarLinkData {
@@ -76,6 +78,7 @@ function toCalendarLinkData(doc: CalendarLinkFields): CalendarLinkData {
     pushedHash: doc.pushedHash ?? null,
     tombstonedAt: doc.tombstonedAt ?? null,
     deletedBy: doc.deletedBy ?? null,
+    deleteAnsweredAt: doc.deleteAnsweredAt ?? null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -165,7 +168,7 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
         tombstonedAt: null,
         ...(calendarId === undefined ? {} : { calendarId }),
       },
-      { $set: { tombstonedAt: new Date(), deletedBy } },
+      { $set: { tombstonedAt: new Date(), deletedBy, deleteAnsweredAt: null } },
       { new: true, runValidators: true },
     ).lean<CalendarLinkFields>();
     return doc ? toCalendarLinkData(doc) : null;
@@ -187,16 +190,39 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
     return result.deletedCount;
   },
 
-  async findOthersDeleted(workspaceId, integrationId, key, since) {
+  async findOthersStanding(workspaceId, integrationId, key, since) {
     const doc = await CalendarLinkMongoModel.findOne({
       workspaceId,
       calendarId: key.calendarId,
       googleEventId: key.googleEventId,
       integrationId: { $ne: integrationId },
       deletedBy: 'dashboard',
-      tombstonedAt: { $gte: since },
+      tombstonedAt: { $ne: null },
+      $or: [
+        { deleteAnsweredAt: { $gte: since.answeredSince } },
+        { deleteAnsweredAt: null, tombstonedAt: { $gte: since.claimedSince } },
+      ],
     }).lean<CalendarLinkFields>();
     return doc ? toCalendarLinkData(doc) : null;
+  },
+
+  async settle(workspaceId, id, tombstonedAt) {
+    const result = await CalendarLinkMongoModel.updateOne(
+      { _id: id, workspaceId, deletedBy: 'dashboard', tombstonedAt, deleteAnsweredAt: null },
+      { $set: { deleteAnsweredAt: new Date() } },
+    );
+    return result.modifiedCount > 0;
+  },
+
+  async listUnsettledClaims(workspaceId, integrationId, before) {
+    const docs = await CalendarLinkMongoModel.find({
+      workspaceId,
+      integrationId,
+      deletedBy: 'dashboard',
+      deleteAnsweredAt: null,
+      tombstonedAt: { $ne: null, $lt: before },
+    }).lean<CalendarLinkFields[]>();
+    return docs.map(toCalendarLinkData);
   },
 
   async hasOtherLive(workspaceId, integrationId, key) {
@@ -210,10 +236,10 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
     return found !== null;
   },
 
-  async release(workspaceId, id, calendarId) {
+  async release(workspaceId, id, calendarId, tombstonedAt) {
     const doc = await CalendarLinkMongoModel.findOneAndUpdate(
-      { _id: id, workspaceId, calendarId, deletedBy: 'dashboard', tombstonedAt: { $ne: null } },
-      { $set: { tombstonedAt: null, deletedBy: null } },
+      { _id: id, workspaceId, calendarId, deletedBy: 'dashboard', tombstonedAt },
+      { $set: { tombstonedAt: null, deletedBy: null, deleteAnsweredAt: null } },
       { new: true, runValidators: true },
     ).lean<CalendarLinkFields>();
     return doc ? toCalendarLinkData(doc) : null;

@@ -5,12 +5,13 @@
  *
  * - op results: a created or updated event gets its link (etag, hash, times), and another
  *   integration's live link to that same event goes (one tracker per event). When another
- *   integration of the workspace claimed that same event for TodoList's own delete during this
- *   push (its link tombstoned `dashboard` since the run was created, less CLAIM_MARGIN_MS for a
- *   delete still in flight then; EventClaim tombstones before every DELETE), the event may be gone:
- *   this link goes too, so no later pull reads that delete as the user's, and the next push makes
- *   or adopts the event again. A delete gets its tombstone (already claimed before it was
- *   sent); a create went to the workspace's primary calendar (its link moves there when the
+ *   integration of the workspace holds a claim on that same event that stands for this run
+ *   (EventClaim.stands: its DELETE answered after the run was created, or unanswered and claimed
+ *   at most CLAIM_MARGIN_MS before it), the event may be gone: this link goes too, so no later pull
+ *   reads that delete as the user's, and the next push (created after the answer) makes or adopts
+ *   the event again and tracks it. The integration's own standing claim on the target calendar
+ *   (its clean-up raced this push) is never revived by its write. A delete keeps its tombstone
+ *   (claimed before it was sent, settled once answered); a create went to the workspace's primary calendar (its link moves there when the
  *   primary calendar changed), an update to its link's calendar; every write is audited
  *   (`gcal.write`); a 412 is a conflict, settled by the next pull;
  * - echoes (`etag == link.lastEtag`) are our own writes and are skipped;
@@ -53,14 +54,7 @@ import {
   getWorkspaceRepository,
 } from '../../models/index.js';
 import { redactString } from '../../services/secretPatterns.js';
-
-/**
- * How long before its run was created another integration's claim on the same event still counts
- * (PushCommit's op-result rule): a delete claimed then may still have been in flight when this
- * push adopted the event. A Calendar API call gives up after STEP_CEILING_MS (8 s), and Google
- * may still apply a request it got just before; a minute covers that with room.
- */
-export const CLAIM_MARGIN_MS = 60 * 1000;
+import { EventClaim } from './EventClaim.js';
 
 const OpResult = z.object({
   opId: z.string().max(200),
@@ -158,8 +152,8 @@ export class PushCommit {
   readonly #primaryCalendarId: string | null;
   /** The integration owner's own integrations: their items may change from Google's side. */
   readonly #ownIntegrations: ReadonlySet<string>;
-  /** Another integration's claim on an event this push wrote counts from this time on. */
-  readonly #claimsSince: Date;
+  /** When this push's run was created: a claim counts against it when it stands then. */
+  readonly #runCreatedAt: Date;
   readonly #counts: CommitCounts = {
     pulled: 0,
     created: 0,
@@ -183,9 +177,9 @@ export class PushCommit {
     this.#timeZone = state.timeZone;
     this.#primaryCalendarId = state.primaryCalendarId;
     this.#ownIntegrations = state.ownIntegrations;
-    // The run's creation time is the database's wall clock, like a claim's tombstone (a run's
-    // `startedAt` may be a caller's `now`).
-    this.#claimsSince = new Date(state.run.createdAt.getTime() - CLAIM_MARGIN_MS);
+    // Stamped by the Node process when the run row was created, like a claim's tombstone and its
+    // answer (a run's `startedAt` may be a caller's `now`); the claim margin absorbs the skew.
+    this.#runCreatedAt = state.run.createdAt;
   }
 
   /**
@@ -272,8 +266,11 @@ export class PushCommit {
     const links = await getCalendarLinkRepository();
     const link = await links.findByItem(workspaceId, this.#integration.id, op.itemId);
     if (op.type === 'delete') {
+      // Claimed before it was sent, and settled by the push; a delete reported otherwise is both.
       if (link !== null && link.tombstonedAt === null) {
-        await links.tombstone(workspaceId, link.id, 'dashboard');
+        const stone = await links.tombstone(workspaceId, link.id, 'dashboard');
+        const at = stone?.tombstonedAt ?? null;
+        if (stone !== null && at !== null) await links.settle(workspaceId, stone.id, at);
       }
       this.#counts.deleted += 1;
       await AuditLog.record(
@@ -295,6 +292,14 @@ export class PushCommit {
     }
     const eventId = result.eventId ?? link?.googleEventId ?? eventIdFor(op.itemId);
     const key = { calendarId, googleEventId: eventId };
+    // This integration's own claim on the event stands (its clean-up deleted the event while this
+    // push ran): the write landed before the delete, so the claim is never revived here, and no
+    // pull reads that delete as the user's.
+    const ownClaim = link?.calendarId === calendarId && EventClaim.stands(link, this.#runCreatedAt);
+    if (ownClaim) {
+      await this.#countWrite(op.type, op.itemId, eventId);
+      return;
+    }
     const written = await links.upsert(
       workspaceId,
       this.#integration.id,
@@ -308,29 +313,36 @@ export class PushCommit {
         pushedHash: op.hash,
         tombstonedAt: null,
         deletedBy: null,
+        deleteAnsweredAt: null,
       },
     );
     // One tracker per event: another integration of the workspace that pushed this same event (the
     // ids are per item, so a create adopts it) no longer tracks it, so its pull or clean-up can never
     // read our later delete or move as its own (rows only; nothing is sent to Google).
     await links.removeOthersForEvent(workspaceId, this.#integration.id, key);
-    // Another integration claimed this event for TodoList's own delete while this push ran (its
-    // tombstone survives removeOthersForEvent): the event may be gone, so this link goes too and
-    // no later pull of ours reads that delete as the user's; the next push makes or adopts it.
-    const claimed = await links.findOthersDeleted(
+    // Another integration's claim on this event stands for this run (its DELETE was unanswered or
+    // answered only after the run was created; its tombstone survives removeOthersForEvent): the
+    // event may be gone, so this link goes too and no later pull of ours reads that delete as the
+    // user's; the next push makes or adopts the event again, and tracks it.
+    const claimed = await links.findOthersStanding(
       workspaceId,
       this.#integration.id,
       key,
-      this.#claimsSince,
+      EventClaim.standingSince(this.#runCreatedAt),
     );
     if (claimed !== null) await links.remove(workspaceId, written.id);
-    if (op.type === 'create') this.#counts.created += 1;
+    await this.#countWrite(op.type, op.itemId, eventId);
+  }
+
+  /** A create or update Google took: counted and audited (`gcal.write`). */
+  async #countWrite(type: 'create' | 'update', itemId: string, eventId: string): Promise<void> {
+    if (type === 'create') this.#counts.created += 1;
     else this.#counts.updated += 1;
     await AuditLog.record(
       this.#system,
       'gcal.write',
-      AuditTarget.of('item', op.itemId),
-      this.#meta({ op: op.type, eventId }),
+      AuditTarget.of('item', itemId),
+      this.#meta({ op: type, eventId }),
     );
   }
 

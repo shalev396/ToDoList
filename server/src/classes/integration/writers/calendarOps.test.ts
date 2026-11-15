@@ -83,11 +83,12 @@ describe('applyOps (OAuth push)', () => {
     );
   });
 
-  it('412 is a conflict, 429 rate_limited, anything else an error; the run goes on', async () => {
+  it('412 is a conflict, 429 rate_limited, a 5xx no_answer, anything else an error; the run goes on', async () => {
     const writer = scripted({
       'patch elaaa if "1"': 412,
       'insert elbbb': 429,
       'insert elccc': 500,
+      'insert eleee': 400,
     });
     const results = await applyOps(
       writer,
@@ -95,13 +96,14 @@ describe('applyOps (OAuth push)', () => {
         op('update', 'elaaa', '"1"'),
         op('create', 'elbbb'),
         op('create', 'elccc'),
+        op('create', 'eleee'),
         op('create', 'elddd'),
       ],
       Date.now() + 60_000,
     );
     assert.deepEqual(
       results.map((result) => result.code ?? 'ok'),
-      ['conflict', 'rate_limited', 'error', 'ok'],
+      ['conflict', 'rate_limited', 'no_answer', 'error', 'ok'],
     );
   });
 

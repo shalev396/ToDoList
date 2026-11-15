@@ -12,7 +12,6 @@ export {
 } from './Calendar.js';
 export { CalendarLink } from './CalendarLink.js';
 export { CalendarLinks } from './CalendarLinks.js';
-export { EventClaim } from './EventClaim.js';
 export {
   DEFAULT_HORIZON_DAYS,
   DEFAULT_MAX_OPS,
@@ -23,10 +22,4 @@ export {
   type LoadedPlan,
   type PlanNarrowing,
 } from './PushPlan.js';
-export {
-  CLAIM_MARGIN_MS,
-  CommitBody,
-  PushCommit,
-  toPushItem,
-  type CommitCounts,
-} from './PushCommit.js';
+export { CommitBody, PushCommit, toPushItem, type CommitCounts } from './PushCommit.js';

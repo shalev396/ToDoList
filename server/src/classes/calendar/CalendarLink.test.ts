@@ -19,6 +19,7 @@ const data = (over: Partial<CalendarLinkData> = {}): CalendarLinkData => ({
   pushedHash: null,
   tombstonedAt: null,
   deletedBy: null,
+  deleteAnsweredAt: null,
   createdAt: new Date(0),
   updatedAt: new Date(0),
   ...over,
