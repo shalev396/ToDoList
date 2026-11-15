@@ -5,7 +5,7 @@
  */
 import type { Breakpoint } from '../../builder/ops.js';
 import type { DashboardLayouts } from '../../models/definitions/Dashboard.js';
-import { stableStringify } from '../../sync/hash.js';
+import { stableStringify } from '../../utils/stableStringify.js';
 
 /** Freezes a value and everything it holds. */
 function deepFreeze<T>(value: T): T {

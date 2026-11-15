@@ -6,7 +6,7 @@
 import { compileQuery, parseQuery } from '../../builder/compile.js';
 import { OpValidationError, QueryValidationError } from '../../builder/errors.js';
 import { validationContext } from '../../builder/validate.js';
-import { stableStringify } from '../../sync/hash.js';
+import { stableStringify } from '../../utils/stableStringify.js';
 import type { Query as QueryJson } from '../../types/builder.js';
 
 /** Freezes a value and everything it holds. */
