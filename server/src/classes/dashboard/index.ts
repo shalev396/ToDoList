@@ -1,5 +1,6 @@
 /**
- * The dashboard classes (docs/design/CLASSES.md §6): Dashboard (with its Layout), NewDashboard,
+ * The dashboard classes (docs/design/CLASSES.md §6): Dashboard (with its Layout; making one is
+ * Dashboard.create, NewDashboard is not exported: it answers raw data),
  * View (with its Query), Persona, and the Operation each of them checks before reading. History
  * (DashboardVersions) is internal to Dashboard and NewDashboard: not exported here
  * (dashboardInternals.test.ts); its limits are in limits.ts. The collaborators a dashboard composes
@@ -16,13 +17,12 @@ export {
   type SaveChange,
   type UndoInput,
 } from './Dashboard.js';
-export { DashboardOutline } from './DashboardOutline.js';
+export type { DashboardOutline } from './DashboardOutline.js';
 export { Layout } from './Layout.js';
-export {
-  NewDashboard,
-  type CreateDashboardInput,
-  type CreatePreview,
-  type InstantiateDashboardInput,
+export type {
+  CreateDashboardInput,
+  CreatePreview,
+  InstantiateDashboardInput,
 } from './NewDashboard.js';
 export { Operation } from './Operation.js';
 export { Persona, type InstantiatePersonaInput, type PersonaPlan } from './Persona.js';
