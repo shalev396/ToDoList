@@ -385,6 +385,32 @@ describe('Jira', () => {
     ]);
   });
 
+  it('a partial write whose local store fails still answers the partial write, never a bare 500', async () => {
+    const jira = await connect('jira', { baseUrl: JIRA_SITE });
+    const item = await issue(jira);
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('GET', TRANSITIONS, json(200, LISTED));
+    on('PUT', ISSUE, json(204));
+    on('POST', `${ISSUE}/transitions`, json(400, { errorMessages: ['A validator failed'] }));
+    const repository = await models.getItemRepository();
+    const updateMirrored = repository.updateMirrored.bind(repository);
+    repository.updateMirrored = (): Promise<never> =>
+      Promise.reject(new Error('the database went away'));
+    try {
+      await assert.rejects(
+        jira.updateTask(caller, item, { title: 'Ship the report', status: 'in_progress' }),
+        (error: unknown) =>
+          hasCode(409, 'provider_partial_write')(error) &&
+          (error as { written?: string[] }).written?.join() === 'title' &&
+          (error as { refused?: string[] }).refused?.join() === 'status',
+      );
+    } finally {
+      repository.updateMirrored = updateMirrored;
+    }
+    // Jira has the title; the copy here catches up on the next sync.
+    assert.equal((await stored(item.id))?.title, 'Write the report');
+  });
+
   it('the fields land and the transition gets no answer: "may or may not have", audited as uncertain', async () => {
     const jira = await connect('jira', { baseUrl: JIRA_SITE });
     const item = await issue(jira);

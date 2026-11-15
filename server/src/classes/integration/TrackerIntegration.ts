@@ -368,7 +368,7 @@ export abstract class TrackerIntegration<
 
   /**
    * A write-back that stopped part-way: what reached the provider is saved (best effort: the item
-   * may be gone) and audited as the edit's outcome (`partial: true`, with the rest as `refused`,
+   * may be gone, or the store may fail; the answer is the partial write either way) and audited as the edit's outcome (`partial: true`, with the rest as `refused`,
    * or as `uncertain` when the step that stopped it got no answer and may have landed); the error
    * to answer.
    */
@@ -382,7 +382,14 @@ export abstract class TrackerIntegration<
     try {
       await this.#save(stored, ledger.values);
     } catch (error) {
-      if (!(error instanceof NotFoundError)) throw error;
+      // The provider has what it took either way: the answer stays the partial write (never a
+      // bare 500 that would say nothing was changed); the item catches up on the next sync.
+      if (!(error instanceof NotFoundError)) {
+        logger.warn('A partial provider write could not be stored', {
+          integrationId: this.id,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      }
     }
     const written = ledger.fields;
     const rest = asked.filter((field) => !written.includes(field));
