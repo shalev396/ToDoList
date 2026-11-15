@@ -67,23 +67,43 @@ const cap = (
   ...over,
 });
 
-/** Shaped like the server's real answer, in CONNECTABLE_PROVIDERS order. */
+/**
+ * The server's real answer (Integration.capabilitiesOf, pinned in the server's
+ * definitions.test.ts), in CONNECTABLE_PROVIDERS order.
+ */
 const response: OAuthProvidersResponse = {
   stage: 'dev',
   providers: [],
   capabilities: [
-    cap('github', { revokePage: 'https://github.com/settings/apps/authorizations' }),
-    cap('jira', { picker: 'sites', revokePage: 'https://id.atlassian.com/manage-profile/apps' }),
+    cap('jira', {
+      authMethods: ['oauth', 'api_token_basic'],
+      picker: 'sites',
+      revokePage: 'https://id.atlassian.com/manage-profile/apps',
+      canCreate: true,
+    }),
     cap('clickup', {
+      authMethods: ['oauth', 'personal_token'],
       picker: 'workspaces',
       revokePage: 'https://app.clickup.com/settings/apps',
+      canCreate: true,
     }),
     cap('linear', {
+      authMethods: ['oauth', 'personal_api_key'],
       revokesOnDisconnect: true,
       revokePage: 'https://linear.app/settings/account/security',
+      canCreate: true,
     }),
-    cap('google_calendar', { picker: 'calendars', revokesOnDisconnect: true }),
-    cap('moodle', { authMethods: [], comingSoon: true }),
+    cap('moodle', { authMethods: ['moodle_ws_token'], comingSoon: true }),
+    cap('google_calendar', {
+      picker: 'calendars',
+      revokesOnDisconnect: true,
+      canCreate: true,
+    }),
+    cap('github', {
+      authMethods: ['oauth', 'fine_grained_pat'],
+      revokePage: 'https://github.com/settings/apps/authorizations',
+      canCreate: true,
+    }),
   ],
 };
 const caps = (provider: string) => capabilitiesOf(response, provider);
@@ -116,14 +136,24 @@ describe('capabilities from the providers answer', () => {
   });
   it('marks only Moodle as coming soon', () => {
     assert.deepEqual(
-      PROVIDER_ORDER.filter((provider) => comingSoonOf(caps(provider))),
+      PROVIDER_ORDER.filter((provider) => comingSoonOf(caps(provider), provider)),
       ['moodle'],
     );
   });
-  it('claims nothing until the answer is loaded', () => {
+  it('claims nothing open until the answer is loaded: Moodle stays coming soon', () => {
     const none = capabilitiesOf(undefined, 'moodle');
-    assert.ok(!hasResourcePicker(none) && !revokesOnDisconnect(none) && !comingSoonOf(none));
+    assert.ok(!hasResourcePicker(none) && !revokesOnDisconnect(none));
     assert.equal(revokePageOf(none), null);
+    assert.deepEqual(
+      PROVIDER_ORDER.filter((provider) => comingSoonOf(undefined, provider)),
+      ['moodle'],
+    );
+  });
+  it('an answer without capabilities (an older server) is read as not loaded, not a crash', () => {
+    const older = { stage: 'dev' as const, providers: [] };
+    assert.equal(capabilitiesOf(older, 'jira'), undefined);
+    assert.ok(comingSoonOf(capabilitiesOf(older, 'moodle'), 'moodle'));
+    assert.ok(!comingSoonOf(capabilitiesOf(older, 'jira'), 'jira'));
   });
 });
 

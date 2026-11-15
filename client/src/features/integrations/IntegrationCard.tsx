@@ -191,7 +191,7 @@ export function IntegrationCard({
   const renew =
     integration !== undefined && needsRenewalHint(integration.expiresAt, now) && days !== null;
   const status = integration?.status;
-  const comingSoon = comingSoonOf(capabilities);
+  const comingSoon = comingSoonOf(capabilities, provider);
 
   return (
     <article

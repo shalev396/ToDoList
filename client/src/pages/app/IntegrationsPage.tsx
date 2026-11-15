@@ -267,7 +267,7 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
     integrations.data.filter((entry) => entry.provider === provider);
   const cards = PROVIDER_ORDER.flatMap<CardEntry>((provider) => {
     // Coming soon (Moodle): one card with a badge, whatever a demo workspace holds.
-    const connected = comingSoonOf(capsOf(provider)) ? [] : byProvider(provider);
+    const connected = comingSoonOf(capsOf(provider), provider) ? [] : byProvider(provider);
     if (connected.length === 0) {
       return [{ provider, integration: undefined }];
     }

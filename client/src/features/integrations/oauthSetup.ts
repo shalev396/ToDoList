@@ -11,6 +11,7 @@ import {
   type OAuthSignInProvider,
   type ProviderCapabilities,
 } from '@api-types/integrations.ts';
+import { isComingSoon } from './providers.ts';
 
 /**
  * - `connect`: the stage has the OAuth app; the card offers "Connect with <provider>".
@@ -44,16 +45,22 @@ export function oauthMode(info: OAuthProviderInfo | undefined, checking: boolean
 
 /*
  * What the server says each provider can do (`capabilities` of the same response). The helpers take
- * `undefined` while that answer is loading or failed, and then claim nothing: no picker, no revoke
- * text and no "Coming soon" badge, so a card never shows a fact the server hasn't confirmed.
+ * `undefined` while that answer is loading, failed or has no capabilities (an older server), and
+ * then claim nothing open: no picker and no revoke text; a provider listed as coming soon stays
+ * coming soon (`comingSoonOf`), so a card never offers what the server hasn't confirmed.
  */
+
+/** The answer as it may arrive: an older server sends no `capabilities`. */
+type ProvidersAnswer = Omit<OAuthProvidersResponse, 'capabilities'> & {
+  capabilities?: ProviderCapabilities[];
+};
 
 /** The capabilities of one provider in the response, or undefined (not loaded, or not listed). */
 export function capabilitiesOf(
-  response: OAuthProvidersResponse | undefined,
+  response: ProvidersAnswer | undefined,
   provider: string,
 ): ProviderCapabilities | undefined {
-  return response?.capabilities.find((entry) => entry.provider === provider);
+  return response?.capabilities?.find((entry) => entry.provider === provider);
 }
 
 /** Providers whose OAuth grant has resources to choose from after connecting (Jira sites, ClickUp workspaces). */
@@ -71,7 +78,11 @@ export function revokePageOf(caps: ProviderCapabilities | undefined): string | n
   return caps?.revokePage ?? null;
 }
 
-/** Listed but not open yet (Moodle): a "Coming soon" badge and no way to connect. */
-export function comingSoonOf(caps: ProviderCapabilities | undefined): boolean {
-  return caps?.comingSoon === true;
+/**
+ * Listed but not open yet (Moodle): a "Coming soon" badge and no way to connect. Until the server
+ * answers (or when it can't), the shared list of coming-soon providers decides, so "not loaded"
+ * never reads as "open".
+ */
+export function comingSoonOf(caps: ProviderCapabilities | undefined, provider: string): boolean {
+  return caps?.comingSoon ?? isComingSoon(provider);
 }
