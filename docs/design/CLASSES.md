@@ -1831,6 +1831,23 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
   `recurrence.ts` (the RRULE line the server's `RecurrenceRule` takes), `RepeatControl.tsx`,
   `RepeatTarget.tsx`; `plannedAt.ts#createCommitPolicy` (Chromium's date and time inputs).
 
+### Phase 4b, fix round 1
+
+- **Codes for provider write failures**: `provider_no_answer` (`ProviderNoAnswerError`, and
+  `GoogleCalendarIntegration#calendarFailure` on a write that got no answer) and
+  `provider_refused` (a write refused for the connection's account: its auth, or a permission).
+  The error handler keeps the one 5xx code `provider_no_answer` (its message stays generic), so a
+  client can say "it may have been made". Read paths keep their code-less errors.
+- **`CalendarReader.get`** and **`CalendarProvider#readEvent`** (a read session): a recurring
+  create whose event Google already had (`existed`) stores Google's version, never the request's;
+  a failed read-back is 409 `created_not_stored`.
+- **`MirroredItem#edit`** keeps the local half (the overrides) when the provider half is a
+  `ProviderPartialWriteError`; a refusal or no answer still keeps nothing.
+- **`title: null` / `status: null`** clear an override (400 on a provider field or a to-do);
+  MCP `update_todo`'s input is unchanged.
+- **Read calendars**: `ensureReads` and `#keepPrimaryRead` match legacy string entries and refuse
+  (400) past the 50-calendar limit; the migration skips deleted rows and full lists.
+
 ## Where phase 4a left the old modules
 
 | Module                               | Now                                                                                                                                                  |
