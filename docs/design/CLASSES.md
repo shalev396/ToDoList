@@ -340,6 +340,8 @@ classDiagram
     +toView() IntegrationStatusView
     +readConfig(caller)
     +update(caller, input) Promise~Integration~
+    +checkMode(caller, mode) Mode
+    +canSwitchMode: boolean
     +setMode(caller, mode) Promise~Integration~
     +saveCredential(caller, body) Promise
     +testConnection(caller) Promise
@@ -355,6 +357,7 @@ classDiagram
     #onConnected() Promise
     #checkSelection(config) Promise
     #learnedLabel(accountLabel) string
+    #revokeGrant() Promise
     +from(data)$ Integration
     +findOwn(caller, id)$ Integration
     +listOwn(caller)$ Integration[]
@@ -470,7 +473,7 @@ classDiagram
   }
   class Revocable {
     <<interface>>
-    +revoke(by)
+    +revoke(caller)
   }
   class BoardProvider {
     <<interface>>
@@ -589,9 +592,23 @@ ops), and only inside their capability methods. In order, it refuses another mem
 data or a fixtures stage's tracker (`provider_writes_off`), then a read-only integration
 (`ReadOnlyIntegrationError`, 409 `integration_read_only`); only then does it open the credential
 and make the writer (`createWriter`, the provider's own). `assertWritable` runs the same checks so
-callers refuse before they reserve or record anything. `writePaths.test.ts` holds that nothing
-outside `classes/integration/**` loads a writer, and `vaultImports.test.ts` that only
-`Integration.ts` uses `Credential`.
+callers refuse before they reserve or record anything. The mode is the one the integration was
+loaded with: a switch made while a request runs is seen by the next one.
+
+What the tests hold:
+
+- `writePaths.test.ts`:
+  - only `TrackerIntegration.ts`, the provider classes and the writer modules load a writer;
+  - nothing outside `classes/integration/**` names the writer factories;
+  - each factory has one call site, by count: `createWriteClient(` in `TrackerIntegration` and
+    `calendarWriter(` in `GoogleCalendarIntegration`, each inside a `createWriter` body, and
+    `applyOps(` once, in `GoogleCalendarIntegration`. A writer made in a read session fails;
+  - MCP code never names `setMode`, `checkMode` or `UpdateIntegrationBody`.
+- `vaultImports.test.ts`: only `Integration.ts` uses `Credential`, and only `Integration.ts` and
+  `sync/secrets.ts` name `Integration.withSyncSecret` (MCP code never does).
+- `integration.test.ts`: for every provider class, without a database, each write it can make
+  (`createOptions`, `createTask`, `insertEvent`, `push`) is refused while read-only before
+  anything is sent.
 
 What phase 1 built, and the seams phase 2 fills:
 
@@ -606,9 +623,12 @@ What phase 1 built, and the seams phase 2 fills:
   `services/providerCreate/*`; the classes call them. Phase 2 folds them into one
   `static definition` per class, and hands the adapters their headers from `auth.headers(...)`.
 - The sync engine reaches a credential through `Integration.withSyncSecret` (a read session) until
-  phase 5 moves it behind `Integration.sync()`.
-- `Revocable.revoke(by)` takes an `AuditScope`, which a `Caller` is: a member's integrations are
-  disconnected by whoever ends the membership, who has no standing of the member's own.
+  phase 5 moves it behind `Integration.sync()`. Only `sync/secrets.ts` names it, by test.
+- `Revocable.revoke(caller)` is its owner's (it checks), over the protected `revokeGrant()` hook,
+  which the disconnect template calls whoever disconnects (the owner, or whoever ended the
+  owner's membership, who has no standing of the member's own).
+- `canSwitchMode` (never demo data) is in the REST view and on the create targets, so the client
+  offers the switch, and the "switch to Read & write" hint, only where it can work.
 
 ## 4. Items, containers and the calendar (phases 4 and 5)
 
