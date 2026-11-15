@@ -12,16 +12,17 @@ It is updated every phase.
 - **Built** (exists in the code): green, solid border.
 - **Planned**: grey, dashed border, with the phase that builds it.
 
-| Phase | What it builds                                                                                                                                                                                                   | State     |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test     | **built** |
-| 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry` | **built** |
-| 2     | `updateTask`/`writableFields`, `ResourcePicker`, `BoardProvider`, the one `static definition` per provider, headers to the adapters, `OAuthFlow`                                                                 | planned   |
-| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects; `User` reworked                                                                                                                         | planned   |
-| 4     | `Item` hierarchy, `Container`, `ItemQuery`, `CreateQuota`                                                                                                                                                        | planned   |
-| 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                        | planned   |
-| 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                              | planned   |
-| 7     | The legacy list emptied, dead services deleted                                                                                                                                                                   | planned   |
+| Phase | What it builds                                                                                                                                                                                                               | State     |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test                 | **built** |
+| 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry`             | **built** |
+| 2a    | The one `static definition` per provider (`IntegrationDefinition`), headers from the auth strategy to the adapters, `OAuthFlow` (Google merged), `ResourcePicker`, capabilities to the client, `Integration`'s collaborators | **built** |
+| 2W    | `updateTask`/`writableFields`, `CalendarProvider` update/delete/create calendar/recurrence, `BoardProvider`                                                                                                                  | planned   |
+| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects; `User` reworked                                                                                                                                     | planned   |
+| 4     | `Item` hierarchy, `Container`, `ItemQuery`, `CreateQuota`                                                                                                                                                                    | planned   |
+| 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                                    | planned   |
+| 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                                          | planned   |
+| 7     | The legacy list emptied, dead services deleted                                                                                                                                                                               | planned   |
 
 **How the boundary is held.** `server/legacy-db-importers.mjs` names:
 
@@ -321,7 +322,7 @@ The 409 domain errors are siblings of `ConflictError`, not children: a `catch (C
 answers the version-conflict body (`currentVersion`), which they are not. The error handler answers
 every `AppError` by `instanceof`.
 
-## 3. Integrations (phases 1 and 2)
+## 3. Integrations (phases 1, 2a and 2W)
 
 ```mermaid
 classDiagram
@@ -337,6 +338,8 @@ classDiagram
     +config: TConfig
     +mode: Mode
     +allowsWrites: boolean
+    +authKind: AuthKind
+    +canCreate: boolean
     +toView() IntegrationStatusView
     +readConfig(caller)
     +update(caller, input) Promise~Integration~
@@ -350,8 +353,10 @@ classDiagram
     +disconnect(caller) Promise
     +assertWritable(caller)
     +needsWriteConsent() Promise~boolean~
+    #definition: IntegrationDefinition
     #withReadSession(fn) Promise
     #withWriteSession(caller, fn) Promise
+    #handBackGrant(failure) Promise
     #createWriter(secret)* Promise~TWriter~
     #probe(adapter, context)* Promise
     #onConnected() Promise
@@ -368,8 +373,48 @@ classDiagram
     +listForDispatch()$ Integration[]
     +disconnectAllOf(workspaceId, actor, member)$ number
     +withSyncSecret(id, fn)$ Promise
+    +capabilitiesOf()$ ProviderCapabilities[]
   }
   WorkspaceEntity <|-- Integration
+  class IntegrationDefinition~TSecret,TAuth~ {
+    <<value object>>
+    +provider
+    +auth: AuthSet
+    +connection: ConnectionRules
+    +adapter: ProviderAdapter
+    +create: CreateRules
+    +picker: PickerKind
+    +revokePage
+    +comingSoon
+    +fixtures
+    +authFor(method) AuthStrategy
+    +parseConfig(config)
+    +planConnection(input) ConnectionPlan
+    +assertSameAccount(integration, config)
+    +defaultLabel(config)
+    +fakeCredential(method, name)
+  }
+  Integration *-- IntegrationDefinition : static definition
+  IntegrationDefinition *-- AuthStrategy
+  class IntegrationConnector {
+    <<collaborator>>
+    +connectWithKey(caller, input)
+    +upsertOAuth(caller, conn)
+  }
+  class ConnectionTester {
+    <<collaborator>>
+    +waitBeforeNext() Promise
+    +run(timeZone) Promise
+  }
+  class SyncRequest {
+    <<collaborator>>
+    +hold() Promise
+    +manualWait() Promise
+    +enqueue() Promise
+  }
+  Integration ..> IntegrationConnector
+  Integration ..> ConnectionTester
+  Integration ..> SyncRequest
   class Owned {
     <<interface>>
   }
@@ -412,18 +457,35 @@ classDiagram
     +methods: AuthMethod[]
     +handles(method) boolean
     +parseCredential(method, raw)
+    +fakeCredential(method, name)
     +headers(secret, purpose?) Headers
+    +query(secret)
+    +bind(session) AdapterAuth
+    +transport(inner) Transport
   }
   class OAuthAuth~TSecret~ {
     +refreshPolicy: stored | per_call
+    +scopes, writeScopes, callbackPath
+    +endpoints()
+    +credentials() Promise
+    +client(transport?) ReadOnlyClient
+    +authorizeUrl(request) string
+    +exchangeCode(client, grant, credentials) Promise
+    +secretFromGrant(grant, scopes, now)
+    +identify(client, accessToken) Promise
     +needsRefresh(secret, now) boolean
     +refresh(secret) Promise
+    +revoke(secret) Promise
   }
   class ApiKeyAuth~TSecret~
-  class ServiceAccountAuth
+  class ServiceAccountAuth~TSecret~
+  class UnofferedAuth~TSecret~ {
+    <<null object>>
+  }
   AuthStrategy <|-- OAuthAuth
   AuthStrategy <|-- ApiKeyAuth
   AuthStrategy <|-- ServiceAccountAuth
+  AuthStrategy <|-- UnofferedAuth
   Credential ..> OAuthAuth : refreshIfStale
   class SyncAdapter~TConfig,TSecret~ {
     <<strategy>>
@@ -468,6 +530,7 @@ classDiagram
   CreateFunnel <|-- CalendarProvider
   class ResourcePicker~R~ {
     <<interface>>
+    +pickerKind: sites | workspaces | calendars | null
     +pickerResources(caller) R[]
     +choose(caller, ids)
   }
@@ -495,16 +558,22 @@ classDiagram
   Integration <|-- TrackerIntegration
   TaskProvider <|.. TrackerIntegration
   class JiraIntegration {
-    +grantResources()
+    +definition$ = JIRA
   }
   class ClickUpIntegration {
-    +grantResources()
+    +definition$ = CLICKUP
   }
-  class LinearIntegration
-  class GitHubIntegration
-  class GoogleCalendarIntegration
+  class LinearIntegration {
+    +definition$ = LINEAR
+  }
+  class GitHubIntegration {
+    +definition$ = GITHUB
+  }
+  class GoogleCalendarIntegration {
+    +definition$ = GOOGLE_CALENDAR
+  }
   class MoodleIntegration {
-    comingSoon = true
+    +definition$ = MOODLE (comingSoon)
   }
   class UnlistedIntegration {
     <<null object>>
@@ -538,15 +607,20 @@ classDiagram
   class IntegrationRegistry {
     <<registry>>
     +instance$
-    +register(provider, factory)
+    +register(cls, factory)
     +registerFallback(factory)
+    +classOf(provider)
     +create(data) Integration
   }
   Integration ..> IntegrationRegistry : from()
   class OAuthFlow {
-    +start(caller, integrationClass)
-    +consume(state)
+    <<entity: OAuthState>>
+    +start(caller, integrationClass, input)$ OAuthStart
+    +consume(integrationClass, callback)$ location
+    +providers(caller)$ OAuthProvidersResponse
   }
+  OAuthFlow ..> OAuthAuth
+  OAuthFlow ..> Integration : connectOAuth
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
   classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
@@ -570,7 +644,7 @@ classDiagram
   class CreateFunnel:::built
   class TaskProvider:::built
   class CalendarProvider:::built
-  class ResourcePicker:::planned
+  class ResourcePicker:::built
   class BoardProvider:::planned
   class CourseProvider:::planned
   class TrackerIntegration:::built
@@ -582,7 +656,12 @@ classDiagram
   class MoodleIntegration:::built
   class UnlistedIntegration:::built
   class IntegrationRegistry:::built
-  class OAuthFlow:::planned
+  class OAuthFlow:::built
+  class IntegrationDefinition:::built
+  class IntegrationConnector:::built
+  class ConnectionTester:::built
+  class SyncRequest:::built
+  class UnofferedAuth:::built
   class ItemCopy:::planned
 ```
 
@@ -606,22 +685,57 @@ What the tests hold:
   - MCP code never names `setMode`, `checkMode` or `UpdateIntegrationBody`.
 - `vaultImports.test.ts`: only `Integration.ts` uses `Credential`, and only `Integration.ts` and
   `sync/secrets.ts` name `Integration.withSyncSecret` (MCP code never does).
+  An alias does not get round them: a factory renamed with `as`, bound to another name,
+  destructured from an `await import(…)` or re-exported fails, as does a dynamic import with no
+  literal target inside `classes/integration/`.
 - `integration.test.ts`: for every provider class, without a database, each write it can make
   (`createOptions`, `createTask`, `insertEvent`, `push`) is refused while read-only before
   anything is sent.
+- `definitions/definitions.test.ts`: the definitions name each connectable provider once, each
+  its class's own; every OAuth app's token and revoke URL is on the HTTP layer's allow-list
+  (`OAUTH_TOKEN_ENDPOINTS`, written out there on purpose: no definition can widen it) and its
+  callback path is the one registered at the provider; the scopes and the key methods are as
+  before; the strategies build the headers (a second token for GitHub boards, Moodle's query
+  token, one Google token exchange per session, one per call for the service account); and
+  `Integration.capabilitiesOf()` agrees with the contracts each class implements.
 
-What phase 1 built, and the seams phase 2 fills:
+**What phase 2a built:**
+
+- **One `static definition` per provider class** (`definitions/<provider>.ts`, an
+  `IntegrationDefinition`): its auth strategies (`auth.oauth`, `auth.apiKey`,
+  `auth.serviceAccount`), the config schema, the connection rules (default topic, account key,
+  label, which config change moves the account), the sync adapter, the create rules (funnel
+  steps and reader, which links are kept, what a 403 means), the picker, the revoke page,
+  `comingSoon` and the fixtures (the funnel's recorded set; each strategy's FAKE credential). It
+  replaces `RULES`, `CREDENTIAL_SCHEMAS`, `OAUTH_PROVIDER_DEFS`, `OAUTH_ENDPOINTS`, the
+  `fakeCredential` switch and the create switches (`safeCopyUrl`, `failureFor`).
+  `definitions/index.ts` lists them for code that must not load the classes (the sync engine in
+  fixtures mode, the seed); `services/integrationConfig.ts` and `seed/fakeCredentials.ts` are
+  views of them.
+- **Headers from the strategy.** The adapters get `ctx.auth` (`AdapterAuth`: `kind`,
+  `headers(purpose?)`, `query()`), bound by the integration's strategy to the opened secret and the
+  run's client; no adapter builds an auth header, and `authMethod === 'oauth'` checks became
+  `auth.kind` / `authKind`, `canCreate` or polymorphism (`pickerKind`). The create path, the
+  connection test and the Calendar writer take the same headers.
+- **`OAuthFlow`** (an OAuthStates row's lifecycle): `start(caller, integrationClass, input)` and
+  `consume(integrationClass, callback)`, the same flow for Google Calendar and the four providers;
+  what differs is each provider's `OAuthAuth` (endpoints, scopes, PKCE, the secret it seals, how it
+  names the account). Routes, callback URLs, scopes, codes and redirects are unchanged.
+- **`ResourcePicker<R>`** (Jira sites, ClickUp workspaces, Google calendars): `pickerKind`,
+  `pickerResources(caller)`, `choose(caller, ids)`; the routes pick by `isResourcePicker`.
+- **Capabilities to the client**: `GET …/oauth/providers` adds `capabilities[]` from
+  `Integration.capabilitiesOf()` (auth methods, picker, revoke on disconnect, revoke page, can
+  create, coming soon); the Integrations page reads them instead of its lists.
+- **`Integration`'s collaborators**: `IntegrationConnector`, `ConnectionTester`, `SyncRequest`.
+  They get the protected members they need as functions; the credential never leaves
+  `Integration.ts`. `toStatusView` is gone (`toView`).
+
+**The seams phase 2W fills:**
 
 - `TaskProvider` has `createOptions` (through `CreateFunnel`) and `createTask`; `updateTask` and
-  `writableFields` arrive in phase 2, and the compiler will then require them of every tracker.
+  `writableFields` arrive in phase 2W, and the compiler will then require them of every tracker.
 - `CalendarProvider` has `listCalendars`, `insertEvent`, `dryRun` and `push`; `updateEvent`,
-  `deleteEvent` and `createCalendar` arrive in phase 2.
-- `ResourcePicker` is planned: Jira and ClickUp expose `grantResources()` today (the OAuth grant's
-  sites and workspaces), and Google its `listCalendars`.
-- The per-provider tables (`RULES`, `CREDENTIAL_SCHEMAS`, `OAUTH_PROVIDER_DEFS`, the create
-  switches) still live in `services/integrationConfig.ts`, `services/oauth/providers.ts` and
-  `services/providerCreate/*`; the classes call them. Phase 2 folds them into one
-  `static definition` per class, and hands the adapters their headers from `auth.headers(...)`.
+  `deleteEvent` and `createCalendar` arrive in phase 2W.
 - The sync engine reaches a credential through `Integration.withSyncSecret` (a read session) until
   phase 5 moves it behind `Integration.sync()`. Only `sync/secrets.ts` names it, by test.
 - `Revocable.revoke(caller)` is its owner's (it checks), over the protected `revokeGrant()` hook,
@@ -1155,6 +1269,21 @@ classDiagram
 
 The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
 SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
+
+## Where phase 2a left the old modules
+
+| Module                             | State after phase 2a                                                                                                                               |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `services/googleCalendarOAuth.ts`  | **removed**: `OAuthFlow` (start, callback) and `GoogleCalendarIntegration`'s definition; the picker route helper is in `services/oauth/service.ts` |
+| `services/googleOAuthClient.ts`    | **removed**: `GOOGLE_CALENDAR_OAUTH` (`OAuthAuth`: credentials, token client, per-call refresh, revoke)                                            |
+| `services/oauth/providers.ts`      | **removed**: each provider's `OAuthAuth` in its definition (`identify`, scopes, endpoints)                                                         |
+| `services/oauth/client.ts`         | **removed**: `OAuthAuth#credentials`, `#client`, `#refresh`                                                                                        |
+| `services/oauth/service.ts`        | the request bodies and the picker listings (over `ResourcePicker`); the flow is `OAuthFlow`                                                        |
+| `services/oauth/common.ts`         | pure (cookie, callback URL, redirects); the state's database work is `OAuthFlow`'s; off the legacy list                                            |
+| `services/oauth/transport.ts`      | the OAuth apps' transport seam only; the stand-in rewrite is `OAuthAuth#transport`                                                                 |
+| `services/integrationConfig.ts`    | the request bodies, and views of the definitions                                                                                                   |
+| `seed/fakeCredentials.ts`          | a view of the strategies' FAKE credentials (the pieces: `definitions/fake.ts`)                                                                     |
+| `sync/providers/oauthEndpoints.ts` | the test stand-in switch only; the endpoints are the definitions'                                                                                  |
 
 ## Where phase 1 left the old modules
 
