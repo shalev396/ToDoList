@@ -155,7 +155,7 @@ export const items = {
     plannedAt: 'תאריך מתוכנן',
     plannedTime: 'שעה מתוכננת',
     plannedClear: 'ניקוי',
-    plannedHint: 'מתי בכוונתך לעשות את זה. נשלח ליומן סביבת העבודה.',
+    plannedHint: 'מתי זה מתוכנן. נשלח ליומן סביבת העבודה כשהוא כולל את הפריט הזה.',
     note: 'ההערה שלך',
     notePlaceholder: 'אפשר להוסיף הערה שרק את/ה רואה',
     edit: 'עריכה',

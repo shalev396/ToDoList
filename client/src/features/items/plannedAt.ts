@@ -16,7 +16,7 @@ export const PLANNED_MAX_YEAR = 2999;
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-function isRealDate(value: string): boolean {
+export function isRealDate(value: string): boolean {
   const match = DATE.exec(value);
   if (match === null) {
     return false;
@@ -31,6 +31,19 @@ function isRealDate(value: string): boolean {
     parsed.getUTCMonth() === month - 1 &&
     parsed.getUTCDate() === day
   );
+}
+
+/** Whether `value` is a whole `HH:mm`. */
+export function isPlannedTime(value: string): boolean {
+  return TIME.test(value);
+}
+
+/**
+ * Whether a picked value can be saved without waiting for blur: a whole real day (1970-2999), and a
+ * time that is empty or whole. A partial or out-of-range value waits, and is never sent.
+ */
+export function isCommittable({ date, time }: PlannedParts): boolean {
+  return isRealDate(date) && (time === '' || TIME.test(time));
 }
 
 /** The day and the time of a stored value; empty parts for none or anything unreadable. */

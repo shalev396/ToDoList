@@ -17,6 +17,7 @@ import { Switch } from '@/components/ui/switch';
 import { useAttributes } from '@/api/queries/attributes';
 import { useItem, useUpdateItem, useUpdateOverlay } from '@/api/queries/items';
 import { useMe } from '@/api/queries/user';
+import { usePrimaryCalendar } from '@/api/queries/integrations';
 import { AttributeFields } from './AttributeFields';
 import { apiErrorStatus, apiOpenIn, errorMessage } from '@/api/errors';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -29,7 +30,7 @@ import { CopyChips } from './CopyChips';
 import { SourcePreview } from './SourcePreview';
 import { describeProps, type ItemField } from './itemFields';
 import { useItemParam } from './useItemParam';
-import { formatPlannedAt, parsePlannedAt } from './plannedAt';
+import { formatPlannedAt, isCommittable, parsePlannedAt } from './plannedAt';
 import { dateInZone, noonInZone } from './zonedDate';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
@@ -478,6 +479,7 @@ function OverlayControls({
   const { workspace, topics } = useCurrentWorkspace();
   const overlay = useUpdateOverlay(workspace?.id ?? '', item.id);
   const attributes = useAttributes(workspace?.id ?? null);
+  const primary = usePrimaryCalendar(workspace?.id ?? '');
   const [note, setNote] = useState(item.overlay.note ?? '');
   const ids = {
     pin: useId(),
@@ -488,7 +490,8 @@ function OverlayControls({
     time: useId(),
   };
   const planned = parsePlannedAt(item.overlay.plannedAt);
-  // The date and time are typed into drafts and committed on blur or Enter, never per keystroke.
+  // The date and time are drafts: a whole real value from the picker is saved at once, anything
+  // else waits for blur or Enter and is never sent. Escape drops what was never saved.
   const [plannedDraft, setPlannedDraft] = useState(planned);
   const [plannedSeen, setPlannedSeen] = useState(item.overlay.plannedAt ?? null);
   if (plannedSeen !== (item.overlay.plannedAt ?? null)) {
@@ -585,7 +588,11 @@ function OverlayControls({
             max="2999-12-31"
             value={plannedDraft.date}
             onChange={(event) => {
-              setPlannedDraft({ date: event.target.value, time: plannedDraft.time });
+              const draft = { date: event.target.value, time: plannedDraft.time };
+              setPlannedDraft(draft);
+              if (isCommittable(draft)) {
+                commitPlanned(draft);
+              }
             }}
             onBlur={() => {
               commitPlanned(plannedDraft);
@@ -593,6 +600,8 @@ function OverlayControls({
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 commitPlanned(plannedDraft);
+              } else if (event.key === 'Escape') {
+                setPlannedDraft(planned);
               }
             }}
           />
@@ -605,7 +614,11 @@ function OverlayControls({
             value={plannedDraft.time}
             disabled={planned.date === ''}
             onChange={(event) => {
-              setPlannedDraft({ date: planned.date, time: event.target.value });
+              const draft = { date: planned.date, time: event.target.value };
+              setPlannedDraft(draft);
+              if (event.target.value !== '' && isCommittable(draft)) {
+                commitPlanned(draft);
+              }
             }}
             onBlur={() => {
               commitPlanned({ date: planned.date, time: plannedDraft.time });
@@ -613,6 +626,8 @@ function OverlayControls({
             onKeyDown={(event) => {
               if (event.key === 'Enter') {
                 commitPlanned({ date: planned.date, time: plannedDraft.time });
+              } else if (event.key === 'Escape') {
+                setPlannedDraft(planned);
               }
             }}
           />
@@ -633,7 +648,9 @@ function OverlayControls({
           )}
         </div>
         {item.source.provider === 'google_calendar' ||
-        item.overlay.calendarSync === false ? null : (
+        item.overlay.calendarSync === false ||
+        !primary.isSuccess ||
+        primary.data.state === 'unset' ? null : (
           <p className="text-[13px] text-muted-foreground" data-planned-hint>
             {t('items.sheet.plannedHint')}
           </p>

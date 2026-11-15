@@ -157,7 +157,7 @@ export const items = {
     plannedAt: 'Planned for',
     plannedTime: 'Planned time',
     plannedClear: 'Clear',
-    plannedHint: 'When you plan to do it. Sent to the workspace calendar.',
+    plannedHint: 'When it’s planned. Sent to the workspace calendar when it includes this item.',
     note: 'Your note',
     notePlaceholder: 'Add a note only you can see',
     edit: 'Edit',
