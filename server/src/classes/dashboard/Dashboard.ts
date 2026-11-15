@@ -1,9 +1,10 @@
 /**
  * Dashboards (BUILDER.md §5–§9, DATA.md §3.11–3.12): the life of one dashboard. Read and list;
  * edit with builder ops (validated, linted, versioned, audited); undo, redo and revert through the
- * history; publish; delete. With NewDashboard (making one) the only code that reads or writes
- * Dashboards; History is the only code for DashboardVersions. Collaborators: DashboardConnectors
- * (the connector rules), BlockPreviews (preview rows), DashboardDryRun (a dry run's answer) and
+ * history; publish; delete. With NewDashboard (making one) the code that reads or writes
+ * Dashboards, until Phase 7 / M7 (QueryTarget, ItemPolicy and Topic still read them); History is
+ * the only code for DashboardVersions. Collaborators: DashboardConnectors (the connector rules),
+ * BlockPreviews (preview rows), DashboardDryRun (a dry run's answer) and
  * DocCheck (the one check of a document).
  *
  * - Every write names the version it read (`ifVersion`, the API's `expectedVersion`). A stale one
@@ -82,6 +83,7 @@ import type { Auditable, Owned, SoftDeletable, Versioned } from '../base/contrac
 import { Role } from '../base/Role.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { AuditLog } from '../AuditLog.js';
+import type { Integration } from '../integration/Integration.js';
 import { DashboardPolicy } from '../policies/DashboardPolicy.js';
 import { IntegrationPolicy } from '../policies/IntegrationPolicy.js';
 import { ItemPolicy } from '../policies/ItemPolicy.js';
@@ -166,13 +168,6 @@ export interface DashboardListFilter {
   /** A topic's id; null: the main dashboard. */
   topicId?: string | null | undefined;
   page?: DashboardPage | undefined;
-}
-
-/** The integration "stop sharing" takes off every block: whose it is, and where. */
-export interface ConnectorOwner {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly ownerUserId: string;
 }
 
 /** What a caller's `save` says of its write: only its summary. */
@@ -938,7 +933,7 @@ export class Dashboard
    */
   static async removeConnectorEverywhere(
     caller: Caller,
-    integration: ConnectorOwner,
+    integration: Integration,
   ): Promise<number> {
     if (
       integration.workspaceId !== caller.workspaceId ||

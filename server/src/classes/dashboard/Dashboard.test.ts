@@ -315,13 +315,30 @@ describe('Dashboard.removeConnectorEverywhere', () => {
     const { Dashboard } = classes;
     const t = await team('dash-strip-guard');
     const other = await team('dash-strip-other');
-    const theirs = { id: 'i-theirs', workspaceId: t.workspaceId, ownerUserId: t.owner.userId };
+    const { Integration } = await import('../integration/index.js');
+    const { getIntegrationRepository } = await import('../../models/index.js');
+    const theirs = Integration.from(
+      await (
+        await getIntegrationRepository()
+      ).create(t.workspaceId, {
+        connectedBy: t.owner.userId,
+        provider: 'linear',
+        accountId: 'acct-strip',
+        label: 'theirs',
+        authMethod: 'personal_api_key',
+        topicId: null,
+      }),
+    );
     await assert.rejects(Dashboard.removeConnectorEverywhere(t.editor, theirs), hasStatus(404));
     await assert.rejects(
       Dashboard.removeConnectorEverywhere(other.owner, theirs),
       hasStatus(404),
       'another workspace’s',
     );
+    // An object literal is no integration: the parameter is the class (nominal, #private fields).
+    const forged = { id: theirs.id, workspaceId: t.workspaceId, ownerUserId: t.owner.userId };
+    // @ts-expect-error a structural stand-in no longer type-checks
+    await Dashboard.removeConnectorEverywhere(t.owner, forged).catch(() => undefined);
     assert.equal(await Dashboard.removeConnectorEverywhere(t.owner, theirs), 0);
   });
 });
