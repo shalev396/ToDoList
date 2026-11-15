@@ -349,6 +349,7 @@ Sharing between two people: Shalev (owner) invites the other person as a `viewer
 { integrationId: 1, calendarId: 1, googleEventId: 1 }  unique
 { integrationId: 1, itemId: 1 }               unique
 { integrationId: 1, tombstonedAt: 1 }         partialFilterExpression: { tombstonedAt: null }   // live links for diffing
+{ workspaceId: 1, calendarId: 1, googleEventId: 1 }   // one event across the workspace's integrations: one tracker per event
 // ReplayNonces
 { expireAt: 1 }                               expireAfterSeconds: 0  (TTL, 10 min)
 // (_id = nonce gives uniqueness for free)

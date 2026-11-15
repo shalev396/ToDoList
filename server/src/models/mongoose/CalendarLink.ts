@@ -40,6 +40,9 @@ calendarLinkSchema.index(
   { integrationId: 1, tombstonedAt: 1 },
   { partialFilterExpression: { tombstonedAt: null } },
 ); // live links for diffing
+// One event across the workspace's integrations: one tracker per event (removeOthersForEvent) is
+// a point lookup, not a seek per integration.
+calendarLinkSchema.index({ workspaceId: 1, calendarId: 1, googleEventId: 1 });
 
 export const CalendarLinkMongoModel = mongoose.model<CalendarLinkFields>(
   'CalendarLink',

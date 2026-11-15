@@ -174,6 +174,7 @@ const EXPECTED: Record<string, IndexSpec[]> = {
     { key: { integrationId: 1, calendarId: 1, googleEventId: 1 }, unique: true },
     { key: { integrationId: 1, itemId: 1 }, unique: true },
     { key: { integrationId: 1, tombstonedAt: 1 }, partialFilterExpression: { tombstonedAt: null } },
+    { key: { workspaceId: 1, calendarId: 1, googleEventId: 1 } },
   ],
   ReplayNonces: [{ key: { expireAt: 1 }, expireAfterSeconds: 0 }],
   CreateQuotas: [{ key: { expireAt: 1 }, expireAfterSeconds: 0 }],
