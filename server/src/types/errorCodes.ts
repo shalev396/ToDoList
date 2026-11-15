@@ -48,6 +48,8 @@ export const ERROR_CODES = [
   'provider_item_missing',
   /** A calendar event with other guests: the caller must say whether to notify them. */
   'event_has_guests',
+  /** A push for a Google Calendar integration that is not the workspace's primary calendar. */
+  'calendar_not_primary',
   // Creating a to-do in a provider too (H5)
   'provider_writes_off',
   'create_rate_limited',

@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { AppError } from './AppError.js';
+import { CalendarNotPrimaryError } from './CalendarNotPrimaryError.js';
 import { CapabilityError } from './CapabilityError.js';
 import { EventHasGuestsError } from './EventHasGuestsError.js';
 import { FieldNotWritableError } from './FieldNotWritableError.js';
@@ -34,6 +35,7 @@ describe('the error hierarchy', () => {
       [new ProviderPartialWriteError('jira', ['title'], ['status']), 409, 'provider_partial_write'],
       [new ProviderItemMissingError('jira'), 404, 'provider_item_missing'],
       [new EventHasGuestsError(), 409, 'event_has_guests'],
+      [new CalendarNotPrimaryError('i-1'), 409, 'calendar_not_primary'],
     ];
     for (const [error, status, code] of cases) {
       assert.ok(error instanceof AppError, error.name);
