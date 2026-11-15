@@ -33,6 +33,12 @@ export const errors = {
       'That tool has no way to set this item to that status. Change it there instead.',
     scopeMissing:
       'This connection needs a new permission for that. Connect it again and allow everything it asks for.',
+    fieldNotWritable:
+      'That tool doesn’t let TodoList change this here. Change it in that tool instead.',
+    providerPartialWrite:
+      'Only part of the change was made in that tool. Check the item there, then try the rest again.',
+    providerItemMissing: 'This item no longer exists in that tool.',
+    eventHasGuests: 'This event has other guests. Choose whether to notify them, then try again.',
     providerWritesOff: 'Creating items in your other tools is turned off on this server.',
     createRateLimited: 'You have created a lot of items there this hour. Try again later.',
     needsDueDate: 'A calendar event needs a due date.',

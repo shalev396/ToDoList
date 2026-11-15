@@ -3,11 +3,15 @@ import assert from 'node:assert/strict';
 
 import { AppError } from './AppError.js';
 import { CapabilityError } from './CapabilityError.js';
+import { EventHasGuestsError } from './EventHasGuestsError.js';
+import { FieldNotWritableError } from './FieldNotWritableError.js';
 import { ConflictError } from './ConflictError.js';
 import { ForbiddenError } from './ForbiddenError.js';
 import { MirroredItemError } from './MirroredItemError.js';
 import { NotFoundError } from './NotFoundError.js';
 import { ProviderComingSoonError } from './ProviderComingSoonError.js';
+import { ProviderItemMissingError } from './ProviderItemMissingError.js';
+import { ProviderPartialWriteError } from './ProviderPartialWriteError.js';
 import { ReadOnlyIntegrationError } from './ReadOnlyIntegrationError.js';
 import { ScopeMissingError } from './ScopeMissingError.js';
 import { StatusNotAvailableError } from './StatusNotAvailableError.js';
@@ -26,6 +30,10 @@ describe('the error hierarchy', () => {
       [new ProviderComingSoonError('moodle'), 400, 'provider_coming_soon'],
       [new StatusNotAvailableError('jira', 'cancelled'), 422, 'status_not_available'],
       [new ScopeMissingError('i-1', 'scope', 'Reconnect it'), 409, 'scope_missing'],
+      [new FieldNotWritableError('jira', ['startAt']), 422, 'field_not_writable'],
+      [new ProviderPartialWriteError('jira', ['title'], ['status']), 409, 'provider_partial_write'],
+      [new ProviderItemMissingError('jira'), 404, 'provider_item_missing'],
+      [new EventHasGuestsError(), 409, 'event_has_guests'],
     ];
     for (const [error, status, code] of cases) {
       assert.ok(error instanceof AppError, error.name);

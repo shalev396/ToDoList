@@ -40,6 +40,14 @@ export const ERROR_CODES = [
   'status_not_available',
   /** The integration's grant lacks a scope this operation needs (a reconnect grants it). */
   'scope_missing',
+  /** Write-back: a field the provider doesn't take for this item (it lacks it, or only reads it). */
+  'field_not_writable',
+  /** Write-back: the provider took part of the change and refused the rest (what was written is kept). */
+  'provider_partial_write',
+  /** Write-back: the item no longer exists at the provider. */
+  'provider_item_missing',
+  /** A calendar event with other guests: the caller must say whether to notify them. */
+  'event_has_guests',
   // Creating a to-do in a provider too (H5)
   'provider_writes_off',
   'create_rate_limited',
