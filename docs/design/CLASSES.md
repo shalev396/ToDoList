@@ -1610,7 +1610,7 @@ classDiagram
     +removeOrphans()$ counts
     +view(caller, options) DashboardView
     +versions(caller, options) DashboardVersionView[]
-    +save(caller, doc, ifVersion, summary) number
+    +save(caller, doc, ifVersion, {summary}) number
     +applyOps(caller, input) DashboardOpsResult
     +applyPatch(caller, input) DashboardOpsResult
     +undo(caller, input)
@@ -2135,14 +2135,17 @@ Auditable, Viewable<SavedView>`, composing a **`Query`** value object (parsed an
   `AuditLog.page`); the trail's entries are deep-frozen.
 - **Narrow seed reads** (M2): `listOutlines` (a `DashboardOutline` per dashboard: no content)
   replaces `listAll`; `pinAccount()` refuses a non-demo integration (409);
-  `removeConnectorEverywhere` takes the owned integration and re-checks it (404).
+  `removeConnectorEverywhere` takes the `Integration` class itself (nominal: a lookalike object no longer type-checks) and re-checks it (404).
   `dashboardInternals.test.ts` pins who loads History and the cascade and who names the doors
   without a caller's checks (`listOutlines`, `pinAccount`, `removeAllIn`,
-  `removeConnectorEverywhere`, `removeOrphans`, `referencedWorkspaceIds`). The workspace barrel no
+  `removeConnectorEverywhere`, `removeOrphans`, `referencedWorkspaceIds`, `listWorkspaceIds`, and the `History.of` / `HistoryTrail` names). The workspace barrel no
   longer re-exports the cascade classes.
 - **The purge sweeps orphans** (M3): `Dashboard.removeOrphans` (the migration's rule) runs in
   `jobs/purge.ts`; `PurgeResult.orphanedDashboards` counts it. Dashboards go before their versions
-  in the cascade, the sweep and the migration.
+  in the cascade, the sweep and the migration. Every read that decides "gone or live" (the three
+  `listWorkspaceIds`, `Workspace.liveAmong` through `listLiveIds`, the migration) reads the primary
+  and takes ids only (`primaryReads.test.ts`); a failed read rejects before anything is deleted.
+  `NewDashboard` is not in the dashboard barrel (`Dashboard.create` is the API).
 - **Nits:** a read's refusal names a member (`Operation.member`, N2); `Layout` / `Query` compare
   canonically (N4); a raced connect link is used once (test, N3); the cascade loads the dashboard
   classes before its first destructive step (N5).
