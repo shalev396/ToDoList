@@ -31,13 +31,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { pageTitle } from '@/data/pageTitles';
+import { scopesForRole } from '@/features/agents/roleScopes';
 import { CopyField } from '@/features/integrations/CopyField';
 import { EmptyIcon, EmptyState } from '@/features/shell/EmptyState';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
 import { SettingsFrame, SettingsSection } from '@/pages/settings/SettingsLayout';
 import type { AgentKeyView, WorkspaceView } from '@api-types/api-contracts';
-import { AGENT_SCOPES, type AgentScope } from '@api-types/domain';
+import type { AgentScope, Role } from '@api-types/domain';
 
 /**
  * This stage's MCP endpoints (MCP.md §12): the API the app itself calls, so dev, QA, prod and a
@@ -66,6 +67,7 @@ const WRITE_SCOPES: ReadonlySet<AgentScope> = new Set([
 
 interface CreateKeyDialogProps {
   workspace: WorkspaceView;
+  role: Role;
   onClose: () => void;
 }
 
@@ -74,7 +76,7 @@ interface CreateKeyDialogProps {
  * held in this dialog's state only (not a mutation, so no cache keeps it) and dropped when the
  * owner confirms they stored it.
  */
-function CreateKeyDialog({ workspace, onClose }: CreateKeyDialogProps) {
+function CreateKeyDialog({ workspace, role, onClose }: CreateKeyDialogProps) {
   const { t } = useTranslation();
   const refresh = useRefreshAgentKeys(workspace.id);
   const [name, setName] = useState('');
@@ -170,7 +172,7 @@ function CreateKeyDialog({ workspace, onClose }: CreateKeyDialogProps) {
             </div>
             <fieldset className="flex flex-col gap-2">
               <legend className="mb-1 text-sm font-medium">{t('agentKeys.create.scopes')}</legend>
-              {AGENT_SCOPES.map((scope) => {
+              {scopesForRole(role).map((scope) => {
                 const id = `agent-scope-${scope}`;
                 return (
                   <div key={scope} className="flex items-start gap-2.5">
@@ -271,9 +273,15 @@ function KeyRow({
         <h3 className="text-sm font-semibold break-words" dir="auto">
           {agentKey.name}
         </h3>
-        <code className="text-[13px] text-muted-foreground" dir="ltr">
-          {agentKey.prefix}…
-        </code>
+        {agentKey.kind === 'oauth' ? (
+          <span className="text-[13px] text-muted-foreground" dir="auto">
+            {t('settings.mcp.signedInWith', { client: agentKey.clientName ?? '' })}
+          </span>
+        ) : (
+          <code className="text-[13px] text-muted-foreground" dir="ltr">
+            {agentKey.prefix}…
+          </code>
+        )}
         {revoked ? (
           <span className="text-[13px] text-destructive">
             {t('agentKeys.list.revoked', { date: format(agentKey.revokedAt, '') })}
@@ -312,7 +320,7 @@ function KeyRow({
   );
 }
 
-function Keys({ workspace, isOwner }: { workspace: WorkspaceView; isOwner: boolean }) {
+function Keys({ workspace, role }: { workspace: WorkspaceView; role: Role }) {
   const { t } = useTranslation();
   const keys = useAgentKeys(workspace.id);
   const revoke = useRevokeAgentKey(workspace.id);
@@ -327,19 +335,17 @@ function Keys({ workspace, isOwner }: { workspace: WorkspaceView; isOwner: boole
       hint={t('agentKeys.hint')}
       layout="stacked"
     >
-      {isOwner ? (
-        <div>
-          <Button
-            type="button"
-            onClick={() => {
-              setCreating(true);
-            }}
-          >
-            <Plus aria-hidden="true" />
-            {t('agentKeys.create.open')}
-          </Button>
-        </div>
-      ) : null}
+      <div>
+        <Button
+          type="button"
+          onClick={() => {
+            setCreating(true);
+          }}
+        >
+          <Plus aria-hidden="true" />
+          {t('agentKeys.create.open')}
+        </Button>
+      </div>
       {problem === null ? null : <FormError>{problem}</FormError>}
       {keys.data === undefined ? (
         keys.isError ? (
@@ -373,7 +379,7 @@ function Keys({ workspace, isOwner }: { workspace: WorkspaceView; isOwner: boole
             </EmptyIcon>
           }
           title={t('agentKeys.emptyTitle')}
-          body={t(isOwner ? 'agentKeys.emptyBody' : 'agentKeys.emptyBodyViewer')}
+          body={t('agentKeys.emptyBody')}
         />
       ) : (
         <ul>
@@ -385,6 +391,7 @@ function Keys({ workspace, isOwner }: { workspace: WorkspaceView; isOwner: boole
       {creating ? (
         <CreateKeyDialog
           workspace={workspace}
+          role={role}
           onClose={() => {
             setCreating(false);
           }}
@@ -445,22 +452,23 @@ function ConnectAgent() {
         label={t('settings.mcp.readonly')}
         value={MCP_READONLY_URL}
       />
+      <p className="text-[13px] text-muted-foreground">{t('settings.mcp.signInNote')}</p>
       <p className="text-[13px] text-muted-foreground">{t('settings.mcp.howTo')}</p>
     </SettingsSection>
   );
 }
 
-/** Keys for AI agents (MCP.md §4): the owner creates and revokes; members see their own. */
+/** Keys for AI agents (MCP.md §4): every member creates and revokes their own. */
 export default function AgentKeysPage() {
   const { t } = useTranslation();
-  const { workspace, isOwner } = useCurrentWorkspace();
-  if (workspace === null) {
+  const { workspace, role } = useCurrentWorkspace();
+  if (workspace === null || role === null) {
     return null;
   }
   return (
     <SettingsFrame>
       <PageMetadata title={pageTitle(t('agentKeys.title'))} noIndex />
-      <Keys key={workspace.id} workspace={workspace} isOwner={isOwner} />
+      <Keys key={workspace.id} workspace={workspace} role={role} />
       <ConnectAgent />
     </SettingsFrame>
   );

@@ -4,38 +4,15 @@
  * ignored as well.
  */
 import { Role as MemberRole } from '../../classes/base/Role.js';
-import { AGENT_SCOPES, type AgentScope, type Role } from '../../types/domain.js';
+import {
+  AGENT_SCOPES,
+  READ_ONLY_SCOPES,
+  ROLE_SCOPES,
+  type AgentScope,
+  type Role,
+} from '../../types/domain.js';
 
-/**
- * The scopes each role may use through a key, read off the DATA.md §5 role matrix (and the REST
- * roles of the same actions): reading is everyone's; local items, sync, the calendar push, the
- * builder and connecting one's own integrations (PERMISSIONS-V2 ruling 9) are editors'; sharing
- * and publishing are owners'. Integration tools act on the key user's own integrations only.
- */
-export const ROLE_SCOPES: Readonly<Record<Role, readonly AgentScope[]>> = {
-  // integrations:connect: a viewer still disconnects their own integrations (ruling 10); they
-  // can't connect new ones (integrations_start_connect needs an editor).
-  viewer: ['read', 'integrations:read', 'integrations:connect', 'workspace:read'],
-  editor: [
-    'read',
-    'items:write',
-    'sync',
-    'gcal:write',
-    'providers:create',
-    'integrations:read',
-    'integrations:connect',
-    'workspace:read',
-    'builder:write',
-  ],
-  owner: AGENT_SCOPES,
-};
-
-/** The scopes that only read: all that /api/mcp/readonly keeps. */
-export const READ_ONLY_SCOPES: readonly AgentScope[] = [
-  'read',
-  'integrations:read',
-  'workspace:read',
-];
+export { ROLE_SCOPES, READ_ONLY_SCOPES };
 
 /** The key's scopes that the role permits, in catalog order, without repeats. */
 export function effectiveScopes(keyScopes: readonly AgentScope[], role: Role): AgentScope[] {

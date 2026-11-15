@@ -22,6 +22,9 @@ export const settings = {
     hint: 'Give your AI assistant this address and one of the keys above.',
     address: 'MCP address',
     readonly: 'Read-only address (tools that only read)',
+    signedInWith: 'Signed in with {{client}}',
+    signInNote:
+      'Agents that support sign-in only need the address: they open TodoList for you to approve. Otherwise, use a key.',
     howTo:
       'Claude Code: install the TodoList plugin and paste the address and the key when it asks. Claude, Cursor and other MCP clients: add a remote MCP server with this address and the header Authorization: Bearer <your key>.',
   },
