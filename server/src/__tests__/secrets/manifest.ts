@@ -429,6 +429,28 @@ export const MANIFEST: readonly Entry[] = [
     expect: [2],
   },
 
+  // MCP sign-in consent: an unknown request is a 404, so the routes answer without a secret.
+  {
+    method: 'GET',
+    path: `${P}/mcp-oauth/requests/:id`,
+    params: () => ({ id: 'unknown-request' }),
+    expect: [4],
+  },
+  {
+    method: 'POST',
+    path: `${P}/mcp-oauth/requests/:id/approve`,
+    params: () => ({ id: 'unknown-request' }),
+    body: (c) => ({ workspaceId: c.wid, scopes: ['read'], name: 'Manifest agent' }),
+    expect: [4],
+  },
+  {
+    method: 'POST',
+    path: `${P}/mcp-oauth/requests/:id/deny`,
+    params: () => ({ id: 'unknown-request' }),
+    expect: [4],
+    noBadInput: true,
+  },
+
   // ── integrations and sync ─────────────────────────────────────────────────
   { method: 'GET', path: `${W}/integrations`, expect: [2] },
   // Which of the caller's own integrations are on a block: `{shared: ids}` only.
@@ -583,5 +605,14 @@ export const EXEMPT_MOUNTS: readonly { prefix: string; reason: string }[] = [
   {
     prefix: '/api/mcp',
     reason: 'authenticated by agent keys, not by a session; its own suite (MCP, T6.x) covers it',
+  },
+  {
+    prefix: '/api/mcp/oauth',
+    reason:
+      'MCP sign-in: public OAuth endpoints whose job is to answer codes and tokens (RFC 6749 wire format); mcp/__tests__/oauth.http.test.ts covers them',
+  },
+  {
+    prefix: '/.well-known',
+    reason: 'public discovery documents (RFC 8414, RFC 9728): no secret, no session',
   },
 ];

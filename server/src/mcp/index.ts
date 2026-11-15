@@ -37,6 +37,7 @@ import { SecretLeakError } from '../errors/AppError.js';
 import { logger } from '../services/logger.js';
 import { findSecrets } from '../services/secretPatterns.js';
 import { createMcpAuth } from './auth/apiKey.js';
+import { mcpResource } from './oauth/urls.js';
 import { requestAgent, type AuthenticatedAgent } from './auth/principal.js';
 import { screenToolCall, toolCallOf } from './callGuard.js';
 import { jsonRpcError, JSON_RPC, methodOf, requestIdOf, type JsonRpcId } from './jsonRpc.js';
@@ -315,7 +316,9 @@ export interface McpRouterOptions {
 /** `/` → /api/mcp, `/readonly` → /api/mcp/readonly, once mounted at /api/mcp behind parseBody. */
 export function createMcpRouter(options: McpRouterOptions = {}): Router {
   const router = Router();
-  const mcpAuth = createMcpAuth(authFailureLimiter(options.authFailureLimit));
+  const mcpAuth = createMcpAuth(authFailureLimiter(options.authFailureLimit), (req) =>
+    mcpResource(req.path.startsWith('/readonly')),
+  );
   const perAgent = agentLimiter(options.agentLimit);
   for (const [path, readonly] of [
     ['/readonly', true],

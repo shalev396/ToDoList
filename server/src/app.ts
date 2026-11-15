@@ -8,6 +8,7 @@ import {
   requestMemo,
 } from './middlewares/index.js';
 import { publicRouter, privateRouter } from './routes/index.js';
+import { mcpOAuthRouter, wellKnownRouter } from './routes/mcpOAuth.js';
 import { mcpBodyErrors, mcpRouter } from './mcp/index.js';
 import { installConsoleRedaction } from './services/logger.js';
 
@@ -56,6 +57,9 @@ export function createApp(): Express {
 
   app.use('/api/public', ...parseBody, publicRouter);
   app.use('/api/private', privateLimiter, expressAuth, ...parseBody, privateRouter);
+  // MCP sign-in: public OAuth endpoints and discovery. Before /api/mcp, which would swallow them.
+  app.use('/.well-known', ...parseBody, wellKnownRouter);
+  app.use('/api/mcp/oauth', ...parseBody, mcpOAuthRouter);
   app.use('/api/mcp', ...parseBody, mcpRouter, mcpBodyErrors); // agent keys, not Cognito
 
   app.use(notFound);

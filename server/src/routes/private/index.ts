@@ -20,6 +20,7 @@ import { connectLinksRouter } from './connectLinks.js';
 import { topicsRouter } from './topics.js';
 import { providerCreateRouter } from './providerCreate.js';
 import { attributesRouter } from './attributes.js';
+import { mcpOAuthPrivateRouter } from './mcpOAuth.js';
 
 const router = Router();
 
@@ -44,6 +45,7 @@ router.use('/', syncRouter);
 router.use('/', gcalSyncRouter);
 router.use('/', primaryCalendarRouter);
 router.use('/', connectLinksRouter);
+router.use('/', mcpOAuthPrivateRouter);
 router.use('/', accountRouter);
 
 export { router as privateRouter };

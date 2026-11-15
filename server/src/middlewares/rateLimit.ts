@@ -32,5 +32,8 @@ export const privateLimiter = limiter(200);
  */
 export const authLimiter = limiter(100);
 
+/** MCP sign-in's register and token endpoints (/api/mcp/oauth): public, so keep them tight. */
+export const mcpOAuthLimiter = limiter(30);
+
 /** OAuth callbacks (/api/public/oauth): a browser lands there once per connection. */
 export const oauthLimiter = limiter(60);

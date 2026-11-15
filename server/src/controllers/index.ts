@@ -21,3 +21,4 @@ export { ProviderOAuthController } from './providerOAuth.js';
 export { TopicsController } from './topics.js';
 export { ProviderCreateController } from './providerCreate.js';
 export { AttributesController } from './attributes.js';
+export { McpOAuthController, McpOAuthConsentController } from './mcpOAuth.js';

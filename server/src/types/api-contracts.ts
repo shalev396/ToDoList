@@ -45,6 +45,16 @@ export type { DashboardResponseData } from '../routes/private/dashboard.js';
 
 export type { RunQueryRequestBody, RunQueryResponseData } from '../routes/private/query.js';
 export type {
+  ConsentView,
+  ConsentWorkspace,
+  ConsentRedirect,
+  GetConsentResponseData,
+  ApproveConsentRequestBody,
+  ApproveConsentResponseData,
+  DenyConsentResponseData,
+} from '../routes/private/mcpOAuth.js';
+
+export type {
   WorkspaceView,
   MyWorkspaceView,
   ListWorkspacesResponseData,

@@ -11,6 +11,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import { AGENT_BEARER_PATTERN, AgentKey } from '../../classes/AgentKey.js';
 import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
 import { jsonRpcError, JSON_RPC, requestIdOf } from '../jsonRpc.js';
+import { mcpIssuer, mcpResource } from '../oauth/urls.js';
 import { setRequestAgent, type AuthenticatedAgent } from './principal.js';
 
 const REALM = 'todolist-mcp';
@@ -42,11 +43,23 @@ export function authenticateAgentKey(
   return AgentKey.authenticate(rawKey, now, origin);
 }
 
-/** The one 401 every failed check gets. */
-export function sendUnauthorized(res: Response, presented: boolean, body: unknown): void {
-  const challenge = presented
-    ? `Bearer realm="${REALM}", error="invalid_token"`
-    : `Bearer realm="${REALM}"`;
+/** What a client is told to ask for when it has no token yet (the sign-in's default scopes). */
+const SUGGESTED_SCOPE = 'read items:write builder:write';
+
+/**
+ * The one 401 every failed check gets. `resource` is the endpoint's (mcpResource): the challenge
+ * points an OAuth client to that resource's metadata (RFC 9728), so it can sign in.
+ */
+export function sendUnauthorized(
+  res: Response,
+  presented: boolean,
+  body: unknown,
+  resource: string,
+): void {
+  const metadata = `${mcpIssuer()}/resource-metadata${resource === mcpResource(true) ? '/readonly' : ''}`;
+  const challenge =
+    `Bearer realm="${REALM}", resource_metadata="${metadata}", scope="${SUGGESTED_SCOPE}"` +
+    (presented ? ', error="invalid_token"' : '');
   res
     .status(401)
     .set('WWW-Authenticate', challenge)
@@ -80,20 +93,26 @@ function withinFailureLimit(
 }
 
 /**
- * Express middleware: authenticates the agent key, or answers 401. `failures` (the per-address
+ * Express middleware: authenticates the agent key or grant token for this endpoint (`resourceOf`), or answers 401. `failures` (the per-address
  * failed-authentication limiter) is consulted only when the key fails, so it counts failures alone
  * and never stands in the way of a key that authenticates; over its limit, it answers 429 itself.
  */
-export function createMcpAuth(failures: RequestHandler): RequestHandler {
+export function createMcpAuth(
+  failures: RequestHandler,
+  resourceOf: (req: Request) => string,
+): RequestHandler {
   return async (req, res, next): Promise<void> => {
     const { presented, key } = bearerKey(req.headers.authorization);
+    const resource = resourceOf(req);
     const agent =
       key === null ? null : await authenticateAgentKey(key, new Date(), Actor.originOf(req));
-    if (agent !== null) {
+    // A sign-in grant is for one endpoint (its token audience); a key (resource null) is for both.
+    if (agent !== null && (agent.resource === null || agent.resource === resource)) {
       setRequestAgent(res, agent);
       next();
       return;
     }
-    if (await withinFailureLimit(failures, req, res)) sendUnauthorized(res, presented, req.body);
+    if (await withinFailureLimit(failures, req, res))
+      sendUnauthorized(res, presented, req.body, resource);
   };
 }
