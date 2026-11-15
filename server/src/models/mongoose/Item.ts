@@ -134,10 +134,14 @@ itemSchema.index({ workspaceId: 1, containerId: 1, dueAt: 1 }); // per course/pr
 itemSchema.index({ integrationId: 1, lastSeenAt: 1 }); // deletion sweep
 itemSchema.index({ integrationId: 1, syncResource: 1, lastSeenAt: 1 }); // per-resource sweep
 itemSchema.index({ deletedAt: 1 }, { partialFilterExpression: { deletedAt: { $type: 'date' } } }); // purge job
-// Hebrew + English: no stemming.
+// Hebrew + English: no stemming. A mirrored item's title override is searched like its title (the
+// title it shows); sync-db swaps the old text index for this one (one text index per collection).
 itemSchema.index(
-  { title: 'text', bodyPreview: 'text' },
-  { weights: { title: 5, bodyPreview: 1 }, default_language: 'none' },
+  { title: 'text', bodyPreview: 'text', 'overlay.overrides.title': 'text' },
+  {
+    weights: { title: 5, bodyPreview: 1, 'overlay.overrides.title': 5 },
+    default_language: 'none',
+  },
 );
 
 itemSchema.index(

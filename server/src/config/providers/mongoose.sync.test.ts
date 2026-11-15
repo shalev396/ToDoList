@@ -80,6 +80,27 @@ describe('syncMongo (sync-db on MongoDB)', () => {
     assert.ok(lines.includes('Views: indexes ok (1), dropped stale_index'), lines.join('\n'));
   });
 
+  it('swaps the old items text index for the one that searches title overrides (Phase 4a)', async () => {
+    const items = connection.collection('Items');
+    const textIndex = (await items.indexes()).find(
+      (index) => index.name?.endsWith('_text') === true,
+    );
+    assert.ok(textIndex?.name !== undefined);
+    // A database from before: its text index without the override title.
+    await items.dropIndex(textIndex.name);
+    await items.createIndex(
+      { title: 'text', bodyPreview: 'text' },
+      { weights: { title: 5, bodyPreview: 1 }, default_language: 'none' },
+    );
+    const lines = await syncDB();
+    assert.ok(
+      lines.includes('Items: indexes ok (11), dropped title_text_bodyPreview_text, validator ok'),
+      lines.join('\n'),
+    );
+    const now = (await items.indexes()).find((index) => index.name?.endsWith('_text') === true);
+    assert.deepEqual(now?.weights, { title: 5, bodyPreview: 1, 'overlay.overrides.title': 5 });
+  });
+
   it('the Items validator rejects a raw insert with kind "bogus"', async () => {
     const items = connection.collection('Items');
     await assert.rejects(items.insertOne(rawItem({ kind: 'bogus' })), isValidationFailure);

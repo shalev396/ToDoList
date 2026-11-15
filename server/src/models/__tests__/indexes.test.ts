@@ -92,8 +92,9 @@ const EXPECTED: Record<string, IndexSpec[]> = {
     { key: { integrationId: 1, syncResource: 1, lastSeenAt: 1 } },
     { key: { deletedAt: 1 }, partialFilterExpression: HAS_DATE('deletedAt') },
     {
-      key: { title: 'text', bodyPreview: 'text' },
-      weights: { title: 5, bodyPreview: 1 },
+      // Phase 4a: a title override is searched too.
+      key: { title: 'text', bodyPreview: 'text', 'overlay.overrides.title': 'text' },
+      weights: { title: 5, bodyPreview: 1, 'overlay.overrides.title': 5 },
       default_language: 'none',
     },
     // H5: a to-do's provider copies
