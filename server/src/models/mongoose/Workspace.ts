@@ -187,6 +187,16 @@ export const WorkspaceRepository: IWorkspaceRepository = {
     return docs.map(toWorkspaceData);
   },
 
+  async listLiveIds(ids) {
+    const docs = await WorkspaceMongoModel.find(
+      { _id: { $in: [...ids] }, deletedAt: null },
+      { _id: 1 },
+    )
+      .read('primary')
+      .lean<{ _id: string }[]>();
+    return docs.map(({ _id }) => _id);
+  },
+
   async update(id, patch) {
     const doc = await WorkspaceMongoModel.findOneAndUpdate(
       { _id: id, deletedAt: null },

@@ -103,6 +103,11 @@ export interface IWorkspaceRepository {
   findBySlug(slug: string): Promise<WorkspaceData | null>;
   /** Not soft-deleted, in no particular order. */
   listByIds(ids: readonly string[]): Promise<WorkspaceData[]>;
+  /**
+   * Which of `ids` are live (not soft-deleted): ids only, read from the PRIMARY. A maintenance
+   * job decides "gone" from what this does not return, so it must see every committed workspace.
+   */
+  listLiveIds(ids: readonly string[]): Promise<string[]>;
   update(id: string, patch: WorkspacePatch): Promise<WorkspaceData | null>;
   /**
    * Appends one topic rule in a single conditional write, unless a rule with the same match

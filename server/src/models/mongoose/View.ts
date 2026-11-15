@@ -87,6 +87,6 @@ export const ViewRepository: IViewRepository = {
   },
 
   async listWorkspaceIds() {
-    return (await ViewMongoModel.distinct('workspaceId')).map(String);
+    return (await ViewMongoModel.distinct('workspaceId').read('primary')).map(String);
   },
 };

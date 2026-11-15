@@ -116,6 +116,6 @@ export const DashboardVersionRepository: IDashboardVersionRepository = {
   },
 
   async listWorkspaceIds() {
-    return (await DashboardVersionMongoModel.distinct('workspaceId')).map(String);
+    return (await DashboardVersionMongoModel.distinct('workspaceId').read('primary')).map(String);
   },
 };

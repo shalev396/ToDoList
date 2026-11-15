@@ -15,6 +15,8 @@ const GLOBAL_METHODS = new Set([
   'WorkspaceRepository.create',
   'WorkspaceRepository.findBySlug',
   'WorkspaceRepository.listByIds',
+  // The purge's sweep asks which workspaces are live, by id, from the primary.
+  'WorkspaceRepository.listLiveIds',
   'MembershipRepository.findForUser',
   'InviteRepository.findByTokenHash',
   'WorkspaceRepository.findByJoinTokenHash',

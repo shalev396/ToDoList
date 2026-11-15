@@ -318,7 +318,7 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
   /** Those of `ids` that are live workspaces (neither missing nor deleted). A job's read. */
   static async liveAmong(ids: readonly string[]): Promise<Set<string>> {
     if (ids.length === 0) return new Set();
-    return new Set((await (await getWorkspaceRepository()).listByIds(ids)).map(({ id }) => id));
+    return new Set(await (await getWorkspaceRepository()).listLiveIds(ids));
   }
 
   /** The workspace the caller acts in. */

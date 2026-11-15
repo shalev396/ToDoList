@@ -17,6 +17,9 @@ import type { Db, Migration } from './types.js';
 
 type Doc = Record<string, unknown>;
 
+/** The decision "gone or live" is read where every committed workspace is visible. */
+const PRIMARY = { readPreference: 'primary' } as const;
+
 export const orphanedDashboards: Migration = {
   id: '2026-11-15-orphaned-dashboards',
   async run(db: Db) {
@@ -25,7 +28,7 @@ export const orphanedDashboards: Migration = {
     const views = db.collection<Doc>(VIEW_TABLE_NAME);
     const referenced = new Set<string>();
     for (const collection of [dashboards, versions, views]) {
-      for (const id of await collection.distinct('workspaceId')) {
+      for (const id of await collection.distinct('workspaceId', {}, PRIMARY)) {
         if (typeof id === 'string') referenced.add(id);
       }
     }
@@ -35,7 +38,7 @@ export const orphanedDashboards: Migration = {
           .collection<Doc>(WORKSPACE_TABLE_NAME)
           .find(
             { _id: { $in: [...referenced] as never[] }, deletedAt: null },
-            { projection: { _id: 1 } },
+            { projection: { _id: 1 }, ...PRIMARY },
           )
           .toArray()
       ).map((workspace) => String(workspace._id)),
