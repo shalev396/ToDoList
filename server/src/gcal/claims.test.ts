@@ -11,7 +11,10 @@
  * - a database failure between the push's claims takes back what was claimed, and sends nothing;
  * - phase 5 re-review 2: claims stored before the field existed are never swept (A); a database
  *   failure while settling releases nothing whose DELETE was made (B); a DELETE that lands after
- *   the read said live leaves the claim kept, so the push's own pull reads nothing (C).
+ *   the read said live leaves the claim kept, so the push's own pull reads nothing (C);
+ * - phase 5 re-review 3: the list of integrations (`pushedEventCount`) sweeps at most 3 claims
+ *   (R3-M1); a claim whose read always fails goes to the back of the line, so it never starves the
+ *   others (R3-N3).
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -372,6 +375,82 @@ describe('re-review 2: a made DELETE is never released, a live reading never tru
     await push(o);
     row = await link(o, x.id);
     assert.ok(row?.deleteAnsweredAt instanceof Date, 'settled by the sweep');
+  });
+});
+
+/**
+ * `count` claims stuck for 11 minutes (the oldest first, one minute apart), their events live in
+ * Google again: as a delete whose answer was lost and whose read failed leaves them.
+ */
+async function stuckClaims(o: Owner, count: number): Promise<{ id: string; eventId: string }[]> {
+  const xs: { id: string; eventId: string }[] = [];
+  for (let n = 0; n < count; n += 1) xs.push(await todo(o, `Stuck ${String(n)}`));
+  await push(o);
+  for (const x of xs) await undate(o, x.id);
+  await push(o);
+  const { CalendarLinkMongoModel } = await import('../models/mongoose/CalendarLink.js');
+  for (const [n, x] of xs.entries()) {
+    await CalendarLinkMongoModel.updateOne(
+      { workspaceId: o.wid, integrationId: o.iid, itemId: x.id },
+      {
+        $set: {
+          deleteAnsweredAt: null,
+          tombstonedAt: new Date(Date.now() - (11 + count - n) * 60_000),
+        },
+      },
+    );
+    mock.addEvent(o.calendarId, {
+      id: x.eventId,
+      summary: `Stuck ${String(n)}`,
+      start: { date: '2026-12-01' },
+      end: { date: '2026-12-02' },
+    });
+  }
+  return xs;
+}
+
+const eventReads = (since: number): number =>
+  mock
+    .requests()
+    .slice(since)
+    .filter((request) => request.method === 'GET' && /\/events\/[^/]+$/.test(request.path)).length;
+
+describe('re-review 3: the sweep of the list stays small, and fair', () => {
+  it('R3-M1: GET /integrations reads at most 3 claims, even with a read failing', async () => {
+    const o = await owner('listcap');
+    const xs = await stuckClaims(o, 10);
+    const before = mock.requests().length;
+    mock.failNextRead(500);
+    const listed = await api.call('GET', `/api/private/workspaces/${o.wid}/integrations`, {
+      token: o.token,
+    });
+    assert.equal(listed.status, 200, listed.text);
+    assert.ok(eventReads(before) <= 3, `reads: ${String(eventReads(before))}`);
+    assert.equal(eventReads(before), 3);
+    const stillClaims = (await Promise.all(xs.map((x) => link(o, x.id)))).filter(
+      (row) => row?.deletedBy === 'dashboard' && row.deleteAnsweredAt === null,
+    );
+    assert.ok(stillClaims.length >= 8, 'the rest wait for a later call');
+  });
+
+  it('R3-N3: a claim whose read always fails goes to the back of the line', async () => {
+    const o = await owner('fair');
+    const xs = await stuckClaims(o, 4);
+    const { EventClaim } = await import('../classes/calendar/EventClaim.js');
+    const owned = { id: o.iid, workspaceId: o.wid };
+    // Every read fails: three sweeps of two claims each go round the four claims.
+    const seen: string[] = [];
+    for (let sweep = 0; sweep < 3; sweep += 1) {
+      const stuck = await EventClaim.stuck(owned, 2);
+      for (const claim of stuck) seen.push(claim.itemId);
+      await EventClaim.reconcile(stuck, () => Promise.resolve('unknown'));
+    }
+    assert.deepEqual(
+      seen,
+      [xs[0], xs[1], xs[2], xs[3], xs[0], xs[1]].map((x) => x?.id),
+      'never swept first, then the least recently swept',
+    );
+    for (const x of xs) assert.equal((await link(o, x.id))?.deleteAnsweredAt, null, 'all kept');
   });
 });
 

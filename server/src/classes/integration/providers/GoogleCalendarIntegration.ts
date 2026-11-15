@@ -92,7 +92,13 @@ import {
 } from '../definitions/googleCalendar.js';
 import { Calendar } from '../../calendar/Calendar.js';
 import { CalendarLink } from '../../calendar/CalendarLink.js';
-import { EventClaim, STUCK_CLAIM_MS, type DeleteReading } from '../../calendar/EventClaim.js';
+import {
+  EventClaim,
+  LIST_SWEEP_LIMIT,
+  STUCK_CLAIM_MS,
+  SWEEP_LIMIT,
+  type DeleteReading,
+} from '../../calendar/EventClaim.js';
 import type { PlanNarrowing } from '../../calendar/PushPlan.js';
 import { SyncRun } from '../../sync/SyncRun.js';
 import { AppCreatedCalendars } from '../calendar/AppCreatedCalendars.js';
@@ -131,6 +137,9 @@ export type { GoogleCalendarSecret };
 
 /** How long one push may write; the rest waits for the next run (API Gateway stops at 30 s). */
 export const PUSH_BUDGET_MS = WRITE_BUDGET_MS;
+
+/** How long the list's sweep (`pushedEventCount`) may go on starting reads. */
+export const COUNT_SWEEP_MS = 2_000;
 
 const MAX_CALENDAR_PAGES = 10;
 const MAX_PULL_PAGES = 10;
@@ -687,8 +696,13 @@ export class GoogleCalendarIntegration
    */
   async pushedEventCount(caller: Caller): Promise<number> {
     this.assertOwner(caller);
-    // A claim left unanswered is reconciled first (reads only): a live event counts again.
-    await this.#reconcileClaims(TimeBudget.start(WRITE_BUDGET_MS));
+    // A claim left unanswered is reconciled first (reads only): a live event counts again. This
+    // runs inside GET /integrations, so the sweep is small: reads start within COUNT_SWEEP_MS, at
+    // most LIST_SWEEP_LIMIT of them (one that is already out may take its STEP_CEILING_MS).
+    await this.#reconcileClaims(
+      TimeBudget.start(STEP_CEILING_MS + COUNT_SWEEP_MS),
+      LIST_SWEEP_LIMIT,
+    );
     const current = await this.#currentPrimaryCalendarId();
     return (await this.#ownLiveLinks()).filter((link) => link.calendarId !== current).length;
   }
@@ -881,8 +895,9 @@ export class GoogleCalendarIntegration
    * One of this integration's own live links: claimed (tombstoned) first, then its event deleted
    * and audited (EventClaim), its claim settled. 404 when the claim fails: the event is no longer
    * this integration's (another integration adopted it, or it moved). A delete Google refuses takes
-   * its claim back; one that got no answer is resolved by a read of the event (made: done; not
-   * made: taken back; unknown: kept) and answered as before (502, audited `outcome: 'unknown'`).
+   * its claim back; one that got no answer is resolved by one read of the event (a single op with
+   * no time budget: gone or cancelled settles it; anything else, a failed read included, keeps
+   * the claim) and answered as before (502, audited `outcome: 'unknown'`).
    */
   async #deleteLink(caller: Caller, link: CalendarLinkData): Promise<void> {
     const calendarId = checkedId('calendarId', link.calendarId, 'link');
@@ -1002,12 +1017,12 @@ export class GoogleCalendarIntegration
    * This integration's claims left unanswered for STUCK_CLAIM_MS (a process that died between the
    * claim and the answer, a lost answer), the oldest first: each read once in one read session
    * (one grant exchange), while a call still fits `budget`; gone settles, live releases (its call
-   * is long over), a failed read keeps. Reading is no provider write: any session of the
-   * integration may do it. Never fails its caller.
+   * is long over), a failed read keeps. At most `limit` claims. Reading is no provider write: any
+   * session of the integration may do it. Never fails its caller.
    */
-  async #reconcileClaims(budget: TimeBudget): Promise<void> {
+  async #reconcileClaims(budget: TimeBudget, limit: number = SWEEP_LIMIT): Promise<void> {
     try {
-      const stuck = await EventClaim.stuck(this);
+      const stuck = await EventClaim.stuck(this, limit);
       if (stuck.length === 0 || !budget.canStart()) return;
       await this.#withGrant(async (auth) => {
         const reader = calendarReader(auth);
