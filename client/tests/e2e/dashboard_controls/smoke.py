@@ -172,10 +172,10 @@ def test_mirrored_item_edits_follow_its_connection(
     expect(sheet.locator("[data-use-source=startAt]")).to_have_count(0, timeout=NORMAL_TIMEOUT)
 
     # The overlay still works: it never writes to Jira.
-    sheet.get_by_role("switch", name="Hide from my dashboards").click()
+    sheet.get_by_role("switch", name="Hide from dashboards").click()
     overlay = sheet.locator("section[aria-labelledby=item-overlay]")
     expect(overlay.locator("[data-save-status=saved]")).to_be_visible()
-    sheet.get_by_role("switch", name="Hide from my dashboards").click()
+    sheet.get_by_role("switch", name="Hide from dashboards").click()
 
 
 def test_new_todo_repeat_needs_the_workspace_calendar(

@@ -605,7 +605,12 @@ function OverlayControls({
         </h3>
         <p className="text-[13px] text-muted-foreground">
           {isLocal
-            ? t('items.sheet.yoursHintLocal')
+            ? // A private to-do is seen by its owner alone; anything else by everyone who sees it.
+              t(
+                item.visibility === 'private'
+                  ? 'items.sheet.yoursHintPrivate'
+                  : 'items.sheet.yoursHintLocal',
+              )
             : t('items.sheet.yoursHint', { source: sourceName })}
         </p>
       </div>
