@@ -17,7 +17,7 @@ It is updated every phase.
 | 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test                 | **built** |
 | 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry`             | **built** |
 | 2a    | The one `static definition` per provider (`IntegrationDefinition`), headers from the auth strategy to the adapters, `OAuthFlow` (Google merged), `ResourcePicker`, capabilities to the client, `Integration`'s collaborators | **built** |
-| 2W    | `updateTask`/`writableFields`, `CalendarProvider` update/delete/create calendar/recurrence, `BoardProvider`                                                                                                                  | planned   |
+| 2W    | Write-back (phase 2b): `TaskProvider.updateTask` and each definition's `writableFields`, `CalendarProvider` update/delete event, create calendar, recurrence (`RecurrenceRule`); `BoardProvider` stays planned               | **built** |
 | 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects; `User` reworked                                                                                                                                     | planned   |
 | 4     | `Item` hierarchy, `Container`, `ItemQuery`, `CreateQuota`                                                                                                                                                                    | planned   |
 | 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                                    | planned   |
@@ -302,6 +302,16 @@ classDiagram
     400 provider_coming_soon
     +provider: string
   }
+  class StatusNotAvailableError {
+    422 status_not_available
+    +provider: string
+    +status: ItemStatus
+  }
+  class ScopeMissingError {
+    409 scope_missing
+    +integrationId: string
+    +scope: string
+  }
   class SecretLeakError
   Error <|-- AppError
   Error <|-- SecretLeakError
@@ -313,6 +323,8 @@ classDiagram
   AppError <|-- MirroredItemError
   AppError <|-- CapabilityError
   AppError <|-- ProviderComingSoonError
+  AppError <|-- StatusNotAvailableError
+  AppError <|-- ScopeMissingError
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
   class AppError:::built
@@ -324,12 +336,16 @@ classDiagram
   class MirroredItemError:::built
   class CapabilityError:::built
   class ProviderComingSoonError:::built
+  class StatusNotAvailableError:::built
+  class ScopeMissingError:::built
   class SecretLeakError:::built
 ```
 
 The 409 domain errors are siblings of `ConflictError`, not children: a `catch (ConflictError)`
 answers the version-conflict body (`currentVersion`), which they are not. The error handler answers
-every `AppError` by `instanceof`.
+every `AppError` by `instanceof`. Write-back adds two (phase 2b): `StatusNotAvailableError` (the
+provider has no transition, status or state for the asked status on this item) and
+`ScopeMissingError` (the grant predates a scope the operation needs: `calendar.app.created`).
 
 ## 3. Integrations (phases 1, 2a and 2W)
 
@@ -366,6 +382,9 @@ classDiagram
     #withReadSession(fn) Promise
     #withWriteSession(caller, fn) Promise
     #handBackGrant(failure) Promise
+    #lacksScopes(scopes) Promise~boolean~
+    #writableFieldsFor(kind) WritableField[]
+    #recordWrite(caller, meta) Promise
     #createWriter(secret)* Promise~TWriter~
     #probe(adapter, context)* Promise
     #onConnected() Promise
@@ -392,6 +411,8 @@ classDiagram
     +connection: ConnectionRules
     +adapter: ProviderAdapter
     +create: CreateRules
+    +writableFields: WritableField[]
+    +writableKinds: ItemKind[]
     +picker: PickerKind
     +revokePage
     +comingSoon
@@ -401,6 +422,7 @@ classDiagram
     +planConnection(input) ConnectionPlan
     +assertSameAccount(integration, config)
     +defaultLabel(config)
+    +writableFieldsFor(kind) WritableField[]
     +fakeCredential(method, name)
   }
   Integration *-- IntegrationDefinition : static definition
@@ -527,14 +549,40 @@ classDiagram
   class TaskProvider {
     <<interface>>
     +createTask(caller, request) CreatedTask
+    +updateTask(caller, item, patch) ItemData
   }
   class CalendarProvider {
     <<interface>>
     +listCalendars(caller)
-    +insertEvent(caller, calendarId, event)
+    +insertEvent(caller, calendarId, event, recurrence?)
+    +updateEvent(caller, calendarId, eventId, patch) WrittenEvent
+    +deleteEvent(caller, calendarId, eventId)
+    +createCalendar(caller, name) GoogleCalendarEntry
     +dryRun(caller, narrowing, now)
     +push(caller, request)
   }
+  class TaskEdit {
+    <<value object>>
+    +parse(patch)$ TaskEdit
+    +touches(fields) boolean
+    +split(item, writable, timeZone) SplitEdit
+  }
+  class EventEdit {
+    <<value object>>
+    +parse(patch, timeZone)$ EventEdit
+    +changes: EventChanges
+    +fields
+  }
+  class RecurrenceRule {
+    <<value object>>
+    +parse(line)$ RecurrenceRule
+    +fromLines(lines)$ RecurrenceRule
+    +fits(allDay) boolean
+    +toString() string
+  }
+  TaskProvider ..> TaskEdit : updateTask
+  CalendarProvider ..> EventEdit : updateEvent
+  CalendarProvider ..> RecurrenceRule : insertEvent
   CreateFunnel <|-- TaskProvider
   CreateFunnel <|-- CalendarProvider
   class ResourcePicker~K~ {
@@ -559,6 +607,10 @@ classDiagram
     <<abstract>>
     +createOptions(caller, query)
     +createTask(caller, request)
+    +updateTask(caller, item, patch) ItemData
+    #applyUpdate(session, item, patch)* MirroredItemPatch
+    #answerOf(result) record
+    #confirmedStatus(status, raw) MirroredItemPatch
     #readOptions(session, query)*
     #prepare(session, target, fields)*
     #readClient(transport)
@@ -671,12 +723,16 @@ classDiagram
   class ConnectionTester:::built
   class SyncRequest:::built
   class UnofferedAuth:::built
+  class TaskEdit:::built
+  class EventEdit:::built
+  class RecurrenceRule:::built
   class ItemCopy:::planned
 ```
 
 The write gate is the `protected` `withWriteSession`: only provider subclasses reach a writer
 (`classes/integration/writers/`: the tracker write client, the Calendar API writer and the push's
-ops), and only inside their capability methods. In order, it refuses another member (404), demo
+ops), and only inside their capability methods (`createTask`, `updateTask`, `insertEvent`,
+`updateEvent`, `deleteEvent`, `createCalendar`, `push`). In order, it refuses another member (404), demo
 data or a fixtures stage's tracker (`provider_writes_off`), then a read-only integration
 (`ReadOnlyIntegrationError`, 409 `integration_read_only`); only then does it open the credential
 and make the writer (`createWriter`, the provider's own). `assertWritable` runs the same checks so
@@ -690,24 +746,42 @@ What the tests hold:
   - nothing outside `classes/integration/**` names the writer factories;
   - each factory has one call site, by count: `createWriteClient(` in `TrackerIntegration` and
     `calendarWriter(` in `GoogleCalendarIntegration`, each inside a `createWriter` body, and
-    `applyOps(` once, in `GoogleCalendarIntegration`. A writer made in a read session fails;
+    `applyOps(` once, in `GoogleCalendarIntegration`, inside a `withWriteSession(…)` call. A
+    writer made in a read session fails;
+  - the write-back hook `applyUpdate` is called once in all of `server/src`: `this.applyUpdate(`
+    in `TrackerIntegration`'s template, inside a `withWriteSession(…)` call; the provider classes
+    only declare it;
   - MCP code never names `setMode`, `checkMode` or `UpdateIntegrationBody`.
+- The write allow-lists, by method and exact path, refuse everything else before it is sent:
+  `writers/trackerWriter.update.test.ts` (Jira `PUT …/issue/{id}` and `POST …/transitions` at the
+  integration's own sites only, ClickUp `PUT /task/{id}`, GitHub `PATCH /issues/{n}`, Linear only
+  the named `issueUpdate` document besides `issueCreate`) and `writers/calendarApi.test.ts`
+  (`POST /calendars`, events insert, patch and delete; never a calendar's delete or ACL).
+- `writeBack.trackers.test.ts` and `writeBack.calendar.test.ts`: per provider, the exact requests
+  a write-back sends (lookups as reads, then the allow-listed writes), that a field the provider
+  lacks and TodoList's own fields stay here and are never sent, what the item holds afterwards,
+  and every refusal before anything is written (read-only: zero non-GET; `status_not_available`;
+  a pull request; `scope_missing`; an invalid RRULE).
 - `vaultImports.test.ts`: only `Integration.ts` uses `Credential`, and only `Integration.ts` and
   `sync/secrets.ts` name `Integration.withSyncSecret` (MCP code never does).
   An alias does not get round them: a factory renamed with `as`, bound to another name,
   destructured from an `await import(…)` or re-exported fails, as does a dynamic import with no
   literal target inside `classes/integration/`.
 - `integration.test.ts`: for every provider class, without a database, each write it can make
-  (`createOptions`, `createTask`, `insertEvent`, `push`) is refused while read-only before
-  anything is sent.
+  (`createOptions`, `createTask`, `updateTask`, `insertEvent` with and without a recurrence,
+  `updateEvent`, `deleteEvent`, `createCalendar`, `push`) is refused while read-only before
+  anything is read or sent.
 - `definitions/definitions.test.ts`: the definitions name each connectable provider once, each
   its class's own; every OAuth app's token and revoke URL is on the HTTP layer's allow-list
   (`OAUTH_TOKEN_ENDPOINTS`, written out there on purpose: no definition can widen it) and its
   callback path is the one registered at the provider; the scopes and the key methods are as
   before; the strategies build the headers (a second token for GitHub boards, Moodle's query
   token, one Google token exchange per session, one per call for the service account); the
-  four authorize URLs are pinned byte for byte (Google's parameters, in any order); and
-  `Integration.capabilitiesOf()` agrees with the contracts each class implements.
+  four authorize URLs are pinned byte for byte (Google's parameters, in any order, now with
+  `calendar.app.created`); each provider's `writableFields` and the kinds that take a write-back
+  are pinned, a write-back is declared exactly where the class implements one; and
+  `Integration.capabilitiesOf()` agrees with the contracts each class implements (with
+  `canUpdate` and `writableFields`).
 - `definitions/purity.test.ts`: nothing under `classes/integration/definitions/` reaches, at run
   time, the models' barrel, a model, the connection or `config/environment.ts` (the plain types
   under `models/definitions/` are fine). The builder's compiler, which validates Google's push
@@ -753,12 +827,48 @@ What the tests hold:
   They get the protected members they need as functions; the credential never leaves
   `Integration.ts`. `toStatusView` is gone (`toView`).
 
-**The seams phase 2W fills:**
+**What phase 2W (write-back, "phase 2b") built:**
 
-- `TaskProvider` has `createOptions` (through `CreateFunnel`) and `createTask`; `updateTask` and
-  `writableFields` arrive in phase 2W, and the compiler will then require them of every tracker.
-- `CalendarProvider` has `listCalendars`, `insertEvent`, `dryRun` and `push`; `updateEvent`,
-  `deleteEvent` and `createCalendar` arrive in phase 2W.
+- **`TaskProvider.updateTask(caller, item, patch)`**, required by the compiler of every tracker,
+  is a template method in `TrackerIntegration`: (1) the edit is validated (`TaskEdit`, a value
+  object; an edit of a field the provider holds refuses a read-only integration first, before
+  anything is read; the overlay's topic and custom attributes are checked against the workspace);
+  (2) the item is read (this integration's live mirrored item, else 404) and the edit split into
+  the changed fields the provider takes (its definition's `writableFields`, for the item's kind)
+  and what stays here; (3) only with something for the provider, the write session; (4) the
+  provider class's `applyUpdate` sends it (its status lookup through the read client first, then
+  its exact update requests through the write client) and returns what the provider confirmed;
+  (5) the confirmed fields and the local ones are saved through the item repository's
+  `updateMirrored` (clearing `source.hash`, so the next sync rewrites what the provider holds) and
+  `setOverlay`, and the write is audited as `integration.write` (field names only). A kind that
+  takes no write-back (a GitHub pull request or draft) refuses an edit of a provider field with
+  the mirrored-item 409.
+- **`writableFields`** per definition (`IntegrationDefinition.writableFields`, `writableKinds`):
+  Jira `title, status, dueAt, priority` (issues); ClickUp `title, status, dueAt, startAt,
+priority` (tasks); Linear `title, status, dueAt, priority` (issues); GitHub `title, status`
+  (issues); Google Calendar `title, startAt, endAt` (events); Moodle none.
+- **Status write-back** through provider lookups: Jira's transitions by status category (none:
+  `StatusNotAvailableError`, 422 `status_not_available`; Jira and ClickUp have no "cancelled"),
+  ClickUp's list statuses by type, Linear's team workflow states by type (the registered
+  `IssueTeamStates` query), GitHub's issue state with `state_reason` ("in progress" is a board
+  column: 422).
+- **`CalendarProvider`**: `updateEvent` (`EventEdit`: title, description, the time given whole;
+  the event's item follows), `deleteEvent` (its item goes too), `createCalendar`
+  (`calendars.insert`; a grant without `calendar.app.created` is `ScopeMissingError`, 409
+  `scope_missing`, before anything is opened), and `insertEvent(…, recurrence)` with one RRULE
+  line parsed by `RecurrenceRule` (FREQ, INTERVAL, BYDAY, BYMONTHDAY, COUNT, UNTIL; anything else
+  400).
+- **Capabilities**: `ProviderCapabilities` gains `canUpdate` and `writableFields` (additive).
+
+**The seams left open:**
+
+- No route calls `updateTask`, `updateEvent`, `deleteEvent` or `createCalendar` yet: the item REST
+  route, MCP and the ItemSheet UI arrive in phase 4; the primary calendar, its Share dialog and
+  the push rule in the post-phase-3 calendar phase.
+- An item field the provider lacks (Jira's start date, GitHub's due date) is saved on the
+  mirrored item as a local value, but the sync owns those columns: the record's next change at
+  the provider rewrites them. Phase 4 decides (disable those fields, or teach the sync to keep
+  them).
 - The sync engine reaches a credential through `Integration.withSyncSecret` (a read session) until
   phase 5 moves it behind `Integration.sync()`. Only `sync/secrets.ts` names it, by test.
 - `Revocable.revoke(caller)` is its owner's (it checks), over the protected `revokeGrant()` hook,
@@ -1292,6 +1402,16 @@ classDiagram
 
 The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
 SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
+
+## Where phase 2W (write-back) left the old modules
+
+| Module                                                  | State after phase 2W                                                                                                                                                           |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `models/definitions/Item.ts`, `models/mongoose/Item.ts` | `updateMirrored(workspaceId, integrationId, id, patch, {resync})`: a write-back on a live mirrored item of that integration (never a local one); `resync` clears `source.hash` |
+| `sync/http.ts`                                          | `HttpRequest.method` names `PUT` and `PATCH` too: only the write client sends them, for its allow-listed updates; the read client still sends GET and POST only                |
+| `services/providerCreate/ids.ts`                        | patterns for a ClickUp task id, a GitHub issue number and a Google event id                                                                                                    |
+| `types/integrations.ts`                                 | `WRITABLE_FIELDS` / `WritableField`; `ProviderCapabilities.canUpdate` and `writableFields` (additive)                                                                          |
+| `types/errorCodes.ts`                                   | `status_not_available`, `scope_missing` (the client translates both)                                                                                                           |
 
 ## Where phase 2a left the old modules
 
