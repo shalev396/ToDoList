@@ -255,7 +255,12 @@ export function rebase(base: EditDraft, draft: EditDraft, next: EditDraft): Reba
       for (const key of keys) {
         merged[key] = next[key];
       }
-    } else if (keys.some((key) => next[key] !== base[key])) {
+    } else if (
+      keys.some((key) => next[key] !== base[key]) &&
+      keys.some((key) => next[key] !== draft[key])
+    ) {
+      // Changed under the member's edit, to something else than their value (a write of their
+      // own value, a partial write's for instance, is no conflict).
       changed.push(field);
     }
   }

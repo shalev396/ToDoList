@@ -294,6 +294,11 @@ describe('patchOf', () => {
       });
     });
 
+    it('a touched field the source now holds as the member’s own value is no conflict', () => {
+      const draft = { ...base, status: 'done' as const };
+      assert.deepEqual(rebase(base, draft, draftOf(newer, ZONE)).changed, []);
+    });
+
     it('a touched field that the source left alone is not reported', () => {
       const draft = { ...base, title: 'Renamed' };
       assert.deepEqual(rebase(base, draft, draftOf(newer, ZONE)).changed, []);

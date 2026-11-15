@@ -840,10 +840,14 @@ export function MirroredEditor({
     send(body, then);
   };
 
+  // "Couldn't save" only where nothing was: a partial write or an unanswered one says itself
+  // what happened, and a flat "Couldn't save" beside "Saved: Title" would be untrue.
   const state: SaveState = update.isPending
     ? 'saving'
     : failure !== null
-      ? 'error'
+      ? failure.problem.kind === 'message'
+        ? 'error'
+        : 'idle'
       : saved
         ? 'saved'
         : 'idle';
