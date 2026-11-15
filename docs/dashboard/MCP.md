@@ -104,6 +104,7 @@ The wire format is JSON-RPC 2.0. The AI reads the tool list (name, description, 
 | Authorization server metadata | `{issuer}/.well-known/oauth-authorization-server` and `{issuer}/.well-known/openid-configuration` (also at `/.well-known/oauth-authorization-server/api/mcp/oauth` and `/.well-known/openid-configuration/api/mcp/oauth`) |
 | Protected resource metadata | `{issuer}/resource-metadata` and `{issuer}/resource-metadata/readonly` (also at `/.well-known/oauth-protected-resource/api/mcp` and `/.well-known/oauth-protected-resource/api/mcp/readonly`) |
 | Consent page | `https://<domain>/{en or he}/authorize-agent?request=<id>` |
+| Consent API (needs the signed-in app user) | `GET /api/private/mcp-oauth/requests/:id`, `POST /api/private/mcp-oauth/requests/:id/approve`, `POST /api/private/mcp-oauth/requests/:id/deny` |
 
 **Storage:** a new `AgentKeys` collection `{_id, workspaceId, userId, name, keyHash (sha256), prefix, scopes[], expiresAt, lastUsedAt, revokedAt}`. Only the hash is stored, following the DATA.md `Invites` token pattern. Defined in DATA.md §3.14, with indexes in §6.
 
