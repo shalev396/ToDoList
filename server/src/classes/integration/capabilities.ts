@@ -14,6 +14,7 @@ import type { Revocable } from '../base/contracts.js';
 import type { PlanEntry, SkippedItem, WireOp } from '../../gcal/diff.js';
 import type { PlanNarrowing } from '../../gcal/plan.js';
 import type { MappedItem } from '../../sync/types.js';
+import type { OAuthResource } from '../../types/integrations.js';
 import type {
   CreateOptionsQuery,
   CreateOptionsResponseData,
@@ -98,15 +99,24 @@ export interface PickerResource {
   id: string;
 }
 
+/** What each kind of picker lists. */
+export interface PickerResources {
+  sites: OAuthResource;
+  workspaces: OAuthResource;
+  calendars: GoogleCalendarEntry;
+}
+
 /**
- * A connection whose grant reaches several resources, of which its owner picks the ones to read
- * (Jira sites, ClickUp workspaces, Google calendars). Its owner only.
+ * A connection whose grant reaches several resources, of which its owner picks the ones to read:
+ * Jira sites, ClickUp workspaces, Google calendars (`K`). Its owner only (404 otherwise); a
+ * connection with nothing to pick (`pickerKind` null: a token connection reads its one site)
+ * refuses both with 409.
  */
-export interface ResourcePicker<R extends PickerResource = PickerResource> {
-  /** What this connection lets its owner pick now; null: nothing (a token connection reads its one site). */
-  readonly pickerKind: PickerKind | null;
+export interface ResourcePicker<K extends PickerKind = PickerKind> {
+  /** What this connection lets its owner pick now; null: nothing. */
+  readonly pickerKind: K | null;
   /** The resources the grant reaches, live from the provider. */
-  pickerResources(caller: Caller): Promise<R[]>;
+  pickerResources(caller: Caller): Promise<PickerResources[K][]>;
   /** Reads exactly these from now on (each must be one the grant reaches: 400 otherwise). */
   choose(caller: Caller, ids: readonly string[]): Promise<Integration>;
 }
@@ -147,6 +157,14 @@ export function isResourcePicker(
   integration: Integration,
 ): integration is Integration & ResourcePicker {
   return hasMethod(integration, 'pickerResources') && hasMethod(integration, 'choose');
+}
+
+/** A picker of this kind with something to pick now (its `pickerKind` is `kind`). */
+export function picksFrom<K extends PickerKind>(
+  integration: Integration,
+  kind: K,
+): integration is Integration & ResourcePicker<K> {
+  return isResourcePicker(integration) && integration.pickerKind === kind;
 }
 
 export function isRevocable(integration: Integration): integration is Integration & Revocable {

@@ -22,12 +22,14 @@ import {
   Integration,
   IntegrationRegistry,
   isCalendarProvider,
+  isResourcePicker,
   isRevocable,
   isTaskProvider,
   JiraIntegration,
   LinearIntegration,
   Mode,
   MoodleIntegration,
+  picksFrom,
   supportsApiKey,
   supportsOAuth,
   UnlistedIntegration,
@@ -174,6 +176,31 @@ describe('capability contracts', () => {
     assert.equal(github.oauth.refreshPolicy, 'stored');
     const google = Integration.from(stored('google_calendar')) as GoogleCalendarIntegration;
     assert.equal(google.oauth.refreshPolicy, 'per_call');
+  });
+});
+
+describe('ResourcePicker', () => {
+  it('picks by kind; a token connection has nothing to pick and refuses before any call', async () => {
+    const jira = Integration.from(stored('jira'));
+    const tokenJira = Integration.from(stored('jira', {}, 'api_token_basic'));
+    const clickup = Integration.from(stored('clickup'));
+    const google = Integration.from(stored('google_calendar'));
+    const demoCalendar = Integration.from(stored('google_calendar', {}, 'service_account'));
+    assert.ok(picksFrom(jira, 'sites') && !picksFrom(jira, 'workspaces'));
+    assert.ok(picksFrom(clickup, 'workspaces'));
+    assert.ok(picksFrom(google, 'calendars'));
+    assert.ok(!picksFrom(tokenJira, 'sites') && !picksFrom(demoCalendar, 'calendars'));
+    assert.ok(!isResourcePicker(Integration.from(stored('linear'))));
+    for (const picker of [tokenJira, demoCalendar]) {
+      assert.ok(isResourcePicker(picker));
+      assert.equal(picker.pickerKind, null);
+      await assert.rejects(picker.pickerResources(caller()), { statusCode: 409 });
+      await assert.rejects(picker.choose(caller(), ['x']), { statusCode: 409 });
+    }
+    assert.ok(isResourcePicker(jira));
+    // Someone else's: 404 before anything else.
+    await assert.rejects(jira.pickerResources(caller('u-other')), NotFoundError);
+    await assert.rejects(jira.choose(caller('u-other'), ['x']), NotFoundError);
   });
 });
 

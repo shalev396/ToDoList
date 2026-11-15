@@ -28,11 +28,11 @@ const ClickUpUser = z.object({
 /** The ClickUp workspaces a grant can read. */
 export async function clickupTeams(
   client: ReadOnlyClient,
-  accessToken: string,
+  auth: Readonly<Record<string, string>>,
 ): Promise<{ id: string; name: string }[]> {
   const { data } = await client.getJson<{ teams?: unknown }>(
     `${CLICKUP_OAUTH.endpoints().api}/team`,
-    { authorization: `Bearer ${accessToken}` },
+    auth,
   );
   const teams = Array.isArray(data.teams) ? (data.teams as unknown[]) : [];
   const out: { id: string; name: string }[] = [];
@@ -64,13 +64,13 @@ const clickupApp: OAuthAppOptions = {
   refresh: 'stored',
   consoleUrl: 'https://app.clickup.com/settings/apps',
   async identify(client, accessToken) {
-    const { data } = await client.getJson<unknown>(`${CLICKUP_OAUTH.endpoints().api}/user`, {
-      authorization: `Bearer ${accessToken}`,
-    });
+    // The fresh grant's headers, as its strategy builds them.
+    const auth = CLICKUP_OAUTH.headers({ accessToken });
+    const { data } = await client.getJson<unknown>(`${CLICKUP_OAUTH.endpoints().api}/user`, auth);
     const parsed = ClickUpUser.safeParse(data);
     if (!parsed.success) throw new ProviderHttpError('clickup', null, 'bad_response');
     const { user } = parsed.data;
-    const teams = await clickupTeams(client, accessToken);
+    const teams = await clickupTeams(client, auth);
     return {
       accountId: String(user.id),
       label: user.username ?? user.email ?? 'ClickUp',

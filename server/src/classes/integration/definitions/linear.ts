@@ -54,11 +54,7 @@ const linearApp: OAuthAppOptions = {
   consoleUrl: 'https://linear.app/settings/api/applications/new',
   identityDocuments: { Viewer: LINEAR_VIEWER_DOCUMENT },
   async identify(client, accessToken) {
-    const data = await client.graphql<unknown>(
-      'Viewer',
-      {},
-      { authorization: `Bearer ${accessToken}` },
-    );
+    const data = await client.graphql<unknown>('Viewer', {}, LINEAR_OAUTH.headers({ accessToken }));
     const parsed = LinearViewer.safeParse(data);
     if (!parsed.success) throw new ProviderHttpError('linear', null, 'bad_response');
     const { viewer } = parsed.data;

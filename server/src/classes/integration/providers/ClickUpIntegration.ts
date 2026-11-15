@@ -9,7 +9,6 @@ import type { OAuthAuth } from '../auth/OAuthAuth.js';
 import type { Caller } from '../../base/Caller.js';
 import type { ResourcePicker, SupportsApiKey, SupportsOAuth } from '../capabilities.js';
 import { CLICKUP, clickupTeams, type ClickUpSecret } from '../definitions/clickup.js';
-import type { PickerKind } from '../definitions/IntegrationDefinition.js';
 import { grantResourcesFor } from '../grantSelection.js';
 import type { Integration } from '../Integration.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
@@ -28,7 +27,7 @@ export class ClickUpIntegration
   implements
     SupportsOAuth<ClickUpSecret>,
     SupportsApiKey<ClickUpSecret>,
-    ResourcePicker<OAuthResource>
+    ResourcePicker<'workspaces'>
 {
   /** What ClickUp is: its strategies, config, rules, adapter, funnel and fixtures. */
   static readonly definition = CLICKUP;
@@ -53,19 +52,19 @@ export class ClickUpIntegration
   }
 
   /** An OAuth grant reaches workspaces to pick from; a personal token reads what it reads. */
-  get pickerKind(): PickerKind | null {
+  get pickerKind(): 'workspaces' | null {
     return this.authKind === 'oauth' ? 'workspaces' : null;
   }
 
   /** Its owner: the workspaces the OAuth grant can read, live from ClickUp. */
   async pickerResources(caller: Caller): Promise<OAuthResource[]> {
-    this.assertOwner(caller);
+    this.assertPicks(caller, this.pickerKind);
     return this.#grantTeams();
   }
 
   /** Its owner reads exactly these workspaces (each one the grant covers). */
   async choose(caller: Caller, ids: readonly string[]): Promise<Integration> {
-    this.assertOwner(caller);
+    this.assertPicks(caller, this.pickerKind);
     return this.update(caller, { config: { ...this.config, teamIds: [...ids] } });
   }
 
@@ -86,7 +85,7 @@ export class ClickUpIntegration
   /** The workspaces the OAuth grant reaches, in a read session. */
   async #grantTeams(): Promise<OAuthResource[]> {
     return this.withReadSession(({ secret }) =>
-      clickupTeams(this.oauth.client(), secret.accessToken ?? ''),
+      clickupTeams(this.oauth.client(), this.oauth.headers(secret)),
     );
   }
 

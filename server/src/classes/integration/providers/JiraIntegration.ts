@@ -12,7 +12,6 @@ import type { Caller } from '../../base/Caller.js';
 import type { ResourcePicker, SupportsApiKey, SupportsOAuth } from '../capabilities.js';
 import { labelWithSite } from '../connectionTest.js';
 import { JIRA, jiraAccessibleSites, type JiraSecret } from '../definitions/jira.js';
-import type { PickerKind } from '../definitions/IntegrationDefinition.js';
 import { grantResourcesFor } from '../grantSelection.js';
 import type { Integration } from '../Integration.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
@@ -31,7 +30,7 @@ export type { JiraSecret };
  */
 export class JiraIntegration
   extends TrackerIntegration<JiraConfig, JiraSecret>
-  implements SupportsOAuth<JiraSecret>, SupportsApiKey<JiraSecret>, ResourcePicker<OAuthResource>
+  implements SupportsOAuth<JiraSecret>, SupportsApiKey<JiraSecret>, ResourcePicker<'sites'>
 {
   /** What Jira is: its strategies, config, rules, adapter, funnel and fixtures. */
   static readonly definition = JIRA;
@@ -53,19 +52,19 @@ export class JiraIntegration
   }
 
   /** An OAuth grant reaches sites to pick from; a token connection reads its one site. */
-  get pickerKind(): PickerKind | null {
+  get pickerKind(): 'sites' | null {
     return this.authKind === 'oauth' ? 'sites' : null;
   }
 
   /** Its owner: the sites the OAuth grant can read, live from Atlassian. */
   async pickerResources(caller: Caller): Promise<OAuthResource[]> {
-    this.assertOwner(caller);
+    this.assertPicks(caller, this.pickerKind);
     return this.#grantSites();
   }
 
   /** Its owner reads exactly these sites (each one the grant covers), named as Atlassian names them. */
   async choose(caller: Caller, ids: readonly string[]): Promise<Integration> {
-    this.assertOwner(caller);
+    this.assertPicks(caller, this.pickerKind);
     const sites = new Map((await this.#grantSites()).map((site) => [site.id, site]));
     const chosen = ids.flatMap((id) => {
       const site = sites.get(id);
@@ -106,7 +105,7 @@ export class JiraIntegration
   /** The sites the OAuth grant reaches (its accessible resources), in a read session. */
   async #grantSites(): Promise<OAuthResource[]> {
     return this.withReadSession(async ({ secret }) =>
-      (await jiraAccessibleSites(this.oauth.client(), secret.accessToken ?? '')).map((site) => ({
+      (await jiraAccessibleSites(this.oauth.client(), this.oauth.headers(secret))).map((site) => ({
         id: site.cloudId,
         name: site.name,
         url: site.url,

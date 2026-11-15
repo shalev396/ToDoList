@@ -79,6 +79,7 @@ import {
   strategyForMethod,
   type ConnectionInput,
   type IntegrationDefinition,
+  type PickerKind,
 } from './definitions/index.js';
 import {
   CREDENTIAL_MISSING,
@@ -248,7 +249,9 @@ export abstract class Integration<
   static capabilitiesOf(): ProviderCapabilities[] {
     return DEFINITIONS.flatMap((definition) => {
       const cls = IntegrationRegistry.instance.classOf(definition.provider);
-      if (cls === null) return [];
+      // Every definition has its class (the definitions test): a missing one is a wiring mistake.
+      if (cls === null)
+        throw new Error(`No integration class is registered for ${definition.provider}`);
       const can = cls.prototype;
       return [
         {
@@ -836,6 +839,20 @@ export abstract class Integration<
         other.accountId === this.accountId &&
         Integration.from(other).auth.kind === 'oauth',
     );
+  }
+
+  /**
+   * A ResourcePicker's own checks: the integration is the caller's (404), and this connection
+   * has something to pick (409: a token connection reads its one site or what its token reads).
+   */
+  protected assertPicks(caller: Caller, kind: PickerKind | null): void {
+    this.assertOwner(caller);
+    if (kind === null) {
+      throw new AppError(
+        409,
+        `This ${this.provider} connection has nothing to pick: connect it with OAuth`,
+      );
+    }
   }
 
   /**

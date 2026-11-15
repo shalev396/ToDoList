@@ -120,6 +120,15 @@ function aliasViolations(files: ReadonlyMap<string, string>): string[] {
       if (ref.kind === 'dynamic' && ref.specifier === null) {
         found.push(`${file}: a dynamic import with no literal target could reach a writer`);
       }
+      // `import * as W` hands out every factory under a computed name (`W['calendarWriter']`).
+      if (
+        !ref.typeOnly &&
+        ref.specifier !== null &&
+        /(?:^|\/)writers\//.test(ref.specifier) &&
+        /^\*\s+as\b/.test(ref.clause.trim())
+      ) {
+        found.push(`${file}: a namespace import of a writer module: import the factory by name`);
+      }
     }
   }
   return found;
@@ -338,6 +347,25 @@ export { createWriteClient as make };`,
         'classes/integration/providers/Reexported2.ts',
         'classes/integration/providers/Renamed.ts',
       ],
+    );
+  });
+
+  it('a namespace import of a writer module fails (its factories under a computed name)', () => {
+    const provider = `export class P {
+  protected createWriter(): Promise<never> {
+    return Promise.reject(new Error('none'));
+  }
+}`;
+    assert.deepEqual(
+      flagged({
+        'classes/integration/providers/Spaced.ts': `import * as W from '../writers/calendarApi.js';
+export const t = (x: Record<string, string>) => W['calendarWriter'](x);
+${provider}`,
+        'classes/integration/providers/Typed.ts': `import type * as W from '../writers/calendarApi.js';
+export type X = W.CalendarWriter;
+${provider}`,
+      }),
+      ['classes/integration/providers/Spaced.ts'],
     );
   });
 

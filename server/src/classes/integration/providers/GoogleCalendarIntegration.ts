@@ -42,7 +42,6 @@ import type {
   Revocable,
   SupportsOAuth,
 } from '../capabilities.js';
-import type { PickerKind } from '../definitions/IntegrationDefinition.js';
 import type { TestableAdapter } from '../connectionTest.js';
 import { GOOGLE_CALENDAR, type GoogleCalendarSecret } from '../definitions/googleCalendar.js';
 import { Integration } from '../Integration.js';
@@ -146,7 +145,7 @@ export class GoogleCalendarIntegration
   extends Integration<GoogleCalendarConfig, GoogleCalendarSecret, CalendarWriter>
   implements
     CalendarProvider,
-    ResourcePicker<GoogleCalendarEntry>,
+    ResourcePicker<'calendars'>,
     Revocable,
     SupportsOAuth<GoogleCalendarSecret>
 {
@@ -198,12 +197,13 @@ export class GoogleCalendarIntegration
   }
 
   /** A Google grant reaches the account's calendars to pick from (the demo's service account: none). */
-  get pickerKind(): PickerKind | null {
+  get pickerKind(): 'calendars' | null {
     return this.authKind === 'oauth' ? 'calendars' : null;
   }
 
   /** Its owner: the account's calendars (listCalendars). */
-  pickerResources(caller: Caller): Promise<GoogleCalendarEntry[]> {
+  async pickerResources(caller: Caller): Promise<GoogleCalendarEntry[]> {
+    this.assertPicks(caller, this.pickerKind);
     return this.listCalendars(caller);
   }
 
@@ -212,7 +212,7 @@ export class GoogleCalendarIntegration
    * it already read keeps its mode, a new one is read only; the push target stays only if chosen.
    */
   async choose(caller: Caller, ids: readonly string[]): Promise<Integration> {
-    const calendars = new Set((await this.listCalendars(caller)).map((entry) => entry.id));
+    const calendars = new Set((await this.pickerResources(caller)).map((entry) => entry.id));
     if (ids.some((id) => !calendars.has(id))) {
       throw new AppError(400, 'config.calendars: not a calendar of this connection');
     }

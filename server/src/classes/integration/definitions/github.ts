@@ -44,7 +44,7 @@ const githubApp: OAuthAppOptions = {
   consoleUrl: 'https://github.com/settings/apps/new',
   async identify(client, accessToken) {
     const { data } = await client.getJson<unknown>(`${GITHUB_OAUTH.endpoints().api}/user`, {
-      authorization: `Bearer ${accessToken}`,
+      ...GITHUB_OAUTH.headers({ accessToken }),
       accept: 'application/vnd.github+json',
       'user-agent': 'TodoList',
     });

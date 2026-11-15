@@ -17,8 +17,22 @@ import { Integration, IntegrationRegistry, isCreateFunnel, isResourcePicker } fr
 import { GITHUB_TOKEN } from './github.js';
 import { GOOGLE_CALENDAR_OAUTH, GOOGLE_SERVICE_ACCOUNT } from './googleCalendar.js';
 import { DEFINITIONS, definitionOf, sessionAuth, strategyForMethod } from './index.js';
+import { pkceChallenge } from '../../../services/crypto/hashing.js';
+import type { AuthorizeRequest } from '../auth/OAuthAuth.js';
+import { CLICKUP_OAUTH } from './clickup.js';
+import { GITHUB_OAUTH } from './github.js';
 import { JIRA_API_TOKEN, JIRA_OAUTH } from './jira.js';
+import { LINEAR_OAUTH } from './linear.js';
 import { MOODLE_TOKEN } from './moodle.js';
+
+const STATE = 'S'.repeat(43);
+const VERIFIER = 'V'.repeat(43);
+const CLIENT_ID = 'FAKE-client-id';
+const redirect = (provider: string): string =>
+  `https://todolist.example.test/api/public/oauth/${provider}/callback`;
+/** The authorize URL the provider's routes have always sent, its parameters in their order. */
+const golden = (authorize: string, pairs: [string, string][]): string =>
+  `${authorize}?${new URLSearchParams(pairs).toString()}`;
 
 /** A client that only answers token exchanges, counting them. */
 function exchanger(): ReadOnlyClient & { exchanges: number } {
@@ -71,6 +85,104 @@ describe('the definitions', () => {
         assert.equal(oauth.callbackPath, '/api/public/oauth/google-calendar/callback');
       }
     }
+  });
+
+  it('send the same authorize URLs as before, byte for byte, with and without the write scope', () => {
+    const request = (provider: string, includeWrite: boolean): AuthorizeRequest => ({
+      clientId: CLIENT_ID,
+      redirectUri: redirect(provider),
+      state: STATE,
+      verifier: VERIFIER,
+      includeWrite,
+      loginHint: 'me@example.test',
+    });
+    const base = (provider: string): [string, string][] => [
+      ['client_id', CLIENT_ID],
+      ['redirect_uri', redirect(provider)],
+      ['state', STATE],
+    ];
+    const pkce: [string, string][] = [
+      ['code_challenge', pkceChallenge(VERIFIER)],
+      ['code_challenge_method', 'S256'],
+    ];
+    for (const includeWrite of [false, true]) {
+      // GitHub App: no response_type, no scopes (the app's permissions decide), PKCE.
+      assert.equal(
+        GITHUB_OAUTH.authorizeUrl(request('github', includeWrite)),
+        golden('https://github.com/login/oauth/authorize', [...base('github'), ...pkce]),
+      );
+      // Atlassian 3LO: response_type, read scopes (write by re-consent), audience, consent, no PKCE.
+      assert.equal(
+        JIRA_OAUTH.authorizeUrl(request('jira', includeWrite)),
+        golden('https://auth.atlassian.com/authorize', [
+          ...base('jira'),
+          ['response_type', 'code'],
+          [
+            'scope',
+            `read:jira-work read:jira-user read:me offline_access${includeWrite ? ' write:jira-work' : ''}`,
+          ],
+          ['audience', 'api.atlassian.com'],
+          ['prompt', 'consent'],
+        ]),
+      );
+      // ClickUp: nothing beyond the client, the callback and the state.
+      assert.equal(
+        CLICKUP_OAUTH.authorizeUrl(request('clickup', includeWrite)),
+        golden('https://app.clickup.com/api', base('clickup')),
+      );
+      // Linear: response_type, its scopes comma separated, PKCE.
+      assert.equal(
+        LINEAR_OAUTH.authorizeUrl(request('linear', includeWrite)),
+        golden('https://linear.app/oauth/authorize', [
+          ...base('linear'),
+          ['response_type', 'code'],
+          ['scope', includeWrite ? 'read,issues:create' : 'read'],
+          ...pkce,
+        ]),
+      );
+    }
+  });
+
+  it('send Google its parameters as before (any order), the login hint only for an email', () => {
+    const params = (loginHint: string | null): Record<string, string> =>
+      Object.fromEntries(
+        new URL(
+          GOOGLE_CALENDAR_OAUTH.authorizeUrl({
+            clientId: CLIENT_ID,
+            redirectUri: 'https://todolist.example.test/api/public/oauth/google-calendar/callback',
+            state: STATE,
+            verifier: VERIFIER,
+            includeWrite: false,
+            loginHint,
+          }),
+        ).searchParams,
+      );
+    const expected = {
+      client_id: CLIENT_ID,
+      redirect_uri: 'https://todolist.example.test/api/public/oauth/google-calendar/callback',
+      response_type: 'code',
+      scope:
+        'openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+      access_type: 'offline',
+      prompt: 'consent',
+      include_granted_scopes: 'true',
+      state: STATE,
+      code_challenge: pkceChallenge(VERIFIER),
+      code_challenge_method: 'S256',
+    };
+    assert.deepEqual(params(null), expected);
+    assert.deepEqual(params('Work account'), expected);
+    assert.deepEqual(params('me@example.test'), { ...expected, login_hint: 'me@example.test' });
+    assert.ok(
+      GOOGLE_CALENDAR_OAUTH.authorizeUrl({
+        clientId: CLIENT_ID,
+        redirectUri: 'x',
+        state: STATE,
+        verifier: VERIFIER,
+        includeWrite: false,
+        loginHint: null,
+      }).startsWith('https://accounts.google.com/o/oauth2/v2/auth?'),
+    );
   });
 
   it('ask for the same scopes as before: read-only, writes by re-consent', () => {

@@ -13,8 +13,7 @@ import {
   GoogleCalendarIntegration,
   Integration,
   IntegrationRegistry,
-  isCalendarProvider,
-  isResourcePicker,
+  picksFrom,
   type GoogleCalendarEntry,
   type OAuthIntegrationClass,
 } from '../../classes/integration/index.js';
@@ -57,7 +56,8 @@ export type StartProviderOAuthInput = z.infer<typeof StartProviderOAuthBody>;
 /** The provider class of a shared OAuth route's `:provider` (GitHub, Jira, ClickUp, Linear). */
 export function oauthClassOf(provider: OAuthProviderId): OAuthIntegrationClass {
   const cls = IntegrationRegistry.instance.classOf(provider);
-  if (cls === null) throw new AppError(404, 'Not found');
+  // Every OAuth provider has its class (the definitions test): a missing one is a wiring mistake.
+  if (cls === null) throw new Error(`No integration class is registered for ${provider}`);
   return cls;
 }
 
@@ -82,14 +82,11 @@ export async function listOAuthResources(
   const caller = Caller.fromContext(ctx, Actor.user(userId));
   const integration = await Integration.findOwn(caller, integrationId);
   const { provider } = integration;
-  if (
-    !isResourcePicker(integration) ||
-    (integration.pickerKind !== 'sites' && integration.pickerKind !== 'workspaces')
-  ) {
+  if (!picksFrom(integration, 'sites') && !picksFrom(integration, 'workspaces')) {
     throw new AppError(409, 'Only a Jira or ClickUp connected with OAuth lists its resources');
   }
   try {
-    return (await integration.pickerResources(caller)) as OAuthResource[];
+    return await integration.pickerResources(caller);
   } catch (error) {
     if (error instanceof ProviderHttpError && error.code === 'auth_failed') {
       throw new AppError(409, `${provider} refused the connection: reconnect it`);
@@ -114,15 +111,11 @@ export async function listGoogleCalendars(
 ): Promise<GoogleCalendarEntry[]> {
   const caller = Caller.fromContext(ctx, Actor.user(userId));
   const integration = await Integration.findOwn(caller, integrationId);
-  if (
-    !isCalendarProvider(integration) ||
-    !isResourcePicker(integration) ||
-    integration.pickerKind !== 'calendars'
-  ) {
+  if (!picksFrom(integration, 'calendars')) {
     throw new AppError(409, 'Only a Google Calendar connected with Google lists its calendars');
   }
   try {
-    return await integration.listCalendars(caller);
+    return await integration.pickerResources(caller);
   } catch (error) {
     if (error instanceof ProviderHttpError && error.code === 'auth_failed') {
       throw new AppError(409, 'Google refused the connection: reconnect Google Calendar');

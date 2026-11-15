@@ -52,11 +52,11 @@ const badAnswer = (): ProviderHttpError => new ProviderHttpError('jira', null, '
 /** The Jira sites of a grant: accessible resources that carry a Jira scope. */
 export async function jiraAccessibleSites(
   client: ReadOnlyClient,
-  accessToken: string,
+  auth: Readonly<Record<string, string>>,
 ): Promise<JiraSiteInfo[]> {
   const { data } = await client.getJson<unknown>(
     `${JIRA_OAUTH.endpoints().api}/oauth/token/accessible-resources`,
-    { authorization: `Bearer ${accessToken}` },
+    auth,
   );
   const parsed = AtlassianResources.safeParse(data);
   if (!parsed.success) throw badAnswer();
@@ -87,12 +87,12 @@ const jiraApp: OAuthAppOptions = {
   refreshRequired: true,
   consoleUrl: 'https://developer.atlassian.com/console/myapps/',
   async identify(client, accessToken) {
-    const { data } = await client.getJson<unknown>(`${JIRA_OAUTH.endpoints().api}/me`, {
-      authorization: `Bearer ${accessToken}`,
-    });
+    // The fresh grant's headers, as its strategy builds them.
+    const auth = JIRA_OAUTH.headers({ accessToken });
+    const { data } = await client.getJson<unknown>(`${JIRA_OAUTH.endpoints().api}/me`, auth);
     const me = AtlassianMe.safeParse(data);
     if (!me.success) throw badAnswer();
-    const sites = await jiraAccessibleSites(client, accessToken);
+    const sites = await jiraAccessibleSites(client, auth);
     if (sites.length === 0) throw badAnswer();
     return {
       accountId: me.data.account_id,

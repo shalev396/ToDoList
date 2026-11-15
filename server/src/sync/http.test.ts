@@ -7,6 +7,7 @@ import {
   DestinationRefusedError,
   GOOGLE_REVOKE_URL,
   GOOGLE_TOKEN_URL,
+  OAUTH_TOKEN_ENDPOINTS,
   ProviderHttpError,
   type HttpRequest,
   type HttpResponse,
@@ -933,5 +934,57 @@ describe('grantedScope (H5: Linear may answer a string or an array)', () => {
     assert.equal(grantedScope([]), null);
     assert.equal(grantedScope(''), null);
     assert.equal(grantedScope(undefined), null);
+  });
+});
+
+describe('the token allow-list: exactly these endpoints, and nothing a definition adds', () => {
+  it('lists the four OAuth apps’ token and revoke URLs, as written', () => {
+    assert.deepEqual(OAUTH_TOKEN_ENDPOINTS, {
+      github: { token: 'https://github.com/login/oauth/access_token', revoke: null },
+      jira: { token: 'https://auth.atlassian.com/oauth/token', revoke: null },
+      clickup: { token: 'https://api.clickup.com/api/v2/oauth/token', revoke: null },
+      linear: {
+        token: 'https://api.linear.app/oauth/token',
+        revoke: 'https://api.linear.app/oauth/revoke',
+      },
+    });
+  });
+
+  it('a client takes exactly Google’s and these URLs; any other is refused when it is built', () => {
+    const tokens = [GOOGLE_TOKEN_URL, ...Object.values(OAUTH_TOKEN_ENDPOINTS).map((e) => e.token)];
+    const revokes = [
+      GOOGLE_REVOKE_URL,
+      ...Object.values(OAUTH_TOKEN_ENDPOINTS).flatMap((e) => (e.revoke === null ? [] : [e.revoke])),
+    ];
+    assert.deepEqual(revokes, [GOOGLE_REVOKE_URL, 'https://api.linear.app/oauth/revoke']);
+    for (const tokenExchangeUrl of tokens) {
+      createReadOnlyClient({ provider: 'jira', transport: scripted([]), tokenExchangeUrl });
+    }
+    for (const revokeUrl of revokes) {
+      createReadOnlyClient({ provider: 'linear', transport: scripted([]), revokeUrl });
+    }
+    for (const tokenExchangeUrl of [
+      'https://api.github.com/login/oauth/access_token',
+      'https://auth.atlassian.com/oauth/token2',
+      'https://api.clickup.com/api/v2/oauth/token/',
+      'https://api.linear.app/oauth/revoke',
+      'https://example.invalid/oauth/token',
+    ]) {
+      assert.throws(
+        () => createReadOnlyClient({ provider: 'jira', transport: scripted([]), tokenExchangeUrl }),
+        /not allow-listed/,
+        tokenExchangeUrl,
+      );
+    }
+    for (const revokeUrl of [
+      'https://api.linear.app/oauth/token',
+      'https://github.com/login/oauth/revoke',
+    ]) {
+      assert.throws(
+        () => createReadOnlyClient({ provider: 'linear', transport: scripted([]), revokeUrl }),
+        /not allow-listed/,
+        revokeUrl,
+      );
+    }
   });
 });
