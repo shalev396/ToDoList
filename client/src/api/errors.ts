@@ -35,6 +35,8 @@ export const ERROR_CODE_KEYS: Readonly<Record<ErrorCode, string>> = {
   account_already_connected: 'errors.codes.accountAlreadyConnected',
   provider_coming_soon: 'errors.codes.providerComingSoon',
   integration_read_only: 'errors.codes.integrationReadOnly',
+  status_not_available: 'errors.codes.statusNotAvailable',
+  scope_missing: 'errors.codes.scopeMissing',
   provider_writes_off: 'errors.codes.providerWritesOff',
   create_rate_limited: 'errors.codes.createRateLimited',
   needs_due_date: 'errors.codes.needsDueDate',

@@ -36,6 +36,10 @@ export const ERROR_CODES = [
   'provider_coming_soon',
   /** A change at the provider through an integration in read-only mode (its owner can switch it). */
   'integration_read_only',
+  /** Write-back: the provider has no status (transition, state) for the one asked, for this item. */
+  'status_not_available',
+  /** The integration's grant lacks a scope this operation needs (a reconnect grants it). */
+  'scope_missing',
   // Creating a to-do in a provider too (H5)
   'provider_writes_off',
   'create_rate_limited',

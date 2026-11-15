@@ -9,6 +9,8 @@ import { MirroredItemError } from './MirroredItemError.js';
 import { NotFoundError } from './NotFoundError.js';
 import { ProviderComingSoonError } from './ProviderComingSoonError.js';
 import { ReadOnlyIntegrationError } from './ReadOnlyIntegrationError.js';
+import { ScopeMissingError } from './ScopeMissingError.js';
+import { StatusNotAvailableError } from './StatusNotAvailableError.js';
 import { ValidationError } from './ValidationError.js';
 
 describe('the error hierarchy', () => {
@@ -22,6 +24,8 @@ describe('the error hierarchy', () => {
       [new MirroredItemError('jira', 'https://example.invalid/browse/A-1'), 409, undefined],
       [new CapabilityError('create tasks'), 400, undefined],
       [new ProviderComingSoonError('moodle'), 400, 'provider_coming_soon'],
+      [new StatusNotAvailableError('jira', 'cancelled'), 422, 'status_not_available'],
+      [new ScopeMissingError('i-1', 'scope', 'Reconnect it'), 409, 'scope_missing'],
     ];
     for (const [error, status, code] of cases) {
       assert.ok(error instanceof AppError, error.name);

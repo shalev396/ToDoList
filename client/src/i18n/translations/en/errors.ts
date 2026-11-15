@@ -29,6 +29,10 @@ export const errors = {
     providerComingSoon: 'This integration is coming soon and can’t be connected yet.',
     integrationReadOnly:
       'This connection is read-only, so nothing is changed in that tool. Its owner can switch it to Read & write.',
+    statusNotAvailable:
+      'That tool has no way to set this item to that status. Change it there instead.',
+    scopeMissing:
+      'This connection needs a new permission for that. Connect it again and allow everything it asks for.',
     providerWritesOff: 'Creating items in your other tools is turned off on this server.',
     createRateLimited: 'You have created a lot of items there this hour. Try again later.',
     needsDueDate: 'A calendar event needs a due date.',
