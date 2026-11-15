@@ -1,10 +1,14 @@
-import { useId, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { CircleAlert, ExternalLink, Lock, Pencil } from 'lucide-react';
+import { errorMessage } from '@/api/errors';
 import { useIntegrations } from '@/api/queries/integrations';
 import { useUpdateItem } from '@/api/queries/items';
+import { queryKeys } from '@/api/queries/keys';
 import { useMembers } from '@/api/queries/members';
+import { startProviderOAuth } from '@/api/services/integrationService';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +29,7 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { cn } from '@/lib/utils';
 import { pathTo, ROUTES } from '@/router/routes';
 import { integrationAnchor } from '@/features/integrations/anchor';
+import { isOAuthSignIn } from '@/features/integrations/oauthSetup';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { ItemDetail, OverridableField, UpdateItemRequestBody } from '@api-types/api-contracts';
 import type { ItemStatus } from '@api-types/domain';
@@ -36,6 +41,7 @@ import {
   editPlan,
   isTimedEvent,
   patchOf,
+  rebase,
   statusChoices,
   withStart,
   type EditDraft,
@@ -67,7 +73,64 @@ function useOwnerName(item: ItemDetail): string {
   return owner?.kind === 'member' ? owner.name : t('items.edit.someoneElse');
 }
 
-/** One clear sentence on why the provider's fields are locked (and, for the owner, where to fix it). */
+/**
+ * "Allow TodoList to edit in Jira": the connection signs in again asking for the write scope
+ * (`includeWrite`, as "Also create in" does), so the grant can write back. Its owner only.
+ */
+function AllowEdits({ item, source }: { item: ItemDetail; source: string }) {
+  const { t } = useTranslation();
+  const { language } = useLanguage();
+  const { workspace } = useCurrentWorkspace();
+  const [problem, setProblem] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const provider = item.source.provider;
+  const integrationId = item.integrationId;
+  if (!isOAuthSignIn(provider) || integrationId === null || workspace === null) {
+    return null;
+  }
+  const start = async () => {
+    setStarting(true);
+    setProblem(null);
+    try {
+      const { data } = await startProviderOAuth(
+        workspace.id,
+        provider,
+        { lng: language, integrationId, includeWrite: true },
+        { suppressErrorToast: true },
+      );
+      window.location.assign(data.authorizeUrl);
+    } catch (failure) {
+      setStarting(false);
+      setProblem(errorMessage(t, failure, 'connect.oauth.startFailed'));
+    }
+  };
+  return (
+    <span className="flex flex-col items-start gap-1">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="max-md:min-h-11"
+        disabled={starting}
+        data-allow-edits=""
+        onClick={() => void start()}
+      >
+        {t('items.edit.allowEdits', { source })}
+      </Button>
+      {problem === null ? null : (
+        <span role="alert" className="text-destructive">
+          {problem}
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
+ * One clear sentence on why the provider's fields are locked, and for the owner the way out: the
+ * card's mode switch for a read-only connection, signing in again with write for a grant without
+ * it. Nothing while the owner's list is loading (no "switch it" where no switch may exist).
+ */
 function LockHint({
   id,
   lock,
@@ -82,45 +145,59 @@ function LockHint({
   const { t } = useTranslation();
   const { language } = useLanguage();
   const owner = useOwnerName(item);
+  if (lock === 'pending') {
+    return <p id={id} data-provider-lock="pending" className="sr-only" />;
+  }
   const toCard =
-    item.editing.ownsIntegration &&
-    item.integrationId !== null &&
-    (lock === 'read_only' || lock === 'reconnect');
+    item.editing.ownsIntegration && item.integrationId !== null && lock === 'read_only';
   return (
-    <p
+    <div
       id={id}
       data-provider-lock={lock}
-      className="flex items-start gap-1.5 text-[13px] text-muted-foreground"
+      className="flex flex-col items-start gap-2 text-[13px] text-muted-foreground"
     >
-      <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
-      <span>
-        {t(`items.edit.lock.${lock}`, { source, owner })}
-        {toCard && item.integrationId !== null ? (
-          <>
-            {' '}
-            <Link
-              to={`${pathTo(ROUTES.INTEGRATIONS, language)}#${integrationAnchor(item.integrationId)}`}
-              className="font-medium text-primary underline-offset-4 hover:underline"
-              data-provider-lock-link=""
-            >
-              {t('items.edit.toCard', { source })}
-            </Link>
-          </>
-        ) : null}
-      </span>
-    </p>
+      <p className="flex items-start gap-1.5">
+        <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+        <span>
+          {t(`items.edit.lock.${lock}`, { source, owner })}
+          {toCard && item.integrationId !== null ? (
+            <>
+              {' '}
+              <Link
+                to={`${pathTo(ROUTES.INTEGRATIONS, language)}#${integrationAnchor(item.integrationId)}`}
+                className="font-medium text-primary underline-offset-4 hover:underline"
+                data-provider-lock-link=""
+              >
+                {t('items.edit.toCard', { source })}
+              </Link>
+            </>
+          ) : null}
+        </span>
+      </p>
+      {lock === 'reconnect' && item.editing.ownsIntegration ? (
+        <span className="ps-5">
+          <AllowEdits item={item} source={source} />
+        </span>
+      ) : null}
+    </div>
   );
 }
 
-/** What went wrong with a save, in words, with the provider's link where the change belongs. */
+/**
+ * What went wrong with a save, in words that never overstate it: what reached the provider and
+ * what didn't, a provider that didn't answer (it may have made the change), or one message; and
+ * what happened to the fields kept in TodoList (`local`: those the save carried).
+ */
 function ProblemNote({
   problem,
   item,
   source,
+  local,
 }: {
   problem: SaveProblem;
   item: ItemDetail;
   source: string;
+  local: readonly string[];
 }) {
   const { t } = useTranslation();
   const list = useFieldList();
@@ -139,28 +216,45 @@ function ProblemNote({
       <ExternalLink aria-hidden="true" className="size-3.5" />
     </a>
   );
+  const box =
+    'flex flex-col gap-1.5 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-[13px]';
   if (problem.kind === 'partial') {
     const lines = (['written', 'refused', 'uncertain'] as const).filter(
       (part) => problem[part].length > 0,
     );
     return (
-      <div
-        role="alert"
-        data-save-problem="partial"
-        className="flex flex-col gap-1.5 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-[13px]"
-      >
+      <div role="alert" data-save-problem="partial" className={box}>
         <p className="flex items-center gap-1.5 font-medium text-destructive">
           <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
           {t('items.edit.partial.title', { source })}
         </p>
-        {lines.length === 0 ? null : (
-          <ul className="m-0 flex list-none flex-col gap-0.5 p-0 ps-5">
-            {lines.map((part) => (
-              <li key={part} data-partial={part}>
-                {t(`items.edit.partial.${part}`, { fields: list(problem[part]), source })}
-              </li>
-            ))}
-          </ul>
+        <ul className="m-0 flex list-none flex-col gap-0.5 p-0 ps-5">
+          {lines.map((part) => (
+            <li key={part} data-partial={part}>
+              {t(`items.edit.partial.${part}`, { fields: list(problem[part]), source })}
+            </li>
+          ))}
+          {/* The server keeps TodoList's own fields of a partly written save. */}
+          {local.length === 0 ? null : (
+            <li data-partial="kept">{t('items.edit.kept', { fields: list(local) })}</li>
+          )}
+        </ul>
+        <span className="ps-5">{link(item.openIn.url)}</span>
+      </div>
+    );
+  }
+  if (problem.kind === 'uncertain') {
+    return (
+      <div role="alert" data-save-problem="uncertain" className={box}>
+        <p className="flex items-center gap-1.5 font-medium text-destructive">
+          <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+          {t('items.edit.uncertain.title', { source })}
+        </p>
+        <p className="ps-5">{t('items.edit.uncertain.body', { source })}</p>
+        {local.length === 0 ? null : (
+          <p className="ps-5" data-partial="not-kept">
+            {t('items.edit.notKept', { fields: list(local) })}
+          </p>
         )}
         <span className="ps-5">{link(item.openIn.url)}</span>
       </div>
@@ -172,6 +266,11 @@ function ProblemNote({
         <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
         {t(problem.key, { source, owner, fields: list(problem.fields) })}
       </p>
+      {local.length === 0 ? null : (
+        <p className="ps-5" data-partial="not-kept">
+          {t('items.edit.notKept', { fields: list(local) })}
+        </p>
+      )}
       {problem.openIn === null ? null : <span className="ps-5">{link(problem.openIn.url)}</span>}
     </div>
   );
@@ -277,6 +376,7 @@ function EditForm({
   source,
   lockId,
   saving,
+  failed,
   onSave,
   onCancel,
   onUseSource,
@@ -289,6 +389,8 @@ function EditForm({
   source: string;
   lockId: string;
   saving: boolean;
+  /** The last save failed: the footer no longer says what Save will do. */
+  failed: boolean;
   onSave: (body: UpdateItemRequestBody | null) => void;
   onCancel: () => void;
   onUseSource: (field: OverridableField, then: () => void) => void;
@@ -298,10 +400,41 @@ function EditForm({
   const { t } = useTranslation();
   const { language } = useLanguage();
   const ids = useId();
-  const [draft, setDraft] = useState<EditDraft>(() => draftOf(item, timeZone));
+  const form = useRef<HTMLFormElement>(null);
+  // The draft and the item as the form last saw it (its base): a save sends what differs from the
+  // base, so values that changed at the source meanwhile are never sent back.
+  const [state, setState] = useState(() => {
+    const base = draftOf(item, timeZone);
+    return { base, draft: base, changed: [] as EditField[] };
+  });
+  const [seen, setSeen] = useState(() => JSON.stringify(state.base));
+  const live = draftOf(item, timeZone);
+  if (JSON.stringify(live) !== seen) {
+    setSeen(JSON.stringify(live));
+    setState((current) => {
+      const next = rebase(current.base, current.draft, live);
+      return {
+        ...next,
+        changed: [...new Set([...current.changed, ...next.changed])],
+      };
+    });
+  }
+  const { draft } = state;
+  const [titleMissing, setTitleMissing] = useState(false);
   const set = (patch: Partial<EditDraft>) => {
-    setDraft((current) => ({ ...current, ...patch }));
+    setState((current) => ({ ...current, draft: { ...current.draft, ...patch } }));
   };
+  const setDraft = (next: (current: EditDraft) => EditDraft) => {
+    setState((current) => ({ ...current, draft: next(current.draft) }));
+  };
+
+  // The form opens on its first control the member can change.
+  useEffect(() => {
+    form.current
+      ?.querySelector<HTMLElement>('input:not(:disabled), button[role="combobox"]:not(:disabled)')
+      ?.focus();
+  }, []);
+
   const fieldOf = (field: EditField) => plan.fields.find((entry) => entry.field === field);
   const timed = isTimedEvent(item);
   const lockedBy = (entry: FieldPlan) =>
@@ -313,8 +446,12 @@ function EditForm({
     }
     return () => {
       onUseSource(field, () => {
-        // The field shows the provider's value it now reads as.
+        // The field shows the provider's value it now reads as, with nothing to warn about.
         set(sourceDraft(field, item.sourceValues, timeZone));
+        setState((current) => ({
+          ...current,
+          changed: current.changed.filter((entry) => entry !== field),
+        }));
       });
     };
   };
@@ -363,13 +500,19 @@ function EditForm({
       clearing={saving}
     >
       {children}
+      {state.changed.includes(entry.field) ? (
+        <p className="text-[13px] text-muted-foreground" data-changed-there={entry.field}>
+          {t('items.edit.changedThere', { source })}
+        </p>
+      ) : null}
     </FieldShell>
   );
-  const describedBy = (entry: FieldPlan) => {
+  const describedBy = (entry: FieldPlan, ...more: (string | false)[]) => {
     const parts = [
       lockedBy(entry),
       entry.origin === 'override' ? `${ids}-${entry.field}-here` : undefined,
-    ].filter((part): part is string => part !== undefined);
+      ...more,
+    ].filter((part): part is string => typeof part === 'string');
     return parts.length === 0 ? undefined : parts.join(' ');
   };
 
@@ -386,30 +529,49 @@ function EditForm({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (draft.title.trim() === '' && title?.editable === true) {
+      setTitleMissing(true);
       return;
     }
-    onSave(patchOf(item, plan, draft, timeZone));
+    setTitleMissing(false);
+    onSave(patchOf(item, plan, draft, state.base, timeZone));
   };
 
   return (
-    <form onSubmit={submit} className="flex flex-col gap-4" noValidate data-item-edit-form="">
+    <form
+      ref={form}
+      onSubmit={submit}
+      className="flex flex-col gap-4"
+      noValidate
+      data-item-edit-form=""
+    >
       {title === undefined
         ? null
         : shell(
             title,
             `${ids}-title`,
-            <Input
-              id={`${ids}-title`}
-              value={draft.title}
-              dir="auto"
-              maxLength={300}
-              disabled={!title.editable}
-              aria-describedby={describedBy(title)}
-              aria-invalid={title.editable && draft.title.trim() === ''}
-              onChange={(event) => {
-                set({ title: event.target.value });
-              }}
-            />,
+            <>
+              <Input
+                id={`${ids}-title`}
+                value={draft.title}
+                dir="auto"
+                maxLength={300}
+                disabled={!title.editable}
+                aria-describedby={describedBy(title, titleMissing && `${ids}-title-missing`)}
+                aria-invalid={title.editable && draft.title.trim() === ''}
+                onChange={(event) => {
+                  set({ title: event.target.value });
+                }}
+              />
+              {titleMissing ? (
+                <p
+                  id={`${ids}-title-missing`}
+                  role="alert"
+                  className="text-[13px] text-destructive"
+                >
+                  {t('items.edit.titleRequired')}
+                </p>
+              ) : null}
+            </>,
           )}
       {status === undefined && priority === undefined ? null : (
         <div className="grid grid-cols-2 gap-3 max-sm:grid-cols-1">
@@ -493,13 +655,9 @@ function EditForm({
                     disabled={!start.editable}
                     aria-describedby={describedBy(start)}
                     onChange={(event) => {
+                      const date = event.target.value;
                       setDraft((current) =>
-                        withStart(
-                          item,
-                          current,
-                          { date: event.target.value, time: current.startTime },
-                          timeZone,
-                        ),
+                        withStart(item, current, { date, time: current.startTime }, timeZone),
                       );
                     }}
                   />
@@ -512,13 +670,9 @@ function EditForm({
                       disabled={!start.editable}
                       aria-describedby={describedBy(start)}
                       onChange={(event) => {
+                        const time = event.target.value;
                         setDraft((current) =>
-                          withStart(
-                            item,
-                            current,
-                            { date: current.startDate, time: event.target.value },
-                            timeZone,
-                          ),
+                          withStart(item, current, { date: current.startDate, time }, timeZone),
                         );
                       }}
                     />
@@ -567,8 +721,9 @@ function EditForm({
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
           {t('items.edit.cancel')}
         </Button>
-        {sendsToProvider ? (
-          <span className="text-[13px] text-muted-foreground">
+        {/* What Save will do, never what it did; gone once a save failed. */}
+        {sendsToProvider && !failed ? (
+          <span className="text-[13px] text-muted-foreground" data-sends-to="">
             {t('items.edit.sentTo', { source })}
           </span>
         ) : null}
@@ -578,11 +733,28 @@ function EditForm({
   );
 }
 
+/** The provider fields a save carried, in the item's names (what "Sent to Jira" lists). */
+function providerFieldsOf(plan: EditPlan, body: UpdateItemRequestBody): string[] {
+  return plan.fields
+    .filter((entry) => entry.origin === 'provider' && entry.field in body)
+    .map((entry) => entry.field);
+}
+
+/** The fields kept in TodoList that a save carried. */
+function localFieldsOf(plan: EditPlan, body: UpdateItemRequestBody): string[] {
+  return plan.fields
+    .filter((entry) => entry.origin === 'override' && entry.field in body)
+    .map((entry) => entry.field);
+}
+
 /**
  * Editing a mirrored item (plan Addendum A1): its provider's fields are written back by its
  * integration's owner while it is read & write; the fields its provider lacks are kept in
  * TodoList ("Only in TodoList") by any editor. Locked fields are shown disabled under one hint
- * that says why. An event with other guests asks whether Google should tell them.
+ * that says why. An event with other guests asks whether Google should tell them. A save says
+ * what happened at the provider and never more: "Sent to Jira: title" only after it was taken;
+ * after a refusal, a partial write or no answer, the item is read again so the sheet shows what
+ * is true now.
  */
 export function MirroredEditor({
   item,
@@ -596,48 +768,72 @@ export function MirroredEditor({
   canEdit: boolean;
 }) {
   const { t } = useTranslation();
+  const list = useFieldList();
   const { workspace } = useCurrentWorkspace();
+  const queryClient = useQueryClient();
   const update = useUpdateItem(workspace?.id ?? '', item.id);
   const integrations = useIntegrations(workspace?.id ?? '');
-  const own = integrations.data?.find((entry) => entry.id === item.integrationId);
+  // undefined while the owner's list loads; null when the integration isn't in it.
+  const own =
+    integrations.data === undefined
+      ? undefined
+      : (integrations.data.find((entry) => entry.id === item.integrationId) ?? null);
   const plan = editPlan(item, canEdit, own);
   const lockId = useId();
   const [editing, setEditing] = useState(false);
-  const [problem, setProblem] = useState<SaveProblem | null>(null);
+  const [failure, setFailure] = useState<{ problem: SaveProblem; local: string[] } | null>(null);
   const [saved, setSaved] = useState(false);
+  /** The provider fields the last successful save sent (they were taken). */
+  const [sent, setSent] = useState<string[]>([]);
   /** A save waiting for the guests answer. */
   const [askGuests, setAskGuests] = useState<{
     body: UpdateItemRequestBody;
     then?: () => void;
   } | null>(null);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
 
-  const touchesProvider = (body: UpdateItemRequestBody) =>
-    plan.fields.some(
-      (entry) =>
-        entry.origin === 'provider' && (body as Record<string, unknown>)[entry.field] !== undefined,
-    );
+  // Back from the form (saved or cancelled): focus returns to Edit.
+  useEffect(() => {
+    if (!editing && returnFocus.current) {
+      returnFocus.current = false;
+      editButton.current?.focus();
+    }
+  }, [editing]);
+  const close = () => {
+    returnFocus.current = true;
+    setEditing(false);
+  };
 
   const send = (body: UpdateItemRequestBody, then?: () => void) => {
-    setProblem(null);
+    setFailure(null);
     setSaved(false);
+    setSent([]);
     update.mutate(body, {
       onSuccess: () => {
         setSaved(true);
+        setSent(providerFieldsOf(plan, body));
         then?.();
       },
       onError: (error) => {
-        const next = saveProblemOf(error);
-        if (next.kind === 'guests' && body.notifyGuests === undefined) {
+        const problem = saveProblemOf(error);
+        if (problem.kind === 'guests' && body.notifyGuests === undefined) {
           setAskGuests(then === undefined ? { body } : { body, then });
           return;
         }
-        setProblem(next);
+        setFailure({ problem, local: localFieldsOf(plan, body) });
+        // Whatever the provider took, and the connection as it is now (its mode, its grant): the
+        // sheet shows the truth again, and the form re-locks if the mode changed elsewhere.
+        void queryClient.invalidateQueries({
+          queryKey: queryKeys.item(workspace?.id ?? '', item.id),
+        });
       },
     });
   };
   /** A save: asks about guests first when the event has them and the provider gets a change. */
   const save = (body: UpdateItemRequestBody, then?: () => void) => {
-    if (item.editing.needsGuestNotice && touchesProvider(body)) {
+    const touchesProvider = providerFieldsOf(plan, body).length > 0;
+    if (item.editing.needsGuestNotice && touchesProvider) {
       setAskGuests(then === undefined ? { body } : { body, then });
       return;
     }
@@ -646,13 +842,17 @@ export function MirroredEditor({
 
   const state: SaveState = update.isPending
     ? 'saving'
-    : problem !== null
+    : failure !== null
       ? 'error'
       : saved
         ? 'saved'
         : 'idle';
   const problemNote =
-    problem === null ? null : <ProblemNote problem={problem} item={item} source={source} />;
+    failure === null ? null : (
+      <ProblemNote problem={failure.problem} item={item} source={source} local={failure.local} />
+    );
+  // The alert beside it already says what went wrong: the status stays out of the live region.
+  const status = <SaveStatus state={state} announce={failure === null} />;
 
   // Nothing to change here and nothing to explain: the source owns the item.
   if (!plan.anyEditable && plan.lock === null) {
@@ -664,7 +864,7 @@ export function MirroredEditor({
   }
 
   return (
-    <section className="flex flex-col gap-3" data-item-edit="" aria-label={t('items.edit.open')}>
+    <div className="flex flex-col gap-3" data-item-edit="">
       {editing ? (
         <>
           {plan.lock === null ? null : (
@@ -677,21 +877,20 @@ export function MirroredEditor({
             source={source}
             lockId={lockId}
             saving={update.isPending}
+            failed={failure !== null}
             problem={problemNote}
-            status={<SaveStatus state={state} />}
+            status={status}
             onSave={(body) => {
               if (body === null) {
-                setEditing(false);
-                setProblem(null);
+                setFailure(null);
+                close();
                 return;
               }
-              save(body, () => {
-                setEditing(false);
-              });
+              save(body, close);
             }}
             onCancel={() => {
-              setEditing(false);
-              setProblem(null);
+              setFailure(null);
+              close();
             }}
             onUseSource={(field, then) => {
               const body = clearOverrideBody(field, item.sourceValues);
@@ -706,18 +905,25 @@ export function MirroredEditor({
           <div className="flex flex-wrap items-center gap-3">
             {plan.anyEditable ? (
               <Button
+                ref={editButton}
                 variant="outline"
                 size="sm"
                 onClick={() => {
                   setEditing(true);
                   setSaved(false);
+                  setSent([]);
                 }}
               >
                 <Pencil aria-hidden="true" />
                 {t('items.edit.open')}
               </Button>
             ) : null}
-            <SaveStatus state={state} />
+            {status}
+            {saved && sent.length > 0 && failure === null ? (
+              <span className="text-[13px] text-muted-foreground" data-sent-fields="">
+                {t('items.edit.sentFields', { source, fields: list(sent) })}
+              </span>
+            ) : null}
           </div>
           {plan.lock === null ? null : (
             <LockHint id={lockId} lock={plan.lock} item={item} source={source} />
@@ -766,6 +972,6 @@ export function MirroredEditor({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </section>
+    </div>
   );
 }

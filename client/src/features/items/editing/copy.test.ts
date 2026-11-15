@@ -39,6 +39,21 @@ describe('the item editing and Repeat texts', () => {
     }
   });
 
+  it('say what Save will do before a save, never that it was done', () => {
+    assert.equal(en.items.edit.sentTo, 'Saving also changes it in {{source}}.');
+    assert.doesNotMatch(en.items.edit.sentTo, /saved/i);
+    assert.doesNotMatch(he.items.edit.sentTo, /^נשמר/);
+    // The past tense is kept for after a write that was taken, naming what was sent.
+    assert.match(en.items.edit.sentFields, /{{fields}}/);
+  });
+
+  it('never call a provider refusal "changed in the meantime"', () => {
+    for (const text of [en.items.edit.errors.refused, en.items.edit.errors.rejected]) {
+      assert.doesNotMatch(text, /meantime/);
+    }
+    assert.match(en.items.edit.uncertain.title, /may have been made/);
+  });
+
   it('use the brief’s words for the locks', () => {
     assert.equal(
       en.items.edit.lock.read_only,

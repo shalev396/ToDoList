@@ -20,11 +20,13 @@ function SaveStatusView({
   state,
   faded,
   texts,
+  announce,
   className,
 }: {
   state: SaveState;
   faded: boolean;
   texts: SaveStatusTexts;
+  announce: boolean;
   className?: string | undefined;
 }) {
   const { text, hidden } = saveStatusView(state, faded);
@@ -43,8 +45,8 @@ function SaveStatusView({
         ))}
       </span>
       <span
-        role="status"
-        aria-live="polite"
+        role={announce ? 'status' : undefined}
+        aria-live={announce ? 'polite' : 'off'}
         className={cn(
           'transition-opacity duration-500 motion-reduce:transition-none',
           hidden ? 'opacity-0' : 'opacity-100',
@@ -58,13 +60,16 @@ function SaveStatusView({
 
 /**
  * "Saving…", "Saved" or "Couldn't save", beside the control that saves: SaveStatusView in the
- * reader's language, with "Saved" fading out after about 2 s.
+ * reader's language, with "Saved" fading out after about 2 s. `announce={false}` keeps it out of
+ * the live region where an alert next to it already says what happened.
  */
 export function SaveStatus({
   state,
+  announce = true,
   className,
 }: {
   state: SaveState;
+  announce?: boolean;
   className?: string | undefined;
 }) {
   const { t } = useTranslation();
@@ -84,6 +89,7 @@ export function SaveStatus({
     <SaveStatusView
       state={state}
       faded={faded}
+      announce={announce}
       className={className}
       texts={{
         saving: t('saveStatus.saving'),

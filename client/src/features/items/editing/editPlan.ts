@@ -27,7 +27,9 @@ export type ProviderLock =
   /** Its grant predates writes: its owner connects it again with Read & write. */
   | 'reconnect'
   /** Writes can't be turned on for it (demo data, or writes off on this server). */
-  | 'writes_off';
+  | 'writes_off'
+  /** Read-only, and whether it can be switched isn't known yet (the owner's list is loading). */
+  | 'pending';
 
 /** One field of the form. */
 export interface FieldPlan {
@@ -56,10 +58,14 @@ export interface OwnIntegration {
 
 const isOverridable = (field: EditField): field is OverridableField => field !== 'endAt';
 
-/** Why `editing.providerFields` are locked for this member, or null. */
+/**
+ * Why `editing.providerFields` are locked for this member, or null. The mode comes before the
+ * grant: a read-only connection is switched first (a reconnect alone never makes it writable).
+ * `own`: the owner's own entry for the integration; undefined while their list loads.
+ */
 export function providerLock(
   editing: ItemEditingView,
-  own: OwnIntegration | undefined,
+  own: OwnIntegration | null | undefined,
 ): ProviderLock | null {
   if (editing.origin !== 'provider' || editing.providerFields.length === 0) {
     return null;
@@ -70,11 +76,14 @@ export function providerLock(
   if (!editing.ownsIntegration) {
     return 'not_owner';
   }
+  if (editing.mode === 'read') {
+    if (own === undefined) {
+      return 'pending';
+    }
+    return own?.canSwitchMode === false ? 'writes_off' : 'read_only';
+  }
   if (editing.needsReconnect) {
     return 'reconnect';
-  }
-  if (editing.mode === 'read') {
-    return own?.canSwitchMode === false ? 'writes_off' : 'read_only';
   }
   // Read & write, yet no writes: this server keeps writes off for it.
   return 'writes_off';
@@ -84,7 +93,7 @@ export function providerLock(
 export function editPlan(
   item: Pick<ItemDetail, 'editing' | 'overlay'>,
   canEdit: boolean,
-  own?: OwnIntegration,
+  own?: OwnIntegration | null,
 ): EditPlan {
   const { editing } = item;
   const lock = providerLock(editing, own);
@@ -208,34 +217,82 @@ function instantFor(date: string, previous: Date | string | null, keepTime: bool
   return instantInZone(date, time, zone);
 }
 
-const same = (a: Date | string | null, b: string | null): boolean =>
-  (a === null ? null : new Date(a).toISOString()) === b;
+/** The draft's fields, by the item field they edit. */
+const DRAFT_KEYS: Readonly<Record<EditField, readonly (keyof EditDraft)[]>> = {
+  title: ['title'],
+  status: ['status'],
+  dueAt: ['dueDate'],
+  startAt: ['startDate', 'startTime'],
+  endAt: ['endDate', 'endTime'],
+  priority: ['priority'],
+};
+
+/** Whether the draft holds something else than `base` for `field`. */
+export function isTouched(field: EditField, base: EditDraft, draft: EditDraft): boolean {
+  return DRAFT_KEYS[field].some((key) => draft[key] !== base[key]);
+}
+
+/** The form after a newer item arrived while it was open. */
+export interface Rebased {
+  /** The newer item's values: what a save compares with now. */
+  base: EditDraft;
+  draft: EditDraft;
+  /** Fields the member edited whose value changed at the source under them. */
+  changed: EditField[];
+}
 
 /**
- * The PATCH a save sends: the editable fields the draft changed, nothing else (so a locked or
- * unchanged provider field is never sent). An event's time: the start alone keeps the duration;
- * the end goes too only when the member changed it. Null when nothing changed.
+ * A newer item while the form is open (a sync, an overlay save, another tab): the fields the
+ * member hasn't touched take its values, so a save never sends a value the provider no longer has;
+ * a touched field keeps the member's value and is reported, so nothing is overwritten silently.
+ */
+export function rebase(base: EditDraft, draft: EditDraft, next: EditDraft): Rebased {
+  const merged: Record<keyof EditDraft, string> = { ...draft };
+  const changed: EditField[] = [];
+  for (const field of EDIT_FIELDS) {
+    const keys = DRAFT_KEYS[field];
+    if (!isTouched(field, base, draft)) {
+      for (const key of keys) {
+        merged[key] = next[key];
+      }
+    } else if (keys.some((key) => next[key] !== base[key])) {
+      changed.push(field);
+    }
+  }
+  return { base: next, draft: { ...merged, status: merged.status as ItemStatus }, changed };
+}
+
+/** A date and time of the draft as an instant (midnight without a time); null without a date. */
+const instantOf = (date: string, time: string, zone: string): number | null =>
+  date === '' ? null : Date.parse(instantInZone(date, time || '00:00', zone));
+
+/**
+ * The PATCH a save sends: the editable fields where the draft differs from `base` (the item as
+ * the form last saw it), nothing else, so a locked field, an untouched one, or a value the source
+ * changed meanwhile is never sent. Titles compare trimmed, as the server stores them. An event's
+ * time: the start alone keeps the duration; the end goes too only when the member changed the
+ * duration. Null when nothing changed.
  */
 export function patchOf(
   item: Datable,
   plan: EditPlan,
   draft: EditDraft,
+  base: EditDraft,
   timeZone: string,
 ): UpdateItemRequestBody | null {
-  const before = draftOf(item, timeZone);
   const editable = new Map(
     plan.fields.filter((field) => field.editable).map((field) => [field.field, field]),
   );
   const body: UpdateItemRequestBody = {};
   const title = draft.title.trim();
-  if (editable.has('title') && title !== '' && title !== item.title) {
+  if (editable.has('title') && title !== '' && title !== base.title.trim()) {
     body.title = title;
   }
-  if (editable.has('status') && draft.status !== item.status) {
+  if (editable.has('status') && draft.status !== base.status) {
     body.status = draft.status;
   }
   const due = editable.get('dueAt');
-  if (due !== undefined && draft.dueDate !== before.dueDate) {
+  if (due !== undefined && draft.dueDate !== base.dueDate) {
     if (draft.dueDate === '') {
       body.dueAt = null;
     } else {
@@ -247,9 +304,9 @@ export function patchOf(
     }
   }
   if (editable.has('startAt')) {
-    addStart(item, draft, before, timeZone, body, editable.has('endAt'));
+    addStart(item, draft, base, timeZone, body, editable.has('endAt'));
   }
-  if (editable.has('priority') && draft.priority !== before.priority) {
+  if (editable.has('priority') && draft.priority !== base.priority) {
     body.priority = draft.priority === '' ? null : Number(draft.priority);
   }
   return Object.keys(body).length === 0 ? null : body;
@@ -259,13 +316,13 @@ export function patchOf(
 function addStart(
   item: Datable,
   draft: EditDraft,
-  before: EditDraft,
+  base: EditDraft,
   timeZone: string,
   body: UpdateItemRequestBody,
   endEditable: boolean,
 ): void {
   if (item.kind !== 'event') {
-    if (draft.startDate !== before.startDate) {
+    if (draft.startDate !== base.startDate) {
       body.startAt =
         draft.startDate === '' ? null : instantFor(draft.startDate, item.startAt, true, timeZone);
     }
@@ -277,24 +334,21 @@ function addStart(
   }
   const timed = isTimedEvent(item);
   // An all-day event is stored at midnight of its day in the workspace's zone.
-  const start = instantInZone(
-    draft.startDate,
-    timed ? draft.startTime || '00:00' : '00:00',
-    timeZone,
-  );
-  if (!same(item.startAt, start)) {
-    body.startAt = start;
+  const start = instantOf(draft.startDate, timed ? draft.startTime : '', timeZone);
+  const before = instantOf(base.startDate, timed ? base.startTime : '', timeZone);
+  if (start !== null && start !== before) {
+    body.startAt = new Date(start).toISOString();
   }
-  if (!timed || !endEditable || draft.endDate === '') {
+  if (!timed || !endEditable || draft.endDate === '' || start === null) {
     return;
   }
-  const end = instantInZone(draft.endDate, draft.endTime || '00:00', timeZone);
-  const shift = item.startAt === null ? 0 : Date.parse(start) - new Date(item.startAt).getTime();
-  const keptDuration =
-    item.endAt === null ? null : new Date(new Date(item.endAt).getTime() + shift).toISOString();
+  const end = instantOf(draft.endDate, draft.endTime, timeZone);
+  const baseEnd = instantOf(base.endDate, base.endTime, timeZone);
+  // The end the start's move alone would give (Google keeps the duration).
+  const keptDuration = baseEnd === null || before === null ? null : baseEnd + (start - before);
   // An end alone keeps the start; with a new start, both are taken as given.
-  if (end !== keptDuration) {
-    body.endAt = end;
+  if (end !== null && end !== keptDuration) {
+    body.endAt = new Date(end).toISOString();
   }
 }
 

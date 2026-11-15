@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMembers } from '@/api/queries/members';
 import { ownerOf } from './owner';
@@ -376,6 +376,15 @@ function LocalEditor({ item, timeZone }: { item: ItemDetail; timeZone: string })
   const { workspace } = useCurrentWorkspace();
   const update = useUpdateItem(workspace?.id ?? '', item.id);
   const [editing, setEditing] = useState(false);
+  const editButton = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
+  // Back from the form (saved or cancelled): focus returns to Edit.
+  useEffect(() => {
+    if (!editing && returnFocus.current) {
+      returnFocus.current = false;
+      editButton.current?.focus();
+    }
+  }, [editing]);
   const state = update.isPending
     ? 'saving'
     : update.isError
@@ -390,6 +399,7 @@ function LocalEditor({ item, timeZone }: { item: ItemDetail; timeZone: string })
         timeZone={timeZone}
         update={update}
         onDone={() => {
+          returnFocus.current = true;
           setEditing(false);
         }}
       />
@@ -398,6 +408,7 @@ function LocalEditor({ item, timeZone }: { item: ItemDetail; timeZone: string })
   ) : (
     <div className="flex flex-wrap items-center gap-3" data-item-local-edit="">
       <Button
+        ref={editButton}
         variant="outline"
         size="sm"
         onClick={() => {
@@ -454,6 +465,8 @@ function EditForm({
         <Label htmlFor={ids.title}>{t('items.sheet.editTitle')}</Label>
         <Input
           id={ids.title}
+          // The form opens on its title.
+          autoFocus
           value={title}
           dir="auto"
           maxLength={500}

@@ -5,10 +5,13 @@ import {
   clearOverrideBody,
   draftOf,
   editPlan,
+  isTouched,
   patchOf,
   providerLock,
+  rebase,
   statusChoices,
   withStart,
+  type EditDraft,
 } from './editPlan.ts';
 import { saveProblemOf } from './saveProblem.ts';
 
@@ -88,8 +91,9 @@ describe('providerLock: one reason, the first that applies', () => {
     );
   });
 
-  it('names who may, then the grant, then the mode', () => {
+  it('names who may, then the mode, then the grant', () => {
     const locked = { canWriteProvider: false };
+    const switchable = { mode: 'read' as const, canSwitchMode: true };
     assert.equal(
       providerLock(editing({ ...locked, ownsIntegration: false, mode: null }), undefined),
       'not_owner',
@@ -98,7 +102,14 @@ describe('providerLock: one reason, the first that applies', () => {
       providerLock(editing({ ...locked, needsReconnect: true }), undefined),
       'reconnect',
     );
-    assert.equal(providerLock(editing({ ...locked, mode: 'read' }), undefined), 'read_only');
+    // A read-only connection is switched first: a reconnect alone never makes it writable.
+    assert.equal(
+      providerLock(editing({ ...locked, mode: 'read', needsReconnect: true }), switchable),
+      'read_only',
+    );
+    // Whether it can be switched isn't known while the owner's list loads: no wording yet.
+    assert.equal(providerLock(editing({ ...locked, mode: 'read' }), undefined), 'pending');
+    assert.equal(providerLock(editing({ ...locked, mode: 'read' }), null), 'read_only');
     assert.equal(
       providerLock(editing({ ...locked, mode: 'read' }), { mode: 'read', canSwitchMode: true }),
       'read_only',
@@ -117,6 +128,7 @@ describe('editPlan', () => {
     const plan = editPlan(
       item({ editing: editing({ canWriteProvider: false, mode: 'read' }) }),
       true,
+      { mode: 'read', canSwitchMode: true },
     );
     assert.deepEqual(
       plan.fields.map((field) => [field.field, field.origin, field.editable]),
@@ -188,16 +200,19 @@ describe('statusChoices', () => {
 
 describe('patchOf', () => {
   const plan = (subject: Item) => editPlan(subject, true);
+  /** A save of `draft` from a form opened on `subject` as it is. */
+  const patch = (subject: Item, draft: EditDraft) =>
+    patchOf(subject, plan(subject), draft, draftOf(subject, ZONE), ZONE);
 
   it('sends nothing when nothing changed', () => {
     const subject = item();
-    assert.equal(patchOf(subject, plan(subject), draftOf(subject, ZONE), ZONE), null);
+    assert.equal(patch(subject, draftOf(subject, ZONE)), null);
   });
 
   it('sends only the changed fields, title trimmed', () => {
     const subject = item();
     const draft = { ...draftOf(subject, ZONE), title: '  Write the final report ', priority: '' };
-    assert.deepEqual(patchOf(subject, plan(subject), draft, ZONE), {
+    assert.deepEqual(patch(subject, draft), {
       title: 'Write the final report',
       priority: null,
     });
@@ -206,31 +221,24 @@ describe('patchOf', () => {
   it('never sends a locked provider field', () => {
     const subject = item({ editing: editing({ canWriteProvider: false, ownsIntegration: false }) });
     const draft = { ...draftOf(subject, ZONE), title: 'Renamed', startDate: '2026-11-18' };
-    assert.deepEqual(patchOf(subject, plan(subject), draft, ZONE), {
+    assert.deepEqual(patch(subject, draft), {
       startAt: '2026-11-18T10:00:00.000Z',
     });
   });
 
   it('a due date at the provider: noon (or its own time); none clears it', () => {
     const subject = item();
-    assert.deepEqual(
-      patchOf(subject, plan(subject), { ...draftOf(subject, ZONE), dueDate: '2026-11-25' }, ZONE),
-      {
-        dueAt: '2026-11-25T10:00:00.000Z',
-      },
-    );
-    assert.deepEqual(
-      patchOf(subject, plan(subject), { ...draftOf(subject, ZONE), dueDate: '' }, ZONE),
-      {
-        dueAt: null,
-      },
-    );
+    assert.deepEqual(patch(subject, { ...draftOf(subject, ZONE), dueDate: '2026-11-25' }), {
+      dueAt: '2026-11-25T10:00:00.000Z',
+    });
+    assert.deepEqual(patch(subject, { ...draftOf(subject, ZONE), dueDate: '' }), {
+      dueAt: null,
+    });
     // A ClickUp due date at 17:30 keeps its hour.
     const timed = item({ dueAt: new Date('2026-11-20T15:30:00.000Z'), allDay: false });
-    assert.deepEqual(
-      patchOf(timed, plan(timed), { ...draftOf(timed, ZONE), dueDate: '2026-11-21' }, ZONE),
-      { dueAt: '2026-11-21T15:30:00.000Z' },
-    );
+    assert.deepEqual(patch(timed, { ...draftOf(timed, ZONE), dueDate: '2026-11-21' }), {
+      dueAt: '2026-11-21T15:30:00.000Z',
+    });
   });
 
   it('a due date kept in TodoList is a day, unless the item has a start', () => {
@@ -241,15 +249,57 @@ describe('patchOf', () => {
         overridableFields: ['dueAt', 'startAt', 'priority'],
       }),
     });
-    assert.deepEqual(
-      patchOf(github, plan(github), { ...draftOf(github, ZONE), dueDate: '2026-12-01' }, ZONE),
-      { dueAt: '2026-12-01T10:00:00.000Z', allDay: true },
-    );
+    assert.deepEqual(patch(github, { ...draftOf(github, ZONE), dueDate: '2026-12-01' }), {
+      dueAt: '2026-12-01T10:00:00.000Z',
+      allDay: true,
+    });
     const started = { ...github, startAt: new Date('2026-11-18T10:00:00Z') };
-    assert.deepEqual(
-      patchOf(started, plan(started), { ...draftOf(started, ZONE), dueDate: '2026-12-01' }, ZONE),
-      { dueAt: '2026-12-01T10:00:00.000Z' },
-    );
+    assert.deepEqual(patch(started, { ...draftOf(started, ZONE), dueDate: '2026-12-01' }), {
+      dueAt: '2026-12-01T10:00:00.000Z',
+    });
+  });
+
+  it('compares titles trimmed: edge spaces at the source are no edit', () => {
+    const spaced = item({ title: '  Write the report ' });
+    assert.equal(patch(spaced, draftOf(spaced, ZONE)), null);
+    assert.equal(patch(spaced, { ...draftOf(spaced, ZONE), title: 'Write the report' }), null);
+  });
+
+  describe('a newer item while the form is open', () => {
+    const opened = item();
+    const base = draftOf(opened, ZONE);
+    // Jira moved on meanwhile (a sync, or a save elsewhere): Done, and a new due date.
+    const newer = item({ status: 'done', dueAt: new Date('2026-11-27T10:00:00.000Z') });
+
+    it('never sends a value the member didn’t touch, even against the old base', () => {
+      const draft = { ...base, title: 'Write the final report' };
+      // Compared with the newer item, the stale status would read as an edit; against its own
+      // base it is not one.
+      assert.deepEqual(patchOf(newer, plan(newer), draft, base, ZONE), {
+        title: 'Write the final report',
+      });
+    });
+
+    it('rebases untouched fields onto the newer values, and reports touched ones', () => {
+      const draft = { ...base, title: 'Write the final report', dueDate: '2026-11-30' };
+      const next = rebase(base, draft, draftOf(newer, ZONE));
+      assert.equal(next.draft.status, 'done');
+      assert.equal(next.draft.title, 'Write the final report');
+      assert.equal(next.draft.dueDate, '2026-11-30');
+      assert.deepEqual(next.changed, ['dueAt']);
+      // The next save compares with the newer base: only the member's own edits go.
+      assert.deepEqual(patchOf(newer, plan(newer), next.draft, next.base, ZONE), {
+        title: 'Write the final report',
+        dueAt: '2026-11-30T10:00:00.000Z',
+      });
+    });
+
+    it('a touched field that the source left alone is not reported', () => {
+      const draft = { ...base, title: 'Renamed' };
+      assert.deepEqual(rebase(base, draft, draftOf(newer, ZONE)).changed, []);
+      assert.equal(isTouched('title', base, draft), true);
+      assert.equal(isTouched('status', base, draft), false);
+    });
   });
 
   describe('an event’s time', () => {
@@ -284,14 +334,14 @@ describe('patchOf', () => {
         ZONE,
       );
       assert.deepEqual([draft.endDate, draft.endTime], ['2026-11-21', '15:30']);
-      assert.deepEqual(patchOf(event, plan(event), draft, ZONE), {
+      assert.deepEqual(patch(event, draft), {
         startAt: '2026-11-21T12:00:00.000Z',
       });
     });
 
     it('a new end alone keeps the start; both go when both changed', () => {
       const longer = { ...draftOf(event, ZONE), endTime: '11:00' };
-      assert.deepEqual(patchOf(event, plan(event), longer, ZONE), {
+      assert.deepEqual(patch(event, longer), {
         endAt: '2026-11-20T09:00:00.000Z',
       });
       const moved = withStart(
@@ -300,7 +350,7 @@ describe('patchOf', () => {
         { date: '2026-11-20', time: '10:00' },
         ZONE,
       );
-      assert.deepEqual(patchOf(event, plan(event), { ...moved, endTime: '12:00' }, ZONE), {
+      assert.deepEqual(patch(event, { ...moved, endTime: '12:00' }), {
         startAt: '2026-11-20T08:00:00.000Z',
         endAt: '2026-11-20T10:00:00.000Z',
       });
@@ -315,10 +365,10 @@ describe('patchOf', () => {
       };
       const draft = draftOf(allDay, ZONE);
       assert.equal(draft.startTime, '');
-      assert.deepEqual(patchOf(allDay, plan(allDay), { ...draft, startDate: '2026-11-23' }, ZONE), {
+      assert.deepEqual(patch(allDay, { ...draft, startDate: '2026-11-23' }), {
         startAt: '2026-11-22T22:00:00.000Z',
       });
-      assert.equal(patchOf(allDay, plan(allDay), { ...draft, startDate: '' }, ZONE), null);
+      assert.equal(patch(allDay, { ...draft, startDate: '' }), null);
     });
   });
 });
@@ -402,6 +452,30 @@ describe('saveProblemOf', () => {
         fields: ['dueAt'],
         openIn: { provider: 'jira', url: 'https://j/1' },
       },
+    );
+  });
+
+  it('no answer: the change may have been made (a code, a gateway, or no response at all)', () => {
+    assert.deepEqual(saveProblemOf(failed(502, { code: 'provider_no_answer' })), {
+      kind: 'uncertain',
+    });
+    assert.deepEqual(saveProblemOf(failed(502, { message: 'x' })), { kind: 'uncertain' });
+    assert.deepEqual(saveProblemOf(failed(504, {})), { kind: 'uncertain' });
+    assert.deepEqual(saveProblemOf(new Error('Network Error')), { kind: 'uncertain' });
+  });
+
+  it('a refusal without a code is the provider’s, never “changed in the meantime”', () => {
+    for (const data of [{ code: 'provider_refused' }, { message: 'jira refused this change' }]) {
+      const problem = saveProblemOf(failed(409, data));
+      assert.equal(
+        problem.kind === 'message' ? problem.key : problem.kind,
+        'items.edit.errors.refused',
+      );
+    }
+    const rejected = saveProblemOf(failed(422, { message: 'jira rejected this change' }));
+    assert.equal(
+      rejected.kind === 'message' ? rejected.key : rejected.kind,
+      'items.edit.errors.rejected',
     );
   });
 

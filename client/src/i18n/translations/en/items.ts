@@ -94,6 +94,11 @@ export const items = {
       notMine:
         'Repeating to-dos are created with the workspace calendar’s connection, and only the person who connected it can do that.',
       settings: 'Open the workspace calendar settings',
+      loadFailed: 'The workspace calendar couldn’t be loaded.',
+      uncertain:
+        'No answer from Google Calendar: it may have been created. Try again sends the same one, so it’s never made twice.',
+      tryAgain: 'Try again',
+      dueDay: 'The due date’s day, always included',
       created: 'Created in Google Calendar',
       createdNotStored:
         'The event was created in Google Calendar. It appears here after the next sync.',
@@ -247,9 +252,16 @@ export const items = {
       '3': 'High',
       '4': 'Highest',
     },
-    sentTo: 'Saved to {{source}} too.',
+    sentTo: 'Saving also changes it in {{source}}.',
+    sentFields: 'Sent to {{source}}: {{fields}}.',
+    titleRequired: 'Give it a title.',
+    changedThere: 'Changed in {{source}} since you opened this. Saving keeps your value.',
+    allowEdits: 'Allow TodoList to edit in {{source}}',
+    kept: 'Kept in TodoList: {{fields}}.',
+    notKept: 'Not kept in TodoList: {{fields}}.',
     onlyHere: 'Only in TodoList',
-    onlyHereHint: '{{source}} doesn’t take this, so it’s kept in TodoList only.',
+    onlyHereHint:
+      '{{source}} doesn’t take this, so it’s kept in TodoList, for everyone who sees this item.',
     useSource: 'Use {{source}}’s value: {{value}}',
     sourceNone: 'none',
     readOnly: 'Read-only',
@@ -281,6 +293,14 @@ export const items = {
       fieldNotWritable: '{{source}} doesn’t let TodoList change {{fields}}. Change it there.',
       itemMissing: 'This item no longer exists in {{source}}.',
       atSource: 'That’s changed in {{source}}. Open it there.',
+      refused:
+        '{{source}} refused this change for your account. If it keeps happening, reconnect {{source}}.',
+      rejected:
+        '{{source}} didn’t accept this change. Check the values, or change it in {{source}}.',
+    },
+    uncertain: {
+      title: 'No answer from {{source}}: the change may have been made there.',
+      body: 'Check {{source}} before trying again.',
     },
     partial: {
       title: 'Only part of the change reached {{source}}.',
