@@ -384,6 +384,36 @@ describe('Google Calendar writes once read & write', () => {
     assert.equal((await audits()).length, count);
   });
 
+  it('an event write that Google refuses or leaves unanswered carries a code, its message unchanged', async () => {
+    const { item } = await pulled('Coded');
+    const failure = async (
+      status: number,
+      expected: { code: string; http: number; message: string },
+    ): Promise<void> => {
+      mock.failNextWrite(status);
+      await assert.rejects(alice.updateEvent(caller, item, { title: `Coded ${String(status)}` }), {
+        statusCode: expected.http,
+        code: expected.code,
+        message: expected.message,
+      });
+    };
+    await failure(503, {
+      code: 'provider_no_answer',
+      http: 502,
+      message: 'Google Calendar did not answer. Try again in a moment.',
+    });
+    await failure(401, {
+      code: 'provider_refused',
+      http: 409,
+      message: 'Google refused the connection: reconnect Google Calendar',
+    });
+    await failure(403, {
+      code: 'provider_refused',
+      http: 409,
+      message: 'Google refused this change for this account',
+    });
+  });
+
   it('updateEvent: all day (the other form cleared); an invalid edit 400; a gone event 404', async () => {
     const { eventId, item } = await pulled('Trip');
     await alice.updateEvent(caller, item, {

@@ -7,6 +7,7 @@ import type { AddressInfo } from 'node:net';
 import express from 'express';
 
 import { AppError } from '../errors/AppError.js';
+import { ProviderNoAnswerError } from '../errors/ProviderNoAnswerError.js';
 import {
   allowSecretKinds,
   errorHandler,
@@ -48,6 +49,9 @@ export async function startGuardHarness(): Promise<{ base: string; stop: () => v
   });
   app.get('/coded-unavailable', () => {
     throw new AppError(503, 'db host detail', { code: 'workspace_full' });
+  });
+  app.get('/no-answer', () => {
+    throw new ProviderNoAnswerError('jira');
   });
   app.use(errorHandler);
   const server: Server = await new Promise((resolve) => {

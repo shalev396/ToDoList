@@ -108,6 +108,15 @@ describe('error codes (ENV=dev)', () => {
     assert.deepEqual(await res.json(), { message: 'Internal server error' });
   });
 
+  it('a provider that did not answer keeps its code, and nothing else of the error', async () => {
+    const res = await fetch(`${harness.base}/no-answer`);
+    assert.equal(res.status, 502);
+    assert.deepEqual(await res.json(), {
+      message: 'Internal server error',
+      code: 'provider_no_answer',
+    });
+  });
+
   it('an error without a code has no code field', async () => {
     const res = await fetch(`${harness.base}/conflict`);
     assert.deepEqual(await res.json(), { message: 'Version conflict' });

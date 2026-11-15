@@ -127,9 +127,13 @@ function writeFailure(provider: string, failure: WriteFailure): AppError {
   if (failure.kind === 'unknown') return new ProviderNoAnswerError(provider);
   switch (failure.reason) {
     case 'auth':
-      return new AppError(409, `${provider} refused the connection: reconnect it`);
+      return new AppError(409, `${provider} refused the connection: reconnect it`, {
+        code: 'provider_refused',
+      });
     case 'forbidden':
-      return new AppError(409, `${provider} refused this change: the connection may not make it`);
+      return new AppError(409, `${provider} refused this change: the connection may not make it`, {
+        code: 'provider_refused',
+      });
     case 'rate_limited':
       return new AppError(429, `${provider} is busy. Try again in a moment.`);
     case 'rejected':
@@ -146,7 +150,9 @@ function lookupFailure(error: ProviderHttpError): AppError {
   const { provider } = error;
   switch (error.code) {
     case 'auth_failed':
-      return new AppError(409, `${provider} refused the connection: reconnect it`);
+      return new AppError(409, `${provider} refused the connection: reconnect it`, {
+        code: 'provider_refused',
+      });
     case 'not_found':
     case 'gone':
       return new ProviderItemMissingError(provider);
