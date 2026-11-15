@@ -154,6 +154,9 @@ function readsCalendar(entry: unknown, calendarId: string): boolean {
 }
 
 const RECONNECT = 'Google refused the connection: reconnect Google Calendar';
+/** A clean-up step Google refused without saying why: kept, and retried by the next call. */
+const RETRIED_LATER =
+  'Google refused for now; what is left will be retried. Try again in a moment.';
 
 /** A calendar's name as TodoList creates it: one line of text. */
 const CalendarName = z
@@ -241,6 +244,10 @@ function calendarFailure(error: unknown, write = false): Error {
   if (status === 401) return new AppError(409, RECONNECT, refused);
   if (rateLimited(error)) {
     return new AppError(429, 'Google Calendar is busy. Try again in a moment.');
+  }
+  if (status === 403 && !write && !refusedForGood(error)) {
+    // No permission reason (an unknown or missing one): nothing was dropped, the next call retries.
+    return new AppError(409, RETRIED_LATER);
   }
   if (status === 403) {
     return new AppError(409, 'Google refused this change for this account', refused);

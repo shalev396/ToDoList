@@ -244,6 +244,24 @@ describe('a disconnect whose clean-up runs out of time', () => {
       'not disconnected while a rate-limited step remains',
     );
 
+    // A 403 with a reason Google never documented, or none at all, is no refusal for good either:
+    // the step is kept for the next call (nothing failed, nothing dropped), and the answer says so.
+    for (const reason of ['somethingNew', undefined]) {
+      mock.failNextWrite(403, reason);
+      const later = await call('DELETE', `/integrations/${iid}?removeAdded=true`);
+      assert.equal(later.status, 409, later.text);
+      assert.equal(
+        later.body?.['message'],
+        'Google refused for now; what is left will be retried. Try again in a moment.',
+      );
+      assert.equal(later.body['code'], undefined);
+      assert.equal(
+        (await (await models.getIntegrationRepository()).findById(wid, iid))?.deletedAt,
+        null,
+        'still connected',
+      );
+    }
+
     // Google refuses the next delete for good (a permission reason): it is counted, no longer
     // tracked, and the call goes on to the next one instead of stopping there for ever.
     mock.failNextWrite(403, 'forbidden');
