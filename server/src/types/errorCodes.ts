@@ -53,6 +53,16 @@ export const ERROR_CODES = [
   'provider_no_answer',
   /** A write the provider refused for this connection's account (its auth, or a permission). */
   'provider_refused',
+  /**
+   * The provider couldn't be reached before anything was sent (a lookup that failed, a blocked
+   * address): nothing was changed there, so trying again later is safe.
+   */
+  'provider_unreachable',
+  /**
+   * The provider took the write, and TodoList couldn't store it (the answer may carry
+   * `details.written`): the item catches up on the next sync.
+   */
+  'provider_written_not_stored',
   /** A calendar event with other guests: the caller must say whether to notify them. */
   'event_has_guests',
   /**

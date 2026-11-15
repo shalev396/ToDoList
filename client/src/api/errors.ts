@@ -47,6 +47,8 @@ export const ERROR_CODE_KEYS: Readonly<Record<ErrorCode, string>> = {
   provider_item_missing: 'errors.codes.providerItemMissing',
   provider_no_answer: 'errors.codes.providerNoAnswer',
   provider_refused: 'errors.codes.providerRefused',
+  provider_unreachable: 'errors.codes.providerUnreachable',
+  provider_written_not_stored: 'errors.codes.providerWrittenNotStored',
   event_has_guests: 'errors.codes.eventHasGuests',
   integration_not_owner: 'errors.codes.integrationNotOwner',
   primary_calendar_unset: 'errors.codes.primaryCalendarUnset',
@@ -169,7 +171,7 @@ const isProvider = (value: string): value is Provider =>
 
 /**
  * What a provider write-back refusal says beyond its code: `{message, code, details}`, where
- * `details` holds field names (`fields`, `written`, `refused`, `uncertain`) and the item's own
+ * `details` holds field names (`fields`, `written`, `refused`, `uncertain`, `kept`) and the item's own
  * `openIn`. Null without details; a list that isn't all strings, and anything else, is left out.
  */
 export function apiErrorDetails(error: unknown): WriteBackErrorDetails | null {
@@ -185,7 +187,7 @@ export function apiErrorDetails(error: unknown): WriteBackErrorDetails | null {
   const names = (value: unknown): string[] | undefined =>
     Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : undefined;
   const parsed: WriteBackErrorDetails = {};
-  for (const key of ['fields', 'written', 'refused', 'uncertain'] as const) {
+  for (const key of ['fields', 'written', 'refused', 'uncertain', 'kept'] as const) {
     const list = names(record[key]);
     if (list !== undefined) {
       parsed[key] = list;

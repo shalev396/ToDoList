@@ -221,6 +221,8 @@ export interface WriteBackErrorDetails {
   written?: string[];
   refused?: string[];
   uncertain?: string[];
+  /** A partial write: the fields kept in TodoList from the same edit (its overrides). */
+  kept?: string[];
 }
 
 export type UpdateItemResponseData = ItemDetail;

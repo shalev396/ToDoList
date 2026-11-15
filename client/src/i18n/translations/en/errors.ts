@@ -46,6 +46,10 @@ export const errors = {
       'No answer from that tool: the change may have been made there. Check it before trying again.',
     providerRefused:
       'That tool refused this change for your account. If it keeps happening, reconnect it.',
+    providerUnreachable:
+      'That tool couldn’t be reached, so nothing was changed there. Try again later.',
+    providerWrittenNotStored:
+      'It was saved in that tool, but TodoList couldn’t store it yet. It updates on the next sync.',
     eventHasGuests: 'This event has other guests. Choose whether to notify them, then try again.',
     integrationNotOwner:
       'Only the person who connected that tool can change this there. You can still keep your own value in TodoList where the tool has none.',
