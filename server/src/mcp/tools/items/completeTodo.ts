@@ -1,8 +1,9 @@
 import { z } from 'zod';
 
-import { completeItem } from '../../../services/items.js';
+import { Item, Todo } from '../../../classes/item/index.js';
+import { MirroredItemError } from '../../../errors/MirroredItemError.js';
 import { defineTool } from '../../tool.js';
-import { ItemDetailView, ItemId, toItemDetailView } from '../itemViews.js';
+import { ItemDetailView, ItemId, itemCaller, itemReads, toItemDetailView } from '../itemViews.js';
 
 export const completeTodo = defineTool({
   name: 'complete_todo',
@@ -24,7 +25,10 @@ export const completeTodo = defineTool({
   scopes: ['items:write'],
   minRole: 'editor',
   async handler(ctx, input) {
-    const item = await completeItem(ctx.workspace, ctx.principal.userId, input.id, input.done);
-    return { output: { item: toItemDetailView(item) }, target: { type: 'item', id: item.id } };
+    const caller = itemCaller(ctx);
+    const item = await Item.find(caller, input.id);
+    if (!(item instanceof Todo)) throw new MirroredItemError(item.provider, item.sourceUrl);
+    const view = await (await itemReads(ctx)).detail(await item.complete(caller, input.done));
+    return { output: { item: toItemDetailView(view) }, target: { type: 'item', id: view.id } };
   },
 });

@@ -102,6 +102,7 @@ import type { PrimaryCalendar } from '../../workspace/PrimaryCalendar.js';
 import { WorkspaceSettings } from '../../workspace/WorkspaceSettings.js';
 import { EventEdit } from '../EventEdit.js';
 import { Integration } from '../Integration.js';
+import { eventHasGuests } from '../../item/guests.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
 import { RecurrenceRule } from '../RecurrenceRule.js';
 import {
@@ -152,16 +153,9 @@ const CalendarName = z
     message: 'Must be one line of text',
   });
 
-/**
- * Whether a pulled event has guests beyond the calendar's owner: its `guestsCount`, or (an item
- * pulled before that was kept) any attendee at all. The fallback fails closed: the count may or
- * may not hold the owner (an event made through the API lists only its guests), so one attendee
- * already asks the caller whether to notify.
- */
+/** Whether a pulled event has guests beyond the calendar's owner (classes/item/guests.ts). */
 function hasGuests(item: ItemData): boolean {
-  const { guestsCount, attendeesCount } = item.props;
-  if (typeof guestsCount === 'number') return guestsCount > 0;
-  return typeof attendeesCount === 'number' && attendeesCount >= 1;
+  return eventHasGuests(item.props);
 }
 
 /** A Google answer that leaves the outcome unknown (no answer, a timeout, a 5xx): it may have landed. */

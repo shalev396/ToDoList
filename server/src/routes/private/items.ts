@@ -60,6 +60,13 @@ router.get('/workspaces/:wid/items', requireWorkspace('viewer'), ItemsController
  * per owner) answers 200 with the item already created. `topicId` (a topic of the workspace, or
  * null for Unsorted) defaults to the workspace's `personal` topic when it has one; an unknown
  * topic is 400.
+ *
+ * With `recurrence` (one `RRULE:` line, plan Addendum A3) it is a recurring to-do instead: a
+ * recurring event created in the workspace's primary calendar only (409 `primary_calendar_unset`
+ * without one), by that calendar integration's owner (403 `integration_not_owner`) while it is read
+ * & write (409 `integration_read_only`), and answered at once as its event item (201); `dueAt` is
+ * its first occurrence (400 `needs_due_date` without it); no local to-do is made, and no
+ * `containerId` is taken.
  */
 export interface CreateItemRequestBody {
   title: string;
@@ -70,6 +77,8 @@ export interface CreateItemRequestBody {
   containerId?: string | null;
   priority?: number | null;
   idempotencyKey?: string;
+  /** A recurring to-do: one `RRULE:` line. */
+  recurrence?: string[];
 }
 
 export type CreateItemResponseData = ItemDetail;

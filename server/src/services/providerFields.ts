@@ -9,12 +9,11 @@
  *   credential (catalog.isRestrictedName) or does not match the strict path pattern.
  * - The registry is what the compiler checks `props.*` fields against, so a path that was never
  *   synced cannot reach a query. It is read from a recent sample of the caller's visible items
- *   (the base access filter applies) and cached briefly.
+ *   (classes/item/ProviderFields.ts: the base access filter applies) and cached briefly.
+ *
+ * Pure: this module only discovers fields from a sample it is given.
  */
 import { redactString } from './secretPatterns.js';
-import type { WorkspaceContext } from '../classes/base/Caller.js';
-import { ItemPolicy, type ItemAccess } from '../classes/policies/ItemPolicy.js';
-import { getItemRepository } from '../models/index.js';
 import type { FieldType, ProviderField } from '../types/builder.js';
 import { PROVIDERS } from '../types/domain.js';
 import {
@@ -23,12 +22,9 @@ import {
   isRestrictedName,
 } from '../builder/catalog.js';
 
-const SAMPLE_ITEMS = 400;
 const MAX_FIELDS = 200;
 const MAX_ENUM_VALUES = 10;
 const MIN_ENUM_SAMPLES = 3;
-const CACHE_MS = 60_000;
-const CACHE_MAX = 500;
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 const MAX_VALUE_LENGTH = 200;
 
@@ -153,51 +149,6 @@ export function discoverFields(
 function namespaceOf(path: string): string | null {
   const [, first] = path.split('.');
   return (PROVIDERS as readonly string[]).includes(first ?? '') ? (first ?? null) : null;
-}
-
-const cache = new Map<string, { at: number; fields: ProviderField[] }>();
-
-/** What the access lets the caller see, as a cache key: the integrations and the to-dos. */
-function accessKey(access: ItemAccess): string {
-  return [access.local, ...access.integrations.map(({ id }) => id).sort()].join(',');
-}
-
-/**
- * The provider fields the items the caller may see carry in this workspace: their own
- * integrations', the shared ones' and their visible to-dos' (PERMISSIONS-V2 share-on-attach), never
- * an unshared integration's. Cached for a minute, keyed by that access too, so Stop sharing (or a
- * new attach) changes the answer from the next request on.
- */
-export async function providerFieldsOf(
-  ws: Pick<WorkspaceContext, 'id' | 'onlyTopics'>,
-  userId: string,
-  now: number = Date.now(),
-): Promise<ProviderField[]> {
-  const policy = await ItemPolicy.for({ workspaceId: ws.id, userId });
-  const key = `${ws.id}:${userId}:${accessKey(policy.access)}`;
-  const hit = cache.get(key);
-  if (hit !== undefined && now - hit.at < CACHE_MS) return hit.fields;
-  const rows = await (
-    await getItemRepository()
-  ).aggregate(
-    ws.id,
-    [
-      { $match: policy.itemFilter(ws) },
-      { $sort: { updatedAt: -1 } },
-      { $limit: SAMPLE_ITEMS },
-      { $project: { provider: '$source.provider', props: 1 } },
-    ],
-    { maxTimeMS: 5000 },
-  );
-  const fields = discoverFields(
-    rows.map((row) => ({
-      provider: typeof row['provider'] === 'string' ? row['provider'] : 'local',
-      props: isPlain(row['props']) ? row['props'] : {},
-    })),
-  );
-  if (cache.size >= CACHE_MAX) cache.clear();
-  cache.set(key, { at: now, fields });
-  return fields;
 }
 
 /** The paths the compiler accepts for `props.*` fields, with their inferred types. */

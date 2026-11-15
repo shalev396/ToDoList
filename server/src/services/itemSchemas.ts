@@ -33,6 +33,11 @@ export const CreateItemBody = z.strictObject({
   containerId: Id.nullable().optional(),
   priority: Priority.nullable().optional(),
   idempotencyKey: z.string().min(1).max(200).optional(),
+  /**
+   * A recurring to-do (plan Addendum A3): one `RRULE:` line, checked by RecurrenceRule. It is
+   * created in the workspace's primary calendar only.
+   */
+  recurrence: z.array(z.string().max(500)).min(1).max(5).optional(),
 });
 
 export const UpdateItemBody = z
@@ -40,10 +45,16 @@ export const UpdateItemBody = z
     title: Title.optional(),
     note: Note.nullable().optional(),
     dueAt: Iso.nullable().optional(),
+    /** With dueAt (or an event's startAt and endAt): no time of day. */
+    allDay: z.boolean().optional(),
+    startAt: Iso.nullable().optional(),
+    endAt: Iso.nullable().optional(),
     topicId: Id.nullable().optional(),
     containerId: Id.nullable().optional(),
     priority: Priority.nullable().optional(),
     status: z.enum(ITEM_STATUSES).optional(),
+    /** A calendar event with other guests: whether Google tells them about the change. */
+    notifyGuests: z.boolean().optional(),
   })
   .refine((body) => Object.keys(body).length > 0, 'At least one change is required');
 

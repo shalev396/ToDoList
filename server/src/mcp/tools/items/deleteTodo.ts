@@ -1,21 +1,25 @@
 import { z } from 'zod';
 
+import { Item, Todo } from '../../../classes/item/index.js';
 import { MirroredItemError } from '../../../errors/MirroredItemError.js';
-import { deleteItem, getItem } from '../../../services/items.js';
 import { confirmField } from '../../middleware/confirm.js';
 import { defineTool, type ToolContext } from '../../tool.js';
-import { ItemId, ItemSummaryView, toItemSummaryView } from '../itemViews.js';
+import { ItemId, ItemSummaryView, itemCaller, itemReads, toItemSummaryView } from '../itemViews.js';
 
 /**
- * The item as it is, for the preview and the answer. A mirrored one is refused at once, with the
- * answer deleteItem itself gives it: it is deleted at its source, never here.
+ * The to-do as it is, for the preview and the answer. A mirrored item is refused at once: it is
+ * deleted at its source, never here.
  */
-async function localItem(ctx: ToolContext, id: string): Promise<ItemSummaryView> {
-  const item = await getItem(ctx.workspace, ctx.principal.userId, id);
-  if (item.source.provider !== 'local') {
-    throw new MirroredItemError(item.source.provider, item.source.url);
-  }
-  return toItemSummaryView(item);
+async function localItem(
+  ctx: ToolContext,
+  id: string,
+): Promise<{ todo: Todo; view: ItemSummaryView }> {
+  const item = await Item.find(itemCaller(ctx), id);
+  if (!(item instanceof Todo)) throw new MirroredItemError(item.provider, item.sourceUrl);
+  return {
+    todo: item,
+    view: toItemSummaryView(await (await itemReads(ctx)).detail(item, { live: true })),
+  };
 }
 
 export const deleteTodo = defineTool({
@@ -39,7 +43,7 @@ export const deleteTodo = defineTool({
   scopes: ['items:write'],
   minRole: 'editor',
   async preview(ctx, input) {
-    const item = await localItem(ctx, input.id);
+    const { view: item } = await localItem(ctx, input.id);
     return {
       output: {
         applied: false,
@@ -51,8 +55,8 @@ export const deleteTodo = defineTool({
     };
   },
   async handler(ctx, input) {
-    const item = await localItem(ctx, input.id);
-    await deleteItem(ctx.workspace, ctx.principal.userId, item.id);
+    const { todo, view: item } = await localItem(ctx, input.id);
+    await todo.delete(itemCaller(ctx));
     return {
       output: { applied: true, item, summary: 'The to-do was deleted.' },
       target: { type: 'item', id: item.id },

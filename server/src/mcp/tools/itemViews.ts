@@ -9,11 +9,31 @@ import { z } from 'zod';
 import { AppError } from '../../errors/AppError.js';
 import type { ItemDetail, ItemSummary } from '../../routes/private/items.js';
 import type { WorkspaceContext } from '../../services/accessFilter.js';
+import { Caller } from '../../classes/base/Caller.js';
+import { ItemQuery } from '../../classes/item/index.js';
 import { Topic } from '../../classes/workspace/index.js';
+import { toolCaller } from '../auth/principal.js';
+import type { ToolContext } from '../tool.js';
 import { ITEM_KINDS, ITEM_STATUSES, PROVIDERS } from '../../types/domain.js';
 import { TOPICS_PER_WORKSPACE_MAX } from '../../types/topics.js';
 
 const Iso = z.string().nullable().describe('ISO 8601, or null');
+
+/**
+ * Who an item tool acts as: the tool's agent (its origin for the audit log), in `workspace`, which
+ * is the tool's own context (a read tool's topics narrow it) unless given.
+ */
+export function itemCaller(ctx: ToolContext, workspace: WorkspaceContext = ctx.workspace): Caller {
+  return Caller.fromContext(workspace, toolCaller(ctx).actor);
+}
+
+/** The item reads of an item tool's caller (ItemQuery). */
+export function itemReads(
+  ctx: ToolContext,
+  workspace: WorkspaceContext = ctx.workspace,
+): Promise<ItemQuery> {
+  return ItemQuery.for(itemCaller(ctx, workspace));
+}
 
 function iso(date: Date | null): string | null {
   return date === null ? null : date.toISOString();

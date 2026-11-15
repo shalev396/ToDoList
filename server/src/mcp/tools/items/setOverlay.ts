@@ -1,9 +1,17 @@
 import { z } from 'zod';
 
+import { Item } from '../../../classes/item/index.js';
 import { UpdateOverlayBody } from '../../../services/itemSchemas.js';
-import { updateOverlay } from '../../../services/items.js';
 import { defineTool } from '../../tool.js';
-import { ItemDetailView, ItemId, TopicRef, toItemDetailView, topicIdOf } from '../itemViews.js';
+import {
+  ItemDetailView,
+  ItemId,
+  TopicRef,
+  itemCaller,
+  itemReads,
+  toItemDetailView,
+  topicIdOf,
+} from '../itemViews.js';
 
 const field = UpdateOverlayBody.shape;
 
@@ -37,10 +45,14 @@ export const setOverlay = defineTool({
   minRole: 'editor',
   async handler(ctx, input) {
     const { id, topicOverride, ...overlay } = input;
-    const item = await updateOverlay(ctx.workspace, ctx.principal.userId, id, {
+    const caller = itemCaller(ctx);
+    const item = await (
+      await Item.find(caller, id)
+    ).setOverlay(caller, {
       ...overlay,
       topicOverride: await topicIdOf(ctx.workspace, topicOverride),
     });
-    return { output: { item: toItemDetailView(item) }, target: { type: 'item', id: item.id } };
+    const view = await (await itemReads(ctx)).detail(item);
+    return { output: { item: toItemDetailView(view) }, target: { type: 'item', id: view.id } };
   },
 });

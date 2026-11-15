@@ -8,10 +8,17 @@ import { PROVIDERS_CREATE_SCOPE } from '../../../types/providerCreate.js';
 import { toolCaller } from '../../auth/principal.js';
 import { confirmField } from '../../middleware/confirm.js';
 
+import { CalendarEvent, Todo } from '../../../classes/item/index.js';
 import { CreateItemBody } from '../../../services/itemSchemas.js';
-import { createItem } from '../../../services/items.js';
 import { defineTool } from '../../tool.js';
-import { ItemDetailView, TopicRef, toItemDetailView, topicIdOf } from '../itemViews.js';
+import {
+  ItemDetailView,
+  TopicRef,
+  itemCaller,
+  itemReads,
+  toItemDetailView,
+  topicIdOf,
+} from '../itemViews.js';
 
 export function toDate(value: string | null | undefined): Date | null | undefined {
   return value === undefined || value === null ? value : new Date(value);
@@ -21,7 +28,7 @@ export const createTodo = defineTool({
   name: 'create_todo',
   title: 'Create a to-do',
   description:
-    'Creates a local to-do (an item owned by TodoList, not mirrored from a provider): title, and optionally a note, due date, topic (a slug, as workspace_get lists them; null: Unsorted), container and priority (0–4). With an idempotencyKey, a retry gives back the to-do the first call made instead of a second one. The topic defaults to the workspace’s personal topic when it has one. With `targets` it also creates the to-do in the user’s own providers (Jira, ClickUp, Linear, GitHub, Google Calendar: each target is the integration and its typed choices, as the app’s funnel picks them); that needs `confirm: true` and the providers:create scope, and each target’s result is in `providerCopies`. At most one target per integration. It only creates: nothing at a provider is ever edited, closed or deleted. A target that failed is retried by calling again with a NEW idempotencyKey (the same key gives back the stored result); one that may exist (`unknown`) should be checked at the provider first.',
+    'Creates a local to-do (an item owned by TodoList, not mirrored from a provider): title, and optionally a note, due date, topic (a slug, as workspace_get lists them; null: Unsorted), container and priority (0–4). With an idempotencyKey, a retry gives back the to-do the first call made instead of a second one. The topic defaults to the workspace’s personal topic when it has one. With `targets` it also creates the to-do in the user’s own providers (Jira, ClickUp, Linear, GitHub, Google Calendar: each target is the integration and its typed choices, as the app’s funnel picks them); that needs `confirm: true` and the providers:create scope, and each target’s result is in `providerCopies`. At most one target per integration. With `recurrence` (one RRULE line) it is a recurring to-do instead: a recurring event created in the workspace calendar only, by the owner of that calendar integration while it is read & write (needs confirm and providers:create, no targets, no container); the answer is that event item. It only creates: nothing at a provider is ever edited, closed or deleted. A target that failed is retried by calling again with a NEW idempotencyKey (the same key gives back the stored result); one that may exist (`unknown`) should be checked at the provider first.',
   toolset: 'items',
   inputSchema: CreateItemBody.omit({ topicId: true }).extend({
     topic: TopicRef.nullable().optional(),
@@ -60,8 +67,41 @@ export const createTodo = defineTool({
   scopes: ['items:write'],
   minRole: 'editor',
   async handler(ctx, input) {
-    const { topic, targets, confirm, ...fields } = input;
+    const { topic, targets, confirm, recurrence, ...fields } = input;
     const wanted = targets ?? [];
+    if (recurrence !== undefined) {
+      if (wanted.length > 0) {
+        throw new AppError(
+          400,
+          'recurrence: a recurring to-do is created in the workspace calendar only, without targets',
+        );
+      }
+      if (!ctx.principal.scopes.includes(PROVIDERS_CREATE_SCOPE)) {
+        throw new AppError(403, 'Creating in providers needs the providers:create scope');
+      }
+      if (confirm !== true) {
+        throw new AppError(
+          400,
+          'recurrence creates an event in the workspace calendar: call again with confirm: true',
+        );
+      }
+      const { containerId, ...rest } = fields;
+      if (containerId !== undefined && containerId !== null) {
+        throw new AppError(400, 'containerId: a recurring to-do lives in the workspace calendar');
+      }
+      const caller = itemCaller(ctx);
+      const event = await CalendarEvent.createRecurring(caller, {
+        ...rest,
+        dueAt: toDate(input.dueAt),
+        recurrence,
+        topicId: await topicIdOf(ctx.workspace, topic),
+      });
+      const view = await (await itemReads(ctx)).detail(event);
+      return {
+        output: { item: toItemDetailView(view), created: true },
+        target: { type: 'item', id: view.id },
+      };
+    }
     if (wanted.length > 0) {
       if (!ctx.principal.scopes.includes(PROVIDERS_CREATE_SCOPE)) {
         throw new AppError(403, 'Creating in providers needs the providers:create scope');
@@ -70,11 +110,12 @@ export const createTodo = defineTool({
         throw new AppError(400, 'targets create items at providers: call again with confirm: true');
       }
     }
-    const { item, created } = await createItem(ctx.workspace, ctx.principal.userId, {
+    const { todo, created } = await Todo.create(itemCaller(ctx), {
       ...fields,
       dueAt: toDate(input.dueAt),
       topicId: await topicIdOf(ctx.workspace, topic),
     });
+    const item = await (await itemReads(ctx)).detail(todo);
     const providerCopies: {
       integrationId: string;
       status: 'created' | 'unknown' | 'failed' | 'needs_permission';

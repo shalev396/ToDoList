@@ -1,9 +1,9 @@
 import { z } from 'zod';
 
+import { Item } from '../../../classes/item/index.js';
 import { AttrValues } from '../../../services/itemSchemas.js';
-import { updateOverlay } from '../../../services/items.js';
 import { defineTool } from '../../tool.js';
-import { ItemDetailView, ItemId, toItemDetailView } from '../itemViews.js';
+import { ItemDetailView, ItemId, itemCaller, itemReads, toItemDetailView } from '../itemViews.js';
 
 export const setItemAttributes = defineTool({
   name: 'set_item_attributes',
@@ -25,9 +25,11 @@ export const setItemAttributes = defineTool({
   scopes: ['items:write'],
   minRole: 'editor',
   async handler(ctx, input) {
-    const item = await updateOverlay(ctx.workspace, ctx.principal.userId, input.id, {
-      attrs: input.attrs,
-    });
-    return { output: { item: toItemDetailView(item) }, target: { type: 'item', id: item.id } };
+    const caller = itemCaller(ctx);
+    const item = await (
+      await Item.find(caller, input.id)
+    ).setOverlay(caller, { attrs: input.attrs });
+    const view = await (await itemReads(ctx)).detail(item);
+    return { output: { item: toItemDetailView(view) }, target: { type: 'item', id: view.id } };
   },
 });

@@ -45,13 +45,13 @@ import {
   planConnection,
   type ConnectionInput,
 } from '../services/integrationConfig.js';
-import { createItem } from '../services/items.js';
 import { DEFAULT_TOPIC_SLUGS, type DefaultTopicSlug } from '../types/topics.js';
 import { Topic } from '../classes/workspace/Topic.js';
 import { Workspace } from '../classes/workspace/Workspace.js';
 import { Actor, type ActorRef } from '../classes/base/Actor.js';
 import { Integration } from '../classes/integration/index.js';
 import { Caller } from '../classes/base/Caller.js';
+import { Todo } from '../classes/item/index.js';
 import { fixtureSetDir } from '../sync/fixtureSets.js';
 import type { Transport } from '../sync/http.js';
 import { getAdapter } from '../sync/registry.js';
@@ -234,7 +234,7 @@ async function ensureTodos(
       { $limit: 1 },
     ]);
     if (existing !== undefined) continue;
-    await createItem(ctx, ownerId, {
+    await Todo.create(Caller.fromContext(ctx, Actor.user(ownerId)), {
       title: todo.title,
       topicId: topics[todo.topic],
       dueAt: dueAt(todo.due, now, ctx.settings),

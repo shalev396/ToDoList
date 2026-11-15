@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import type { WorkspaceContext } from '../../services/accessFilter.js';
 import type * as Classes from './index.js';
-import type * as Items from '../../services/items.js';
+import type * as Items from '../../testing/itemCalls.js';
 import type { AttributeDef, NewAttribute, AttributePatch } from '../../types/attributes.js';
 import { callerOf } from '../../testing/workspaceFixtures.js';
 import type * as Models from '../../models/index.js';
@@ -27,7 +27,7 @@ let count = 0;
 before(async () => {
   db = await startTestDatabase('todolist_attributes_test');
   ({ Workspace, AttributeDefinitions } = await import('./index.js'));
-  items = await import('../../services/items.js');
+  items = await import('../../testing/itemCalls.js');
   models = await import('../../models/index.js');
 });
 

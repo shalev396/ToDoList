@@ -432,7 +432,7 @@ describe('conditional confirmation', () => {
 
 describe('errors from the services the tools wrap', () => {
   it('a mirrored item (items service) answers with its Open in link', async () => {
-    const { ItemMirroredResponse } = await import('../../services/items.js');
+    const { ItemMirroredResponse } = await import('../../testing/itemCalls.js');
     const result = await pipeline.runTool(
       failing(new ItemMirroredResponse('clickup', 'https://example.invalid/t/1')),
       context(),

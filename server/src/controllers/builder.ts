@@ -2,7 +2,7 @@ import { type RequestHandler } from 'express';
 
 import { describeCatalog } from '../builder/catalog.js';
 import { AttributeDefinitions } from '../classes/workspace/index.js';
-import { providerFieldsOf } from '../services/providerFields.js';
+import { ProviderFields } from '../classes/item/ProviderFields.js';
 import { listPersonas } from '../builder/personas.js';
 import { listTemplates } from '../builder/templates.js';
 import { listViewTemplates } from '../builder/viewTemplates.js';
@@ -37,7 +37,7 @@ const catalog: RequestHandler = async (req, res): Promise<void> => {
   const { workspace, user } = req as WorkspaceRequest;
   const data: BuilderCatalogResponseData = describeCatalog({
     attributes: AttributeDefinitions.of(workspace.settings).toJSON(),
-    providerFields: await providerFieldsOf(workspace, user.id),
+    providerFields: await ProviderFields.of(workspace, user.id),
   });
   res.success(data);
 };

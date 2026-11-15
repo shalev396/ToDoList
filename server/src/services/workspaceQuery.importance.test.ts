@@ -11,7 +11,7 @@ import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js
 import type { WorkspaceContext } from './accessFilter.js';
 import type * as Models from '../models/index.js';
 import type * as Query from './workspaceQuery.js';
-import type * as Items from './items.js';
+import type * as Items from '../testing/itemCalls.js';
 import type { ItemUpsert } from '../models/definitions/Item.js';
 import type { ItemQueryRow, Query as BuilderQuery, QueryResult } from '../types/builder.js';
 import type { ImportanceConfig } from '../types/importance.js';
@@ -31,7 +31,7 @@ before(async () => {
   db = await startTestDatabase('todolist_importance_query_test');
   models = await import('../models/index.js');
   queries = await import('./workspaceQuery.js');
-  items = await import('./items.js');
+  items = await import('../testing/itemCalls.js');
   const { Workspace } = await import('../classes/workspace/index.js');
   const user = await newUser('importance-query');
   userId = user.id;

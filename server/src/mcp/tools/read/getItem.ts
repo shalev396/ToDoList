@@ -1,8 +1,7 @@
 import { z } from 'zod';
 
-import { getItem as getItemDetail } from '../../../services/items.js';
 import { defineTool } from '../../tool.js';
-import { ItemDetailView, ItemId, toItemDetailView } from '../itemViews.js';
+import { ItemDetailView, ItemId, itemReads, toItemDetailView } from '../itemViews.js';
 
 export const getItem = defineTool({
   name: 'get_item',
@@ -21,7 +20,7 @@ export const getItem = defineTool({
   scopes: ['read'],
   minRole: 'viewer',
   async handler(ctx, input) {
-    const item = await getItemDetail(ctx.workspace, ctx.principal.userId, input.id);
+    const item = await (await itemReads(ctx)).get(input.id);
     return { output: toItemDetailView(item), target: { type: 'item', id: item.id } };
   },
 });

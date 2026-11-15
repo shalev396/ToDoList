@@ -4,7 +4,7 @@
  * what they mean on a dashboard (workspace time zone, week start, access filter). They answer
  * with the items service's summaries of what it found, in the bridge's order.
  */
-import { getItemSummaries } from '../../../services/items.js';
+import { itemReads } from '../itemViews.js';
 import { runWorkspaceQuery } from '../../../services/workspaceQuery.js';
 import type { Query, Rule } from '../../../types/builder.js';
 import type { ItemKind, Provider } from '../../../types/domain.js';
@@ -56,6 +56,6 @@ export async function findItems(
 ): Promise<{ items: ItemSummaryView[]; total: number }> {
   const result = await runWorkspaceQuery(ctx.workspace, ctx.principal.userId, { draft }, now);
   const ids = (result.rows ?? []).map((row) => row.id);
-  const summaries = await getItemSummaries(ctx.workspace, ctx.principal.userId, ids);
+  const summaries = await (await itemReads(ctx)).summaries(ids);
   return { items: summaries.map(toItemSummaryView), total: result.total };
 }

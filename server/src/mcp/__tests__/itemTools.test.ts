@@ -214,7 +214,8 @@ describe('update_todo and complete_todo', () => {
 
   it('answers an edit of a mirrored item with its Open in link (the REST 409)', async () => {
     for (const [name, args] of [
-      ['update_todo', { id: mirroredId, title: 'Hijacked' }],
+      // A field edited at its source only (neither its provider's nor kept as an override).
+      ['update_todo', { id: mirroredId, note: 'Hijacked' }],
       ['complete_todo', { id: mirroredId }],
       ['delete_todo', { id: mirroredId }],
       ['delete_todo', { id: mirroredId, confirm: true }],
@@ -232,6 +233,17 @@ describe('update_todo and complete_todo', () => {
       [item?.title, item?.status, item?.deletedAt],
       ['Fix the login bug', 'open', null],
     );
+  });
+
+  it('a provider field of a shared integration’s item is its owner’s to write', async () => {
+    const result = await call(editorKey, 'update_todo', { id: mirroredId, title: 'Hijacked' });
+    assert.equal(result.isError, true);
+    assert.equal(
+      errorText(result),
+      'Only the owner of this integration can change this at its provider',
+    );
+    const item = await (await models.getItemRepository()).findById(team.workspace.id, mirroredId);
+    assert.equal(item?.title, 'Fix the login bug');
   });
 
   it('does not find another workspace’s item', async () => {
@@ -257,6 +269,56 @@ describe('delete_todo', () => {
     assert.equal(deleted.applied, true);
     const gone = await call(editorKey, 'get_item', { id: item.id });
     assert.equal(gone.isError, true);
+  });
+});
+
+describe('create_todo with a recurrence (plan Addendum A3)', () => {
+  const recurrence = ['RRULE:FREQ=WEEKLY;BYDAY=MO'];
+
+  it('needs providers:create and confirm, takes no targets, and needs the workspace calendar', async () => {
+    const plain = await call(editorKey, 'create_todo', {
+      title: 'Weekly',
+      dueAt: '2026-11-23T07:00:00.000Z',
+      recurrence,
+      confirm: true,
+    });
+    assert.equal(plain.isError, true);
+    assert.match(errorText(plain), /providers:create/);
+    const key = await insertAgentKey({
+      workspaceId: team.workspace.id,
+      userId: team.editor.id,
+      scopes: ['read', 'items:write', 'providers:create'],
+    });
+    const unconfirmed = await call(key, 'create_todo', {
+      title: 'Weekly',
+      dueAt: '2026-11-23T07:00:00.000Z',
+      recurrence,
+    });
+    assert.equal(unconfirmed.isError, true);
+    assert.match(errorText(unconfirmed), /confirm: true/);
+    const withTargets = await call(key, 'create_todo', {
+      title: 'Weekly',
+      dueAt: '2026-11-23T07:00:00.000Z',
+      recurrence,
+      confirm: true,
+      targets: [
+        { integrationId: 'no-such-integration', target: { provider: 'clickup', listId: '90200' } },
+      ],
+    });
+    assert.equal(withTargets.isError, true);
+    assert.match(errorText(withTargets), /without targets/);
+    const noPrimary = await call(key, 'create_todo', {
+      title: 'Weekly',
+      dueAt: '2026-11-23T07:00:00.000Z',
+      recurrence,
+      confirm: true,
+    });
+    assert.equal(noPrimary.isError, true);
+    assert.match(errorText(noPrimary), /workspace calendar/);
+    const found = await (
+      await models.getItemRepository()
+    ).aggregate(team.workspace.id, [{ $match: { title: 'Weekly' } }]);
+    assert.equal(found.length, 0, 'nothing was created');
   });
 });
 

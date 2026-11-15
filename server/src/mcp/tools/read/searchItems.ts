@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
-import { listItems } from '../../../services/items.js';
 import { defineTool } from '../../tool.js';
 import {
   TopicList,
   topicIds,
   ItemSummaryView,
+  itemReads,
   KindList,
   ProviderList,
   StatusList,
@@ -55,7 +55,9 @@ export const searchItems = defineTool({
   minRole: 'viewer',
   async handler(ctx, input) {
     const { topic, ...filters } = input;
-    const page = await listItems(ctx.workspace, ctx.principal.userId, {
+    const page = await (
+      await itemReads(ctx)
+    ).list({
       ...filters,
       topicId: await topicIds(ctx.workspace, topic),
     });

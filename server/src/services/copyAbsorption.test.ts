@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import type { WorkspaceContext } from './accessFilter.js';
-import type * as Items from './items.js';
+import type * as Items from '../testing/itemCalls.js';
 import type * as Models from '../models/index.js';
 import type { ItemData } from '../models/definitions/Item.js';
 
@@ -21,7 +21,7 @@ let integrationId = '';
 
 before(async () => {
   db = await startTestDatabase('todolist_copy_absorption_test');
-  items = await import('./items.js');
+  items = await import('../testing/itemCalls.js');
   models = await import('../models/index.js');
   const created = await (
     await models.getWorkspaceRepository()

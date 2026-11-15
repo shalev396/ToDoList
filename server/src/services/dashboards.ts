@@ -25,7 +25,8 @@
  */
 import type { ImportanceConfig } from '../types/importance.js';
 import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
-import { providerFieldsOf, registryOf } from './providerFields.js';
+import { ProviderFields } from '../classes/item/ProviderFields.js';
+import { registryOf } from './providerFields.js';
 import { createPatch } from 'rfc6902';
 
 import {
@@ -999,7 +1000,7 @@ async function previews(
   if (blocks.length === 0) return {};
   const deps = await repositoryDeps();
   // The same `props.*` registry a saved query is run against, so a preview refuses the same paths.
-  const fieldRegistry = registryOf(await providerFieldsOf(ws, actor.userId));
+  const fieldRegistry = registryOf(await ProviderFields.of(ws, actor.userId));
   const rows = Math.min(
     limit ?? (actor.agentId === null ? CAPS.previewRows : AGENT_PREVIEW_ROWS),
     CAPS.previewRows,

@@ -374,7 +374,9 @@ describe('writes', () => {
 
   it('answers 409 with openIn for a mirrored item', async () => {
     for (const [method, path, body] of [
-      ['PATCH', `/items/${mirroredId}`, { title: 'x' }],
+      // A field edited at its source only: neither its provider's to take nor kept as an override.
+      ['PATCH', `/items/${mirroredId}`, { note: 'x' }],
+      ['PATCH', `/items/${mirroredId}`, { topicId: null }],
       ['DELETE', `/items/${mirroredId}`, undefined],
       ['POST', `/items/${mirroredId}/complete`, { done: true }],
     ] as const) {
@@ -385,6 +387,12 @@ describe('writes', () => {
         url: 'https://acme.atlassian.net/browse/ADS-1',
       });
     }
+  });
+
+  it('a provider field of a shared integration’s item is its owner’s to write (403)', async () => {
+    const res = await call('editor', 'PATCH', `/items/${mirroredId}`, { title: 'x' });
+    assert.equal(res.status, 403, res.text);
+    assert.equal(res.body?.['code'], 'integration_not_owner');
   });
 
   it('overlay works on a mirrored item and does not touch the source fields', async () => {

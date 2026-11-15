@@ -1,10 +1,9 @@
 import { z } from 'zod';
 
-import { getFacets } from '../../../services/items.js';
 import { Topic } from '../../../classes/workspace/index.js';
 import { CONTAINER_TYPES, ITEM_KINDS, ITEM_STATUSES, PROVIDERS } from '../../../types/domain.js';
 import { defineTool } from '../../tool.js';
-import { TopicList, withinTopics } from '../itemViews.js';
+import { itemReads, TopicList, withinTopics } from '../itemViews.js';
 
 export const listFacets = defineTool({
   name: 'list_facets',
@@ -41,10 +40,9 @@ export const listFacets = defineTool({
   scopes: ['read'],
   minRole: 'viewer',
   async handler(ctx, input) {
-    const facets = await getFacets(
-      await withinTopics(ctx.workspace, input.topic),
-      ctx.principal.userId,
-    );
+    const facets = await (
+      await itemReads(ctx, await withinTopics(ctx.workspace, input.topic))
+    ).facets();
     const present = new Set(facets.topics);
     const topics = (await Topic.list(ctx.workspace.id))
       .filter((topic) => present.has(topic.id))
