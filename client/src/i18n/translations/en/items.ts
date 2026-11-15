@@ -271,6 +271,7 @@ export const items = {
       '{{source}} doesn’t take this, so it’s kept in TodoList, for everyone who sees this item.',
     useSource: 'Use {{source}}’s value: {{value}}',
     sourceNone: 'none',
+    clearTitle: 'Clear the TodoList title',
     readOnly: 'Read-only',
     readOnlyLabel: 'Read-only: the {{source}} connection doesn’t send changes',
     someoneElse: 'the person who connected it',

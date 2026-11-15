@@ -51,7 +51,7 @@ import {
   type FieldPlan,
   type ProviderLock,
 } from './editPlan';
-import { saveProblemOf, serverAnswered, type SaveProblem } from './saveProblem';
+import { saveProblemOf, saveStateOf, serverAnswered, type SaveProblem } from './saveProblem';
 
 const PRIORITIES = ['4', '3', '2', '1', '0'] as const;
 
@@ -356,6 +356,7 @@ function FieldShell({
   source,
   onUseSource,
   sourceValue,
+  hideValue,
   clearing,
   children,
 }: {
@@ -369,6 +370,8 @@ function FieldShell({
   onUseSource: (() => void) | undefined;
   /** That value, as words ("none" when the provider has none). */
   sourceValue: string;
+  /** The provider's value is redacted: the action clears without naming it. */
+  hideValue: boolean;
   clearing: boolean;
   children: ReactNode;
 }) {
@@ -409,7 +412,9 @@ function FieldShell({
           data-use-source={plan.field}
           onClick={onUseSource}
         >
-          {t('items.edit.useSource', { source, value: sourceValue })}
+          {hideValue
+            ? t('items.edit.clearTitle')
+            : t('items.edit.useSource', { source, value: sourceValue })}
         </Button>
       ) : null}
     </div>
@@ -490,9 +495,7 @@ function EditForm({
     entry.origin === 'provider' && !entry.editable && plan.lock !== null ? lockId : undefined;
   const sourceAction = (entry: FieldPlan) => {
     const { field } = entry;
-    // Never show a redacted value as the provider's: the option is left out then.
-    const redacted = field === 'title' && (item.sourceValues?.title ?? '').includes('[REDACTED:');
-    if (field === 'endAt' || redacted) {
+    if (field === 'endAt') {
       return undefined;
     }
     return () => {
@@ -548,6 +551,8 @@ function EditForm({
       source={source}
       onUseSource={sourceAction(entry)}
       sourceValue={sourceText(entry.field)}
+      // Never show a redacted value as the provider's: the action then just clears ours.
+      hideValue={entry.field === 'title' && (item.sourceValues?.title ?? '').includes('[REDACTED:')}
       clearing={saving}
     >
       {children}
@@ -901,15 +906,7 @@ export function MirroredEditor({
 
   // "Couldn't save" only where nothing was: a partial write or an unanswered one says itself
   // what happened, and a flat "Couldn't save" beside "Saved: Title" would be untrue.
-  const state: SaveState = update.isPending
-    ? 'saving'
-    : failure !== null
-      ? failure.problem.kind === 'message'
-        ? 'error'
-        : 'idle'
-      : saved
-        ? 'saved'
-        : 'idle';
+  const state: SaveState = saveStateOf(update.isPending, failure?.problem ?? null, saved);
   const problemNote =
     failure === null ? null : (
       <ProblemNote

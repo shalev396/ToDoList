@@ -13,7 +13,7 @@ import {
   withStart,
   type EditDraft,
 } from './editPlan.ts';
-import { saveProblemOf, serverAnswered } from './saveProblem.ts';
+import { saveProblemOf, saveStateOf, serverAnswered } from './saveProblem.ts';
 
 const ZONE = 'Asia/Jerusalem';
 
@@ -467,6 +467,15 @@ describe('saveProblemOf', () => {
     assert.deepEqual(saveProblemOf(new Error('Network Error'), true), { kind: 'uncertain' });
   });
 
+  it('a bare 500 to a save that sent the provider something may have been made there', () => {
+    assert.deepEqual(saveProblemOf(failed(500, { message: 'Internal server error' }), true), {
+      kind: 'uncertain',
+    });
+    // Without a provider field, it is TodoList's own failure, said as such.
+    const own = saveProblemOf(failed(500, { message: 'Internal server error' }), false);
+    assert.equal(own.kind === 'message' ? own.key : own.kind, 'items.sheet.saveError');
+  });
+
   it('“not kept” is known only from an answer (a code, or a 4xx)', () => {
     assert.equal(serverAnswered(failed(502, { code: 'provider_no_answer' })), true);
     assert.equal(serverAnswered(failed(409, { message: 'x' })), true);
@@ -528,7 +537,7 @@ describe('saveProblemOf', () => {
         openIn: { provider: 'jira', url: 'https://j/1' },
       },
     );
-    assert.deepEqual(saveProblemOf(failed(500, {})), {
+    assert.deepEqual(saveProblemOf(failed(500, {}), false), {
       kind: 'message',
       key: 'items.sheet.saveError',
       fields: [],
@@ -540,5 +549,39 @@ describe('saveProblemOf', () => {
       fields: [],
       openIn: null,
     });
+  });
+});
+
+describe('saveStateOf: “Couldn’t save” only where nothing was saved', () => {
+  const failed = (status: number, data: unknown) => ({ response: { status, data } });
+  const problem = (status: number, data: unknown, sent = true) =>
+    saveProblemOf(failed(status, data), sent);
+
+  it('saving, saved, and idle', () => {
+    assert.equal(saveStateOf(true, null, false), 'saving');
+    assert.equal(saveStateOf(false, null, true), 'saved');
+    assert.equal(saveStateOf(false, null, false), 'idle');
+  });
+
+  it('a refusal is an error', () => {
+    assert.equal(
+      saveStateOf(false, problem(409, { code: 'integration_read_only' }), false),
+      'error',
+    );
+    assert.equal(
+      saveStateOf(false, problem(502, { code: 'provider_unreachable' }), false),
+      'error',
+    );
+  });
+
+  it('written at the provider, partial, unanswered or unconfirmed: never “Couldn’t save”', () => {
+    for (const each of [
+      problem(409, { code: 'provider_written_not_stored', details: { written: ['title'] } }),
+      problem(409, { code: 'provider_partial_write', details: { written: ['title'] } }),
+      problem(502, { code: 'provider_no_answer' }),
+      problem(504, {}, false),
+    ]) {
+      assert.equal(saveStateOf(false, each, false), 'idle', JSON.stringify(each));
+    }
   });
 });

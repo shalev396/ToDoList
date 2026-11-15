@@ -272,6 +272,7 @@ export const items = {
     onlyHereHint: '{{source}} לא שומר את זה, לכן זה נשמר ב-⁠TodoList, לכל מי שרואה את הפריט.',
     useSource: 'לחזור לערך של {{source}}: {{value}}',
     sourceNone: 'אין',
+    clearTitle: 'ניקוי הכותרת של TodoList',
     readOnly: 'קריאה בלבד',
     readOnlyLabel: 'קריאה בלבד: החיבור ל-⁠{{source}} לא שולח שינויים',
     someoneElse: 'מי שחיבר אותו',

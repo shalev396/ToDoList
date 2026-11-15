@@ -14,6 +14,7 @@ import {
   errorKey,
 } from '../../../api/errors.ts';
 import type { OpenIn } from '@api-types/items.ts';
+import type { SaveState } from '../../../components/ui/save-status-state.ts';
 
 export type SaveProblem =
   /** The event has other guests: ask whether to tell them, then send again. */
@@ -83,6 +84,11 @@ export function saveProblemOf(error: unknown, sentToProvider = true): SaveProble
       kept: details?.kept ?? null,
     };
   }
+  // A bare 500 to a save that sent the provider something: the server may have failed after the
+  // provider took it, so it may have been made there.
+  if (code === undefined && status === 500 && sentToProvider) {
+    return { kind: 'uncertain' };
+  }
   // Sent, and no answer came back (a timeout, a gateway, the network): it may have been made.
   if (
     code === 'provider_no_answer' ||
@@ -113,4 +119,25 @@ export function saveProblemOf(error: unknown, sentToProvider = true): SaveProble
     fields: [],
     openIn: null,
   };
+}
+
+/**
+ * The SaveStatus beside a save: "Couldn't save" only where nothing was saved. A partial write, an
+ * unanswered or unconfirmed one, and one the provider took but TodoList couldn't store say
+ * themselves what happened; a flat "Couldn't save" beside them would be untrue.
+ */
+export function saveStateOf(
+  pending: boolean,
+  problem: SaveProblem | null,
+  saved: boolean,
+): SaveState {
+  if (pending) {
+    return 'saving';
+  }
+  if (problem !== null) {
+    return problem.kind === 'message' && problem.key !== 'items.edit.errors.writtenNotStored'
+      ? 'error'
+      : 'idle';
+  }
+  return saved ? 'saved' : 'idle';
 }
