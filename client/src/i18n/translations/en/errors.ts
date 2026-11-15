@@ -65,6 +65,7 @@ export const errors = {
     oauthNotEditor: 'Only editors and owners can connect their own accounts here.',
     oauthLimit: 'You, or this workspace, have the most connections allowed. Disconnect one first.',
     oauthFailed: 'Google Calendar couldn’t be connected. Try again.',
+    scopeNotAllowed: 'Your role can’t give an agent that access. Choose fewer permissions.',
   },
   generic: 'Something went wrong. Try again in a moment.',
   status: {
