@@ -1,6 +1,6 @@
 # MCP sign-in for agents (OAuth), next to agent keys
 
-**Status:** design, awaiting Shalev's approval. **Date:** 2026-11-15.
+**Status:** approved by Shalev 2026-11-15, with two additions folded in: many agents per workspace, and losing access logs everything out. **Date:** 2026-11-15.
 
 ## Why
 
@@ -12,6 +12,8 @@ Agents (Claude, Claude Code, Cursor, VS Code) are the point of TodoList's MCP se
 - Agent keys keep working unchanged, for any client that can send a header.
 - **Anyone in a workspace can connect an agent, either way** (Shalev's decision "B"). The agent never exceeds the person's role: a viewer's agent can only read. This uses the existing rule, effective scopes = granted scopes ∩ role.
 - **Members can create agent keys too** (today owner only), so "the user will choose" holds for every role. This is my call, flagged to Shalev.
+- **Many agents per workspace** (Shalev): any number of members, each with any number of agents, in any mix of keys and sign-ins. For example, two agents from one user and one from another. Every sign-in is its own entry, even from the same client, up to the existing per-user cap.
+- **An agent's access is the user's access** (Shalev). It is checked on every request, so a role change applies to the agent's next call. When a user loses access to a workspace (removed, leaves, or deletes the account), **everything of theirs there is logged out at once**: agent keys, agent sign-ins (their refresh tokens stop working too), and every provider integration (Jira, ClickUp, Linear, GitHub, Google Calendar).
 - One place to see and revoke access: Settings → Agent keys lists keys and sign-ins together.
 
 ## Non-goals
@@ -133,9 +135,13 @@ Agent ──POST /api/mcp  Authorization: Bearer <access token>──▶ works a
   - single use, 10 minutes, stored hashed;
   - bound to client, redirect URI, PKCE challenge (S256 only; `plain` refused), user, workspace, scopes and resource;
   - `pkceChallenge` from the shared helper verifies it.
-- **One grant per (user, workspace, client, resource):** signing in again from the same client to the same endpoint replaces the old grant, so repeated sign-ins don't pile up toward the cap. The same client connected to both `/api/mcp` and `/api/mcp/readonly` holds two grants. Grants count toward the 10-per-user cap. At the cap, the consent page says so and points to Agent keys.
+- **Every sign-in is a new grant**, including a second sign-in from the same client: two Claude instances, or Claude on two machines. Nothing is replaced.
+  - The consent page has a name field, prefilled with the client name ("Claude"), so the user can tell them apart ("Claude on laptop").
+  - Grants count toward the 10-per-user cap, which counts only usable entries (not revoked, not past their hard cap). At the cap, the consent page says so and points to Agent keys.
 - **Revocation:**
-  - revoking in Agent keys, leaving the workspace or deleting the account ends the grant, exactly as for keys (`revokeForUser`);
+  - revoking one entry in Agent keys ends that agent alone;
+  - **losing access logs out everything of that user in that workspace.** This is already how keys and integrations work: `Member` (remove/leave) calls `revokeForUser` and `Integration.disconnectAllOf`, which hard-delete credentials for Jira, ClickUp, Linear, GitHub and Google Calendar. `revokeForUser` must revoke sign-ins too, and a revoked grant's access token and refresh token fail on their next use, not after the hour. Account deletion goes through the same path. No change to `Member.ts` is needed;
+  - every MCP request already re-checks membership and role (`resolvePrincipal`), so this holds even before revocation finishes;
   - an optional RFC 7009 `POST /api/public/oauth/revoke` lets clients disconnect.
 - **Audit log** (`AuditLog.record`): grant created, refreshed (at most once per hour per grant, like `lastUsedAt`), revoked, refresh reuse detected. No tokens are ever logged.
 
@@ -182,6 +188,8 @@ Agent ──POST /api/mcp  Authorization: Bearer <access token>──▶ works a
   - a wrong verifier, a reused code, an expired code, a `resource` mismatch;
   - refresh rotation and reuse detection;
   - role-capped scopes, a viewer's agent being read-only, revocation;
+  - several agents at once: two sign-ins from one user (same client) and one from another user, all working side by side, and revoking one leaves the others;
+  - removing a member: their keys, sign-ins (access and refresh) and integrations all stop at once, while other members' agents keep working;
   - the cap.
 - Existing key tests stay green unchanged.
 - **Live:** Claude Code and Claude (web) against dev (through the gate's `/api` fallbacks), then prod after release, both connecting and revoking.
@@ -197,7 +205,7 @@ Agent ──POST /api/mcp  Authorization: Bearer <access token>──▶ works a
 
 1. Members can create keys too, not only sign in.
 2. Access token 1 hour. Refresh: 90 days sliding, 365-day hard cap, rotated, reuse revokes (30-second grace for a retried refresh), no expiry picker.
-3. One grant per user, workspace, client and endpoint; grants count toward the 10-key cap.
+3. Every sign-in is its own named entry (no replacing). Entries count toward the 10-per-user cap (Shalev: many agents per workspace, per user).
 4. Consent defaults: what the agent asked for, or `read`, `items:write`, `builder:write` when it asked for nothing. `providers:create` and `builder:publish` start unticked.
 5. Dev/QA: no change to the shared WAF. Clients that only try root discovery URLs can sign in on prod but not on dev/QA; keys work everywhere.
 6. No CORS change: the agents that matter don't need it.
