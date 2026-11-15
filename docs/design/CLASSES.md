@@ -1780,6 +1780,32 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 - **`Topic.delete`** unsets the topic through `Item.unsetTopicIn`, `Container.unsetTopicIn` and
   `Integration.unsetTopicIn`.
 
+### Phase 4a, fix round 1
+
+- **`ItemPolicy#canOverride` / `assertCanOverride`**: TodoList's own fields (the overlay, a mirrored
+  item's overrides) belong to editors who see the item (404, else 403); `Item#setOverlay` and the
+  local half of `MirroredItem#edit` ask it.
+- **`Item#providerChanges(caller, edit)`** (abstract; a `Todo` has none): what an edit would write
+  at the provider, checked, nothing written. MCP `update_todo` asks it first: a provider half needs
+  `providers:create` and `confirm: true` (nothing sent otherwise); local changes need neither.
+- **`allDay` override**: only a due date's, for an item without a start (`Overrides.effective` and
+  the projection's `$cond`); a `CalendarEvent` (`keepsOwnTime`) or any item with a start refuses
+  one (400).
+- **`Overrides.prefilter(filter, skip)`**: a wider filter on stored fields, run before the
+  projection so the indexes narrow (the compiler, `ItemQuery#list`, the push plan); the exact
+  filter still runs after it.
+- **`gcal/commit.ts`** builds its `PushItem` from the effective values, as the plan does.
+- **A stale override** of a provider field clears when the provider's value is sent (no write).
+- **Text search** covers `overlay.overrides.title` (the items text index; sync-db swaps the old one).
+- **`Integration#needsCreateConsent`** (a create: the write scopes, or one of the definition's
+  `createScopes`, Linear's `issues:create`) beside `needsWriteConsent` (a write-back: `write`);
+  `ItemEditing` adds `needsReconnect` and `canWriteProvider` is false without the write scope.
+- **Recurring create**: `CalendarProvider#ensureReads` (the workspace calendar is read from then
+  on), a retry with the same key answers the stored event (200, nothing sent, no quota; Google's
+  409 reads as `existed`), a store failure is 409 `created_not_stored` with `details.written`.
+- **Copy flow**: `Todo.copyOwn` → `TodoCopy.start` (each check once); `providerIds.ts` and
+  `createFields.ts` live in `classes/integration/`, the field discovery in `builder/`.
+
 ## Where phase 4a left the old modules
 
 | Module                               | Now                                                                                                                                                  |
@@ -1787,7 +1813,7 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 | `services/items.ts`                  | **deleted**: `Item`, `Todo`, `ItemQuery`, `Container` (controllers and MCP tools call them)                                                          |
 | `services/providerCreate/mirror.ts`  | **deleted**: `MirroredItem.store`, `MirroredItem#markAsCopyOf`                                                                                       |
 | `services/providerCreate/service.ts` | no database: the chips and the funnel steps; `createCopy` is `Todo.findOwn` + `Todo#copyTo` (`TodoCopy`)                                             |
-| `services/providerFields.ts`         | pure discovery only; the sample and its cache are `ProviderFields`                                                                                   |
+| `services/providerFields.ts`         | moved to `builder/providerFields.ts` (pure discovery); the sample and its cache are `ProviderFields`                                                 |
 | `services/workspaceQuery.ts`         | no database: request parsing and the compile context; `QueryTarget` reads views and blocks, `ItemQuery#run` runs the query (the 503 on a time limit) |
 | `gcal/plan.ts`                       | still on the legacy list (phase 5); projects the effective values before its date window                                                             |
 | `testing/itemCalls.ts`               | tests only: the old call shapes, one line each over the classes                                                                                      |
