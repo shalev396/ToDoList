@@ -12,6 +12,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  CalendarApiError,
   CalendarWriteRefusedError,
   calendarWriter,
   isAllowedCalendarWrite,
@@ -182,5 +183,47 @@ describe('calendarWriter', () => {
     await assert.rejects(scoped.removeCalendar('me@example.test'), refused);
     await assert.rejects(scoped.removeCalendar('primary'), refused);
     assert.deepEqual(sent, []);
+  });
+});
+
+describe('a refusal keeps Google’s reason, a one-word token, never its text', () => {
+  const realFetch = globalThis.fetch;
+  let body = '';
+
+  before(() => {
+    globalThis.fetch = (): Promise<Response> =>
+      Promise.resolve(
+        new Response(body, { status: 403, headers: { 'content-type': 'application/json' } }),
+      );
+  });
+
+  after(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const reasonOf = async (answer: unknown): Promise<string | null> => {
+    body = typeof answer === 'string' ? answer : JSON.stringify(answer);
+    const writer = calendarWriter({ authorization: 'Bearer FAKE-access' });
+    try {
+      await writer.remove('me@example.test', 'elabc');
+    } catch (error) {
+      assert.ok(error instanceof CalendarApiError);
+      assert.equal(error.status, 403);
+      assert.equal(error.message.includes('Rate'), false, 'no text of the body');
+      return error.reason;
+    }
+    throw new Error('expected a refusal');
+  };
+
+  it('reads error.errors[0].reason when it is a plain word', async () => {
+    const google = (reason: unknown): unknown => ({
+      error: { code: 403, message: 'Rate Limit Exceeded', errors: [{ reason, message: 'x' }] },
+    });
+    assert.equal(await reasonOf(google('rateLimitExceeded')), 'rateLimitExceeded');
+    assert.equal(await reasonOf(google('forbidden')), 'forbidden');
+    assert.equal(await reasonOf(google('not a word')), null);
+    assert.equal(await reasonOf(google(7)), null);
+    assert.equal(await reasonOf({ error: { code: 403, message: 'no reasons' } }), null);
+    assert.equal(await reasonOf('<html>not json</html>'), null);
   });
 });

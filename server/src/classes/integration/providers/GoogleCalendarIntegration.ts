@@ -170,13 +170,36 @@ function outcomeUnknown(error: unknown): boolean {
   return error.status === null || error.status >= 500;
 }
 
+/** Google's 403 reasons that mean "this account may not do this": a refusal for good. */
+const PERMISSION_REASONS: ReadonlySet<string> = new Set([
+  'forbidden',
+  'insufficientPermissions',
+  'requiredAccessLevel',
+  'forbiddenForNonOrganizer',
+]);
+
+/** Google's 403 reasons that mean "too much, too fast": back off and retry later, like a 429. */
+const RATE_LIMIT_REASONS: ReadonlySet<string> = new Set([
+  'rateLimitExceeded',
+  'userRateLimitExceeded',
+  'quotaExceeded',
+  'dailyLimitExceeded',
+]);
+
+/** A 403 that is Google's rate or usage limit (to retry later), not a refusal. */
+function rateLimited(error: CalendarApiError): boolean {
+  return error.status === 403 && error.reason !== null && RATE_LIMIT_REASONS.has(error.reason);
+}
+
 /**
- * A Google answer that refuses a clean-up step for good (no permission, a precondition, a rejected
- * request): the step is recorded and dropped, not retried.
+ * A Google answer that refuses a clean-up step for good, so the step is recorded and dropped, not
+ * retried: a rejected request (400), or a 403 whose reason is a permission one. A 403 for a rate
+ * limit, or with an unknown or missing reason, is not: it stops the call, and the next one retries.
  */
 function refusedForGood(error: unknown): boolean {
-  if (!(error instanceof CalendarApiError) || error.status === null) return false;
-  return [400, 403, 412, 422].includes(error.status);
+  if (!(error instanceof CalendarApiError)) return false;
+  if (error.status === 400) return true;
+  return error.status === 403 && error.reason !== null && PERMISSION_REASONS.has(error.reason);
 }
 
 /** Events.list from the start of time: every event of a calendar (deleted ones marked so). */
@@ -207,6 +230,9 @@ function calendarFailure(error: unknown): Error {
     return new AppError(502, 'Google Calendar did not answer. Try again in a moment.');
   }
   if (status === 401) return new AppError(409, RECONNECT);
+  if (rateLimited(error)) {
+    return new AppError(429, 'Google Calendar is busy. Try again in a moment.');
+  }
   if (status === 403) return new AppError(409, 'Google refused this change for this account');
   if (status === 404 || status === 410) return new ProviderItemMissingError('google_calendar');
   if (status === 429) return new AppError(429, 'Google Calendar is busy. Try again in a moment.');
@@ -573,12 +599,7 @@ export class GoogleCalendarIntegration
    */
   async removeAdded(caller: Caller, budget: TimeBudget = cleanupBudget()): Promise<AddedRemoval> {
     this.assertWritable(caller);
-    const removed = await this.#cleanUp(caller, 'added', budget);
-    return {
-      events: removed.events,
-      calendars: removed.calendars,
-      calendarsKept: removed.calendarsKept,
-    };
+    return this.#cleanUp(caller, 'added', budget);
   }
 
   /**
@@ -791,33 +812,55 @@ export class GoogleCalendarIntegration
         const subject: CleanupSubject = {
           ownLiveLinks: () => this.#ownLiveLinks(),
           isProtected: (calendarId) => calendarId === protectedId,
-          deleteLink: (link) =>
-            this.#refusable(
+          deleteLink: async (link): Promise<StepOutcome> => {
+            // Re-read before each delete: the primary calendar may have been switched meanwhile,
+            // and a push may have moved or dropped the link.
+            const links = await getCalendarLinkRepository();
+            const [now, fresh] = await Promise.all([
+              this.#currentPrimary(),
+              links.findByItem(this.workspaceId, this.id, link.itemId),
+            ]);
+            const guarded =
+              kind === 'added' && now?.isOn(this.id) === true ? null : (now?.calendarId ?? null);
+            if (
+              fresh === null ||
+              !CalendarLink.isOwnLive(fresh) ||
+              fresh.calendarId !== link.calendarId ||
+              fresh.calendarId === guarded
+            ) {
+              return 'skipped';
+            }
+            // Only while the link is still on that calendar (N2): a move meanwhile keeps it live.
+            const forget = async (): Promise<void> => {
+              await links.tombstone(this.workspaceId, fresh.id, 'dashboard', fresh.calendarId);
+            };
+            return this.#refusable(
               caller,
-              { operation: 'event.delete', itemId: link.itemId },
+              { operation: 'event.delete', itemId: fresh.itemId },
               async () => {
                 await writer.remove(
-                  checkedId('calendarId', link.calendarId, 'link'),
-                  checkedId('eventId', link.googleEventId, 'link'),
+                  checkedId('calendarId', fresh.calendarId, 'link'),
+                  checkedId('eventId', fresh.googleEventId, 'link'),
                 );
-                return async () => {
-                  await (
-                    await getCalendarLinkRepository()
-                  ).tombstone(this.workspaceId, link.id, 'dashboard');
-                };
               },
-            ),
+              forget,
+            );
+          },
           createdCalendars: () => this.#createdCalendars.ids,
           contentsOf: (calendarId): Promise<CalendarContents> => {
             if (calendarId === protectedId) return Promise.resolve('others');
             ownItems ??= this.#linkedItemIds();
-            return this.#contentsOf(calendarId, ownItems);
+            return this.#contentsOf(calendarId, ownItems, budget);
           },
           deleteCalendar: (calendarId) =>
-            this.#refusable(caller, { operation: 'calendar.delete' }, async () => {
-              await writer.removeCalendar(calendarId);
-              return () => Promise.resolve();
-            }),
+            this.#refusable(
+              caller,
+              { operation: 'calendar.delete' },
+              async () => {
+                await writer.removeCalendar(calendarId);
+              },
+              () => Promise.resolve(),
+            ),
           forgetCalendar: (calendarId) => this.#forgetCalendar(calendarId),
           removeLinks: async (): Promise<void> => {
             await (
@@ -843,20 +886,21 @@ export class GoogleCalendarIntegration
   }
 
   /**
-   * One clean-up step at Google, audited as `integration.write` with `meta`: done (then `after`,
-   * the step's own bookkeeping), or refused for good (Google said no: a 400, 403, 412 or 422),
-   * which is recorded (`outcome: 'refused'`) and dropped from tracking all the same, so the next
-   * call moves on. An outcome Google left unknown (no answer, a 5xx) is recorded as such and stops
-   * the call, as do a 401 (reconnect) and a 429 (busy): the next call retries.
+   * One clean-up step at Google, audited as `integration.write` with `meta`, then `forget` (the
+   * step's own bookkeeping: no longer tracked), when it was done or refused for good
+   * (refusedForGood: a rejected request, a permission 403), recorded then as `outcome: 'refused'`
+   * so the next call moves on. An outcome Google left unknown (no answer, a 5xx) is recorded as
+   * such and stops the call, as do a 401 (reconnect), a 429 and a rate-limit 403 (busy): the next
+   * call retries.
    */
   async #refusable(
     caller: Caller,
     meta: Record<string, unknown>,
-    step: () => Promise<() => Promise<void>>,
+    step: () => Promise<void>,
+    forget: () => Promise<void>,
   ): Promise<StepOutcome> {
-    let after: () => Promise<void>;
     try {
-      after = await step();
+      await step();
     } catch (error) {
       if (outcomeUnknown(error)) {
         await this.recordWrite(caller, { ...meta, outcome: 'unknown' });
@@ -864,15 +908,11 @@ export class GoogleCalendarIntegration
       }
       if (!refusedForGood(error)) throw error;
       await this.recordWrite(caller, { ...meta, outcome: 'refused' });
-      if (typeof meta['itemId'] === 'string') {
-        const links = await getCalendarLinkRepository();
-        const found = await links.findByItem(this.workspaceId, this.id, meta['itemId']);
-        if (found !== null) await links.tombstone(this.workspaceId, found.id, 'dashboard');
-      }
+      await forget();
       return 'refused';
     }
     await this.recordWrite(caller, meta);
-    await after();
+    await forget();
     return 'done';
   }
 
@@ -908,6 +948,7 @@ export class GoogleCalendarIntegration
   async #contentsOf(
     calendarId: string,
     ownItems: Promise<ReadonlySet<string>>,
+    budget: TimeBudget,
   ): Promise<CalendarContents> {
     const linked = await ownItems;
     const isOwn = (raw: Record<string, unknown>): boolean => {
@@ -927,6 +968,8 @@ export class GoogleCalendarIntegration
         const reader = calendarReader(auth);
         let pageToken: string | null = null;
         for (let page = 0; page < MAX_FOREIGN_PAGES; page += 1) {
+          // Another page only while a call can still end in the budget; else the next call reads.
+          if (page > 0 && !budget.canStart()) return 'later';
           const result = await reader.list(calendarId, { timeMin: ALL_EVENTS_FROM }, pageToken);
           if (result.items.some((raw) => raw['status'] !== 'cancelled' && !isOwn(raw))) {
             return 'others';

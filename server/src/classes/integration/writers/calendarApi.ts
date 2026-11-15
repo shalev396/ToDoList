@@ -18,8 +18,8 @@
  * Anything else (another calendar's delete, a clear, an ACL, a GET) is refused before it is
  * sent. The base is
  * Google's (googleEndpoints), or a test's stand-in. No redirect is followed, a call gives up after
- * 8 s (STEP_CEILING_MS), and a failure is a CalendarApiError with the HTTP status only: never a token, a body or a
- * URL.
+ * 8 s (STEP_CEILING_MS), and a failure is a CalendarApiError with the HTTP status and Google's
+ * error reason (a one-word token): never a token, a body's text or a URL.
  */
 import { loopbackAllowedForTests } from '../../../config/testSwitches.js';
 import { assertPublicHttpsUrl } from '../../../services/netGuard.js';
@@ -34,11 +34,31 @@ const MAX_BODY_CHARS = 1_000_000;
 export class CalendarApiError extends Error {
   /** The HTTP status, or null when there was no answer (network, timeout, redirect). */
   readonly status: number | null;
+  /**
+   * Google's error reason (`error.errors[0].reason`: `forbidden`, `rateLimitExceeded`…), a short
+   * token checked against REASON, never the error's text; null when none came.
+   */
+  readonly reason: string | null;
 
-  constructor(status: number | null) {
+  constructor(status: number | null, reason: string | null = null) {
     super(`Google Calendar answered ${status === null ? 'nothing' : String(status)}`);
     this.name = 'CalendarApiError';
     this.status = status;
+    this.reason = reason;
+  }
+}
+
+/** A Google error reason: one short word, nothing else ever kept from an error body. */
+const REASON = /^[A-Za-z]{1,40}$/;
+
+/** Google's `error.errors[0].reason` of an error body, when it is a plain token. */
+function reasonOf(text: string): string | null {
+  try {
+    const body = JSON.parse(text) as { error?: { errors?: { reason?: unknown }[] } } | null;
+    const reason = body?.error?.errors?.[0]?.reason;
+    return typeof reason === 'string' && REASON.test(reason) ? reason : null;
+  } catch {
+    return null;
   }
 }
 
@@ -240,7 +260,7 @@ async function request(
   }
   const text = await response.text();
   if (response.status < 200 || response.status >= 300) {
-    throw new CalendarApiError(response.status);
+    throw new CalendarApiError(response.status, reasonOf(text.slice(0, MAX_BODY_CHARS)));
   }
   if (text === '' || text.length > MAX_BODY_CHARS) return null;
   try {

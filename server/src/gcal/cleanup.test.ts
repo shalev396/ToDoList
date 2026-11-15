@@ -233,9 +233,20 @@ describe('a disconnect whose clean-up runs out of time', () => {
     const still = await (await models.getIntegrationRepository()).findById(wid, iid);
     assert.equal(still?.deletedAt, null, 'still connected');
 
-    // Google refuses the next delete for good (no permission): it is counted, no longer tracked,
-    // and the call goes on to the next one instead of stopping there for ever.
-    mock.failNextWrite(403);
+    // A rate limit (a 403 with Google's rateLimitExceeded) is no refusal: the call stops like a
+    // 429, nothing is counted as failed, nothing is dropped, and it stays connected.
+    mock.failNextWrite(403, 'rateLimitExceeded');
+    const busy = await call('DELETE', `/integrations/${iid}?removeAdded=true`);
+    assert.equal(busy.status, 429, busy.text);
+    assert.equal(
+      (await (await models.getIntegrationRepository()).findById(wid, iid))?.deletedAt,
+      null,
+      'not disconnected while a rate-limited step remains',
+    );
+
+    // Google refuses the next delete for good (a permission reason): it is counted, no longer
+    // tracked, and the call goes on to the next one instead of stopping there for ever.
+    mock.failNextWrite(403, 'forbidden');
     const refused = await call('DELETE', `/integrations/${iid}?removeAdded=true`);
     assert.equal(refused.status, 409, refused.text);
     assert.deepEqual(refused.body?.['progress'], {
@@ -253,7 +264,16 @@ describe('a disconnect whose clean-up runs out of time', () => {
 
     setBudget(null);
     const done = await call('DELETE', `/integrations/${iid}?removeAdded=true`);
-    assert.equal(done.status, 204, done.text);
+    // A completed clean-up answers what it did (200), refused and skipped steps included.
+    assert.equal(done.status, 200, done.text);
+    assert.deepEqual(data(done.body), {
+      events: 1,
+      calendars: 1,
+      calendarsKept: 0,
+      remaining: 0,
+      skipped: 0,
+      failed: 0,
+    });
     // The refused event is still in Google, but it is this integration's own push (its link row
     // stays until the links are removed), so the calendar TodoList made holds nothing else.
     assert.deepEqual(

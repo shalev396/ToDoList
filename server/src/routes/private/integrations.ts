@@ -6,6 +6,7 @@ import {
 } from '../../controllers/index.js';
 import { requireWorkspace } from '../../middlewares/requireWorkspace.js';
 import { sensitiveBody } from '../../middlewares/sensitiveBody.js';
+import type { CleanupProgress } from '../../types/primaryCalendar.js';
 import type { IntegrationStatusView } from '../../models/definitions/Integration.js';
 import type { AuthMethod, IntegrationMode } from '../../types/domain.js';
 import type {
@@ -309,7 +310,7 @@ router.post(
 // ─── DELETE /api/private/workspaces/:wid/integrations/:iid ──────────────────
 
 /**
- * Its owner. 204. Disconnects: the integration is deleted first, then its credential is wiped (and
+ * Its owner. 204 (200 with the clean-up's counts when `removeAdded` ran). Disconnects: the integration is deleted first, then its credential is wiped (and
  * checked gone), then its items and containers are soft-deleted. `?removeAdded=true` (Google
  * Calendar: "Also remove everything TodoList added to this calendar") first deletes every event
  * TodoList pushed with it and each calendar TodoList created there that holds nothing else, then
@@ -322,6 +323,12 @@ router.post(
 export interface DisconnectIntegrationQuery {
   removeAdded?: 'true' | 'false';
 }
+
+/**
+ * With `removeAdded`, once the clean-up completed and the integration is disconnected: 200 with
+ * what the clean-up did (`remaining` 0; `failed` and `skipped` steps included). Without: 204.
+ */
+export type DisconnectIntegrationResponseData = CleanupProgress;
 router.delete(
   '/workspaces/:wid/integrations/:iid',
   requireWorkspace('viewer'),

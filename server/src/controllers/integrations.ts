@@ -7,6 +7,7 @@ import type {
   GetIntegrationConfigResponseData,
   IntegrationSharingResponseData,
   ListIntegrationsResponseData,
+  DisconnectIntegrationResponseData,
   RemovePushedResponseData,
   StopSharingResponseData,
   TestIntegrationResponseData,
@@ -132,13 +133,22 @@ const remove: RequestHandler = async (req, res): Promise<void> => {
     request.caller,
     routeParam(req, 'iid'),
   );
+  let removed;
   try {
-    await integration.disconnect(request.caller, { removeAdded: query.removeAdded === 'true' });
+    removed = await integration.disconnect(request.caller, {
+      removeAdded: query.removeAdded === 'true',
+    });
   } catch (error) {
     if (answeredIncomplete(error, res)) return;
     throw error;
   }
-  res.status(204).end();
+  if (removed === null) {
+    res.status(204).end();
+    return;
+  }
+  // What the clean-up did, refused and skipped steps included, for the client to show.
+  const data: DisconnectIntegrationResponseData = removed;
+  res.success(data);
 };
 
 /** "Remove" the events a Google Calendar integration pushed (its owner, read & write). */

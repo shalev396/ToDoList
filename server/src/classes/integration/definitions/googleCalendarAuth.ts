@@ -12,6 +12,7 @@ import type { ReadOnlyClient } from '../../../sync/http.js';
 import { CALENDAR_READONLY_SCOPE } from '../auth/googleServiceAccount.js';
 import { GOOGLE_ENDPOINTS, googleEndpoints } from '../../../sync/providers/googleEndpoints.js';
 import { liveTransport } from '../../../sync/transports/live.js';
+import { STEP_CEILING_MS } from '../calendar/TimeBudget.js';
 import { OAuthAuth, type OAuthAppOptions } from '../auth/OAuthAuth.js';
 import { ServiceAccountAuth, type ServiceAccountAuthOptions } from '../auth/ServiceAccountAuth.js';
 import { fakeEmail, fakePrivateKey } from './fake.js';
@@ -100,7 +101,9 @@ const googleApp: OAuthAppOptions = {
   loginHint: true,
   refresh: 'per_call',
   consoleUrl: 'https://console.cloud.google.com/apis/credentials',
-  transport: () => liveTransport(),
+  // A token exchange or revoke takes one call's longest time at most (STEP_CEILING_MS), so it fits
+  // a request's TimeBudget like every Calendar API call.
+  transport: () => liveTransport({ timeoutMs: STEP_CEILING_MS }),
   messages: {
     unavailable: 'Connecting with Google is not set up on this server',
     notReconnectable: 'integrationId: not a Google Calendar connected with Google',

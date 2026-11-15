@@ -189,16 +189,19 @@ describe('two integrations of one workspace on one shared calendar', () => {
   });
 
   it('the old integration’s "Remove" leaves the current calendar alone', async () => {
+    // One tracker per event: the new integration's adopting push took over the old one's links.
+    const links = await models.getCalendarLinkRepository();
+    assert.deepEqual(await links.listLive(wid, ia), []);
     assert.equal(await pushedEvents(first, ia), 0);
     const removed = await call(first, 'POST', `/integrations/${ia}/remove-pushed`);
     assert.equal(removed.status, 200, removed.text);
-    assert.deepEqual(data(removed.body), { events: 0, remaining: 0, skipped: 2, failed: 0 });
+    assert.deepEqual(data(removed.body), { events: 0, remaining: 0, skipped: 0, failed: 0 });
     assert.equal(eventCount(), 3);
   });
 
   it('its disconnect with "Also remove" keeps the calendar and its events', async () => {
     const removed = await call(first, 'DELETE', `/integrations/${ia}?removeAdded=true`);
-    assert.equal(removed.status, 204, removed.text);
+    assert.equal(removed.status, 200, removed.text);
     assert.ok(
       mock.createdCalendars().some((entry) => entry.id === calendar),
       'the current workspace calendar is never deleted',
@@ -212,7 +215,7 @@ describe('two integrations of one workspace on one shared calendar', () => {
       calendars: 0,
       calendarsKept: 1,
       remaining: 0,
-      skipped: 2,
+      skipped: 0,
       failed: 0,
     });
   });

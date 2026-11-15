@@ -108,8 +108,11 @@ export interface MockGoogle {
   grants(): { issued: number; revoked: number; live: number };
   /** Every request the stand-in received, in order: its method, path and query (no body). */
   requests(): readonly { method: string; path: string; query: string }[];
-  /** The next Calendar API write (not a GET, not the token endpoint) answers `status` instead. */
-  failNextWrite(status: number): void;
+  /**
+   * The next Calendar API write (not a GET, not the token endpoint) answers `status` instead, with
+   * Google's error `reason` when given (`rateLimitExceeded`, `forbidden`…).
+   */
+  failNextWrite(status: number, reason?: string): void;
   reset(): void;
   close(): Promise<void>;
 }
@@ -149,8 +152,14 @@ function send(res: ServerResponse, status: number, body?: unknown): void {
   res.end(JSON.stringify(body));
 }
 
-const apiError = (res: ServerResponse, status: number, message: string): void => {
-  send(res, status, { error: { code: status, message } });
+const apiError = (res: ServerResponse, status: number, message: string, reason?: string): void => {
+  send(res, status, {
+    error: {
+      code: status,
+      message,
+      ...(reason === undefined ? {} : { errors: [{ domain: 'usageLimits', reason, message }] }),
+    },
+  });
 };
 
 async function readBody(req: IncomingMessage): Promise<string> {
@@ -178,7 +187,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
   let created = new Map<string, (CalendarEntry & { timeZone: string | null })[]>();
   let epoch = randomBytes(4).toString('hex');
   let seq = 0;
-  let failWrite: number | null = null;
+  let failWrite: { status: number; reason?: string } | null = null;
 
   const calendarsOf = (who: MockGoogleAccount): CalendarEntry[] => [
     { id: who.email, summary: who.email, primary: true, accessRole: 'owner' },
@@ -514,9 +523,9 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     const grant = grantOf(req, res);
     if (grant === null) return;
     if (failWrite !== null && req.method !== 'GET') {
-      const status = failWrite;
+      const { status, reason } = failWrite;
       failWrite = null;
-      apiError(res, status, 'Backend Error');
+      apiError(res, status, 'Backend Error', reason);
       return;
     }
     const who = grant.account;
@@ -705,8 +714,8 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
       return { issued: grants.length, revoked, live: grants.length - revoked };
     },
     requests: (): readonly { method: string; path: string; query: string }[] => [...received],
-    failNextWrite(status): void {
-      failWrite = status;
+    failNextWrite(status, reason): void {
+      failWrite = reason === undefined ? { status } : { status, reason };
     },
     reset,
     close: () =>

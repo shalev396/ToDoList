@@ -20,8 +20,15 @@ export interface OpResult {
 const statusOf = (error: unknown): number | null =>
   error instanceof CalendarApiError ? error.status : null;
 
-/** One op through the writer, as Code.gs's applyOps_ does it. */
-async function applyOp(writer: CalendarWriter, op: WireOp): Promise<OpResult> {
+/**
+ * One op through the writer, as Code.gs's applyOps_ does it. `canCall` says whether a second call
+ * (a create's adopting patch after a 409) still fits the budget; deferred otherwise.
+ */
+async function applyOp(
+  writer: CalendarWriter,
+  op: WireOp,
+  canCall: () => boolean,
+): Promise<OpResult> {
   if (op.type === 'delete') {
     await writer.remove(op.calendarId, op.eventId);
     return { opId: op.opId, ok: true };
@@ -35,6 +42,8 @@ async function applyOp(writer: CalendarWriter, op: WireOp): Promise<OpResult> {
     } catch (error) {
       // The deterministic id exists already (a create that was cut off, or deleted in Google).
       if (statusOf(error) !== 409) throw error;
+      // The id exists (adopted next run when no call fits now: the create is idempotent).
+      if (!canCall()) return { opId: op.opId, ok: false, code: 'deferred' };
       written = await writer.patch(op.calendarId, event.id, { ...event, status: 'confirmed' });
     }
   } else {
@@ -51,7 +60,8 @@ async function applyOp(writer: CalendarWriter, op: WireOp): Promise<OpResult> {
 
 /**
  * Every op, in order, while one more call (taking up to `ceilingMs`) still ends by `deadline`
- * (epoch ms); what is left is deferred. Never throws.
+ * (epoch ms); what is left is deferred. The first op always runs, so every push makes progress.
+ * Never throws.
  */
 export async function applyOps(
   writer: CalendarWriter,
@@ -61,14 +71,15 @@ export async function applyOps(
   ceilingMs = 0,
 ): Promise<OpResult[]> {
   const results: OpResult[] = [];
+  const fits = (): boolean => deadline - now() >= Math.max(0, ceilingMs);
   for (const op of ops) {
-    const left = deadline - now();
-    if (left < Math.max(0, ceilingMs)) {
+    const ok = fits();
+    if (results.length > 0 && !ok) {
       results.push({ opId: op.opId, ok: false, code: 'deferred' });
       continue;
     }
     try {
-      results.push(await applyOp(writer, op));
+      results.push(await applyOp(writer, op, fits));
     } catch (error) {
       const status = statusOf(error);
       results.push({

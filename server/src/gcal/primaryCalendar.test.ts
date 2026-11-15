@@ -450,7 +450,7 @@ describe('disconnect with "Also remove everything TodoList added to this calenda
 
     const before = writes();
     const removed = await as(owner, 'DELETE', `/integrations/${iid}?removeAdded=true`);
-    assert.equal(removed.status, 204, removed.text);
+    assert.equal(removed.status, 200, removed.text);
     const sent = since(before);
     assert.deepEqual(sent.filter((line) => line.includes('/events/')).sort(), [...live].sort());
     // One calendar delete, for the calendar TodoList made that holds nothing else.

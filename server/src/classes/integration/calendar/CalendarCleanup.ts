@@ -29,11 +29,17 @@ import { TimeBudget, WRITE_BUDGET_MS } from './TimeBudget.js';
 
 export type { CleanupProgress };
 
-/** Whether a calendar TodoList created holds anything it did not add: `gone` when Google no longer has it. */
-export type CalendarContents = 'others' | 'only_ours' | 'gone';
+/**
+ * Whether a calendar TodoList created holds anything it did not add: `gone` when Google no longer
+ * has it, `later` when its listing could not be read whole within the budget (the next call reads).
+ */
+export type CalendarContents = 'others' | 'only_ours' | 'gone' | 'later';
 
-/** How one step at Google ended: done, or refused for good (recorded, no longer tracked). */
-export type StepOutcome = 'done' | 'refused';
+/**
+ * How one step at Google ended: done, refused for good (recorded, no longer tracked), or skipped
+ * (re-read just before: the link moved, went, or is now on the current workspace calendar).
+ */
+export type StepOutcome = 'done' | 'refused' | 'skipped';
 
 /** What a clean-up asks of its integration: each a provider write or read of its own. */
 export interface CleanupSubject {
@@ -41,7 +47,10 @@ export interface CleanupSubject {
   ownLiveLinks(): Promise<CalendarLinkData[]>;
   /** Whether a calendar is the current workspace calendar, which this clean-up never touches. */
   isProtected(calendarId: string): boolean;
-  /** One pushed event deleted (audited), then its link tombstoned. */
+  /**
+   * One pushed event deleted (audited), then its link tombstoned; `skipped` when the link, re-read
+   * just before, moved, went or is now on the current workspace calendar.
+   */
   deleteLink(link: CalendarLinkData): Promise<StepOutcome>;
   /** The calendars TodoList created on it. */
   createdCalendars(): readonly string[];
@@ -95,8 +104,10 @@ export abstract class CalendarCleanup {
     this.progress.skipped = links.length - todo.length;
     for (const [index, link] of todo.entries()) {
       this.stopIfOutOfTime(todo.length - index + this.pendingAfterEvents());
-      if ((await this.subject.deleteLink(link)) === 'done') this.progress.events += 1;
-      else this.progress.failed += 1;
+      const outcome = await this.subject.deleteLink(link);
+      if (outcome === 'done') this.progress.events += 1;
+      else if (outcome === 'refused') this.progress.failed += 1;
+      else this.progress.skipped += 1;
     }
     await this.afterEvents();
     return { ...this.progress };
@@ -146,6 +157,9 @@ export class AddedContentRemoval extends CalendarCleanup {
       }
       this.stopIfOutOfTime(calendars.length - index);
       const contents = await this.subject.contentsOf(calendarId);
+      if (contents === 'later') {
+        throw new CleanupIncompleteError({ ...this.progress, remaining: calendars.length - index });
+      }
       if (contents === 'others') {
         this.progress.calendarsKept += 1;
         continue;

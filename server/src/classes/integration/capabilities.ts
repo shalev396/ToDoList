@@ -9,6 +9,7 @@
  * (Integration#withWriteSession), the one place that refuses demo data and read-only
  * integrations.
  */
+import type { CleanupProgress } from '../../types/primaryCalendar.js';
 import type { TimeBudget } from './calendar/TimeBudget.js';
 import type { Caller } from '../base/Caller.js';
 import type { Revocable } from '../base/contracts.js';
@@ -143,15 +144,12 @@ export interface CalendarPushRequest {
   budget?: TimeBudget;
 }
 
-/** What "Also remove everything TodoList added" removed (counts only). */
-export interface AddedRemoval {
-  /** Pushed events deleted at the provider. */
-  events: number;
-  /** Calendars TodoList created, deleted. */
-  calendars: number;
-  /** Calendars TodoList created, kept because they hold events it did not add. */
-  calendarsKept: number;
-}
+/**
+ * What "Also remove everything TodoList added" did (counts only): the events and calendars
+ * removed, the calendars kept, the events left on the current workspace calendar (`skipped`) and
+ * the steps Google refused for good (`failed`). `remaining` is 0 once it completed.
+ */
+export type AddedRemoval = CleanupProgress;
 
 /**
  * An integration that can take back what TodoList added at its provider, always on its owner's

@@ -77,6 +77,8 @@ interface FakeOptions {
   protectedId?: string;
   /** Links (by item) and calendars Google refuses for good. */
   refused?: readonly string[];
+  /** Links (by item) found moved or gone when re-read just before their delete. */
+  moved?: readonly string[];
   /** Links on another calendar than `c`, by item. */
   elsewhere?: Readonly<Record<string, string>>;
 }
@@ -95,6 +97,7 @@ function subject(
     return Promise.resolve();
   };
   const outcome = async (entry: string, id: string): Promise<StepOutcome> => {
+    if (options.moved?.includes(id) === true) return 'skipped';
     await step(entry);
     return options.refused?.includes(id) === true ? 'refused' : 'done';
   };
@@ -202,5 +205,12 @@ describe('CalendarCleanup', () => {
     assert.deepEqual(done, counts({ events: 2, failed: 2 }));
     assert.ok(log.includes('delete c'));
     assert.ok(log.includes('forget mine'), 'a refused calendar is no longer tracked');
+  });
+
+  it('a link found moved or gone when re-read just before its delete is skipped, not deleted', async () => {
+    const { subject: s, log } = subject(['a', 'b'], {}, { moved: ['a'] });
+    const done = await new PushedEventsRemoval(s, TimeBudget.start(60_000)).run();
+    assert.deepEqual(done, counts({ events: 1, skipped: 1 }));
+    assert.deepEqual(log, ['delete b']);
   });
 });

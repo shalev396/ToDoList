@@ -79,6 +79,7 @@ import { UnofferedAuth } from './auth/UnofferedAuth.js';
 import {
   isAddedContentRemover,
   isCalendarProvider,
+  type AddedRemoval,
   isCreateFunnel,
   isResourcePicker,
   isRevocable,
@@ -779,10 +780,15 @@ export abstract class Integration<
    * With `removeAdded` ("Also remove everything TodoList added"), an integration that can take it
    * back (AddedContentRemover: Google Calendar; 400 for any other) does so first, while it is
    * still connected and read & write (409 `integration_read_only` otherwise); a failure there
-   * stops before anything is disconnected. Not for one already disconnected (409).
+   * stops before anything is disconnected. Not for one already disconnected (409). Returns what
+   * the clean-up did (its counts, `failed` and `skipped` included), or null without one.
    */
-  async disconnect(caller: Caller, options: { removeAdded?: boolean } = {}): Promise<void> {
+  async disconnect(
+    caller: Caller,
+    options: { removeAdded?: boolean } = {},
+  ): Promise<AddedRemoval | null> {
     this.assertOwner(caller);
+    let removed: AddedRemoval | null = null;
     if (options.removeAdded === true) {
       if (!isAddedContentRemover(this)) {
         throw new AppError(400, 'removeAdded: TodoList adds nothing at this provider');
@@ -793,9 +799,10 @@ export abstract class Integration<
           'Already disconnected: what TodoList added can no longer be removed',
         );
       }
-      await this.removeAdded(caller);
+      removed = await this.removeAdded(caller);
     }
     await this.#disconnectSteps(caller);
+    return removed;
   }
 
   async #disconnectSteps(by: AuditScope): Promise<void> {
