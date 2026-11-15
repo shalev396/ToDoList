@@ -39,7 +39,7 @@ export const legal = {
       },
       agents: {
         title: 'AI agents (MCP)',
-        body: 'You can create agent keys so an AI assistant can work with your workspace over MCP. We store only a hash of each key. An agent sees only what the key’s scopes and your role in the workspace allow, and it never sees connection tokens. You can revoke a key at any time.',
+        body: 'You can create agent keys so an AI assistant can work with your workspace over MCP. We store only a hash of each key. An agent sees only what the key’s scopes and your role in the workspace allow, and it never sees connection tokens. You can revoke a key at any time. An agent can also sign in instead of using a key. For that we store the agent’s name, its redirect address and hashes of its tokens, never the tokens themselves. Sign-ins show in Agent keys, you can revoke them at any time, and they end when you leave the workspace or delete your account.',
       },
       sharing: {
         title: 'Sharing and who can see what',

@@ -28,6 +28,16 @@ When the plugin is enabled, Claude Code asks for two values (the plugin's `userC
 
 Change either later in `/config` (the key: disable and re-enable the plugin). The `todolist` MCP server, four skills (`todolist-daily`, `todolist-tasks`, `todolist-builder`, `todolist-sync`) and the hooks load together. Hook state and the audit log live in the plugin data directory.
 
+### Sign in instead of using a key
+
+Claude Code can also sign in, with no key. Add the server without a header:
+
+```sh
+claude mcp add --transport http todolist <address>
+```
+
+Then run `/mcp` in Claude Code and choose to sign in. A browser opens on TodoList, where you pick the scopes and approve. The sign-in appears in **Settings -> Agent keys** with the client's name, and you can revoke it there at any time.
+
 ## 3. Cursor
 
 1. Copy `cursor/mcp.json` to `.cursor/mcp.json` in your project (or merge it into `~/.cursor/mcp.json`). It reads `${env:TODOLIST_MCP_URL}` (the address from **Connect an agent**) and `${env:TODOLIST_AGENT_KEY}`, so start Cursor from a shell that has them.
@@ -36,7 +46,7 @@ Change either later in `/config` (the key: disable and re-enable the plugin). Th
 
 ## 4. Any other MCP client
 
-Streamable HTTP, the address from **Connect an agent**, header `Authorization: Bearer <key>`. In Claude (web, desktop): Connectors -> Add custom connector, paste the address, and add the header under Request headers. To poke at it with the MCP Inspector:
+Streamable HTTP, the address from **Connect an agent**, header `Authorization: Bearer <key>`. In Claude (web, desktop): Connectors -> Add custom connector, paste the address, and add the header under Request headers. To sign in instead of using a key: Connectors -> Add custom connector, paste the address, leave the headers empty, and choose Connect. For Cursor and VS Code, add the server URL without the header and the client offers sign-in. To poke at it with the MCP Inspector:
 
 ```sh
 npx @modelcontextprotocol/inspector

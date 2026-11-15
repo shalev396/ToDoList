@@ -85,14 +85,25 @@ The wire format is JSON-RPC 2.0. The AI reads the tool list (name, description, 
 
 ## 4. Agent authentication
 
-| | **A. Per-agent scoped API keys** (phase 1) | **B. OAuth 2.1 per MCP spec** (phase 2) |
+| | **A. Per-agent scoped API keys** (phase 1) | **B. OAuth 2.1 per MCP spec** (built) |
 |---|---|---|
-| How | Elytra UI → Settings → Agents → New key: workspace + scopes + expiry. Shown once. Sent as `Authorization: Bearer elk_…`. | Server publishes Protected Resource Metadata (RFC 9728), and Cognito is the authorization server (auth code + PKCE) ([authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization), [AS discovery](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery)) |
+| How | Elytra UI → Settings → Agents → New key: workspace + scopes + expiry. Shown once. Sent as `Authorization: Bearer elk_…`. | Server publishes Protected Resource Metadata (RFC 9728). TodoList is its own authorization server, on the API Lambda (auth code + PKCE; not Cognito). Design: `docs/superpowers/specs/2026-11-15-mcp-oauth-sign-in-design.md` ([authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization), [AS discovery](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery)) |
 | Clients | Any client that can set a header. Claude's custom-connector dialog has auth and header settings ([Claude help](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)). Grok Bot, Cursor and Inspector do too. | Every spec-compliant client, with a "Connect" button UX |
 | Pros | Simple, revocable per agent, explicit scopes, no consent screens | Standard, short-lived tokens, no secret pasting |
-| Cons | A long-lived secret sits in the agent's config | More moving parts. The 2026 spec prefers **Client ID Metadata Documents** and deprecates Dynamic Client Registration ([client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration)). Cognito's support for these needs checking, so a pre-registered client per agent may be the practical route. |
+| Cons | A long-lived secret sits in the agent's config | More moving parts. The 2026 spec prefers **Client ID Metadata Documents** and deprecates Dynamic Client Registration ([client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration)). TodoList's own server supports both: Client ID Metadata Documents and Dynamic Client Registration. |
 
-**Decision:** ship **A**, then add **B**. Both resolve to `AgentPrincipal {userId, workspaceId, agentId, role, scopes[]}`. Effective rights are the **intersection** of the key's scopes and the user's DATA.md membership role (viewer/editor/owner). A key can never exceed its user.
+**Decision:** ship **A**, then add **B** (both are built). Both resolve to `AgentPrincipal {userId, workspaceId, agentId, role, scopes[]}`. Effective rights are the **intersection** of the key's scopes and the user's DATA.md membership role (viewer/editor/owner). A key can never exceed its user.
+
+**OAuth addresses (B).** `<domain>` is the stage's domain. The issuer is `https://<domain>/api/mcp/oauth`.
+
+| What | Address |
+|---|---|
+| Issuer | `https://<domain>/api/mcp/oauth` |
+| Authorize (GET) | `{issuer}/authorize` |
+| Token, register, revoke (POST) | `{issuer}/token`, `{issuer}/register`, `{issuer}/revoke` |
+| Authorization server metadata | `{issuer}/.well-known/oauth-authorization-server` and `{issuer}/.well-known/openid-configuration` (also at `/.well-known/oauth-authorization-server/api/mcp/oauth` and `/.well-known/openid-configuration/api/mcp/oauth`) |
+| Protected resource metadata | `{issuer}/resource-metadata` and `{issuer}/resource-metadata/readonly` (also at `/.well-known/oauth-protected-resource/api/mcp` and `/.well-known/oauth-protected-resource/api/mcp/readonly`) |
+| Consent page | `https://<domain>/{en or he}/authorize-agent?request=<id>` |
 
 **Storage:** a new `AgentKeys` collection `{_id, workspaceId, userId, name, keyHash (sha256), prefix, scopes[], expiresAt, lastUsedAt, revokedAt}`. Only the hash is stored, following the DATA.md `Invites` token pattern. Defined in DATA.md §3.14, with indexes in §6.
 
@@ -491,10 +502,12 @@ In `app.ts`, mount `app.use('/api/mcp', parseBody, mcpRouter)` next to the exist
 
 | Client | How |
 |---|---|
-| **Claude Code** | The TodoList plugin (`agent-plugin/`). On enable it asks for the address and the key (`userConfig`; the key goes to the system's secure credential store). The address defaults to prod. |
-| **Claude** | Customize → Connectors → Add → Custom → Web. Paste `https://<domain>/api/mcp` (or `/readonly`) and set up auth or headers ([Claude help](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)). It must be publicly reachable over HTTPS. |
+| **Claude Code** | The TodoList plugin (`agent-plugin/`). On enable it asks for the address and the key (`userConfig`; the key goes to the system's secure credential store). The address defaults to prod. To sign in instead of using a key: `claude mcp add --transport http todolist <address>` with no header. Claude Code then offers to sign in through `/mcp`. |
+| **Claude** | Customize → Connectors → Add → Custom → Web. Paste `https://<domain>/api/mcp` (or `/readonly`) and set up auth or headers ([Claude help](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)). It must be publicly reachable over HTTPS. To sign in instead of using a key: Connectors → Add custom connector, paste the address, leave the headers empty, and choose Connect. |
 | **Grok Bot** | Add a custom connector with the remote URL plus `Authorization: Bearer elk_…`. Remi gets its own key (`read sync builder:write`), so the audit log shows "Remi". |
-| **Cursor / VS Code** | `agent-plugin/cursor/mcp.json`: `{"url":"${env:TODOLIST_MCP_URL}","headers":{"Authorization":"Bearer ${env:TODOLIST_AGENT_KEY}"}}` |
+| **Cursor / VS Code** | `agent-plugin/cursor/mcp.json`: `{"url":"${env:TODOLIST_MCP_URL}","headers":{"Authorization":"Bearer ${env:TODOLIST_AGENT_KEY}"}}`. To sign in instead: add the server URL without the header, and the client offers sign-in. |
+
+**Signing in.** With no key, the client finds the sign-in on its own, registers itself, and sends the member to the consent page. The member picks the scopes and approves. The sign-in then shows in Settings → Agent keys with its client's name, and can be revoked there at any time. Each sign-in counts toward the same cap as keys.
 
 **One key per agent, least scope.** Start every new agent on `/readonly`.
 
@@ -503,6 +516,6 @@ In `app.ts`, mount `app.use('/api/mcp', parseBody, mcpRouter)` next to the exist
 ## 14. Open questions
 
 1. Is TypeScript (TS SDK) confirmed? BACKEND.md §2 still marks the language as undecided.
-2. OAuth phase 2: does Cognito support CIMD or DCR, or do we pre-register one client per agent?
+2. ~~OAuth phase 2: does Cognito support CIMD or DCR?~~ Answered: TodoList runs its own authorization server and supports both CIMD and DCR (see §4).
 3. Can agents ever hold `builder:publish`, or does only the UI publish?
 4. Retention: `AuditLogs` is 365 days per DATA.md. For `DashboardVersions`, I suggest the last 50 per dashboard.
