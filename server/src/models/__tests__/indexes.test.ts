@@ -11,6 +11,8 @@ import { DashboardVersionMongoModel } from '../mongoose/DashboardVersion.js';
 import { IntegrationMongoModel } from '../mongoose/Integration.js';
 import { InviteMongoModel } from '../mongoose/Invite.js';
 import { ItemMongoModel } from '../mongoose/Item.js';
+import { McpAuthRequestMongoModel } from '../mongoose/McpAuthRequest.js';
+import { McpClientMongoModel } from '../mongoose/McpClient.js';
 import { MembershipMongoModel } from '../mongoose/Membership.js';
 import { ReplayNonceMongoModel } from '../mongoose/ReplayNonce.js';
 import { CreateQuotaMongoModel } from '../mongoose/CreateQuota.js';
@@ -160,6 +162,11 @@ const EXPECTED: Record<string, IndexSpec[]> = {
   Topics: [{ key: { workspaceId: 1, slug: 1 }, unique: true }],
   AgentKeys: [
     { key: { keyHash: 1 }, unique: true },
+    // MCP sign-in grants: the refresh token's hash and the two tokens kept for a retried refresh.
+    { key: { refreshHash: 1 }, unique: true },
+    { key: { prevRefreshHash: 1 } },
+    { key: { altRefreshHash: 1 } },
+    { key: { sourceRequestId: 1 } },
     { key: { workspaceId: 1, userId: 1, revokedAt: 1 } },
     { key: { expiresAt: 1 }, partialFilterExpression: HAS_DATE('expiresAt') },
   ],
@@ -170,6 +177,17 @@ const EXPECTED: Record<string, IndexSpec[]> = {
   ],
   ReplayNonces: [{ key: { expireAt: 1 }, expireAfterSeconds: 0 }],
   CreateQuotas: [{ key: { expireAt: 1 }, expireAfterSeconds: 0 }],
+  // MCP sign-in (global, not per workspace): a client is forgotten 30 days after its last use.
+  McpClients: [{ key: { lastUsedAt: 1 }, expireAfterSeconds: 30 * 86400 }],
+  // A request lives until it expires (TTL); an approved one is found by its code's hash.
+  McpAuthRequests: [
+    { key: { expiresAt: 1 }, expireAfterSeconds: 0 },
+    {
+      key: { codeHash: 1 },
+      unique: true,
+      partialFilterExpression: { codeHash: { $type: 'string' } },
+    },
+  ],
 };
 
 /** The parts of a Mongoose model this test reads. */
@@ -197,6 +215,8 @@ const MODELS: readonly ModelWithIndexes[] = [
   CalendarLinkMongoModel,
   ReplayNonceMongoModel,
   CreateQuotaMongoModel,
+  McpClientMongoModel,
+  McpAuthRequestMongoModel,
 ];
 
 const COMPARED_OPTIONS = [
@@ -218,7 +238,7 @@ function normalize(key: Record<string, unknown>, options: Record<string, unknown
 }
 
 describe('collection indexes (DATA.md §6)', () => {
-  it('covers exactly the 18 new collections', () => {
+  it('covers exactly the collections listed', () => {
     const names = MODELS.map((model) => model.collection.collectionName).sort();
     assert.deepEqual(names, Object.keys(EXPECTED).sort());
   });

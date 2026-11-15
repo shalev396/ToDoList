@@ -55,7 +55,10 @@ describe('syncMongo (sync-db on MongoDB)', () => {
     // The state hash (unique) and the 10-minute TTL.
     assert.ok(first.includes('OAuthStates: indexes ok (2)'), first.join('\n'));
     assert.ok(first.includes('Topics: indexes ok (1)'), first.join('\n'));
-    assert.equal(first.length, 21, first.join('\n'));
+    // MCP sign-in adds McpClients and McpAuthRequests (TTL indexes; the request's code hash).
+    assert.ok(first.includes('McpClients: indexes ok (1)'), first.join('\n'));
+    assert.ok(first.includes('McpAuthRequests: indexes ok (2)'), first.join('\n'));
+    assert.equal(first.length, 23, first.join('\n'));
   });
 
   it('reports collection names and counts only, never a value', () => {

@@ -24,6 +24,12 @@ const GLOBAL_METHODS = new Set([
   'IntegrationRepository.findIncludingDeletedForWorker',
   'IntegrationRepository.listActiveForDispatch',
   'AgentKeyRepository.findByHash',
+  // MCP sign-in grants are found by the hash of a secret, like findByHash: the refresh token
+  // (and the two it replaced, for a retried refresh), or the authorization request that made them.
+  'AgentKeyRepository.findByRefreshHash',
+  'AgentKeyRepository.findBySourceRequest',
+  // The refresh endpoint rotates a grant it found by the refresh token's hash: the id is the key.
+  'AgentKeyRepository.rotateGrant',
   // The public OAuth callback knows the state only: its hash is the key (like an invite token).
   'OAuthStateRepository.findByStateHash',
   // The nightly purge job (jobs/purge.ts) is maintenance over every workspace.
@@ -39,6 +45,10 @@ const NOT_WORKSPACE_SCOPED = new Set([
   'MediaRepository',
   // The hourly create budget (H5) is per user and provider, across workspaces.
   'CreateQuotaRepository',
+  // MCP sign-in, before any workspace is chosen: a client is global, an authorization request
+  // names its workspace only once the member approves it.
+  'McpClientRepository',
+  'McpAuthRequestRepository',
 ]);
 
 /** Workspaces are the scope itself: there `id` is the workspace id. */
