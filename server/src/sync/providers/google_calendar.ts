@@ -17,7 +17,7 @@
  *   cancelled occurrence stays live as `status: cancelled` (the client hides that occurrence).
  * - Auth: the integration's strategy (`ctx.auth`, classes/integration/auth) hands each resource
  *   its headers:
- *   - `service_account`: a service-account JWT traded for an access token (googleAuth.ts), scope
+ *   - `service_account`: a service-account JWT traded for an access token (the strategy's signer), scope
  *     calendar.readonly, once per resource;
  *   - `oauth`: the user's refresh token (sealed `{refreshToken, scope}`, opened by the vault for
  *     the run) traded for an access token once per run, kept in memory for that run only.
@@ -495,7 +495,7 @@ async function testConnection(ctx: AdapterContext): Promise<ConnectionTestResult
         : null;
     label ??= summary ?? id;
   }
-  const clientEmail = text(ctx.secret['clientEmail']);
+  const clientEmail = text(ctx.auth.account?.() ?? null);
   return {
     accountLabel: label ?? first,
     ...(clientEmail === null ? {} : { accountId: clientEmail }),

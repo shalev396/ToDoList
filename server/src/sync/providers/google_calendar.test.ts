@@ -499,7 +499,6 @@ function contextFor(
   const client = googleCalendarAdapter.createClient(transport, clock);
   return {
     integration: s.integration,
-    secret,
     client,
     // The headers come from the integration's auth strategy, as in a run.
     auth: bindAuth(GOOGLE_CALENDAR_AUTH, s.integration.authMethod, { secret, client, now: NOW }),

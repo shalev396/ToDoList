@@ -84,7 +84,10 @@ export interface FakeFetchCall {
   resource: string;
   state: SyncStateData | null;
   fullSyncDue: boolean;
-  secretKeys: string[];
+  /** Whether the context carried a secret (it never does: the adapter gets `auth` only). */
+  seesSecret: boolean;
+  /** The run's auth, as the integration's strategy bound it. */
+  authKind: AdapterContext['auth']['kind'];
   timeZone: string;
   now: Date;
 }
@@ -92,7 +95,7 @@ export interface FakeFetchCall {
 const contextNumbers = new WeakMap<AdapterContext, number>();
 let contextsSeen = 0;
 
-/** A number per context object (the object itself is not kept: it holds the run's secret). */
+/** A number per context object (the object itself is not kept). */
 function contextNumber(ctx: AdapterContext): number {
   let number = contextNumbers.get(ctx);
   if (number === undefined) {
@@ -106,9 +109,9 @@ function contextNumber(ctx: AdapterContext): number {
 const PROJECTS_QUERY =
   'query FakeProjects($first: Int) { projects(first: $first) { id name url } }';
 
-function headers(ctx: AdapterContext): Record<string, string> {
-  // Fixtures mode has no secret: the value is empty and the fixture transport ignores headers.
-  return { authorization: `Bearer ${ctx.secret['token'] ?? ''}` };
+/** The run's auth headers: the integration's strategy's (none for the fake provider). */
+function headers(ctx: AdapterContext): Promise<Readonly<Record<string, string>>> {
+  return ctx.auth.headers();
 }
 
 /** `breakContract: 'parentId'`: a database id smuggled onto a mapped record. */
@@ -169,7 +172,7 @@ async function* fetchProjects(ctx: AdapterContext): AsyncGenerator<AdapterPage, 
   const data = await ctx.client.graphql<{ projects: FakeProject[] }>(
     'FakeProjects',
     { first: 50 },
-    headers(ctx),
+    await headers(ctx),
   );
   yield {
     resource: 'projects',
@@ -219,7 +222,7 @@ async function* fetchItems(
     if (since !== null) url.searchParams.set('since', since);
     const { data } = await ctx.client.getJson<{ items: FakeItem[]; next: number | null }>(
       url.href,
-      headers(ctx),
+      await headers(ctx),
     );
     for (const item of data.items) {
       if (cursor === null || item.updatedAt > cursor) cursor = item.updatedAt;
@@ -276,7 +279,8 @@ export function createFakeAdapter(): { adapter: ProviderAdapter; calls: FakeFetc
         resource,
         state,
         fullSyncDue: ctx.fullSyncDue,
-        secretKeys: Object.keys(ctx.secret),
+        seesSecret: 'secret' in ctx,
+        authKind: ctx.auth.kind,
         timeZone: ctx.timeZone,
         now: ctx.now,
       });

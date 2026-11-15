@@ -9,7 +9,7 @@ import { z } from 'zod';
 
 import { OAuthFailure } from '../../../services/oauth/failure.js';
 import type { ReadOnlyClient } from '../../../sync/http.js';
-import { CALENDAR_READONLY_SCOPE } from '../../../sync/providers/googleAuth.js';
+import { CALENDAR_READONLY_SCOPE } from '../auth/googleServiceAccount.js';
 import { GOOGLE_ENDPOINTS, googleEndpoints } from '../../../sync/providers/googleEndpoints.js';
 import { liveTransport } from '../../../sync/transports/live.js';
 import { OAuthAuth, type OAuthAppOptions } from '../auth/OAuthAuth.js';

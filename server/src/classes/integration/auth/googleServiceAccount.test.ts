@@ -7,7 +7,7 @@ import {
   FAKE_CLIENT_EMAIL,
   FAKE_UNUSABLE_PEM,
   fakeServiceAccount,
-} from '../../testing/fakeServiceAccount.js';
+} from '../../../testing/fakeServiceAccount.js';
 import {
   createReadOnlyClient,
   GOOGLE_TOKEN_URL,
@@ -15,15 +15,15 @@ import {
   type HttpRequest,
   type HttpResponse,
   type Transport,
-} from '../http.js';
-import { fixtureTransport } from '../transports/fixtures.js';
+} from '../../../sync/http.js';
+import { fixtureTransport } from '../../../sync/transports/fixtures.js';
 import {
   bearerHeaders,
   CALENDAR_READONLY_SCOPE,
   JWT_BEARER_GRANT,
   serviceAccountToken,
   signServiceAccountAssertion,
-} from './googleAuth.js';
+} from './googleServiceAccount.js';
 
 const NOW = new Date('2026-11-12T08:00:00.000Z');
 const NOW_S = NOW.getTime() / 1000;

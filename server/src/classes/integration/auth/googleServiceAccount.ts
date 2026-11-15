@@ -1,19 +1,26 @@
 /**
- * Google service-account auth, for the google_calendar adapter's fixture-mode
- * (demo) calendar (secret `{clientEmail, privateKey}`, the calendar shared with the account). Users
- * connect Google Calendar with Google sign-in (OAuth), never this.
+ * Google service-account auth (ServiceAccountAuth's signer), for the google_calendar adapter's
+ * fixture-mode (demo) calendar (secret `{clientEmail, privateKey}`, the calendar shared with the
+ * account). Users connect Google Calendar with Google sign-in (OAuth), never this.
  *
  * Each resource of a run signs an RS256 JWT (RFC 7523: issuer = the account, audience = the token
- * endpoint, one hour) with node:crypto and trades it for an access token through the client's one
- * allow-listed POST, exchangeToken(). The private key is read from `ctx.secret` inside the run and
- * is never kept: only the short-lived access token leaves this module, and only to build headers.
- * In fixtures mode the secret is `{}`: the assertion is empty and a recorded response answers.
+ * endpoint, one hour) with node:crypto and trades it for an access token through the session's
+ * client's one allow-listed POST, exchangeToken(). The private key is read from the strategy's
+ * session (the opened secret), never by the adapter, and is never kept: only the short-lived access
+ * token leaves this module, and only to build headers. In fixtures mode the secret is `{}`: the
+ * assertion is empty and a recorded response answers.
  */
 import { createPrivateKey, createSign } from 'node:crypto';
 
-import type { Provider } from '../../types/domain.js';
-import { GOOGLE_TOKEN_URL, ProviderHttpError } from '../http.js';
-import type { AdapterContext } from '../types.js';
+import { GOOGLE_TOKEN_URL, ProviderHttpError, type ReadOnlyClient } from '../../../sync/http.js';
+import type { Provider } from '../../../types/domain.js';
+
+/** The session a token is exchanged in: the opened secret, the session's client, its time. */
+export interface ServiceAccountSession {
+  client: ReadOnlyClient;
+  secret: Readonly<Record<string, string | undefined>>;
+  now: Date;
+}
 
 export const CALENDAR_READONLY_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
 export const JWT_BEARER_GRANT = 'urn:ietf:params:oauth:grant-type:jwt-bearer';
@@ -77,7 +84,7 @@ export function signServiceAccountAssertion(
  * assertion expires an hour after it.
  */
 export async function serviceAccountToken(
-  ctx: Pick<AdapterContext, 'client' | 'secret' | 'now'>,
+  ctx: ServiceAccountSession,
   provider: Provider,
   scope: string,
 ): Promise<string> {

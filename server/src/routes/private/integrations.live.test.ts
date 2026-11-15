@@ -86,7 +86,7 @@ async function* nothingToFetch(): AsyncGenerator<AdapterPage, ResourceResult> {
  * Like a real adapter: its own client, with the default retries, over the transport and clock it
  * is handed. The connection test reads `name` from GET /me; a sync lists nothing (no network).
  */
-function liveAdapter(provider: Provider, secretField: string): ProviderAdapter {
+function liveAdapter(provider: Provider): ProviderAdapter {
   return {
     ...createFakeAdapter().adapter,
     provider,
@@ -102,12 +102,11 @@ function liveAdapter(provider: Provider, secretField: string): ProviderAdapter {
     resources: () => ['nothing'],
     fetch: () => nothingToFetch(),
     async test(ctx): Promise<ConnectionTestResult> {
-      const secret = ctx.secret[secretField] ?? '';
-      if (throwQuotingSecret) throw new Error(`adapter bug: ${secret}`);
+      // The integration's strategy builds the header from the saved credential.
+      const headers = await ctx.auth.headers();
+      if (throwQuotingSecret) throw new Error(`adapter bug: ${headers['authorization'] ?? ''}`);
       const me = (): Promise<{ data: { name: string } }> =>
-        ctx.client.getJson<{ name: string }>('https://provider.example.invalid/me', {
-          authorization: `Bearer ${secret}`,
-        });
+        ctx.client.getJson<{ name: string }>('https://provider.example.invalid/me', headers);
       if (sameRequestTwice) await me();
       const { data } = await me();
       return { accountLabel: data.name, capabilities: { issues: true } };
@@ -128,8 +127,8 @@ before(async () => {
   token = (await api.login('live-owner@example.test')).token;
   const me = await api.call('GET', '/api/private/me', { token });
   ownerId = (me.body?.['data'] as { id: string }).id;
-  useAdapter(liveAdapter('linear', 'apiKey'));
-  useAdapter(liveAdapter('jira', 'token'));
+  useAdapter(liveAdapter('linear'));
+  useAdapter(liveAdapter('jira'));
   const { setLiveTransportForTests } = await import('../../classes/integration/connectionTest.js');
   setLiveTransportForTests((timeoutMs) => {
     transportTimeouts.push(timeoutMs);
@@ -248,7 +247,8 @@ describe('POST …/integrations/:iid/test in live mode', () => {
     const [request] = requests;
     assert.ok(request);
     assert.equal(request.method, 'GET');
-    assert.ok(request.headers['authorization'] === `Bearer ${LINEAR.apiKey}`, 'the saved key');
+    // Linear's personal API key goes as is (its strategy's header).
+    assert.ok(request.headers['authorization'] === LINEAR.apiKey, 'the saved key');
     assert.deepEqual(transportTimeouts, [10_000], 'one live transport, 10 s per request');
     const credential = await (await models.getCredentialRepository()).findMeta(wid, id);
     assert.ok(credential?.lastUsedAt instanceof Date, 'the vault recorded the use');

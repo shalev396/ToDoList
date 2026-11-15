@@ -697,7 +697,6 @@ async function syncAll(
       const client = adapter.createClient(transport, opts.clock);
       const ctx: AdapterContext = {
         integration: run.integration,
-        secret,
         // The headers come from the integration's auth strategy, never from the adapter.
         auth: sessionAuth(run.integration, secret, client, run.now),
         client,

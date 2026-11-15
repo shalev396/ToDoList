@@ -1166,7 +1166,7 @@ describe('runIntegrationSync: transports and secrets', () => {
     assert.deepEqual(usage, { loads: 0, decrypts: [] });
     const seen = fakeCalls.filter((call) => call.integrationId === s.integration.id);
     assert.ok(seen.length > 0);
-    assert.ok(seen.every((call) => call.secretKeys.length === 0));
+    assert.ok(seen.every((call) => !call.seesSecret));
   });
 
   it('live mode decrypts once per run, for this integration, inside the run', async () => {
@@ -1181,7 +1181,8 @@ describe('runIntegrationSync: transports and secrets', () => {
     assert.deepEqual(usage, { loads: 1, decrypts: [s.integration.id] });
     const seen = fakeCalls.filter((call) => call.integrationId === s.integration.id);
     assert.ok(seen.length > 0);
-    assert.ok(seen.every((call) => call.secretKeys.join() === 'token'));
+    // Opened once, inside the run; the adapter gets the strategy's auth, never the secret.
+    assert.ok(seen.every((call) => !call.seesSecret && call.authKind === 'api_key'));
   });
 
   it('a vault failure fails the run as credential_unavailable before any request', async () => {

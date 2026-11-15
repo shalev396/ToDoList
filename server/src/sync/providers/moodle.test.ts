@@ -227,7 +227,6 @@ function contextFor(
   const client = moodleAdapter.createClient(transport);
   return {
     integration,
-    secret,
     client,
     // The headers come from the integration's auth strategy, as in a run.
     auth: bindAuth(MOODLE.auth, integration.authMethod, { secret, client, now: FIXTURE_NOW }),

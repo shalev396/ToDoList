@@ -182,7 +182,6 @@ export class ConnectionTester {
     const now = new Date();
     const context: AdapterContext = {
       integration: subject.data,
-      secret,
       // The headers come from the integration's auth strategy, never from the adapter.
       auth: subject.auth(secret, client, now),
       client,

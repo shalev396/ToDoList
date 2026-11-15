@@ -61,16 +61,19 @@ export interface AdapterAuth {
   headers(purpose?: HeaderPurpose): Promise<Readonly<Record<string, string>>>;
   /** A credential the provider takes in the query string instead (Moodle's `wstoken`). */
   query(): Readonly<Record<string, string>>;
+  /**
+   * The account the credential names, where it names one that is not a secret (a Google service
+   * account's email): what a connection test may report as the account.
+   */
+  account?(): string | null;
 }
 
 export interface AdapterContext {
   integration: IntegrationData;
   /**
-   * The decrypted provider secret (DATA.md §3.5), valid only during this run: `{}` in fixtures
-   * mode. Request headers come from `auth`, never from here; never log, store, return or cache it.
+   * The run's auth (AdapterAuth): headers built by the integration's auth strategy from the
+   * opened secret (DATA.md §3.5). The adapter never sees the secret itself.
    */
-  secret: Readonly<Record<string, string>>;
-  /** The run's auth headers, from the integration's auth strategy (AdapterAuth). */
   auth: AdapterAuth;
   /** Built with the adapter's createClient() over the run's transport. */
   client: ReadOnlyClient;

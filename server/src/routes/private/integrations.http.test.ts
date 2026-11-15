@@ -54,7 +54,7 @@ let workspaces = 0;
 
 /** What the linear test adapter answers, and what it saw. */
 let nextLabel = 'Fake Account';
-const testCalls: { secretKeys: string[] }[] = [];
+const testCalls: { seesSecret: boolean }[] = [];
 const originals = new Map<Provider, ProviderAdapter | null>();
 /** Runs inside a test adapter's connection test, before it answers: a change that lands meanwhile. */
 let duringTest: (() => Promise<void>) | null = null;
@@ -66,7 +66,7 @@ function linearTestAdapter(): ProviderAdapter {
     ...adapter,
     provider: 'linear',
     async test(ctx): Promise<ConnectionTestResult> {
-      testCalls.push({ secretKeys: Object.keys(ctx.secret) });
+      testCalls.push({ seesSecret: 'secret' in ctx });
       const data = await ctx.client.graphql<{ projects: unknown[] }>(
         'FakeProjects',
         { first: 50 },
@@ -810,7 +810,7 @@ describe('POST /workspaces/:wid/integrations/:iid/test (fixtures mode)', () => {
       accountLabel: 'Fake Account',
       capabilities: { projects: true },
     });
-    assert.deepEqual(testCalls, [{ secretKeys: [] }], 'the adapter got no secret');
+    assert.deepEqual(testCalls, [{ seesSecret: false }], 'the adapter got no secret');
     assert.equal((await credentialOf(wid, id))?.lastUsedAt, null, 'the vault was never used');
     const stored = await integrationDoc(wid, id);
     assert.deepEqual([stored?.accountId, stored?.label], ['Fake Account', 'Fake Account']);

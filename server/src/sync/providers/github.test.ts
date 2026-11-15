@@ -800,7 +800,6 @@ function contextOf(
   const client = githubAdapter.createClient(transport);
   return {
     integration,
-    secret,
     client,
     // The headers come from the integration's auth strategy, as in a run.
     auth: bindAuth(GITHUB.auth, integration.authMethod, { secret, client, now: FIXTURE_NOW }),

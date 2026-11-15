@@ -321,7 +321,6 @@ function contextFor(
   const client = jiraAdapter.createClient(transport);
   return {
     integration,
-    secret,
     client,
     // The headers come from the integration's auth strategy, as in a run.
     auth: bindAuth(JIRA.auth, integration.authMethod, { secret, client, now: FIXTURE_NOW }),

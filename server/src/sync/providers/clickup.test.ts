@@ -178,7 +178,6 @@ function contextFor(
   const client = clickupAdapter.createClient(transport, instantClock());
   return {
     integration,
-    secret,
     client,
     // The headers come from the integration's auth strategy, as in a run.
     auth: bindAuth(CLICKUP.auth, integration.authMethod, { secret, client, now: FIXTURE_NOW }),
