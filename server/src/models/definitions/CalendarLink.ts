@@ -140,7 +140,7 @@ export interface ICalendarLinkRepository {
   settle(workspaceId: string, id: string, tombstonedAt: Date): Promise<boolean>;
   /**
    * The integration's claims whose DELETE is still unanswered (an explicit null), claimed before
-   * `before`: the oldest first, at most `limit`.
+   * `before`: the least recently swept first (never swept first), then the oldest, at most `limit`.
    */
   listUnsettledClaims(
     workspaceId: string,
@@ -148,6 +148,8 @@ export interface ICalendarLinkRepository {
     before: Date,
     limit: number,
   ): Promise<CalendarLinkData[]>;
+  /** The sweep looked at the claim tombstoned at `tombstonedAt` now (`lastSweptAt`), answered or not. */
+  markSwept(workspaceId: string, id: string, tombstonedAt: Date): Promise<void>;
   /** Whether another integration of the workspace holds a live link to the same event. */
   hasOtherLive(workspaceId: string, integrationId: string, key: CalendarLinkKey): Promise<boolean>;
   /**

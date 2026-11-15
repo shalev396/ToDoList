@@ -12,15 +12,18 @@
  * - Google answered (made, or refused for good): `settle` stamps `deleteAnsweredAt`, the time a
  *   push run must have been created after for the claim no longer to stand for it (`stands`);
  * - not sent, or certainly not made (refused for now, deferred, out of time): `release` takes it
- *   back: the link is live again and the next call retries, as before, unless another integration
+ *   up: the link is live again and the next call retries, as before, unless another integration
  *   tracks the event by then (one tracker per event), when the row goes instead;
  * - no answer (a timeout, a 5xx: it may have been made, and may still be landing): `resolve` reads
  *   the event once. Gone or cancelled: settled. Anything else (live, or the read failed or didn't
  *   fit the budget): KEPT, unanswered, never released, because a live reading may come before a
  *   slow DELETE lands. An orphaned event in Google is better than a to-do lost to our own delete.
  * - a claim left unanswered for STUCK_CLAIM_MS is reconciled (`reconcile`) by the integration's
- *   next push, clean-up (Remove, "Also remove") or look at its pushed events: a read settles it
- *   (gone) or, its call long over, releases it (live).
+ *   next push (its workspace calendar's integration only: a non-primary push is refused before its
+ *   sweep), clean-up (Remove, "Also remove") or look at its pushed events (a small sweep): a read
+ *   settles it (gone) or, its call long over, releases it (live). Not every unanswered claim gets
+ *   there: a move's claim is erased by its own create half's commit (PERMISSIONS-V2 ruling 12, F
+ *   and the move clause), and a claim of an integration nobody visits again is never swept.
  *
  * Used by every TodoList delete of a pushed event: a clean-up step, a to-do's delete
  * (deleteLinkedEvent), a push's delete or move. Internal to the calendar classes: not in any
@@ -50,8 +53,11 @@ export const CLAIM_MARGIN_MS = 60 * 1000;
  */
 export const STUCK_CLAIM_MS = 10 * 60 * 1000;
 
-/** Claims one sweep reconciles at most (each a read), the oldest first. */
+/** Claims one sweep reconciles at most (each a read) in a push or a clean-up. */
 export const SWEEP_LIMIT = 20;
+
+/** Claims the sweep of a list of integrations (`pushedEventCount`) reconciles at most. */
+export const LIST_SWEEP_LIMIT = 3;
 
 /** What a read of the event says about a DELETE whose answer was lost: made, not made, unknown. */
 export type DeleteReading = 'made' | 'not_made' | 'unknown';
@@ -59,7 +65,10 @@ export type DeleteReading = 'made' | 'not_made' | 'unknown';
 /** Where an unanswered DELETE ended: settled (made) or kept (anything else). */
 export type ClaimOutcome = 'settled' | 'kept';
 
-/** What one sweep did: claims settled (gone), released (live), kept (a failed read, no time). */
+/**
+ * What one sweep did: claims settled (gone, and the settle written), released (live), kept (a
+ * failed read or write).
+ */
 export interface SweepCounts {
   settled: number;
   released: number;
@@ -106,24 +115,30 @@ export class EventClaim {
     };
   }
 
-  /** The integration's claims unanswered for STUCK_CLAIM_MS, oldest first, at most SWEEP_LIMIT. */
-  static async stuck(owner: {
-    readonly id: string;
-    readonly workspaceId: string;
-  }): Promise<CalendarLinkData[]> {
+  /**
+   * The integration's claims unanswered for STUCK_CLAIM_MS, at most `limit` (SWEEP_LIMIT): the
+   * least recently swept first (never swept first), then the oldest, so a claim whose read always
+   * fails goes to the back of the line and never starves the rest.
+   */
+  static async stuck(
+    owner: { readonly id: string; readonly workspaceId: string },
+    limit: number = SWEEP_LIMIT,
+  ): Promise<CalendarLinkData[]> {
     return (await getCalendarLinkRepository()).listUnsettledClaims(
       owner.workspaceId,
       owner.id,
       new Date(Date.now() - STUCK_CLAIM_MS),
-      SWEEP_LIMIT,
+      limit,
     );
   }
 
   /**
    * Stuck claims (`stuck`) reconciled by a read of each event (`read`, which shares one session),
    * while `canGoOn`: gone settles the claim, live releases it (its call is long over), and a read
-   * that fails keeps it, then the sweep goes on to the next one (one bad row never starves the
-   * others). A failure of one row's own write is logged and kept.
+   * that fails keeps it, then the sweep goes on to the next one. Each attempt stamps the claim's
+   * `lastSweptAt` first, which is what `stuck` sorts by, so one bad row never starves the others
+   * across sweeps. A failure of one row's own write is logged and kept. The counts are logged
+   * (info) when the sweep did anything.
    */
   static async reconcile(
     stuck: readonly CalendarLinkData[],
@@ -134,6 +149,7 @@ export class EventClaim {
     for (const link of stuck) {
       if (!canGoOn() || link.tombstonedAt === null) break;
       const claim = new EventClaim(link, link.tombstonedAt);
+      await claim.#swept();
       let reading: DeleteReading;
       try {
         reading = await read(link);
@@ -141,8 +157,8 @@ export class EventClaim {
         reading = 'unknown';
       }
       if (reading === 'made') {
-        await claim.settle();
-        counts.settled += 1;
+        if (await claim.settle()) counts.settled += 1;
+        else counts.kept += 1;
       } else if (reading === 'not_made') {
         try {
           await claim.release();
@@ -154,6 +170,13 @@ export class EventClaim {
       } else {
         counts.kept += 1;
       }
+    }
+    const first = stuck[0];
+    if (first !== undefined && counts.settled + counts.released + counts.kept > 0) {
+      logger.info('Stuck calendar claims reconciled', {
+        integrationId: first.integrationId,
+        ...counts,
+      });
     }
     return counts;
   }
@@ -173,14 +196,27 @@ export class EventClaim {
   /**
    * Google answered the DELETE (made, or refused for good): the claim is settled now. A failure is
    * logged, never thrown: the claim then stays unanswered, for the sweep, which is the safe side.
+   * Whether this call wrote the settle.
    */
-  async settle(): Promise<void> {
+  async settle(): Promise<boolean> {
     try {
-      await (
+      return await (
         await getCalendarLinkRepository()
       ).settle(this.#link.workspaceId, this.#link.id, this.#tombstonedAt);
     } catch (error) {
       EventClaim.#logged('settled', error);
+      return false;
+    }
+  }
+
+  /** The sweep is about to read this claim's event: stamped, quietly (it is only an ordering). */
+  async #swept(): Promise<void> {
+    try {
+      await (
+        await getCalendarLinkRepository()
+      ).markSwept(this.#link.workspaceId, this.#link.id, this.#tombstonedAt);
+    } catch (error) {
+      EventClaim.#logged('swept', error);
     }
   }
 
@@ -216,7 +252,7 @@ export class EventClaim {
     return 'settled';
   }
 
-  static #logged(what: 'settled' | 'released', error: unknown): void {
+  static #logged(what: 'settled' | 'released' | 'swept', error: unknown): void {
     logger.warn(`A calendar claim could not be ${what}`, {
       errorName: error instanceof Error ? error.name : typeof error,
     });

@@ -11,7 +11,11 @@ import {
 } from '../definitions/CalendarLink.js';
 import { setFields, uuidIdField } from './common.js';
 
-type CalendarLinkFields = Omit<CalendarLinkData, 'id'> & { _id: string };
+/** `lastSweptAt` is the sweep's own bookkeeping (EventClaim): not part of CalendarLinkData. */
+type CalendarLinkFields = Omit<CalendarLinkData, 'id'> & {
+  _id: string;
+  lastSweptAt?: Date | null;
+};
 
 const DELETED_BY: readonly CalendarLinkDeletedBy[] = ['google', 'dashboard', 'google_kept'];
 
@@ -31,6 +35,7 @@ const calendarLinkSchema = new mongoose.Schema<CalendarLinkFields>(
     tombstonedAt: { type: Date, default: null },
     deletedBy: { type: String, enum: DELETED_BY, default: null },
     deleteAnsweredAt: { type: Date, default: null },
+    lastSweptAt: { type: Date, default: null },
   },
   { timestamps: true, collection: CALENDAR_LINK_TABLE_NAME },
 );
@@ -45,6 +50,13 @@ calendarLinkSchema.index(
 // hasOtherLive) and another integration's claim on it (findOthersStanding) are point lookups, not
 // a seek per integration.
 calendarLinkSchema.index({ workspaceId: 1, calendarId: 1, googleEventId: 1 });
+// The sweep's query (listUnsettledClaims): an integration's unanswered claims (an explicit null),
+// the least recently swept first, then the oldest. Partial, so it holds only the few claims
+// standing at any time, and "is any claim stuck?" is an index seek, not a scan of the links.
+calendarLinkSchema.index(
+  { integrationId: 1, lastSweptAt: 1, tombstonedAt: 1 },
+  { partialFilterExpression: { deletedBy: 'dashboard', deleteAnsweredAt: { $type: 'null' } } },
+);
 
 export const CalendarLinkMongoModel = mongoose.model<CalendarLinkFields>(
   'CalendarLink',
@@ -179,7 +191,7 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
         tombstonedAt: null,
         ...(calendarId === undefined ? {} : { calendarId }),
       },
-      { $set: { tombstonedAt: new Date(), deletedBy, deleteAnsweredAt: null } },
+      { $set: { tombstonedAt: new Date(), deletedBy, deleteAnsweredAt: null, lastSweptAt: null } },
       { new: true, runValidators: true },
     ).lean<CalendarLinkFields>();
     return doc ? toCalendarLinkData(doc) : null;
@@ -259,10 +271,25 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
       deleteAnsweredAt: { $type: 'null' },
       tombstonedAt: { $ne: null, $lt: before },
     })
-      .sort({ tombstonedAt: 1 })
+      // Never swept first (null sorts first, a missing field too), then the longest ago, then the
+      // oldest claim: a claim whose read always fails goes to the back of the line.
+      .sort({ lastSweptAt: 1, tombstonedAt: 1 })
       .limit(limit)
       .lean<CalendarLinkFields[]>();
     return docs.map(toCalendarLinkData);
+  },
+
+  async markSwept(workspaceId, id, tombstonedAt) {
+    await CalendarLinkMongoModel.updateOne(
+      {
+        _id: id,
+        workspaceId,
+        deletedBy: 'dashboard',
+        tombstonedAt,
+        deleteAnsweredAt: { $type: 'null' },
+      },
+      { $set: { lastSweptAt: new Date() } },
+    );
   },
 
   async hasOtherLive(workspaceId, integrationId, key) {
@@ -287,7 +314,7 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
         // Never a settled claim: its delete was made or refused for good.
         deleteAnsweredAt: { $type: 'null' },
       },
-      { $set: { tombstonedAt: null, deletedBy: null, deleteAnsweredAt: null } },
+      { $set: { tombstonedAt: null, deletedBy: null, deleteAnsweredAt: null, lastSweptAt: null } },
       { new: true, runValidators: true },
     ).lean<CalendarLinkFields>();
     return doc ? toCalendarLinkData(doc) : null;
