@@ -8,12 +8,14 @@ import {
   type Block,
   type BlockAction,
   type BlockType,
+  type ConnectorScopes,
   type DashboardVars,
   type DisplayRule,
   type Op,
   type Query,
   type QueryRequest,
 } from '@api-types/builder.ts';
+import { normalizeScopes } from './connectorScopes.ts';
 
 export interface BlockDraft {
   type: BlockType;
@@ -33,6 +35,11 @@ export interface BlockDraft {
    * the block reads nothing ("No source").
    */
   connectors?: string[] | undefined;
+  /**
+   * Per connector, the containers it reads (external ids); a connector with no entry reads all of
+   * its containers. Only for connectors on the block.
+   */
+  connectorScopes?: ConnectorScopes | undefined;
 }
 
 /** What the catalog gives a new block of one type. */
@@ -47,6 +54,10 @@ export interface TypeDefaults {
  * left with none reads nothing, never every source).
  */
 export function draftFromBlock(block: Block, removed?: ReadonlySet<string>): BlockDraft {
+  const connectors =
+    block.connectors === undefined
+      ? undefined
+      : block.connectors.filter((id) => removed?.has(id) !== true);
   return {
     type: block.type,
     title: block.title,
@@ -59,10 +70,8 @@ export function draftFromBlock(block: Block, removed?: ReadonlySet<string>): Blo
     sets: block.sets,
     action: block.action,
     note: block.note,
-    connectors:
-      block.connectors === undefined
-        ? undefined
-        : block.connectors.filter((id) => removed?.has(id) !== true),
+    connectors,
+    connectorScopes: normalizeScopes(structuredClone(block.connectorScopes), connectors),
   };
 }
 
@@ -98,6 +107,11 @@ export function draftContent(draft: BlockDraft): Omit<Block, 'id' | 'type'> {
   }
   if (draft.connectors !== undefined) {
     content.connectors = draft.connectors;
+    // An entry only means something for a connector that is on the block.
+    const scopes = normalizeScopes(draft.connectorScopes, draft.connectors);
+    if (scopes !== undefined) {
+      content.connectorScopes = scopes;
+    }
   }
   return content;
 }
@@ -161,6 +175,10 @@ export function updateBlockOp(blockId: string, draft: BlockDraft, original: Bloc
   if (next.connectors === undefined && before.connectors !== undefined) {
     patch['connectors'] = null;
   }
+  // Every connector back to all its containers: null takes the scopes off.
+  if (next.connectorScopes === undefined && before.connectorScopes !== undefined) {
+    patch['connectorScopes'] = null;
+  }
   return Object.keys(patch).length === 0 ? null : { op: 'update_block', blockId, patch };
 }
 
@@ -197,12 +215,14 @@ export function previewRequest(draft: BlockDraft, vars: DashboardVars): QueryReq
   if (draft.query === undefined) {
     return null;
   }
+  const scopes = normalizeScopes(draft.connectorScopes, draft.connectors);
   return {
     draft: draft.query,
     blockType: draft.type,
     preview: true,
     vars: previewVars(vars),
     ...(draft.connectors === undefined ? {} : { connectors: draft.connectors }),
+    ...(scopes === undefined ? {} : { connectorScopes: scopes }),
   };
 }
 

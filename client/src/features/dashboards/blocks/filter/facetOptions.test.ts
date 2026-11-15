@@ -10,8 +10,24 @@ const facets: FacetsResponseData = {
   kinds: ['task', 'event'],
   statuses: ['open', 'done'],
   containers: [
-    { id: 'c1', name: 'Algorithms', type: 'course', topicId: 't-college', provider: 'moodle' },
-    { id: 'c2', name: 'Atlas', type: 'project', topicId: 't-work', provider: 'jira' },
+    {
+      id: 'c1',
+      name: 'Algorithms',
+      type: 'course',
+      topicId: 't-college',
+      provider: 'moodle',
+      integrationId: 'i1',
+      externalId: 'x1',
+    },
+    {
+      id: 'c2',
+      name: 'Atlas',
+      type: 'project',
+      topicId: 't-work',
+      provider: 'jira',
+      integrationId: 'i2',
+      externalId: 'x2',
+    },
   ],
 };
 

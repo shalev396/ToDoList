@@ -14,15 +14,21 @@ import {
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SelectField } from '@/components/ui/select';
-import type { CatalogDescription, Query, RuleGroup } from '@api-types/builder';
+import type { CatalogDescription, ConnectorScopes, Query, RuleGroup } from '@api-types/builder';
 import { CONTAINER_TYPES } from '@api-types/domain';
-import type { FacetsResponseData } from '@api-types/items';
+import type { FacetContainer, FacetsResponseData } from '@api-types/items';
 import type { ConnectorInfo, SavedView } from '@api-types/dashboards';
 import { LOCAL_CONNECTOR, MAX_RULE_DEPTH } from '@api-types/builder';
 import type { IntegrationStatusView } from '@api-types/api-contracts';
 import { ProviderIcon, type IconName } from '@/features/landing/ProviderIcon';
 import { PROVIDER_REGISTRY } from '@/features/integrations/providers';
 import { canAddRule, countRules } from './caps';
+import {
+  selectedContainers,
+  toggleConnector,
+  toggleContainer,
+  type SourcePick,
+} from './connectorScopes';
 import { fieldEntries } from './fieldOptions';
 import { connectorProviders, type BlockDraft } from './draft';
 import {
@@ -151,14 +157,19 @@ export interface ConnectorContext {
 function ConnectorChecks({
   integrations,
   connectors,
+  connectorScopes,
+  containers,
   context,
   onChange,
 }: {
   integrations: readonly IntegrationStatusView[] | undefined;
   /** Undefined: all sources. */
   connectors: readonly string[] | undefined;
+  connectorScopes: ConnectorScopes | undefined;
+  /** What the facets list: the second level under a ticked connector. */
+  containers: readonly FacetContainer[] | undefined;
   context: ConnectorContext;
-  onChange: (connectors: string[] | undefined) => void;
+  onChange: (pick: SourcePick) => void;
 }) {
   const { t } = useTranslation();
   const [confirming, setConfirming] = useState<IntegrationStatusView | null>(null);
@@ -169,8 +180,27 @@ function ConnectorChecks({
     const info = context.info[id];
     return id !== LOCAL_CONNECTOR && !ownIds.has(id) && info !== undefined && !info.removed;
   });
+  const pick: SourcePick = {
+    connectors: connectors === undefined ? undefined : [...connectors],
+    connectorScopes,
+  };
   const toggle = (id: string, checked: boolean) => {
-    onChange(checked ? [...picked, id] : picked.filter((value) => value !== id));
+    onChange(toggleConnector({ ...pick, connectors: [...picked] }, id, checked));
+  };
+  /** The containers a connector offers: a Google Calendar's calendars, else any the facets list. */
+  const containersOf = (integration: IntegrationStatusView): FacetContainer[] => {
+    const seen = new Set<string>();
+    return (containers ?? []).filter((container) => {
+      if (
+        container.integrationId !== integration.id ||
+        (integration.provider === 'google_calendar' && container.type !== 'calendar') ||
+        seen.has(container.externalId)
+      ) {
+        return false;
+      }
+      seen.add(container.externalId);
+      return true;
+    });
   };
   const row = (
     id: string,
@@ -203,26 +233,74 @@ function ConnectorChecks({
         <span data-connector-all>{t('editor.source.allSources')}</span>,
         connectors === undefined,
         (checked) => {
-          onChange(checked ? undefined : []);
+          onChange({ connectors: checked ? undefined : [], connectorScopes: undefined });
         },
       )}
       <div className="flex flex-wrap gap-x-4 gap-y-2">
         {own.map((integration) => {
           const icon = iconOf(integration.provider);
-          return row(
-            integration.id,
-            <>
-              {icon === null ? null : <ProviderIcon name={icon} className="size-4" />}
-              <span data-connector-label>{integration.accountLabel}</span>
-            </>,
-            picked.includes(integration.id),
-            (checked) => {
-              if (checked && !context.shared.has(integration.id)) {
-                setConfirming(integration);
-              } else {
-                toggle(integration.id, checked);
-              }
-            },
+          const checked = picked.includes(integration.id);
+          const offered = containersOf(integration);
+          const all = offered.map((container) => container.externalId);
+          const selected = selectedContainers(connectorScopes, integration.id, all);
+          return (
+            <div key={integration.id} className="flex flex-col gap-2">
+              {row(
+                integration.id,
+                <>
+                  {icon === null ? null : <ProviderIcon name={icon} className="size-4" />}
+                  <span data-connector-label>
+                    {t(`sources.${integration.provider}`, { defaultValue: integration.provider })}
+                    {' · '}
+                    {integration.accountLabel}
+                  </span>
+                </>,
+                checked,
+                (next) => {
+                  if (next && !context.shared.has(integration.id)) {
+                    setConfirming(integration);
+                  } else {
+                    toggle(integration.id, next);
+                  }
+                },
+              )}
+              {checked && offered.length > 1 ? (
+                <div
+                  data-connector-containers={integration.id}
+                  className="flex flex-col gap-1 ps-6"
+                >
+                  {offered.map((container) => {
+                    const id = `connector-${integration.id}-${container.externalId}`;
+                    return (
+                      <div key={container.externalId} className="flex items-center gap-2">
+                        <Checkbox
+                          id={id}
+                          checked={selected.includes(container.externalId)}
+                          onCheckedChange={(next) => {
+                            onChange(
+                              toggleContainer(
+                                { ...pick, connectors: [...picked] },
+                                integration.id,
+                                all,
+                                container.externalId,
+                                next === true,
+                              ),
+                            );
+                          }}
+                        />
+                        <label
+                          htmlFor={id}
+                          dir="auto"
+                          className="flex min-h-6 items-center text-sm break-all max-md:min-h-11"
+                        >
+                          {container.name}
+                        </label>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
           );
         })}
         {row(
@@ -417,8 +495,10 @@ export function SourceStep({
           <ConnectorChecks
             integrations={integrations}
             connectors={draft.connectors}
+            connectorScopes={draft.connectorScopes}
+            containers={facets?.containers}
             context={connectorContext}
-            onChange={(connectors) => {
+            onChange={({ connectors, connectorScopes }) => {
               // The connectors decide the sources: a provider rule keeps only their providers.
               const offered = connectorProviders(connectors, connectorContext.providerOf);
               const chosen = facetSelection(query.where, 'source.provider');
@@ -428,6 +508,7 @@ export function SourceStep({
                   : chosen.filter((provider) => offered.includes(provider));
               onChange({
                 connectors,
+                connectorScopes,
                 ...(kept.length === chosen.length
                   ? {}
                   : patchQuery(draft, {
