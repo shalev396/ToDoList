@@ -163,7 +163,7 @@ describe('the scheduled calendar worker, against the mock Google', () => {
   });
 
   it('creates nothing once the day’s create cap is used up', async () => {
-    const { DAILY_CREATE_CAP } = await import('./plan.js');
+    const { DAILY_CREATE_CAP } = await import('../testing/calendarCalls.js');
     const repo = await models.getSyncRunRepository();
     const used = await repo.create(wid, {
       integrationId: iid,

@@ -1,7 +1,8 @@
 /**
- * One item ↔ Google event mapping of the push (DATA.md §3.15), as the rules about it read it. The
- * phase 5 `Calendar` entity completes it; for now it holds the one rule every delete path shares:
- * which links point at an event TodoList itself made, so only those are ever deleted at Google.
+ * One item ↔ Google event mapping of the push (DATA.md §3.15), as the rules about it read it: the
+ * links a `Calendar` is made of (its plan reads them; its commit writes them). It holds the one
+ * rule every delete path shares: which links point at an event TodoList itself made, so only those
+ * are ever deleted at Google.
  */
 import { eventIdFor } from '../../gcal/diff.js';
 import type { CalendarLinkData } from '../../models/definitions/CalendarLink.js';

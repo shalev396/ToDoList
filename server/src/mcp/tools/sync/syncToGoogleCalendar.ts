@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { AppError } from '../../../errors/AppError.js';
-import type { PlanNarrowing } from '../../../gcal/plan.js';
+import type { PlanNarrowing } from '../../../classes/calendar/PushPlan.js';
 import { gcalSync } from '../../../services/gcalSync.js';
 import { Integration } from '../../../classes/integration/index.js';
 import { Workspace } from '../../../classes/workspace/index.js';

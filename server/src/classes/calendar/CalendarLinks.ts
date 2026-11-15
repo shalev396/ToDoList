@@ -1,6 +1,6 @@
 /**
- * What happens to the push's links when something around them changes (until phase 5's
- * `Calendar` entity holds them): right after a to-do is deleted, each event TodoList pushed for it
+ * What happens to the push's links when something around them changes outside a push (a push's
+ * own links are its Calendar's): right after a to-do is deleted, each event TodoList pushed for it
  * goes at once, through its integration's own write session and checks (deleteLinkedEvent), as
  * that integration's owner (the push is theirs).
  */

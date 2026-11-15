@@ -35,9 +35,7 @@ import { ProviderNoAnswerError } from '../../../errors/ProviderNoAnswerError.js'
 import { ScopeMissingError } from '../../../errors/ScopeMissingError.js';
 import { WrittenNotStoredError } from '../../../errors/WrittenNotStoredError.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
-import { applyCommit } from '../../../gcal/commit.js';
 import { eventIdFor, ORIGIN, PAST_WINDOW_DAYS } from '../../../gcal/diff.js';
-import { loadPlan, type PlanNarrowing } from '../../../gcal/plan.js';
 import type { CalendarLinkData } from '../../../models/definitions/CalendarLink.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
 import type { ItemData } from '../../../models/definitions/Item.js';
@@ -45,8 +43,6 @@ import {
   getCalendarLinkRepository,
   getIntegrationRepository,
   getItemRepository,
-  getSyncRunRepository,
-  getSyncStateRepository,
   getWorkspaceRepository,
 } from '../../../models/index.js';
 import { logger } from '../../../services/logger.js';
@@ -88,7 +84,10 @@ import {
   GOOGLE_CALENDAR,
   type GoogleCalendarSecret,
 } from '../definitions/googleCalendar.js';
+import { Calendar } from '../../calendar/Calendar.js';
 import { CalendarLink } from '../../calendar/CalendarLink.js';
+import type { PlanNarrowing } from '../../calendar/PushPlan.js';
+import { SyncRun } from '../../sync/SyncRun.js';
 import { AppCreatedCalendars } from '../calendar/AppCreatedCalendars.js';
 import {
   AddedContentRemoval,
@@ -130,7 +129,7 @@ const MAX_CALENDAR_PAGES = 10;
 const MAX_PULL_PAGES = 10;
 const ACCESS_ROLES: ReadonlySet<string> = new Set(['owner', 'writer', 'reader', 'freeBusyReader']);
 
-/** One calendar's pulled changes, in the shape the commit reads (gcal/commit.ts CalendarResult). */
+/** One calendar's pulled changes, in the shape the commit reads (PushCommit's CalendarResult). */
 interface PulledCalendar {
   id: string;
   events: Record<string, unknown>[];
@@ -677,14 +676,14 @@ export class GoogleCalendarIntegration
     now: Date = new Date(),
   ): Promise<CalendarDryRun> {
     this.assertOwner(caller);
-    const plan = await loadPlan(this.toJSON(), now, narrowing);
-    return { dryRun: true, counts: plan.counts, entries: plan.entries, skipped: plan.skipped };
+    const plan = await (await Calendar.primaryFor(this.toJSON())).plan(now, narrowing);
+    return plan.toDryRun();
   }
 
   /**
-   * A push, start to commit: a `SyncRuns` row (trigger `calendar_push`), the ops through the
-   * Calendar API inside the write session, the pull that follows, then the commit (gcal/commit.ts:
-   * links, audit, the run's counts). A read-only integration is refused first (assertWritable),
+   * A push, start to commit: a SyncRun (trigger `calendar_push`), the ops through the Calendar API
+   * inside the write session, the pull that follows, then the commit (Calendar#commit: links,
+   * audit, the run's counts). A read-only integration is refused first (assertWritable),
    * before any run is recorded; the mode is the one this integration was loaded with, so a switch
    * made while the push runs is seen by the next one. The request's budget (`budget`, which its
    * plan already spent part of; PUSH_BUDGET_MS when absent) starts an op only while a call can
@@ -697,13 +696,7 @@ export class GoogleCalendarIntegration
     const budget = request.budget ?? TimeBudget.start(PUSH_BUDGET_MS);
     this.assertWritable(caller);
     const { workspaceId } = this;
-    const runs = await getSyncRunRepository();
-    const run = await runs.create(workspaceId, {
-      integrationId: this.id,
-      trigger: 'calendar_push',
-      status: 'running',
-      startedAt: now,
-    });
+    const run = await SyncRun.begin(this, 'calendar_push', now);
     let opResults: OpResult[];
     try {
       opResults = await this.withWriteSession(caller, ({ writer }) =>
@@ -711,13 +704,13 @@ export class GoogleCalendarIntegration
       );
     } catch (error) {
       const authFailed = error instanceof ProviderHttpError && error.code === 'auth_failed';
-      await runs.updateIfStatus(workspaceId, run.id, ['running'], {
-        status: 'failed',
-        finishedAt: new Date(),
-        error: authFailed
+      // Only while it is still open (a conditional write).
+      await run.cancel(
+        authFailed
           ? { code: 'auth_failed', message: 'Reconnect required' }
           : { code: 'calendar_unreachable', message: 'Google Calendar did not answer' },
-      });
+        new Date(),
+      );
       if (authFailed) {
         // As a sync would: the integration waits for its owner to reconnect.
         await (
@@ -738,11 +731,9 @@ export class GoogleCalendarIntegration
     // skipped): Google-side edits and deletes of what we pushed. A failed pull never fails the
     // push; the token is kept and the next run lists again.
     const calendars = await this.#pullAfterPush(calendarId, now, budget);
-    await applyCommit(
-      this.toJSON(),
+    await Calendar.of(this.toJSON(), calendarId).commit(
       { runId: run.id, opResults, calendars },
       new Date(),
-      calendarId,
     );
     return run.id;
   }
@@ -1224,13 +1215,11 @@ export class GoogleCalendarIntegration
   async #pullAfterPush(target: string, now: Date, budget: TimeBudget): Promise<PulledCalendar[]> {
     if (!budget.canStart()) return [];
     try {
-      const state = await (
-        await getSyncStateRepository()
-      ).get(this.workspaceId, this.id, `gcal:${target}`);
+      const cursor = await Calendar.of(this.toJSON(), target).cursor();
       const timeMin = new Date(
         now.getTime() - PAST_WINDOW_DAYS * 24 * 60 * 60 * 1000,
       ).toISOString();
-      const calendars = [{ id: target, syncToken: state?.syncToken ?? null }];
+      const calendars = [{ id: target, syncToken: cursor.syncToken }];
       return await this.#withGrant(async (auth) => {
         const reader = calendarReader(auth);
         const results: PulledCalendar[] = [];

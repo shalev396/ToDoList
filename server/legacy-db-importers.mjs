@@ -58,8 +58,6 @@ export const AUDIT_LOG_WRITER = 'src/classes/AuditLog.ts';
  * The list only shrinks: the boundary test fails on an entry that no longer needs to be here.
  */
 export const LEGACY_DB_IMPORTERS = [
-  'src/gcal/commit.ts',
-  'src/gcal/plan.ts',
   'src/mcp/tools/workspace/auditLogQuery.ts',
   'src/seed/seedWorkspace.ts',
   'src/services/connectLinks.ts',

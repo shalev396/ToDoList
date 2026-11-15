@@ -7,7 +7,7 @@
 import type { WireOp } from '../../../gcal/diff.js';
 import { CalendarApiError, type CalendarWriter } from './calendarApi.js';
 
-/** An op's outcome, in the shape the commit reads (gcal/commit.ts). */
+/** An op's outcome, in the shape the commit reads (classes/calendar/PushCommit.ts). */
 export interface OpResult {
   opId: string;
   ok: boolean;

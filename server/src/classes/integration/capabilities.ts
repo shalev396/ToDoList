@@ -14,7 +14,7 @@ import type { TimeBudget } from './calendar/TimeBudget.js';
 import type { Caller } from '../base/Caller.js';
 import type { Revocable } from '../base/contracts.js';
 import type { PlanEntry, SkippedItem, WireOp } from '../../gcal/diff.js';
-import type { PlanNarrowing } from '../../gcal/plan.js';
+import type { PlanNarrowing } from '../calendar/PushPlan.js';
 import type { ItemData } from '../../models/definitions/Item.js';
 import type { MappedItem } from '../../sync/types.js';
 import type { OAuthResource } from '../../types/integrations.js';

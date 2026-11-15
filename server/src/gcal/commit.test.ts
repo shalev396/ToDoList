@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import { startGcalFixture, type GcalFixture } from '../testing/gcalFixture.js';
 import type { CalendarLinkData, IntegrationData, ItemData } from '../models/index.js';
-import type { applyCommit as applyCommitType, CommitCounts } from './commit.js';
+import type { applyCommit as applyCommitType, CommitCounts } from '../testing/calendarCalls.js';
 import { eventIdFor } from './diff.js';
 
 let fx: GcalFixture;
@@ -15,7 +15,7 @@ let applyCommit: typeof applyCommitType;
 
 before(async () => {
   fx = await startGcalFixture('todolist_gcal_commit');
-  ({ applyCommit } = await import('./commit.js'));
+  ({ applyCommit } = await import('../testing/calendarCalls.js'));
 });
 after(async () => {
   await fx.stop();
@@ -262,7 +262,7 @@ describe('commit: a move in Google becomes the plan, never a due or start date (
     assert.equal(after.overlay.plannedAt, '2026-11-20');
     // What Google shows is what we would push now: idle on the next run, no ping-pong.
     const { hashEvent, projectEvent } = await import('./diff.js');
-    const { toPushItem } = await import('./commit.js');
+    const { toPushItem } = await import('../testing/calendarCalls.js');
     const projection = projectEvent(toPushItem(after), fx.workspaceId, 'Asia/Jerusalem');
     assert.ok(projection);
     assert.equal((await linkOf(created.id)).pushedHash, hashEvent(projection));
@@ -338,7 +338,7 @@ describe('commit: a move in Google becomes the plan, never a due or start date (
 describe('commit: a mirrored item’s overrides are what was pushed (Phase 4a, I3)', () => {
   it('a Google change of its overridden event settles; its plan is not pinned to the override', async () => {
     const { projectEvent, hashEvent } = await import('./diff.js');
-    const { toPushItem } = await import('./commit.js');
+    const { toPushItem } = await import('../testing/calendarCalls.js');
     const items = await fx.models.getItemRepository();
     await items.bulkUpsert(fx.workspaceId, [
       {
@@ -417,7 +417,7 @@ describe('commit: a mirrored item’s overrides are what was pushed (Phase 4a, I
 describe('commit: a title that matches a secret pattern (N1)', () => {
   it('settles on the redacted title the plan pushed: no extra push', async () => {
     const { projectEvent, hashEvent } = await import('./diff.js');
-    const { toPushItem } = await import('./commit.js');
+    const { toPushItem } = await import('../testing/calendarCalls.js');
     const { redactString } = await import('../services/secretPatterns.js');
     const items = await fx.models.getItemRepository();
     const secretTitle = `Rotate ghp_${'a'.repeat(24)} now`;

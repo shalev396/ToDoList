@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 
 import { startGcalFixture, type GcalFixture } from '../testing/gcalFixture.js';
 import type { IntegrationData } from '../models/index.js';
-import type { loadPlan as LoadPlan } from './plan.js';
+import type { loadPlan as LoadPlan } from '../testing/calendarCalls.js';
 import { eventIdFor } from './diff.js';
 
 let fx: GcalFixture;
@@ -20,7 +20,7 @@ const NOW = new Date();
 
 before(async () => {
   fx = await startGcalFixture('todolist_gcal_plan');
-  ({ loadPlan } = await import('./plan.js'));
+  ({ loadPlan } = await import('../testing/calendarCalls.js'));
 });
 after(async () => {
   await fx.stop();

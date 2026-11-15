@@ -1,7 +1,9 @@
 /**
- * Loads what the diff needs for the workspace's primary calendar and runs it (plan Addendum A2).
- * Only the integration the primary calendar is on is planned (409 `calendar_not_primary` for any
- * other), and only into that calendar.
+ * One target Google calendar of a workspace (plan Addendum A2): the workspace's primary calendar,
+ * as the Google Calendar integration it is on pushes to it. It composes its links (CalendarLink,
+ * tombstones included), its pull cursor (SyncCursor, `gcal:<id>`) and what a push would do
+ * (PushPlan). GoogleCalendarIntegration uses it to plan, push and commit; the diff (gcal/diff.ts)
+ * and the Calendar API (writers/calendarApi.ts) stay pure.
  *
  * The push set is fixed, and read as one MongoDB filter over what the integration's owner may see
  * (ItemPolicy as them: their own integrations, the shared ones, and the to-dos they may see,
@@ -16,41 +18,39 @@
  *   defers creates; the next run reads them first, since what was created is linked.
  * Then the recently tombstoned links, and what is left of the daily creation cap.
  */
-import { AppError } from '../errors/AppError.js';
-import { CalendarNotPrimaryError } from '../errors/CalendarNotPrimaryError.js';
-import type { IntegrationData } from '../models/definitions/Integration.js';
-import {
-  getCalendarLinkRepository,
-  getItemRepository,
-  getSyncRunRepository,
-} from '../models/index.js';
-import type { RuleGroup } from '../types/builder.js';
-import { compileQuery, parseQuery } from '../builder/compile.js';
-import { Actor } from '../classes/base/Actor.js';
-import { Caller } from '../classes/base/Caller.js';
-import { CalendarLink } from '../classes/calendar/CalendarLink.js';
-import { TimeBudget, WRITE_BUDGET_MS } from '../classes/integration/calendar/TimeBudget.js';
-import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
-import { Overrides } from '../classes/item/Overrides.js';
-import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
-import { WorkspaceSettings } from '../classes/workspace/WorkspaceSettings.js';
-import { redactString } from '../services/secretPatterns.js';
-import { zonedTime } from '../sync/transports/fixtureDates.js';
+import { Actor } from '../base/Actor.js';
+import { Caller } from '../base/Caller.js';
+import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
+import { TimeBudget, WRITE_BUDGET_MS } from '../integration/calendar/TimeBudget.js';
+import { Overrides } from '../item/Overrides.js';
+import { ItemPolicy } from '../policies/ItemPolicy.js';
+import type { SyncCursor } from '../sync/SyncCursor.js';
+import { SyncCursors } from '../sync/SyncCursors.js';
+import { SyncRun } from '../sync/SyncRun.js';
+import { AttributeDefinitions } from '../workspace/AttributeDefinitions.js';
+import { WorkspaceSettings } from '../workspace/WorkspaceSettings.js';
+import { compileQuery, parseQuery } from '../../builder/compile.js';
+import { AppError } from '../../errors/AppError.js';
+import { CalendarNotPrimaryError } from '../../errors/CalendarNotPrimaryError.js';
 import {
   buildOps,
   localDate,
   PAST_WINDOW_DAYS,
   TOMBSTONE_MS,
-  type BuildResult,
   type PushConfig,
   type PushItem,
   type PushLink,
-} from './diff.js';
+} from '../../gcal/diff.js';
+import type { IntegrationData } from '../../models/definitions/Integration.js';
+import { getCalendarLinkRepository, getItemRepository } from '../../models/index.js';
+import { redactString } from '../../services/secretPatterns.js';
+import { zonedTime } from '../../sync/transports/fixtureDates.js';
+import { CalendarLink } from './CalendarLink.js';
+import { PushCommit, type CommitCounts } from './PushCommit.js';
+import { PushPlan, readGcalConfig, type PlanNarrowing } from './PushPlan.js';
 
 /** Google allows 5,000 creations a day; we stop at 4,000. */
 export const DAILY_CREATE_CAP = 4000;
-export const DEFAULT_HORIZON_DAYS = 90;
-export const DEFAULT_MAX_OPS = 50;
 /** What the plan leaves of the request's budget for the writes and the pull that follow. */
 export const WRITE_RESERVE_MS = 12_000;
 /** Items read per page (and link items per chunk). */
@@ -59,49 +59,12 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 type Filter = Record<string, unknown>;
 
-export interface CalendarEntry {
+/** A calendar as this class holds it: Google's id, and the integration that pushes to it. */
+export interface CalendarData {
+  /** Google's calendar id (from calendarList: never the `primary` alias). */
   id: string;
-  mode: 'two_way' | 'read';
-}
-
-/** `Integrations.config` of a Google Calendar integration, with the defaults filled in. */
-export interface GcalConfig {
-  calendars: CalendarEntry[];
-  horizonDays: number;
-  maxOpsPerRun: number;
-}
-
-export function readGcalConfig(integration: IntegrationData): GcalConfig {
-  const raw = integration.config;
-  const calendars: CalendarEntry[] = [];
-  if (Array.isArray(raw['calendars'])) {
-    for (const entry of raw['calendars'] as unknown[]) {
-      const id = (entry as { id?: unknown } | null)?.id;
-      const mode = (entry as { mode?: unknown } | null)?.mode;
-      if (typeof id === 'string' && id !== '') {
-        calendars.push({ id, mode: mode === 'read' ? 'read' : 'two_way' });
-      }
-    }
-  }
-  const horizon = raw['horizonDays'];
-  const maxOps = raw['maxOpsPerRun'];
-  return {
-    calendars,
-    horizonDays: typeof horizon === 'number' ? horizon : DEFAULT_HORIZON_DAYS,
-    maxOpsPerRun: typeof maxOps === 'number' ? maxOps : DEFAULT_MAX_OPS,
-  };
-}
-
-/** Narrows the plan to some items (the MCP dry run): nothing is deleted then. */
-export interface PlanNarrowing {
-  where?: RuleGroup;
-  range?: { from?: string; to?: string };
-}
-
-export interface LoadedPlan extends BuildResult {
-  /** `calendarId` is the primary calendar's. */
-  cfg: PushConfig & { calendarId: string };
-  config: GcalConfig;
+  workspaceId: string;
+  integrationId: string;
 }
 
 /** A span of time, as instants and as the local dates a planned date is compared with. */
@@ -292,85 +255,130 @@ async function pushItems(
   return found.map(toPushItem);
 }
 
-/** Creations still allowed today: the cap minus what runs of the last 24 hours created. */
-export async function remainingCreates(integration: IntegrationData, now: Date): Promise<number> {
-  const runs = await (
-    await getSyncRunRepository()
-  ).listForIntegration(integration.workspaceId, integration.id, 100);
-  let used = 0;
-  for (const run of runs) {
-    const push = run.trigger === 'calendar_push';
-    if (push && now.getTime() - run.startedAt.getTime() < DAY_MS) {
-      used += run.counts['created'] ?? 0;
+export class Calendar extends WorkspaceEntity<CalendarData> {
+  readonly #integration: IntegrationData;
+  /** The integration's owner, as whom the push set is read (a primary calendar only). */
+  readonly #owner: Caller | null;
+
+  private constructor(integration: IntegrationData, calendarId: string, owner: Caller | null) {
+    super({ id: calendarId, workspaceId: integration.workspaceId, integrationId: integration.id });
+    this.#integration = integration;
+    this.#owner = owner;
+  }
+
+  /**
+   * The calendar a push of `integration` wrote to (its commit's calendar): no check, the push
+   * already planned it as the primary calendar.
+   */
+  static of(integration: IntegrationData, calendarId: string): Calendar {
+    return new Calendar(integration, calendarId, null);
+  }
+
+  /**
+   * The workspace's primary calendar, as `integration` pushes to it: 409 `calendar_not_primary`
+   * unless the primary calendar is on this integration; 409 when its member is gone. With the
+   * owner's caller, as whom its push set is read.
+   */
+  static async primaryFor(integration: IntegrationData): Promise<Calendar> {
+    const owner = await Caller.enter(integration.workspaceId, Actor.user(integration.ownerUserId));
+    if (owner === null) {
+      throw new AppError(409, 'The member who connected this integration is gone');
     }
+    const primary = WorkspaceSettings.from(owner.settings).primaryCalendar;
+    if (primary?.isOn(integration.id) !== true) throw new CalendarNotPrimaryError(integration.id);
+    return new Calendar(integration, primary.calendarId, owner);
   }
-  return Math.max(0, DAILY_CREATE_CAP - used);
-}
 
-/**
- * Items to push → ops, for `integration` at `now`, into the workspace's primary calendar. 409
- * `calendar_not_primary` unless the primary calendar is on this integration; 409 when its member
- * is gone.
- */
-export async function loadPlan(
-  integration: IntegrationData,
-  now: Date,
-  narrowing?: PlanNarrowing,
-  budget: TimeBudget = TimeBudget.start(WRITE_BUDGET_MS),
-): Promise<LoadedPlan> {
-  const { workspaceId } = integration;
-  const config = readGcalConfig(integration);
-  const owner = integration.ownerUserId;
-  const caller = await Caller.enter(workspaceId, Actor.user(owner));
-  if (caller === null) {
-    throw new AppError(409, 'The member who connected this integration is gone');
+  get integrationId(): string {
+    return this.data.integrationId;
   }
-  const primary = WorkspaceSettings.from(caller.settings).primaryCalendar;
-  if (primary?.isOn(integration.id) !== true) throw new CalendarNotPrimaryError(integration.id);
-  const timeZone = caller.settings.timezone;
 
-  const linkRepo = await getCalendarLinkRepository();
-  const [allLive, stones, kept] = await Promise.all([
-    linkRepo.listLive(workspaceId, integration.id),
-    linkRepo.listTombstonedSince(
+  /** Where the pull after a push stands on this calendar (`gcal:<id>`, apart from the sync's). */
+  async cursor(): Promise<SyncCursor> {
+    return SyncCursors.of(this.#integration).get(`gcal:${this.id}`);
+  }
+
+  /**
+   * Items to push → ops, at `now`, into this primary calendar (Calendar.primaryFor), as its
+   * integration's owner sees them. A narrowing (the MCP dry run) plans some items and deletes
+   * nothing. The plan spends part of `budget`, which the writes and the pull then share.
+   */
+  async plan(
+    now: Date,
+    narrowing?: PlanNarrowing,
+    budget: TimeBudget = TimeBudget.start(WRITE_BUDGET_MS),
+  ): Promise<PushPlan> {
+    const integration = this.#integration;
+    const { workspaceId } = integration;
+    const config = readGcalConfig(integration);
+    const caller = this.#owner;
+    if (caller === null) throw new Error('Calendar#plan plans a calendar from primaryFor only');
+    const timeZone = caller.settings.timezone;
+
+    const linkRepo = await getCalendarLinkRepository();
+    const [allLive, stones, kept] = await Promise.all([
+      linkRepo.listLive(workspaceId, integration.id),
+      linkRepo.listTombstonedSince(
+        workspaceId,
+        integration.id,
+        new Date(now.getTime() - TOMBSTONE_MS),
+      ),
+      linkRepo.listKeptStops(workspaceId, integration.id),
+    ]);
+    // Only links to events TodoList made are ever updated, moved or deleted (CalendarLink).
+    const live = allLive.filter((link) => CalendarLink.isOwnLive(link));
+    const recent = new Set(stones.map((link) => link.id));
+    const links: PushLink[] = [...live, ...stones, ...kept.filter((link) => !recent.has(link.id))];
+
+    // Everything its owner may see (their own, the shared integrations, the to-dos they may see).
+    const policy = await ItemPolicy.for(caller);
+    const window = spanOf(
+      new Date(now.getTime() - PAST_WINDOW_DAYS * DAY_MS),
+      new Date(now.getTime() + config.horizonDays * DAY_MS),
+      timeZone,
+    );
+    const narrowed = narrowingOf(narrowing, caller, policy, now);
+    const scope: Filter[] = [policy.itemFilter(caller.context), ...pushRule()];
+    const items = await pushItems(
       workspaceId,
-      integration.id,
-      new Date(now.getTime() - TOMBSTONE_MS),
-    ),
-    linkRepo.listKeptStops(workspaceId, integration.id),
-  ]);
-  // Only links to events TodoList made are ever updated, moved or deleted (CalendarLink).
-  const live = allLive.filter((link) => CalendarLink.isOwnLive(link));
-  const recent = new Set(stones.map((link) => link.id));
-  const links: PushLink[] = [...live, ...stones, ...kept.filter((link) => !recent.has(link.id))];
+      scope,
+      [datedWithin(window), ...narrowed.filters],
+      narrowed.stages,
+      live.map((link) => link.itemId),
+      budget,
+    );
 
-  // Everything its owner may see (their own, the shared integrations, the to-dos they may see).
-  const policy = await ItemPolicy.for(caller);
-  const window = spanOf(
-    new Date(now.getTime() - PAST_WINDOW_DAYS * DAY_MS),
-    new Date(now.getTime() + config.horizonDays * DAY_MS),
-    timeZone,
-  );
-  const narrowed = narrowingOf(narrowing, caller, policy, now);
-  const scope: Filter[] = [policy.itemFilter(caller.context), ...pushRule()];
-  const items = await pushItems(
-    workspaceId,
-    scope,
-    [datedWithin(window), ...narrowed.filters],
-    narrowed.stages,
-    live.map((link) => link.itemId),
-    budget,
-  );
+    const cfg: PushConfig & { calendarId: string } = {
+      workspaceId,
+      calendarId: this.id,
+      timeZone,
+      horizonDays: config.horizonDays,
+      maxOps: config.maxOpsPerRun,
+      maxCreates: await this.#remainingCreates(now),
+      // Every live link's item was read, so a delete is always right; a narrowed plan sees a part.
+      allowDelete: narrowing === undefined,
+    };
+    return PushPlan.of({ ...buildOps(items, links, cfg, now), cfg, config });
+  }
 
-  const cfg: PushConfig & { calendarId: string } = {
-    workspaceId,
-    calendarId: primary.calendarId,
-    timeZone,
-    horizonDays: config.horizonDays,
-    maxOps: config.maxOpsPerRun,
-    maxCreates: await remainingCreates(integration, now),
-    // Every live link's item was read, so a delete is always right; a narrowed plan sees a part.
-    allowDelete: narrowing === undefined,
-  };
-  return { ...buildOps(items, links, cfg, now), cfg, config };
+  /**
+   * One push's commit into this calendar (PushCommit): the op results (links, audit), the pull's
+   * Google changes, and the run's end. Throws 409 for a run that is not open.
+   */
+  commit(input: unknown, now: Date = new Date()): Promise<CommitCounts> {
+    return PushCommit.apply(this.#integration, input, now, this.id);
+  }
+
+  /** Creations still allowed today: the cap minus what runs of the last 24 hours created. */
+  async #remainingCreates(now: Date): Promise<number> {
+    const runs = await SyncRun.listFor(this.#integration, 100);
+    let used = 0;
+    for (const run of runs) {
+      const push = run.trigger === 'calendar_push';
+      if (push && now.getTime() - run.startedAt.getTime() < DAY_MS) {
+        used += run.counts['created'] ?? 0;
+      }
+    }
+    return Math.max(0, DAILY_CREATE_CAP - used);
+  }
 }

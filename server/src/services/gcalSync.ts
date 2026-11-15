@@ -5,8 +5,8 @@
  * calendar (409 `calendar_not_primary` for any other integration), and only while it is read &
  * write (the write gate of GoogleCalendarIntegration: 409 `integration_read_only` otherwise).
  *
- * A push runs in the request (GoogleCalendarIntegration#push): a `SyncRuns` row (trigger
- * `calendar_push`), the diff's ops through the Calendar API, then the commit (gcal/commit.ts:
+ * A push runs in the request (GoogleCalendarIntegration#push): a SyncRun (trigger
+ * `calendar_push`), the diff's ops through the Calendar API, then the commit (Calendar#commit:
  * links, audit, the run's counts). Ops left when PUSH_BUDGET_MS runs out wait for the next run.
  *
  * A dry run shows what would be created, updated and removed and writes nothing: allowed for a
@@ -21,8 +21,9 @@ import {
   isCalendarProvider,
   type CalendarDryRun,
 } from '../classes/integration/index.js';
+import { Calendar } from '../classes/calendar/Calendar.js';
+import type { PlanNarrowing } from '../classes/calendar/PushPlan.js';
 import { AppError } from '../errors/AppError.js';
-import { loadPlan, type PlanNarrowing } from '../gcal/plan.js';
 import { TimeBudget, WRITE_BUDGET_MS } from '../classes/integration/calendar/TimeBudget.js';
 import type { WorkspaceContext } from './accessFilter.js';
 
@@ -48,7 +49,7 @@ export interface GcalSyncInput {
 /**
  * A push to the workspace's primary calendar, on the member's own Google Calendar integration
  * (404 for another member's, ruling 1; 409 `calendar_not_primary` when the primary calendar is
- * not on it), of the dated items its owner may see (loadPlan). A confirmed push needs it to be
+ * not on it), of the dated items its owner may see (Calendar#plan). A confirmed push needs it to be
  * read & write (409 `integration_read_only`, before anything is planned or recorded).
  */
 export async function gcalSync(
@@ -74,8 +75,8 @@ export async function gcalSync(
   integration.assertWritable(caller);
   // One budget for the whole request: the plan, the writes and the pull share it.
   const budget = TimeBudget.start(WRITE_BUDGET_MS);
-  const plan = await loadPlan(integration.toJSON(), now, undefined, budget);
-  if (plan.cfg.maxCreates === 0 && plan.skipped.some((entry) => entry.reason === 'daily_cap')) {
+  const plan = await (await Calendar.primaryFor(integration.toJSON())).plan(now, undefined, budget);
+  if (plan.dailyCapReached) {
     throw new AppError(
       429,
       'The daily limit of new calendar events is used up. Try again tomorrow.',
@@ -86,7 +87,7 @@ export async function gcalSync(
     runId: await integration.push(caller, {
       ops: plan.ops,
       now,
-      calendarId: plan.cfg.calendarId,
+      calendarId: plan.calendarId,
       budget,
     }),
   };

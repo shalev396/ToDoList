@@ -7,7 +7,7 @@
  * integration (the primary calendar suspended) is not eligible.
  *
  * The per-day create cap (4,000) and `maxOpsPerRun` apply as in the manual path (both live in
- * loadPlan). Each `gcal-run` job carries the integration id only (services/syncJobs.ts).
+ * Calendar#plan). Each `gcal-run` job carries the integration id only (services/syncJobs.ts).
  */
 import { Actor } from '../classes/base/Actor.js';
 import { Caller } from '../classes/base/Caller.js';
@@ -17,7 +17,7 @@ import { AppError } from '../errors/AppError.js';
 import type { IntegrationData } from '../models/definitions/Integration.js';
 import { logger } from '../services/logger.js';
 import { TimeBudget, WRITE_BUDGET_MS } from '../classes/integration/calendar/TimeBudget.js';
-import { loadPlan } from './plan.js';
+import { Calendar } from '../classes/calendar/Calendar.js';
 
 /**
  * Whether the dispatch may sync this integration, as stored: a live, read & write Google Calendar
@@ -73,10 +73,11 @@ export async function runScheduledGcalSync(
     return { ran: false, reason: 'not_eligible' };
   }
   try {
-    // The ops are capped by maxOpsPerRun and the day's remaining creates (loadPlan); with the cap
-    // used up only updates and removals go out, and the pull still runs.
+    // The ops are capped by maxOpsPerRun and the day's remaining creates (Calendar#plan); with the
+    // cap used up only updates and removals go out, and the pull still runs.
     const budget = TimeBudget.start(WRITE_BUDGET_MS);
-    const plan = await loadPlan(integration.toJSON(), now, undefined, budget);
+    const calendar = await Calendar.primaryFor(integration.toJSON());
+    const plan = await calendar.plan(now, undefined, budget);
     // The push is its owner's, on schedule: it runs as them, under the same write gate.
     const caller = await Caller.enter(integration.workspaceId, Actor.user(integration.ownerUserId));
     if (caller === null) {
@@ -87,7 +88,7 @@ export async function runScheduledGcalSync(
       runId: await integration.push(caller, {
         ops: plan.ops,
         now,
-        calendarId: plan.cfg.calendarId,
+        calendarId: plan.calendarId,
         budget,
       }),
     };
