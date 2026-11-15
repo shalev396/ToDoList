@@ -200,8 +200,16 @@ export interface CreatePreview {
   shares: IntegrationShare[];
 }
 
-/** One write of a whole next document, as `save` takes it. */
-export interface DashboardChange {
+/** What a caller's `save` says of its write: only its summary. */
+export interface SaveChange {
+  readonly summary: string;
+}
+
+/**
+ * One write of a whole next document, as the private commit takes it: only this class's own,
+ * checked write paths build one (a caller's `save` passes its summary alone).
+ */
+interface Commit {
   summary: string;
   /** The patch and inverse the write's ops made; diffed from the current draft when absent. */
   patch?: PatchOperation[] | undefined;
@@ -818,28 +826,41 @@ export class Dashboard
   // ─── Saving ────────────────────────────────────────────────────────────────
 
   /**
-   * Writes `doc` as version `ifVersion + 1` (compare-and-set: 409 with the current version when it
-   * moved on, 404 when it is gone), then its history entry, the prune and the audit entry. An
-   * owner's UI write is published in the same update (unless the change brings its own published
-   * copy). Connectors are checked first, and each removal of another member's connector is
-   * audited. Returns the new version.
+   * A caller's whole next draft, written as version `ifVersion + 1`, with every check a write
+   * makes: the edit role and the read (403, 404), the version this dashboard was read at (409 with
+   * the current version when `ifVersion` is not it), then validation and lint in the caller's mode
+   * through DocCheck, the secret scan included (400 with a pointer). The scope stays the stored
+   * one. Only `change.summary` is read: the patch and inverse are diffed here, and the published
+   * copy changes only as any write of the caller's changes it (an owner's UI write publishes).
+   * Returns the new version.
    */
   async save(
     caller: Caller,
     doc: DashboardDraft,
     ifVersion: number,
-    change: DashboardChange,
+    change: SaveChange,
   ): Promise<number> {
     this.#allow(caller, Dashboard.Operation.edit);
-    return this.#commit(caller, doc, ifVersion, change);
+    // Read at another version (a stale instance, or a stale ifVersion): the current one, or gone.
+    if (this.version !== ifVersion)
+      throw await Dashboard.#conflictOrGone(this.workspaceId, this.id);
+    const draft = validated({ ...doc, scope: this.toJSON().scope }, caller);
+    return this.#commit(caller, draft, ifVersion, { summary: change.summary });
   }
 
-  /** `save` after its checks; "stop sharing" writes through it directly (#stripConnector). */
+  /**
+   * Writes `doc` as version `ifVersion + 1` (compare-and-set: 409 with the current version when it
+   * moved on, 404 when it is gone), then its history entry, the prune and the audit entry. An
+   * owner's UI write is published in the same update (unless the change brings its own published
+   * copy). Connectors are checked first, and each removal of another member's connector is
+   * audited. Private: every caller (`save`, ops, patches, undo, redo, revert, stop sharing) has
+   * run its own checks first.
+   */
   async #commit(
     caller: Caller,
     doc: DashboardDraft,
     ifVersion: number,
-    change: DashboardChange,
+    change: Commit,
   ): Promise<number> {
     let next = doc;
     let patch = change.patch;
@@ -967,7 +988,7 @@ export class Dashboard
     }
     const [blocking] = errors;
     if (blocking !== undefined) throw new OpValidationError(blocking.pointer, blocking.message);
-    const version = await this.save(caller, result.next, input.expectedVersion, {
+    const version = await this.#commit(caller, result.next, input.expectedVersion, {
       summary,
       patch: result.patch,
       inverse: result.inverse,
@@ -1007,7 +1028,7 @@ export class Dashboard
     }
     if (input.dryRun === true) return this.#dryRun(caller, before, next, input.previewRows);
     const draft = validated(next, caller);
-    const version = await this.save(caller, draft, input.expectedVersion, {
+    const version = await this.#commit(caller, draft, input.expectedVersion, {
       summary: `apply_patch ${String(input.patch.length)} op(s)`,
     });
     const warnings = DocCheck.instance
@@ -1102,7 +1123,7 @@ export class Dashboard
    */
   async undo(caller: Caller, input: UndoInput): Promise<DashboardWriteResult> {
     const plan = await this.#undoPlan(caller, input);
-    const version = await this.save(
+    const version = await this.#commit(
       caller,
       restorable(plan.state, 'undo', caller),
       input.expectedVersion,
@@ -1130,7 +1151,7 @@ export class Dashboard
     const trail = await this.#history.read();
     await this.#assertHistoryComplete(trail.newest);
     const { state, summary } = trail.redo(this.#head(), caller.actor.agentId);
-    const version = await this.save(
+    const version = await this.#commit(
       caller,
       restorable(state, 'redo', caller),
       input.expectedVersion,
@@ -1161,7 +1182,7 @@ export class Dashboard
     this.#assertVersion(input.expectedVersion);
     const { toVersion } = input;
     const target = await this.#revertTarget(toVersion);
-    const version = await this.save(
+    const version = await this.#commit(
       caller,
       restorable(target, 'revert', caller),
       input.expectedVersion,

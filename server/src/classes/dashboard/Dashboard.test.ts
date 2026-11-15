@@ -10,6 +10,7 @@ import assert from 'node:assert/strict';
 
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { callerFor, hasStatus, newUser } from '../../testing/workspaceFixtures.js';
+import type { DashboardView } from '../../types/dashboards.js';
 import type { Caller } from '../base/Caller.js';
 import type * as DashboardModule from './index.js';
 
@@ -102,37 +103,126 @@ describe('Dashboard: the role before anything is read', () => {
   });
 });
 
+/** A dashboard's stored versions, newest first (tests read the repository directly). */
+async function storedVersions(
+  workspaceId: string,
+  dashboardId: string,
+): Promise<{ version: number; summary: string | null; patch: unknown[] }[]> {
+  const { getDashboardVersionRepository } = await import('../../models/index.js');
+  const entries = await (await getDashboardVersionRepository()).list(workspaceId, dashboardId, 20);
+  return entries.map(({ version, summary, patch }) => ({ version, summary, patch }));
+}
+
+/** The draft a view shows, as `save` takes it. */
+function draftOf(view: DashboardView): Parameters<DashboardModule.Dashboard['save']>[1] {
+  return {
+    title: view.title,
+    scope: view.scope,
+    vars: view.vars,
+    layouts: view.layouts,
+    blocks: view.blocks,
+  };
+}
+
 describe('Dashboard#save', () => {
   it('writes the next version with its history entry; a stale version is a 409 with the current one', async () => {
     const { Dashboard } = classes;
     const t = await team('dash-save');
     const created = await Dashboard.create(t.editor, { title: 'First', language: 'en' });
     const dashboard = await Dashboard.load(t.editor, created.id, Dashboard.Operation.edit);
-    const doc = { ...created, title: 'Second' };
-    const draft = {
-      title: doc.title,
-      scope: doc.scope,
-      vars: doc.vars,
-      layouts: doc.layouts,
-      blocks: doc.blocks,
-    };
+    const draft = { ...draftOf(created), title: 'Second' };
     assert.equal(await dashboard.save(t.editor, draft, 1, { summary: 'rename' }), 2);
-    const trail = await dashboard.history.read();
-    assert.deepEqual(
-      trail.entries.map((entry) => [entry.version, entry.summary]),
-      [
-        [2, 'rename'],
-        [1, 'create'],
-      ],
-    );
-    assert.deepEqual(trail.latest?.patch, [{ op: 'replace', path: '/title', value: 'Second' }]);
-    await assert.rejects(
-      dashboard.save(t.editor, { ...draft, title: 'Stale' }, 1, { summary: 'stale' }),
-      (error: unknown) =>
-        hasStatus(409)(error) && (error as { currentVersion?: number }).currentVersion === 2,
-    );
+    assert.deepEqual(await storedVersions(t.workspaceId, created.id), [
+      {
+        version: 2,
+        summary: 'rename',
+        patch: [{ op: 'replace', path: '/title', value: 'Second' }],
+      },
+      { version: 1, summary: 'create', patch: [] },
+    ]);
+    // The instance was read at version 1: stale now, whichever version it names.
+    for (const ifVersion of [1, 2]) {
+      await assert.rejects(
+        dashboard.save(t.editor, { ...draft, title: 'Stale' }, ifVersion, { summary: 'stale' }),
+        (error: unknown) =>
+          hasStatus(409)(error) && (error as { currentVersion?: number }).currentVersion === 2,
+      );
+    }
     const now = await Dashboard.load(t.editor, created.id);
     assert.deepEqual([now.title, now.version], ['Second', 2]);
+  });
+
+  it('cannot publish, skip the checks or write the history’s patches: only the summary is read', async () => {
+    const { Dashboard } = classes;
+    const t = await team('dash-save-narrow');
+    const created = await Dashboard.create(t.editor, { title: 'First', language: 'en' });
+    await (
+      await Dashboard.load(t.owner, created.id, Dashboard.Operation.publish)
+    ).publish(t.owner, { expectedVersion: 1 });
+    const dashboard = await Dashboard.load(t.editor, created.id, Dashboard.Operation.edit);
+    const forged = [{ op: 'replace', path: '/title', value: 'Forged' }];
+    // Whatever a caller passes besides the summary, as if the old commit's fields were accepted.
+    const wide = dashboard.save.bind(dashboard) as (
+      caller: Caller,
+      doc: unknown,
+      ifVersion: number,
+      change: unknown,
+    ) => Promise<number>;
+    const version = await wide(
+      t.editor,
+      { ...draftOf(created), title: 'Edited', scope: { ...created.scope, page: 'group' } },
+      1,
+      {
+        summary: 'edit',
+        published: { copy: { title: 'Forged', vars: {}, layouts: created.layouts, blocks: [] } },
+        patch: forged,
+        inverse: forged,
+      },
+    );
+    assert.equal(version, 2);
+    const after = await Dashboard.load(t.editor, created.id);
+    assert.equal(after.publishedVersion, 1, 'an editor’s save never publishes');
+    assert.equal((await after.view(t.editor, { as: 'published' })).title, 'First');
+    assert.equal(after.scope.page, created.scope.page, 'the scope stays the stored one');
+    const [entry] = await storedVersions(t.workspaceId, created.id);
+    assert.deepEqual(entry, {
+      version: 2,
+      summary: 'edit',
+      patch: [{ op: 'replace', path: '/title', value: 'Edited' }],
+    });
+
+    // The checks a write makes: the secret scan, and the document's own validation.
+    await assert.rejects(
+      after.save(
+        t.editor,
+        { ...draftOf(created), title: 'ghp_FAKEabcdefghijklmnopqrstuvwxyz0123' },
+        2,
+        {
+          summary: 'secret',
+        },
+      ),
+      hasStatus(400),
+    );
+    await assert.rejects(
+      after.save(
+        t.editor,
+        { ...draftOf(created), blocks: [{ id: 'b', type: 'nope' }] } as never,
+        2,
+        {
+          summary: 'invalid',
+        },
+      ),
+      hasStatus(400),
+    );
+    await assert.rejects(
+      after.save(t.viewer, draftOf(created), 2, { summary: 'viewer' }),
+      hasStatus(403),
+    );
+    assert.equal(
+      (await Dashboard.load(t.editor, created.id)).version,
+      2,
+      'nothing more was written',
+    );
   });
 });
 

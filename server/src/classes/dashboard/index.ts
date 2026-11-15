@@ -8,7 +8,6 @@ export {
   Dashboard,
   type CreateDashboardInput,
   type CreatePreview,
-  type DashboardChange,
   type DashboardListFilter,
   type DashboardOpsInput,
   type DashboardOpsResult,
@@ -16,6 +15,7 @@ export {
   type InstantiateDashboardInput,
   type PublishInput,
   type RevertInput,
+  type SaveChange,
   type UndoInput,
 } from './Dashboard.js';
 export {
