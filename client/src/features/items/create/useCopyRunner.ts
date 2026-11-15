@@ -29,6 +29,8 @@ export interface ConsentReturn {
   todoId: string;
   integrationId: string;
   path: string;
+  /** Select that integration in the to-do's "Also create in" (false: the item's own sign-in). */
+  preselect?: boolean;
 }
 
 export function rememberConsentReturn(value: ConsentReturn): void {
@@ -50,7 +52,12 @@ export function takeConsentReturn(): ConsentReturn | null {
     return typeof parsed.todoId === 'string' &&
       typeof parsed.integrationId === 'string' &&
       typeof parsed.path === 'string'
-      ? (parsed as ConsentReturn)
+      ? {
+          todoId: parsed.todoId,
+          integrationId: parsed.integrationId,
+          path: parsed.path,
+          preselect: parsed.preselect !== false,
+        }
       : null;
   } catch {
     return null;

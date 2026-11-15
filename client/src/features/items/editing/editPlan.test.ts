@@ -13,7 +13,7 @@ import {
   withStart,
   type EditDraft,
 } from './editPlan.ts';
-import { saveProblemOf } from './saveProblem.ts';
+import { saveProblemOf, serverAnswered } from './saveProblem.ts';
 
 const ZONE = 'Asia/Jerusalem';
 
@@ -403,13 +403,20 @@ describe('saveProblemOf', () => {
           details: { written: ['title'], refused: ['status'], uncertain: ['dueAt'] },
         }),
       ),
-      { kind: 'partial', written: ['title'], refused: ['status'], uncertain: ['dueAt'] },
+      {
+        kind: 'partial',
+        written: ['title'],
+        refused: ['status'],
+        uncertain: ['dueAt'],
+        kept: null,
+      },
     );
     assert.deepEqual(saveProblemOf(failed(409, { code: 'provider_partial_write' })), {
       kind: 'partial',
       written: [],
       refused: [],
       uncertain: [],
+      kept: null,
     });
   });
 
@@ -452,6 +459,46 @@ describe('saveProblemOf', () => {
     assert.deepEqual(saveProblemOf(failed(502, { message: 'x' })), { kind: 'uncertain' });
     assert.deepEqual(saveProblemOf(failed(504, {})), { kind: 'uncertain' });
     assert.deepEqual(saveProblemOf(new Error('Network Error')), { kind: 'uncertain' });
+  });
+
+  it('a lost answer to a save that sent the provider nothing never blames the provider', () => {
+    assert.deepEqual(saveProblemOf(new Error('Network Error'), false), { kind: 'unconfirmed' });
+    assert.deepEqual(saveProblemOf(failed(504, {}), false), { kind: 'unconfirmed' });
+    assert.deepEqual(saveProblemOf(new Error('Network Error'), true), { kind: 'uncertain' });
+  });
+
+  it('“not kept” is known only from an answer (a code, or a 4xx)', () => {
+    assert.equal(serverAnswered(failed(502, { code: 'provider_no_answer' })), true);
+    assert.equal(serverAnswered(failed(409, { message: 'x' })), true);
+    assert.equal(serverAnswered(failed(400, {})), true);
+    assert.equal(serverAnswered(failed(502, {})), false);
+    assert.equal(serverAnswered(failed(500, { message: 'Internal server error' })), false);
+    assert.equal(serverAnswered(new Error('Network Error')), false);
+  });
+
+  it('nothing sent, or sent and not stored: their own copy', () => {
+    const unreachable = saveProblemOf(failed(502, { code: 'provider_unreachable' }));
+    assert.equal(
+      unreachable.kind === 'message' ? unreachable.key : unreachable.kind,
+      'items.edit.errors.unreachable',
+    );
+    const stored = saveProblemOf(
+      failed(409, { code: 'provider_written_not_stored', details: { written: ['title'] } }),
+    );
+    assert.equal(
+      stored.kind === 'message' ? stored.key : stored.kind,
+      'items.edit.errors.writtenNotStored',
+    );
+  });
+
+  it('a partial write carries what the server kept in TodoList', () => {
+    const problem = saveProblemOf(
+      failed(409, {
+        code: 'provider_partial_write',
+        details: { written: ['title'], refused: ['status'], uncertain: [], kept: [] },
+      }),
+    );
+    assert.deepEqual(problem.kind === 'partial' ? problem.kept : 'no', []);
   });
 
   it('a refusal without a code is the provider’s, never “changed in the meantime”', () => {

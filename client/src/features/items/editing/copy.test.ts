@@ -40,7 +40,7 @@ describe('the item editing and Repeat texts', () => {
   });
 
   it('say what Save will do before a save, never that it was done', () => {
-    assert.equal(en.items.edit.sentTo, 'Saving also changes it in {{source}}.');
+    assert.equal(en.items.edit.sentTo, 'Saving also changes {{fields}} in {{source}}.');
     assert.doesNotMatch(en.items.edit.sentTo, /saved/i);
     assert.doesNotMatch(he.items.edit.sentTo, /^נשמר/);
     // The past tense is kept for after a write that was taken, naming what was sent.
@@ -52,6 +52,24 @@ describe('the item editing and Repeat texts', () => {
       assert.doesNotMatch(text, /meantime/);
     }
     assert.match(en.items.edit.uncertain.title, /may have been made/);
+  });
+
+  it('never tell a member the shared fields are theirs alone', () => {
+    for (const lang of [en, he]) {
+      const sheet = lang.items.sheet;
+      for (const text of [
+        sheet.yours,
+        sheet.yoursHint,
+        sheet.yoursHintLocal,
+        sheet.notePlaceholder,
+      ]) {
+        assert.ok(!text.toLowerCase().includes('only you') && !text.includes('רק את/ה'), text);
+      }
+    }
+    assert.equal(
+      en.items.sheet.yoursHint,
+      'Kept in TodoList for everyone who sees this item. Never sent to {{source}}.',
+    );
   });
 
   it('use the brief’s words for the locks', () => {

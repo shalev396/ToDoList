@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils';
 import { pathTo, ROUTES } from '@/router/routes';
 import { integrationAnchor } from '@/features/integrations/anchor';
 import { isOAuthSignIn } from '@/features/integrations/oauthSetup';
+import { rememberConsentReturn } from '../create/useCopyRunner';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { ItemDetail, OverridableField, UpdateItemRequestBody } from '@api-types/api-contracts';
 import type { ItemStatus } from '@api-types/domain';
@@ -50,7 +51,7 @@ import {
   type FieldPlan,
   type ProviderLock,
 } from './editPlan';
-import { saveProblemOf, type SaveProblem } from './saveProblem';
+import { saveProblemOf, serverAnswered, type SaveProblem } from './saveProblem';
 
 const PRIORITIES = ['4', '3', '2', '1', '0'] as const;
 
@@ -91,6 +92,13 @@ function AllowEdits({ item, source }: { item: ItemDetail; source: string }) {
   const start = async () => {
     setStarting(true);
     setProblem(null);
+    // Back here after signing in (the callback lands on Integrations): this item's sheet again.
+    rememberConsentReturn({
+      todoId: item.id,
+      integrationId,
+      path: `${window.location.pathname}${window.location.search}`,
+      preselect: false,
+    });
     try {
       const { data } = await startProviderOAuth(
         workspace.id,
@@ -136,17 +144,36 @@ function LockHint({
   lock,
   item,
   source,
+  onRetry,
 }: {
   id: string;
   lock: ProviderLock;
   item: ItemDetail;
   source: string;
+  /** The owner's list failed to load: say so, and offer another try (a pending lock only). */
+  onRetry?: (() => void) | undefined;
 }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const owner = useOwnerName(item);
   if (lock === 'pending') {
-    return <p id={id} data-provider-lock="pending" className="sr-only" />;
+    return onRetry === undefined ? (
+      <p id={id} data-provider-lock="pending" className="sr-only" />
+    ) : (
+      <div
+        id={id}
+        data-provider-lock="pending"
+        className="flex flex-col items-start gap-2 text-[13px] text-muted-foreground"
+      >
+        <p className="flex items-start gap-1.5">
+          <Lock aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          {t('items.edit.lockUnknown', { source })}
+        </p>
+        <Button type="button" variant="outline" size="sm" className="ms-5" onClick={onRetry}>
+          {t('items.edit.retry')}
+        </Button>
+      </div>
+    );
   }
   const toCard =
     item.editing.ownsIntegration && item.integrationId !== null && lock === 'read_only';
@@ -185,19 +212,22 @@ function LockHint({
 
 /**
  * What went wrong with a save, in words that never overstate it: what reached the provider and
- * what didn't, a provider that didn't answer (it may have made the change), or one message; and
- * what happened to the fields kept in TodoList (`local`: those the save carried).
+ * what didn't, a provider that didn't answer (it may have made the change), a lost answer to a
+ * save of TodoList's own fields, or one message. And what happened to the fields kept in TodoList
+ * (`local`: those the save carried), said only when the server answered (`answered`).
  */
 function ProblemNote({
   problem,
   item,
   source,
   local,
+  answered,
 }: {
   problem: SaveProblem;
   item: ItemDetail;
   source: string;
   local: readonly string[];
+  answered: boolean;
 }) {
   const { t } = useTranslation();
   const list = useFieldList();
@@ -205,6 +235,8 @@ function ProblemNote({
   if (problem.kind === 'guests') {
     return null;
   }
+  // "Not kept" is known only from an answer; a lost one may have been stored after all.
+  const notKept = answered ? local : [];
   const link = (url: string) => (
     <a
       href={url}
@@ -222,6 +254,9 @@ function ProblemNote({
     const lines = (['written', 'refused', 'uncertain'] as const).filter(
       (part) => problem[part].length > 0,
     );
+    // The server says which of TodoList's own fields it kept (an older one keeps them all).
+    const kept = local.filter((field) => problem.kept?.includes(field) ?? true);
+    const lost = local.filter((field) => !kept.includes(field));
     return (
       <div role="alert" data-save-problem="partial" className={box}>
         <p className="flex items-center gap-1.5 font-medium text-destructive">
@@ -234,9 +269,11 @@ function ProblemNote({
               {t(`items.edit.partial.${part}`, { fields: list(problem[part]), source })}
             </li>
           ))}
-          {/* The server keeps TodoList's own fields of a partly written save. */}
-          {local.length === 0 ? null : (
-            <li data-partial="kept">{t('items.edit.kept', { fields: list(local) })}</li>
+          {kept.length === 0 ? null : (
+            <li data-partial="kept">{t('items.edit.kept', { fields: list(kept) })}</li>
+          )}
+          {lost.length === 0 ? null : (
+            <li data-partial="not-kept">{t('items.edit.notKept', { fields: list(lost) })}</li>
           )}
         </ul>
         <span className="ps-5">{link(item.openIn.url)}</span>
@@ -251,12 +288,23 @@ function ProblemNote({
           {t('items.edit.uncertain.title', { source })}
         </p>
         <p className="ps-5">{t('items.edit.uncertain.body', { source })}</p>
-        {local.length === 0 ? null : (
+        {notKept.length === 0 ? null : (
           <p className="ps-5" data-partial="not-kept">
-            {t('items.edit.notKept', { fields: list(local) })}
+            {t('items.edit.notKept', { fields: list(notKept) })}
           </p>
         )}
         <span className="ps-5">{link(item.openIn.url)}</span>
+      </div>
+    );
+  }
+  if (problem.kind === 'unconfirmed') {
+    // Nothing went to the provider: only TodoList's answer was lost, and the sheet re-reads.
+    return (
+      <div role="alert" data-save-problem="unconfirmed" className="flex flex-col gap-1 text-[13px]">
+        <p className="flex items-start gap-1.5 text-destructive">
+          <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
+          {t('items.edit.unconfirmed')}
+        </p>
       </div>
     );
   }
@@ -266,9 +314,9 @@ function ProblemNote({
         <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />
         {t(problem.key, { source, owner, fields: list(problem.fields) })}
       </p>
-      {local.length === 0 ? null : (
+      {notKept.length === 0 ? null : (
         <p className="ps-5" data-partial="not-kept">
-          {t('items.edit.notKept', { fields: list(local) })}
+          {t('items.edit.notKept', { fields: list(notKept) })}
         </p>
       )}
       {problem.openIn === null ? null : <span className="ps-5">{link(problem.openIn.url)}</span>}
@@ -399,6 +447,7 @@ function EditForm({
 }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
+  const list = useFieldList();
   const ids = useId();
   const form = useRef<HTMLFormElement>(null);
   // The draft and the item as the form last saw it (its base): a save sends what differs from the
@@ -441,7 +490,9 @@ function EditForm({
     entry.origin === 'provider' && !entry.editable && plan.lock !== null ? lockId : undefined;
   const sourceAction = (entry: FieldPlan) => {
     const { field } = entry;
-    if (field === 'endAt') {
+    // Never show a redacted value as the provider's: the option is left out then.
+    const redacted = field === 'title' && (item.sourceValues?.title ?? '').includes('[REDACTED:');
+    if (field === 'endAt' || redacted) {
       return undefined;
     }
     return () => {
@@ -502,7 +553,10 @@ function EditForm({
       {children}
       {state.changed.includes(entry.field) ? (
         <p className="text-[13px] text-muted-foreground" data-changed-there={entry.field}>
-          {t('items.edit.changedThere', { source })}
+          {/* An "Only in TodoList" value was changed in TodoList (someone else), not at the source. */}
+          {entry.origin === 'provider'
+            ? t('items.edit.changedThere', { source })
+            : t('items.edit.changedHere')}
         </p>
       ) : null}
     </FieldShell>
@@ -522,9 +576,8 @@ function EditForm({
   const due = fieldOf('dueAt');
   const start = fieldOf('startAt');
   const end = fieldOf('endAt');
-  const sendsToProvider = plan.fields.some(
-    (entry) => entry.origin === 'provider' && entry.editable,
-  );
+  // What Save would send to the provider now, from the draft itself (nothing before an edit).
+  const willSend = providerFieldsOf(plan, patchOf(item, plan, draft, state.base, timeZone) ?? {});
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -722,9 +775,9 @@ function EditForm({
           {t('items.edit.cancel')}
         </Button>
         {/* What Save will do, never what it did; gone once a save failed. */}
-        {sendsToProvider && !failed ? (
+        {willSend.length > 0 && !failed ? (
           <span className="text-[13px] text-muted-foreground" data-sends-to="">
-            {t('items.edit.sentTo', { source })}
+            {t('items.edit.sentTo', { source, fields: list(willSend) })}
           </span>
         ) : null}
         {saveStatus}
@@ -781,7 +834,11 @@ export function MirroredEditor({
   const plan = editPlan(item, canEdit, own);
   const lockId = useId();
   const [editing, setEditing] = useState(false);
-  const [failure, setFailure] = useState<{ problem: SaveProblem; local: string[] } | null>(null);
+  const [failure, setFailure] = useState<{
+    problem: SaveProblem;
+    local: string[];
+    answered: boolean;
+  } | null>(null);
   const [saved, setSaved] = useState(false);
   /** The provider fields the last successful save sent (they were taken). */
   const [sent, setSent] = useState<string[]>([]);
@@ -816,17 +873,19 @@ export function MirroredEditor({
         then?.();
       },
       onError: (error) => {
-        const problem = saveProblemOf(error);
+        const problem = saveProblemOf(error, providerFieldsOf(plan, body).length > 0);
         if (problem.kind === 'guests' && body.notifyGuests === undefined) {
           setAskGuests(then === undefined ? { body } : { body, then });
           return;
         }
-        setFailure({ problem, local: localFieldsOf(plan, body) });
+        setFailure({ problem, local: localFieldsOf(plan, body), answered: serverAnswered(error) });
         // Whatever the provider took, and the connection as it is now (its mode, its grant): the
-        // sheet shows the truth again, and the form re-locks if the mode changed elsewhere.
+        // sheet shows the truth again, and the form re-locks if the mode changed elsewhere. Rows
+        // in blocks too: a partial or unconfirmed save may have stored part of it.
         void queryClient.invalidateQueries({
           queryKey: queryKeys.item(workspace?.id ?? '', item.id),
         });
+        void queryClient.invalidateQueries({ predicate: (query) => query.queryKey[2] === 'block' });
       },
     });
   };
@@ -853,7 +912,13 @@ export function MirroredEditor({
         : 'idle';
   const problemNote =
     failure === null ? null : (
-      <ProblemNote problem={failure.problem} item={item} source={source} local={failure.local} />
+      <ProblemNote
+        problem={failure.problem}
+        item={item}
+        source={source}
+        local={failure.local}
+        answered={failure.answered}
+      />
     );
   // The alert beside it already says what went wrong: the status stays out of the live region.
   const status = <SaveStatus state={state} announce={failure === null} />;
@@ -872,7 +937,19 @@ export function MirroredEditor({
       {editing ? (
         <>
           {plan.lock === null ? null : (
-            <LockHint id={lockId} lock={plan.lock} item={item} source={source} />
+            <LockHint
+              id={lockId}
+              lock={plan.lock}
+              item={item}
+              source={source}
+              onRetry={
+                integrations.isError
+                  ? () => {
+                      void integrations.refetch();
+                    }
+                  : undefined
+              }
+            />
           )}
           <EditForm
             item={item}
@@ -927,7 +1004,19 @@ export function MirroredEditor({
             ) : null}
           </div>
           {plan.lock === null ? null : (
-            <LockHint id={lockId} lock={plan.lock} item={item} source={source} />
+            <LockHint
+              id={lockId}
+              lock={plan.lock}
+              item={item}
+              source={source}
+              onRetry={
+                integrations.isError
+                  ? () => {
+                      void integrations.refetch();
+                    }
+                  : undefined
+              }
+            />
           )}
           {problemNote}
         </>
