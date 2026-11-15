@@ -1,4 +1,5 @@
 import type { ItemKind, ItemStatus, Visibility } from '../../types/domain.js';
+export { OVERRIDABLE_FIELDS, type OverridableField } from '../../types/items.js';
 import type {
   AggregateOptions,
   BulkUpsertResult,
@@ -7,6 +8,23 @@ import type {
   SourceRef,
   SweepOptions,
 } from './common.js';
+
+/**
+ * Values kept in TodoList for fields a mirrored item's provider lacks for its kind (GitHub's due
+ * date, Jira's start date, anything of a pull request): what the item reads as is the override
+ * when set, else what the provider sent (`override ?? source`). Null: no override. The sync never
+ * touches them; a local to-do has none (it edits its own fields).
+ */
+export interface ItemOverrides {
+  title: string | null;
+  status: ItemStatus | null;
+  dueAt: Date | null;
+  /** With a `dueAt` override: it has no time of day (null: as the item is). */
+  allDay: boolean | null;
+  startAt: Date | null;
+  /** 0 (lowest) … 4 (highest). */
+  priority: number | null;
+}
 
 /** User-only fields on any item, mirrored or local. The sync never touches them. */
 export interface ItemOverlay {
@@ -37,7 +55,14 @@ export interface ItemOverlay {
    * `setOverlay`, a key given as null is cleared.
    */
   attrs: Record<string, unknown>;
+  /** Local stand-ins for fields the provider lacks (mirrored items only; never synced). */
+  overrides: ItemOverrides;
 }
+
+/** What `setOverlay` takes: overlay fields, and override fields (null clears one). */
+export type ItemOverlayPatch = Partial<Omit<ItemOverlay, 'overrides'>> & {
+  overrides?: Partial<ItemOverrides>;
+};
 
 /** How far a provider copy of a local to-do got (H5). `unknown`: sent, no answer: may exist. */
 export const COPY_STATUSES = ['pending', 'created', 'failed', 'unknown'] as const;
@@ -252,12 +277,11 @@ export interface IItemRepository {
     patch: MirroredItemPatch,
     options: { resync: boolean },
   ): Promise<ItemData | null>;
-  /** Only the overlay fields given change. Works on mirrored and local items. */
-  setOverlay(
-    workspaceId: string,
-    id: string,
-    overlay: Partial<ItemOverlay>,
-  ): Promise<ItemData | null>;
+  /**
+   * Only the overlay fields given change (an override given as null is cleared). Works on mirrored
+   * and local items.
+   */
+  setOverlay(workspaceId: string, id: string, overlay: ItemOverlayPatch): Promise<ItemData | null>;
   /**
    * Sets `deletedAt`. False when there was nothing to delete. The item's provider copies are
    * released (`overlay.copyOf` cleared): they show as normal mirrored items. Nothing is deleted at

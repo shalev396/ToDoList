@@ -498,6 +498,14 @@ describe('ItemRepository', () => {
       copyOfOwner: null,
       copyOfShared: null,
       attrs: {},
+      overrides: {
+        title: null,
+        status: null,
+        dueAt: null,
+        allDay: null,
+        startAt: null,
+        priority: null,
+      },
     });
     assert.deepEqual([item.props, item.assignees, item.linkedItemIds], [{}, [], []]);
   });
@@ -548,7 +556,49 @@ describe('ItemRepository', () => {
       copyOfOwner: null,
       copyOfShared: null,
       attrs: {},
+      overrides: {
+        title: null,
+        status: null,
+        dueAt: null,
+        allDay: null,
+        startAt: null,
+        priority: null,
+      },
     });
+  });
+
+  it('setOverlay sets and clears overrides, and a sync of the record never touches them', async () => {
+    await ItemRepository.bulkUpsert('w-items', [jiraIssue('102', 'sha1:a')]);
+    const id = await mirroredId('w-items', '102');
+    const due = new Date('2026-12-01T00:00:00.000Z');
+    const set = await ItemRepository.setOverlay('w-items', id, {
+      overrides: { startAt: due, priority: 3 },
+    });
+    assert.deepEqual(
+      [
+        set?.overlay.overrides.startAt,
+        set?.overlay.overrides.priority,
+        set?.overlay.overrides.title,
+      ],
+      [due, 3, null],
+    );
+    // The record changes at the provider: the sync rewrites what it owns, never the overrides.
+    await ItemRepository.bulkUpsert('w-items', [
+      { ...jiraIssue('102', 'sha1:b'), title: 'Renamed there' },
+    ]);
+    const synced = await ItemRepository.findById('w-items', id);
+    assert.equal(synced?.title, 'Renamed there');
+    assert.deepEqual(
+      [synced.overlay.overrides.startAt, synced.overlay.overrides.priority],
+      [due, 3],
+    );
+    const cleared = await ItemRepository.setOverlay('w-items', id, {
+      overrides: { startAt: null },
+    });
+    assert.deepEqual(
+      [cleared?.overlay.overrides.startAt, cleared?.overlay.overrides.priority],
+      [null, 3],
+    );
   });
 
   it('softDelete hides the item', async () => {

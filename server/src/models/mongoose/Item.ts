@@ -12,6 +12,7 @@ import {
   type ItemCopy,
   type ItemData,
   type ItemOverlay,
+  type ItemOverrides,
   type ItemSweepOptions,
   type ItemUpsert,
   type LocalItemPatch,
@@ -89,6 +90,15 @@ const itemSchema = new mongoose.Schema<ItemFields>(
       copyOfOwner: { type: String, default: null },
       copyOfShared: { type: Boolean, default: null },
       attrs: { type: mongoose.Schema.Types.Mixed, default: (): Record<string, unknown> => ({}) },
+      // Local stand-ins for fields the provider lacks (never written by a sync).
+      overrides: {
+        title: { type: String, default: null },
+        status: { type: String, enum: ITEM_STATUSES, default: null },
+        dueAt: { type: Date, default: null },
+        allDay: { type: Boolean, default: null },
+        startAt: { type: Date, default: null },
+        priority: { type: Number, default: null, min: 0, max: 4 },
+      },
     },
     visibility: { type: String, enum: VISIBILITIES, default: 'workspace' },
     ownerUserId: { type: String, default: null },
@@ -188,6 +198,27 @@ const OVERLAY_KEYS: readonly (keyof ItemOverlay)[] = [
   'copyOfShared',
 ];
 
+const OVERRIDE_KEYS: readonly (keyof ItemOverrides)[] = [
+  'title',
+  'status',
+  'dueAt',
+  'allDay',
+  'startAt',
+  'priority',
+];
+
+/** The overrides as stored (absent on items stored before Phase 4a: none). */
+function toOverrides(stored: Partial<ItemOverrides> | undefined): ItemOverrides {
+  return {
+    title: stored?.title ?? null,
+    status: stored?.status ?? null,
+    dueAt: stored?.dueAt ?? null,
+    allDay: stored?.allDay ?? null,
+    startAt: stored?.startAt ?? null,
+    priority: stored?.priority ?? null,
+  };
+}
+
 /** At most 500 UTF-16 units, without splitting a surrogate pair (an emoji) at the cut. */
 function toPreview(text: string | null | undefined): string | null {
   if (text === undefined || text === null || text.length <= BODY_PREVIEW_MAX) return text ?? null;
@@ -238,6 +269,7 @@ function toItemData(doc: ItemFields): ItemData {
       copyOfOwner: overlay.copyOfOwner ?? null,
       copyOfShared: overlay.copyOfShared ?? null,
       attrs: { ...overlay.attrs },
+      overrides: toOverrides(overlay.overrides),
     },
     visibility: doc.visibility,
     ownerUserId: doc.ownerUserId ?? null,
@@ -476,7 +508,10 @@ export const ItemRepository: IItemRepository = {
   },
 
   async setOverlay(workspaceId, id, overlay) {
-    const set = setFields(overlay, OVERLAY_KEYS, 'overlay.');
+    const set = {
+      ...setFields(overlay, OVERLAY_KEYS, 'overlay.'),
+      ...setFields(overlay.overrides ?? {}, OVERRIDE_KEYS, 'overlay.overrides.'),
+    };
     const unset: Record<string, ''> = {};
     for (const [key, value] of Object.entries(overlay.attrs ?? {})) {
       // Attribute keys are slugs (the service checks them); refuse anything else as a path.
