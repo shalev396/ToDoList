@@ -117,6 +117,15 @@ describe('error codes (ENV=dev)', () => {
     });
   });
 
+  it('a provider that was never reached keeps its code, and nothing else of the error', async () => {
+    const res = await fetch(`${harness.base}/unreachable`);
+    assert.equal(res.status, 502);
+    assert.deepEqual(await res.json(), {
+      message: 'Internal server error',
+      code: 'provider_unreachable',
+    });
+  });
+
   it('an error without a code has no code field', async () => {
     const res = await fetch(`${harness.base}/conflict`);
     assert.deepEqual(await res.json(), { message: 'Version conflict' });

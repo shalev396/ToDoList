@@ -87,8 +87,8 @@ export interface ItemEditingView {
 
 /**
  * A mirrored item's own values at its provider, before any override: what the item sheet's "Use
- * <provider>'s value" goes back to (a title or status override is cleared by sending the
- * provider's value; a date or the priority by null). The title is redacted like the item's.
+ * <provider>'s value" is labelled with. Null clears any override (title, status, dates, priority);
+ * these values only say what it goes back to. The title is redacted like the item's.
  */
 export interface ItemSourceValuesView {
   title: string;

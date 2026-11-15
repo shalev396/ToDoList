@@ -53,6 +53,9 @@ export async function startGuardHarness(): Promise<{ base: string; stop: () => v
   app.get('/no-answer', () => {
     throw new ProviderNoAnswerError('jira');
   });
+  app.get('/unreachable', () => {
+    throw new AppError(502, 'jira host detail', { code: 'provider_unreachable' });
+  });
   app.use(errorHandler);
   const server: Server = await new Promise((resolve) => {
     const s = app.listen(0, () => {

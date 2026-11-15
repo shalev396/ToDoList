@@ -138,8 +138,12 @@ export const errorHandler: ErrorRequestHandler = (
     if (error.statusCode >= 500) {
       // Server-side detail (driver, host, provider text) stays in the redacted log.
       logger.error(`${req.method} ${req.path} failed`, error);
-      // The one code a server error keeps: the client must know a write may have been made.
-      const code = error.code === 'provider_no_answer' ? error.code : undefined;
+      // The two codes a server error keeps: the client must know whether a write may have been
+      // made (`provider_no_answer`) or certainly was not (`provider_unreachable`).
+      const code =
+        error.code === 'provider_no_answer' || error.code === 'provider_unreachable'
+          ? error.code
+          : undefined;
       res.status(error.statusCode).json(errorBody('Internal server error', code));
       return;
     }

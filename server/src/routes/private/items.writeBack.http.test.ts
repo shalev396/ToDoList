@@ -347,6 +347,7 @@ describe('the provider half: its integration’s owner, read & write', () => {
       written: ['title'],
       refused: ['status'],
       uncertain: [],
+      kept: [],
     });
     // Jira lacks a start date: it is kept here, by anyone who sees the item.
     sent.length = 0;
@@ -422,6 +423,7 @@ describe('the provider half: its integration’s owner, read & write', () => {
     });
     assert.equal(mixed.status, 409, mixed.text);
     assert.equal(mixed.body?.['code'], 'provider_partial_write');
+    assert.deepEqual((mixed.body['details'] as Json)['kept'], ['startAt']);
     const after = data(await call('owner', 'GET', `/items/${jiraItemId}`));
     assert.equal(after['title'], 'Ship the report, twice');
     assert.equal(after['startAt'], LATER, 'the local half was kept');
@@ -842,5 +844,107 @@ describe('fix round 1: who may, what never widens, and the edges', () => {
     assert.deepEqual(lines(), [`PATCH ${ISSUE_URL}`]);
     const stored = await (await models.getItemRepository()).findById(wid, issueId);
     assert.equal(stored?.title, 'By an agent');
+  });
+
+  it('MCP update_todo: null clears a title or status override; null on a provider field is refused', async () => {
+    const { insertAgentKey } = await import('../../mcp/__tests__/helpers/agentKeys.js');
+    const key = await insertAgentKey({
+      workspaceId: wid,
+      userId: ids.owner,
+      scopes: ['read', 'items:write'],
+    });
+    const set = await tool(key.raw, 'update_todo', {
+      id: prId,
+      title: 'Agent name',
+      status: 'done',
+    });
+    assert.equal(set.isError, undefined, errorText(set));
+    let stored = await (await models.getItemRepository()).findById(wid, prId);
+    assert.equal(stored?.overlay.overrides.title, 'Agent name');
+    const cleared = await tool(key.raw, 'update_todo', { id: prId, title: null, status: null });
+    assert.equal(cleared.isError, undefined, errorText(cleared));
+    stored = await (await models.getItemRepository()).findById(wid, prId);
+    assert.equal(stored?.overlay.overrides.title ?? null, null);
+    assert.equal(stored?.overlay.overrides.status ?? null, null);
+    const refused = await tool(key.raw, 'update_todo', { id: jiraItemId, title: null });
+    assert.equal(refused.isError, true);
+    assert.match(errorText(refused), /a provider field can't be cleared/);
+    assert.deepEqual(lines(), []);
+  });
+
+  it('a partial write whose override store fails still answers the partial, with kept []', async () => {
+    const issue = `${JIRA_SITE}/rest/api/3/issue/10500`;
+    on(
+      'GET',
+      `${issue}/editmeta`,
+      json(200, { fields: { summary: {}, duedate: {}, priority: { allowedValues: [] } } }),
+    );
+    on(
+      'GET',
+      `${issue}/transitions?expand=transitions.fields`,
+      json(200, {
+        transitions: [{ id: '31', name: 'Finish', to: { statusCategory: { key: 'done' } } }],
+      }),
+    );
+    on('PUT', issue, json(204));
+    on('POST', `${issue}/transitions`, json(400, { errorMessages: ['A validator failed'] }));
+    const { Item } = await import('../../classes/item/index.js');
+    const original: unknown = Reflect.get(Item.prototype, 'storeOverlay');
+    Reflect.set(
+      Item.prototype,
+      'storeOverlay',
+      (): Promise<never> => Promise.reject(new Error('db down')),
+    );
+    try {
+      const res = await call('owner', 'PATCH', `/items/${jiraItemId}`, {
+        title: 'Partial, store down',
+        status: 'done',
+        startAt: DUE,
+      });
+      assert.equal(res.status, 409, res.text);
+      assert.equal(res.body?.['code'], 'provider_partial_write');
+      assert.deepEqual(res.body['details'], {
+        written: ['title'],
+        refused: ['status'],
+        uncertain: [],
+        kept: [],
+      });
+    } finally {
+      Reflect.set(Item.prototype, 'storeOverlay', original);
+    }
+  });
+
+  it('the provider took the write and the local store failed: 409 provider_written_not_stored', async () => {
+    on('PATCH', ISSUE_URL, json(200, { number: 12, title: 'Taken', state: 'open' }));
+    const { Item } = await import('../../classes/item/index.js');
+    const original: unknown = Reflect.get(Item.prototype, 'storeOverlay');
+    Reflect.set(
+      Item.prototype,
+      'storeOverlay',
+      (): Promise<never> => Promise.reject(new Error('db down')),
+    );
+    try {
+      const res = await call('owner', 'PATCH', `/items/${issueId}`, {
+        title: 'Taken',
+        priority: 3,
+      });
+      assert.equal(res.status, 409, res.text);
+      assert.equal(res.body?.['code'], 'provider_written_not_stored');
+      assert.deepEqual(res.body['details'], { written: ['title'] });
+    } finally {
+      Reflect.set(Item.prototype, 'storeOverlay', original);
+    }
+  });
+
+  it('a provider that was never reached answers provider_unreachable (a lookup before any write)', async () => {
+    const issue = `${JIRA_SITE}/rest/api/3/issue/10500`;
+    on('GET', `${issue}/editmeta`, json(500, { message: 'down' }));
+    const res = await call('owner', 'PATCH', `/items/${jiraItemId}`, { title: 'Never sent' });
+    assert.equal(res.status, 502, res.text);
+    assert.equal(res.body?.['code'], 'provider_unreachable');
+    assert.ok(
+      sent.every((request) => request.method === 'GET'),
+      'a read only: nothing written',
+    );
   });
 });

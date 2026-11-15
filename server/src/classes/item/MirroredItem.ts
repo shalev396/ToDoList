@@ -27,6 +27,8 @@ import { MirroredItemError } from '../../errors/MirroredItemError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ProviderPartialWriteError } from '../../errors/ProviderPartialWriteError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
+import { WrittenNotStoredError } from '../../errors/WrittenNotStoredError.js';
+import { logger } from '../../services/logger.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { ItemData, ItemOverrides, ItemUpsert } from '../../models/definitions/Item.js';
 import { getItemRepository } from '../../models/index.js';
@@ -142,19 +144,49 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
       } catch (error) {
         // Part of it reached the provider (and is kept): the local half is kept too, then the
         // caller is told. A refusal or no answer wrote nothing, so nothing is kept.
-        if (error instanceof ProviderPartialWriteError) {
-          this.#clearStale(overrides, error.written);
-          if (Object.keys(overrides).length > 0) {
-            await this.storeOverlay({ overrides, editedAt: new Date() });
-          }
-        }
+        if (error instanceof ProviderPartialWriteError) await this.#keepLocal(error, overrides);
         throw error;
       }
       this.#clearStale(overrides, written);
     }
     // 5. The local half.
     if (Object.keys(overrides).length === 0) return this.reload();
-    return this.storeOverlay({ overrides, editedAt: new Date() });
+    try {
+      return await this.storeOverlay({ overrides, editedAt: new Date() });
+    } catch (error) {
+      // The provider took its half (when it had one): that is no "couldn't be saved".
+      if (written.length === 0) throw error;
+      logger.warn(
+        'The local half of an edit could not be stored after the provider took its half',
+        {
+          itemId: this.id,
+          errorName: error instanceof Error ? error.name : typeof error,
+        },
+      );
+      throw new WrittenNotStoredError(this.data.source.provider, written);
+    }
+  }
+
+  /**
+   * After a partial write: the stale overrides of what was written are cleared, the rest are kept,
+   * and `error.kept` names what is stored. A store that fails never hides the partial error:
+   * nothing was kept then.
+   */
+  async #keepLocal(error: ProviderPartialWriteError, overrides: MutableOverrides): Promise<void> {
+    this.#clearStale(overrides, error.written);
+    const names = Object.entries(overrides)
+      .filter(([, value]) => value !== null)
+      .map(([name]) => name);
+    if (Object.keys(overrides).length === 0) return;
+    try {
+      await this.storeOverlay({ overrides, editedAt: new Date() });
+      error.kept = names;
+    } catch (failure) {
+      logger.warn('The local half of a partial write could not be stored', {
+        itemId: this.id,
+        errorName: failure instanceof Error ? failure.name : typeof failure,
+      });
+    }
   }
 
   /** The provider fields the edit would change (nothing written; its checks run). */

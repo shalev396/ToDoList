@@ -26,8 +26,10 @@ import type { Caller } from '../base/Caller.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { ItemData, MirroredItemPatch } from '../../models/definitions/Item.js';
 import { getItemRepository } from '../../models/index.js';
+import { logger } from '../../services/logger.js';
 import { cachedCreateOptions } from '../../services/providerCreate/funnel.js';
 import { AppError } from '../../errors/AppError.js';
+import { WrittenNotStoredError } from '../../errors/WrittenNotStoredError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ProviderItemMissingError } from '../../errors/ProviderItemMissingError.js';
 import { ProviderNoAnswerError } from '../../errors/ProviderNoAnswerError.js';
@@ -139,7 +141,10 @@ function writeFailure(provider: string, failure: WriteFailure): AppError {
     case 'rejected':
       return new AppError(422, `${provider} rejected this change`);
     case 'unreachable':
-      return new AppError(502, `${provider} could not be reached. Try again in a moment.`);
+      // Never sent (netGuard or the allow-list): nothing was changed there.
+      return new AppError(502, `${provider} could not be reached. Try again in a moment.`, {
+        code: 'provider_unreachable',
+      });
     case 'not_found':
       return new ProviderItemMissingError(provider);
   }
@@ -159,7 +164,10 @@ function lookupFailure(error: ProviderHttpError): AppError {
     case 'rate_limited':
       return new AppError(429, `${provider} is busy. Try again in a moment.`);
     default:
-      return new AppError(502, `${provider} could not be reached. Try again in a moment.`);
+      // A read before any write: nothing was changed there.
+      return new AppError(502, `${provider} could not be reached. Try again in a moment.`, {
+        code: 'provider_unreachable',
+      });
   }
 }
 
@@ -298,8 +306,17 @@ export abstract class TrackerIntegration<
       }
       throw await this.#partial(caller, stored, changes.fields, ledger, unknown);
     }
-    // 5. Save what the provider confirmed.
-    return this.#save(stored, ledger.values);
+    // 5. Save what the provider confirmed. A failure here is not "couldn't be saved": it was made.
+    try {
+      return await this.#save(stored, ledger.values);
+    } catch (error) {
+      if (error instanceof NotFoundError) throw error;
+      logger.warn('A provider write could not be stored', {
+        integrationId: this.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      throw new WrittenNotStoredError(this.provider, ledger.fields);
+    }
   }
 
   /**

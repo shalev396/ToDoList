@@ -11,6 +11,8 @@ export class ProviderPartialWriteError extends AppError {
   readonly written: readonly string[];
   readonly refused: readonly string[];
   readonly uncertain: readonly string[];
+  /** The override fields kept in TodoList from the same edit (set by the item once it knows). */
+  kept: readonly string[] = [];
 
   constructor(
     provider: string,

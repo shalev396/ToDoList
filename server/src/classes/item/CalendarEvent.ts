@@ -29,6 +29,7 @@ import { CreatedNotStoredError } from '../../errors/CreatedNotStoredError.js';
 import { IntegrationNotOwnerError } from '../../errors/IntegrationNotOwnerError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { PrimaryCalendarUnsetError } from '../../errors/PrimaryCalendarUnsetError.js';
+import { ProviderItemMissingError } from '../../errors/ProviderItemMissingError.js';
 import { ProviderNoAnswerError } from '../../errors/ProviderNoAnswerError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
@@ -231,7 +232,10 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
         data,
         calendarEventExternalId(calendarId, eventId),
       );
-      if (known instanceof CalendarEvent) return { event: known, created: false };
+      // Its topic and priority may be what the first try did not get to store: again, idempotently.
+      if (known instanceof CalendarEvent) {
+        return { event: await CalendarEvent.#applyLocal(known, data, input, now), created: false };
+      }
     }
 
     const quota = CreateQuota.forHour(caller.userId, integration.provider, now);
@@ -283,8 +287,12 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
           integrationId: data.id,
           errorName: error instanceof Error ? error.name : typeof error,
         });
+        throw new CreatedNotStoredError(data.provider, ['event']);
       }
-      if (atGoogle === null) throw new CreatedNotStoredError(data.provider, ['event']);
+      // Deleted at Google since (gone, or cancelled): a retry can't bring it back.
+      if (atGoogle === null || atGoogle['status'] === 'cancelled') {
+        throw new ProviderItemMissingError(data.provider);
+      }
     }
     const stored = await CalendarEvent.#storeCreated(
       caller,
@@ -295,6 +303,20 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
       result,
       atGoogle,
     );
+    return { event: await CalendarEvent.#applyLocal(stored, data, input, now), created: !existed };
+  }
+
+  /**
+   * The request's topic and priority on the stored event (also on a retry that found it already:
+   * the same values again, so it is idempotent). A failure leaves the event stored without them:
+   * 409 `created_not_stored`, and the same retry completes it.
+   */
+  static async #applyLocal(
+    stored: CalendarEvent,
+    data: IntegrationData,
+    input: NewRecurringTodo,
+    now: Date,
+  ): Promise<CalendarEvent> {
     const local = {
       ...(input.topicId === undefined || input.topicId === null
         ? {}
@@ -303,10 +325,17 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
         ? {}
         : { overrides: { priority: input.priority } }),
     };
-    if (Object.keys(local).length === 0) return { event: stored, created: !existed };
-    // Also on a retry that found the event at Google: the same values again, so it is idempotent.
-    const updated = await stored.storeOverlay({ ...local, editedAt: now });
-    return { event: updated instanceof CalendarEvent ? updated : stored, created: !existed };
+    if (Object.keys(local).length === 0) return stored;
+    try {
+      const updated = await stored.storeOverlay({ ...local, editedAt: now });
+      return updated instanceof CalendarEvent ? updated : stored;
+    } catch (error) {
+      logger.warn('A created recurring event could not keep its topic or priority', {
+        integrationId: data.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      throw new CreatedNotStoredError(data.provider, ['event']);
+    }
   }
 
   /**

@@ -3,6 +3,7 @@ import { type RequestHandler, type Response } from 'express';
 import { CalendarEvent, Item, ItemEdit, ItemQuery, Todo } from '../classes/item/index.js';
 import { AppError } from '../errors/AppError.js';
 import { CreatedNotStoredError } from '../errors/CreatedNotStoredError.js';
+import { WrittenNotStoredError } from '../errors/WrittenNotStoredError.js';
 import { FieldNotWritableError } from '../errors/FieldNotWritableError.js';
 import { MirroredItemError } from '../errors/MirroredItemError.js';
 import { ProviderPartialWriteError } from '../errors/ProviderPartialWriteError.js';
@@ -47,7 +48,8 @@ function withMirrored(handler: RequestHandler): RequestHandler {
 /**
  * The details a write-back refusal carries, allow-listed (field names and the item's own link,
  * never a value or provider text): `fields` and `openIn` of a field the provider won't take,
- * `written`, `refused` and `uncertain` of a write that stopped part-way. Null for anything else.
+ * `written`, `refused`, `uncertain` and `kept` of a write that stopped part-way, and `written` of
+ * a change the provider took that could not be stored here. Null for anything else.
  */
 function writeBackDetails(error: unknown): WriteBackErrorDetails | null {
   if (error instanceof FieldNotWritableError) {
@@ -61,9 +63,12 @@ function writeBackDetails(error: unknown): WriteBackErrorDetails | null {
       written: [...error.written],
       refused: [...error.refused],
       uncertain: [...error.uncertain],
+      kept: [...error.kept],
     };
   }
-  if (error instanceof CreatedNotStoredError) return { written: [...error.written] };
+  if (error instanceof CreatedNotStoredError || error instanceof WrittenNotStoredError) {
+    return { written: [...error.written] };
+  }
   return null;
 }
 

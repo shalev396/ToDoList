@@ -495,6 +495,71 @@ describe('a recurring to-do', () => {
       await call('owner', 'PATCH', `/integrations/${iid}`, { mode: 'read_write' });
     }
   });
+
+  it('a retry that finds the event deleted at Google: 409 provider_item_missing', async () => {
+    const { MirroredItem } = await import('../../classes/item/index.js');
+    const store = MirroredItem.store.bind(MirroredItem);
+    MirroredItem.store = (): Promise<never> => Promise.reject(new Error('database down'));
+    try {
+      const first = await recurring('owner', { title: 'Deleted later', idempotencyKey: 'i2c' });
+      assert.equal(first.body?.['code'], 'created_not_stored', first.text);
+    } finally {
+      MirroredItem.store = store;
+    }
+    const atGoogle = mock.events(ALICE.email).find((entry) => entry.summary === 'Deleted later');
+    assert.ok(atGoogle);
+    atGoogle.status = 'cancelled';
+    const again = await recurring('owner', { title: 'Deleted later', idempotencyKey: 'i2c' });
+    assert.equal(again.status, 404, again.text);
+    assert.equal(again.body?.['code'], 'provider_item_missing');
+  });
+
+  it('a topic or priority that failed to store: created_not_stored, and the same retry completes it', async () => {
+    const { Item } = await import('../../classes/item/index.js');
+    const original: unknown = Reflect.get(Item.prototype, 'storeOverlay');
+    Reflect.set(
+      Item.prototype,
+      'storeOverlay',
+      (): Promise<never> => Promise.reject(new Error('database down')),
+    );
+    try {
+      const first = await recurring('owner', {
+        title: 'Needs its priority',
+        priority: 3,
+        idempotencyKey: 'i2d',
+      });
+      assert.equal(first.status, 409, first.text);
+      assert.equal(first.body?.['code'], 'created_not_stored');
+    } finally {
+      Reflect.set(Item.prototype, 'storeOverlay', original);
+    }
+    const again = await recurring('owner', {
+      title: 'Needs its priority',
+      priority: 3,
+      idempotencyKey: 'i2d',
+    });
+    assert.equal(again.status, 200, again.text);
+    assert.equal(data(again)['priority'], 3);
+  });
+
+  it('readEvent is its owner’s: anyone else is refused', async () => {
+    const { Integration } = await import('../../classes/integration/index.js');
+    const { callerFor } = await import('../../testing/workspaceFixtures.js');
+    const integration = await Integration.forWorker(iid);
+    assert.ok(integration !== null && 'readEvent' in integration);
+    const other = await callerFor(wid, ids.editor);
+    const mine = await callerFor(wid, ids.owner);
+    await assert.rejects(
+      (
+        integration as unknown as { readEvent(c: unknown, a: string, b: string): Promise<unknown> }
+      ).readEvent(other, ALICE.email, 'whatever'),
+      /Not found|owner/i,
+    );
+    const own = integration as unknown as {
+      readEvent(c: unknown, a: string, b: string): Promise<unknown>;
+    };
+    assert.equal(await own.readEvent(mine, ALICE.email, 'whatever'), null);
+  });
 });
 
 describe('the primary calendar is always a read calendar', () => {

@@ -32,6 +32,7 @@ import { EventHasGuestsError } from '../../../errors/EventHasGuestsError.js';
 import { NotFoundError } from '../../../errors/NotFoundError.js';
 import { ProviderItemMissingError } from '../../../errors/ProviderItemMissingError.js';
 import { ScopeMissingError } from '../../../errors/ScopeMissingError.js';
+import { WrittenNotStoredError } from '../../../errors/WrittenNotStoredError.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
 import { applyCommit } from '../../../gcal/commit.js';
 import { eventIdFor, ORIGIN, PAST_WINDOW_DAYS } from '../../../gcal/diff.js';
@@ -520,7 +521,16 @@ export class GoogleCalendarIntegration
       writer.update(event.calendarId, event.eventId, edit.changes, sendUpdates),
     );
     await this.recordWrite(caller, meta);
-    await this.#refreshItem(event, updated.record, timeZone);
+    try {
+      await this.#refreshItem(event, updated.record, timeZone);
+    } catch (error) {
+      // Google took it: not "couldn't be saved".
+      logger.warn('A Google Calendar write could not be stored', {
+        integrationId: this.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      throw new WrittenNotStoredError('google_calendar', edit.fields);
+    }
     return { id: updated.id, etag: updated.etag, updated: updated.updated };
   }
 
@@ -1069,10 +1079,11 @@ export class GoogleCalendarIntegration
 
   /** One event as Google has it now, through the read session (null: gone). */
   async readEvent(
-    _caller: Caller,
+    caller: Caller,
     calendarId: string,
     eventId: string,
   ): Promise<Record<string, unknown> | null> {
+    this.assertOwner(caller);
     return this.#withGrant((auth) => calendarReader(auth).get(calendarId, eventId));
   }
 

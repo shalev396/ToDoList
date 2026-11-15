@@ -23,12 +23,12 @@ export const updateTodo = defineTool({
   name: 'update_todo',
   title: 'Update an item',
   description:
-    'Changes an item, by its id. A local to-do: its title, note, due date (allDay: no time of day), start, end, topic (a slug; null: Unsorted), container, priority or status (null clears a note, a date, a container or a priority). A mirrored item: the fields its provider takes for its kind are written there (only by the owner of its integration, and only while that integration is read & write); the fields its provider lacks (title, status, due date, start, priority) are kept in TodoList as local overrides (null clears one); anything else (note, topic, container) is edited at its source: the answer is an error with its Open in link. A change written to the provider needs the providers:create scope and confirm: true (nothing is sent without them); local changes need neither. An event with other guests needs notifyGuests. Use complete_todo to mark a to-do done.',
+    'Changes an item, by its id. A local to-do: its title, note, due date (allDay: no time of day), start, end, topic (a slug; null: Unsorted), container, priority or status (null clears a note, a date, a container or a priority; a to-do title and status cannot be null). A mirrored item: the fields its provider takes for its kind are written there (only by the owner of its integration, and only while that integration is read & write); the fields its provider lacks (title, status, due date, start, priority) are kept in TodoList as local overrides (null clears one: title, status, dates or priority; a field the provider takes cannot be cleared, only changed); anything else (note, topic, container) is edited at its source: the answer is an error with its Open in link. A change written to the provider needs the providers:create scope and confirm: true (nothing is sent without them); local changes need neither. An event with other guests needs notifyGuests. Use complete_todo to mark a to-do done.',
   toolset: 'items',
   inputSchema: z
     .strictObject({
       id: ItemId,
-      title: field.title.unwrap().unwrap().optional(),
+      title: field.title,
       note: field.note,
       dueAt: field.dueAt,
       allDay: field.allDay,
@@ -37,7 +37,7 @@ export const updateTodo = defineTool({
       topic: TopicRef.nullable().optional(),
       containerId: field.containerId,
       priority: field.priority,
-      status: field.status.unwrap().unwrap().optional(),
+      status: field.status,
       notifyGuests: field.notifyGuests,
       confirm: confirmField.describe(
         'true writes the provider fields to the provider; without it, an edit that would is refused',
