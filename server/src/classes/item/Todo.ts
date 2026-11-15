@@ -118,6 +118,28 @@ export class Todo
     return TodoCopy.start(caller, request, (who) => Todo.findOwn(who, id), now);
   }
 
+  /**
+   * Whether the caller made a to-do with this idempotency key, live or deleted (the demo data
+   * leaves one its owner deleted as it is).
+   */
+  static async existsWithKey(caller: Caller, idempotencyKey: string): Promise<boolean> {
+    const [existing] = await (
+      await getItemRepository()
+    ).aggregate(caller.workspaceId, [
+      { $match: { ownerUserId: caller.userId, 'props.idempotencyKey': idempotencyKey } },
+      { $limit: 1 },
+    ]);
+    return existing !== undefined;
+  }
+
+  /** How many of the caller's to-dos with these idempotency keys are live. */
+  static async countLiveWithKeys(caller: Caller, keys: readonly string[]): Promise<number> {
+    return Item.countLive(caller.workspaceId, {
+      ownerUserId: caller.userId,
+      'props.idempotencyKey': { $in: [...keys] },
+    });
+  }
+
   /** The caller's own live to-do (anyone else's, or a mirrored item: 404). */
   static async findOwn(caller: Caller, id: string): Promise<Todo> {
     const stored = await (await getItemRepository()).findById(caller.workspaceId, id);

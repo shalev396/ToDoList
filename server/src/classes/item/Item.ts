@@ -122,6 +122,25 @@ export abstract class Item
     return (await getItemRepository()).unsetTopic(workspaceId, topicId);
   }
 
+  /** How many live items an integration has (the demo data's summary). */
+  static async countLiveOf(workspaceId: string, integrationId: string): Promise<number> {
+    return Item.countLive(workspaceId, { integrationId });
+  }
+
+  /** How many live items match a stored-field filter (internal: the counts above build it). */
+  protected static async countLive(
+    workspaceId: string,
+    match: Readonly<Record<string, unknown>>,
+  ): Promise<number> {
+    const [row] = await (
+      await getItemRepository()
+    ).aggregate<{ n: number }>(workspaceId, [
+      { $match: { ...match, deletedAt: null } },
+      { $count: 'n' },
+    ]);
+    return row?.n ?? 0;
+  }
+
   // ─── What every item is ───────────────────────────────────────────────────
 
   /** A local to-do (TodoList's own), or mirrored from a provider. */

@@ -125,6 +125,11 @@ export class Container
     return found === undefined ? null : new Container(found);
   }
 
+  /** How many live containers an integration has (the demo data's summary). */
+  static async countLiveOf(workspaceId: string, integrationId: string): Promise<number> {
+    return (await (await getContainerRepository()).list(workspaceId, { integrationId })).length;
+  }
+
   /** A topic was deleted: its containers become Unsorted (Topic.delete). Returns how many. */
   static async unsetTopicIn(workspaceId: string, topicId: string): Promise<number> {
     return (await getContainerRepository()).unsetTopic(workspaceId, topicId);

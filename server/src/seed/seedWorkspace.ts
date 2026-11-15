@@ -3,14 +3,15 @@
  * "Load demo data", POST /private/workspaces {loadDemoData: true}). The demo's specifics are in
  * demoData.ts (D17).
  *
- * It goes through the same services a person's clicks do, acting as the workspace's owner:
- * 1. one integration per demo account (Integration.connectWithKey), on a stable account, marked
- *    `demo` (it never syncs, is never tested against its provider and is never written to: it
- *    stays read-only), with a FAKE credential (Integration#saveCredential: sealed like any other,
- *    never stored in plaintext);
+ * It goes through the same classes a person's clicks do, acting as the workspace's owner, and
+ * reaches the database only through them:
+ * 1. one integration per demo account (Integration.connectWithKey), on a stable account
+ *    (Integration#pinAccount), marked `demo` (it never syncs, is never tested against its provider
+ *    and is never written to: it stays read-only), with a FAKE credential
+ *    (Integration#saveCredential: sealed like any other, never stored in plaintext);
  * 2. the demo area rules (`shalev396/*` → personal, `Braude*` → college);
- * 3. local to-dos (items.ts): overdue, today, later this week and undated;
- * 4. the template dashboards (dashboards.ts), published;
+ * 3. local to-dos (Todo.create): overdue, today, later this week and undated;
+ * 4. the template dashboards (Dashboard.instantiate), published;
  * 5. one fixture sync per integration (Integration.runSync, trigger `seed`), all at once: the items
  *    are the adapters' recorded fixtures, their relative dates resolved against `now` in the
  *    workspace's time zone, so they look exactly like a real sync's. Records without a URL are
@@ -23,23 +24,7 @@
 import { connectorsOf } from '../builder/connectors.js';
 import { listTemplates, type TemplateLanguage } from '../builder/templates.js';
 import { environment } from '../config/environment.js';
-import type { IntegrationData } from '../models/definitions/Integration.js';
 import type { WorkspaceSettings } from '../models/definitions/Workspace.js';
-import {
-  getContainerRepository,
-  getCredentialRepository,
-  getDashboardRepository,
-  getIntegrationRepository,
-  getItemRepository,
-  getWorkspaceRepository,
-} from '../models/index.js';
-import type { WorkspaceContext } from '../services/accessFilter.js';
-import {
-  applyDashboardOps,
-  deleteDashboard,
-  instantiateDashboard,
-  publishDashboard,
-} from '../services/dashboards.js';
 import {
   isPlaceholderAccountId,
   planConnection,
@@ -48,10 +33,11 @@ import {
 import { DEFAULT_TOPIC_SLUGS, type DefaultTopicSlug } from '../types/topics.js';
 import { Topic } from '../classes/workspace/Topic.js';
 import { Workspace } from '../classes/workspace/Workspace.js';
-import { Actor, type ActorRef } from '../classes/base/Actor.js';
+import { Actor } from '../classes/base/Actor.js';
 import { Integration } from '../classes/integration/index.js';
 import { Caller } from '../classes/base/Caller.js';
-import { Todo } from '../classes/item/index.js';
+import { Container, Item, Todo } from '../classes/item/index.js';
+import { Dashboard } from '../classes/dashboard/index.js';
 import { fixtureSetDir } from '../sync/fixtureSets.js';
 import type { Transport } from '../sync/http.js';
 import { getAdapter } from '../sync/registry.js';
@@ -110,7 +96,7 @@ export interface SeedSummary {
 
 interface Connected {
   spec: DemoIntegration;
-  integration: IntegrationData;
+  integration: Integration;
 }
 
 function connectionOf(spec: DemoIntegration): ConnectionInput {
@@ -133,15 +119,10 @@ function demoAccountId(spec: DemoIntegration): string {
 }
 
 /** The demo integration, found by its account (or as the seed left it unpinned), else connected. */
-async function ensureIntegration(
-  ctx: WorkspaceContext,
-  actor: ActorRef,
-  spec: DemoIntegration,
-): Promise<IntegrationData> {
-  const integrations = await getIntegrationRepository();
+async function ensureIntegration(caller: Caller, spec: DemoIntegration): Promise<Integration> {
   const accountId = demoAccountId(spec);
   // The owner's own: an integration belongs to the member who connected it (PERMISSIONS-V2).
-  const existing = (await integrations.listForOwner(ctx.id, actor.userId)).filter(
+  const existing = (await Integration.listOwn(caller)).filter(
     (integration) => integration.provider === spec.provider,
   );
   const integration =
@@ -149,26 +130,16 @@ async function ensureIntegration(
     existing.find(
       (found) => isPlaceholderAccountId(found.accountId) && found.label === spec.label,
     ) ??
-    (
-      await Integration.connectWithKey(Caller.fromContext(ctx, actor), connectionOf(spec), {
-        demo: true,
-      })
-    ).toJSON();
+    (await Integration.connectWithKey(caller, connectionOf(spec), { demo: true }));
   if (integration.accountId === accountId) return integration;
-  const pinned = await integrations.replacePendingAccount(ctx.id, integration.id, accountId);
+  const pinned = await integration.pinAccount(accountId);
   if (pinned === null) throw new Error(`seedWorkspace: could not set the ${spec.key} account`);
   return pinned;
 }
 
-/** A FAKE credential, through the credential PUT's service, unless the integration has one. */
-async function ensureCredential(
-  ctx: WorkspaceContext,
-  actor: ActorRef,
-  { spec, integration }: Connected,
-): Promise<void> {
-  const credentials = await getCredentialRepository();
-  if ((await credentials.findMeta(ctx.id, integration.id)) !== null) return;
-  const caller = Caller.fromContext(ctx, actor);
+/** A FAKE credential, through the credential PUT's class, unless the integration has one. */
+async function ensureCredential(caller: Caller, { spec, integration }: Connected): Promise<void> {
+  if (await integration.hasCredential()) return;
   await (
     await Integration.findOwn(caller, integration.id)
   ).saveCredential(caller, fakeCredential(spec.authMethod, spec.key));
@@ -178,12 +149,7 @@ async function ensureCredential(
 type TopicIds = Readonly<Record<DefaultTopicSlug, string>>;
 
 /** Appends the demo topic rules the workspace lacks (compared without case). */
-async function ensureTopicRules(
-  ctx: WorkspaceContext,
-  actorUserId: string,
-  topics: TopicIds,
-): Promise<void> {
-  const caller = Caller.fromContext(ctx, Actor.user(actorUserId));
+async function ensureTopicRules(caller: Caller, topics: TopicIds): Promise<void> {
   const workspace = await Workspace.load(caller);
   const rules = workspace.settings.topicRules.toJSON();
   const missing = DEMO_TOPIC_RULES.filter(
@@ -217,26 +183,16 @@ function dueAt(due: DemoDue, now: Date, settings: WorkspaceSettings): Date | nul
  * The demo to-dos, created by the owner with an idempotency key each (its seed id). Returns the
  * keys. One that exists, even deleted, is left as its owner left it.
  */
-async function ensureTodos(
-  ctx: WorkspaceContext,
-  ownerId: string,
-  now: Date,
-  topics: TopicIds,
-): Promise<string[]> {
-  const items = await getItemRepository();
+async function ensureTodos(caller: Caller, now: Date, topics: TopicIds): Promise<string[]> {
   const keys: string[] = [];
   for (const todo of DEMO_TODOS) {
     const idempotencyKey = seedId(todo.name);
     keys.push(idempotencyKey);
-    const [existing] = await items.aggregate(ctx.id, [
-      { $match: { ownerUserId: ownerId, 'props.idempotencyKey': idempotencyKey } },
-      { $limit: 1 },
-    ]);
-    if (existing !== undefined) continue;
-    await Todo.create(Caller.fromContext(ctx, Actor.user(ownerId)), {
+    if (await Todo.existsWithKey(caller, idempotencyKey)) continue;
+    await Todo.create(caller, {
       title: todo.title,
       topicId: topics[todo.topic],
-      dueAt: dueAt(todo.due, now, ctx.settings),
+      dueAt: dueAt(todo.due, now, caller.settings),
       ...(todo.priority === undefined ? {} : { priority: todo.priority }),
       ...(todo.note === undefined ? {} : { note: todo.note }),
       idempotencyKey,
@@ -251,12 +207,8 @@ async function ensureTodos(
  * missing topics are added and that empty page, if nobody has put anything on it, is deleted (its
  * template page replaces it). Answers the default topics' ids.
  */
-async function leaveMinimalShape(
-  ctx: WorkspaceContext,
-  actor: ActorRef,
-  language: TemplateLanguage,
-): Promise<TopicIds> {
-  const all = await Topic.ensureDefaults(ctx.id, DEFAULT_TOPIC_SLUGS, language);
+async function leaveMinimalShape(caller: Caller, language: TemplateLanguage): Promise<TopicIds> {
+  const all = await Topic.ensureDefaults(caller.workspaceId, DEFAULT_TOPIC_SLUGS, language);
   const idOf = (slug: DefaultTopicSlug): string => {
     const topic = all.find((entry) => entry.slug === slug);
     if (topic === undefined) throw new Error(`seedWorkspace: no ${slug} topic`);
@@ -267,7 +219,7 @@ async function leaveMinimalShape(
     college: idOf('college'),
     personal: idOf('personal'),
   };
-  const empty = (await (await getDashboardRepository()).list(ctx.id, {})).filter(
+  const empty = (await Dashboard.listAll(caller)).filter(
     (dashboard) =>
       dashboard.templateKey === null &&
       dashboard.scope.topicId === topics.personal &&
@@ -276,19 +228,18 @@ async function leaveMinimalShape(
       dashboard.version === 1,
   );
   for (const dashboard of empty) {
-    await deleteDashboard(ctx, { userId: actor.userId, agentId: actor.agentId }, dashboard.id);
+    await (await Dashboard.load(caller, dashboard.id, Dashboard.Operation.delete)).delete(caller);
   }
   return topics;
 }
 
 /** The demo dashboards from their templates (published: the owner creates them). */
 async function ensureDashboards(
-  ctx: WorkspaceContext,
-  actor: ActorRef,
+  caller: Caller,
   language: TemplateLanguage,
   topics: TopicIds,
 ): Promise<number> {
-  const existing = await (await getDashboardRepository()).list(ctx.id, {});
+  const existing = await Dashboard.listAll(caller);
   const templates = new Map(listTemplates().map((template) => [template.key, template]));
   for (const demo of DEMO_DASHBOARDS) {
     const template = templates.get(demo.templateKey);
@@ -301,7 +252,7 @@ async function ensureDashboards(
         dashboard.scope.page === template.scope.page,
     );
     if (found) continue;
-    await instantiateDashboard(ctx, actor, {
+    await Dashboard.instantiate(caller, {
       templateKey: template.key,
       language,
       ...(topicId === null ? {} : { scope: { topicId } }),
@@ -316,14 +267,12 @@ async function ensureDashboards(
  * already has a block with exactly those connectors, so a second run changes nothing.
  */
 async function ensureConnectorBlocks(
-  ctx: WorkspaceContext,
-  actor: ActorRef,
+  caller: Caller,
   connected: readonly Connected[],
   language: TemplateLanguage,
 ): Promise<void> {
-  const dashboards = await getDashboardRepository();
   for (const demo of DEMO_CONNECTOR_BLOCKS) {
-    const target = (await dashboards.list(ctx.id, {})).find(
+    const target = (await Dashboard.listAll(caller)).find(
       (dashboard) => dashboard.templateKey === demo.templateKey,
     );
     if (target === undefined) throw new Error(`seedWorkspace: no ${demo.templateKey} dashboard`);
@@ -335,20 +284,16 @@ async function ensureConnectorBlocks(
     const same = JSON.stringify(ids);
     if (target.blocks.some((block) => JSON.stringify(connectorsOf(block)) === same)) continue;
     // Full width, below everything else: a task list with chips needs the room.
-    const below = (items: readonly unknown[]): number =>
-      items.reduce<number>((bottom, raw) => {
-        const item = raw as { y: number; h: number };
-        return Math.max(bottom, item.y + item.h);
-      }, 0);
-    const result = await applyDashboardOps(ctx, actor, target.id, {
+    const editable = await Dashboard.load(caller, target.id, Dashboard.Operation.edit);
+    const result = await editable.applyOps(caller, {
       expectedVersion: target.version,
       language,
       ops: [
         {
           op: 'add_block',
           layout: {
-            lg: { x: 0, y: below(target.layouts.lg), w: 12, h: 10 },
-            md: { x: 0, y: below(target.layouts.md), w: 8, h: 10 },
+            lg: { x: 0, y: target.layout.bottom('lg'), w: 12, h: 10 },
+            md: { x: 0, y: target.layout.bottom('md'), w: 8, h: 10 },
           },
           block: {
             type: 'list',
@@ -367,7 +312,8 @@ async function ensureConnectorBlocks(
       ],
     });
     if (!('version' in result)) throw new Error('seedWorkspace: the connector block was not saved');
-    await publishDashboard(ctx, actor, target.id, { expectedVersion: result.version });
+    const written = await Dashboard.load(caller, target.id, Dashboard.Operation.publish);
+    await written.publish(caller, { expectedVersion: result.version });
   }
 }
 
@@ -424,22 +370,13 @@ async function syncAll(
 }
 
 async function summarize(
-  ctx: WorkspaceContext,
-  ownerId: string,
+  caller: Caller,
   connected: readonly Connected[],
   runs: readonly SyncRunSummary[],
   todoKeys: readonly string[],
   dashboards: number,
 ): Promise<SeedSummary> {
-  const items = await getItemRepository();
-  const containers = await getContainerRepository();
-  const count = async (match: Record<string, unknown>): Promise<number> => {
-    const [row] = await items.aggregate<{ n: number }>(ctx.id, [
-      { $match: { ...match, deletedAt: null } },
-      { $count: 'n' },
-    ]);
-    return row?.n ?? 0;
-  };
+  const { workspaceId } = caller;
   const integrations: SeededIntegration[] = [];
   for (const [index, { spec, integration }] of connected.entries()) {
     const run = runs[index];
@@ -452,15 +389,15 @@ async function summarize(
       topicId: integration.topicId,
       status: run.status,
       error: run.error?.code ?? null,
-      items: await count({ integrationId: integration.id }),
-      containers: (await containers.list(ctx.id, { integrationId: integration.id })).length,
+      items: await Item.countLiveOf(workspaceId, integration.id),
+      containers: await Container.countLiveOf(workspaceId, integration.id),
       failed: run.counts.failed,
     });
   }
   return {
-    workspaceId: ctx.id,
+    workspaceId,
     integrations,
-    localTodos: await count({ ownerUserId: ownerId, 'props.idempotencyKey': { $in: todoKeys } }),
+    localTodos: await Todo.countLiveWithKeys(caller, todoKeys),
     dashboards,
   };
 }
@@ -476,26 +413,29 @@ export async function seedWorkspace(
 ): Promise<SeedSummary> {
   const refusal = demoDataRefusal(environment.env);
   if (refusal !== null) throw new Error(refusal);
-  const workspace = await (await getWorkspaceRepository()).findById(workspaceId);
-  if (workspace === null) throw new Error('seedWorkspace: no such workspace');
-  const first = (await Caller.enter(workspaceId, Actor.user(workspace.ownerId)))?.context;
-  if (first?.role !== 'owner') throw new Error('seedWorkspace: the workspace has no owner');
-  const actor: ActorRef = { userId: workspace.ownerId, agentId: null };
+  const ownerId = await Workspace.ownerOf(workspaceId);
+  if (ownerId === null) throw new Error('seedWorkspace: no such workspace');
+  const first = await Caller.enter(workspaceId, Actor.user(ownerId));
+  if (first?.role.name !== 'owner') {
+    throw new Error('seedWorkspace: the workspace has no owner');
+  }
 
-  const topics = await leaveMinimalShape(first, actor, options.language ?? 'en');
-  // Read again: the context carries the settings.
-  const ctx = (await Caller.enter(workspaceId, Actor.user(workspace.ownerId)))?.context;
-  if (ctx?.role !== 'owner') throw new Error('seedWorkspace: the workspace has no owner');
+  const topics = await leaveMinimalShape(first, options.language ?? 'en');
+  // Read again: the caller carries the settings.
+  const caller = await Caller.enter(workspaceId, Actor.user(ownerId));
+  if (caller?.role.name !== 'owner') {
+    throw new Error('seedWorkspace: the workspace has no owner');
+  }
   const connected: Connected[] = [];
   for (const spec of DEMO_INTEGRATIONS) {
-    const integration = await ensureIntegration(ctx, actor, spec);
-    await ensureCredential(ctx, actor, { spec, integration });
+    const integration = await ensureIntegration(caller, spec);
+    await ensureCredential(caller, { spec, integration });
     connected.push({ spec, integration });
   }
-  await ensureTopicRules(ctx, actor.userId, topics);
-  const todoKeys = await ensureTodos(ctx, actor.userId, now, topics);
-  const dashboards = await ensureDashboards(ctx, actor, options.language ?? 'en', topics);
-  await ensureConnectorBlocks(ctx, actor, connected, options.language ?? 'en');
-  const runs = await syncAll(connected, now, ctx.settings.timezone);
-  return summarize(ctx, actor.userId, connected, runs, todoKeys, dashboards);
+  await ensureTopicRules(caller, topics);
+  const todoKeys = await ensureTodos(caller, now, topics);
+  const dashboards = await ensureDashboards(caller, options.language ?? 'en', topics);
+  await ensureConnectorBlocks(caller, connected, options.language ?? 'en');
+  const runs = await syncAll(connected, now, caller.settings.timezone);
+  return summarize(caller, connected, runs, todoKeys, dashboards);
 }
