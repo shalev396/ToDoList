@@ -1154,10 +1154,11 @@ classDiagram
     internal: claim before delete
     +take(link)$ EventClaim
     +stands(link, runCreatedAt)$ boolean
-    +reconcile(ws, integrationId, olderThanMs, read)$
+    +stuck(owner)$ CalendarLinkData[]
+    +reconcile(stuck, read, canGoOn)$ SweepCounts
     +settle()
     +release()
-    +resolve(read) settled | released | kept
+    +resolve(read) settled | kept
   }
   PushCommit ..> EventClaim : a claim drops an adopt
   class CalendarLink {
@@ -1942,8 +1943,12 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 - **Carried fixes:** a clean-up racing another integration's push (fix rounds 1 and 2: every
   TodoList delete of a pushed event claims its own link first, `EventClaim`, so its tombstone exists
   while the DELETE is in flight, and settles the claim with the time Google answered,
-  `deleteAnsweredAt`; a DELETE with no answer is resolved by one read of the event, and kept when
-  the read fails too, for the next push to reconcile; a push whose write is committed while another
+  `deleteAnsweredAt`; a DELETE with no answer is read once within the request's budget, settled
+  when gone and kept otherwise (a live reading may precede a slow delete), and a claim unanswered
+  for 10 minutes is reconciled by the integration's next push, clean-up or look at its pushed
+  events, primary or not; a missing field, a claim stored before it existed, reads as answered at
+  its tombstone, and the `2026-11-15-calendar-link-delete-answered` migration stores that; "Also
+  remove" keeps the claims of the last 10 minutes; a push whose write is committed while another
   integration's claim stands for its run, answered after the run was created or unanswered and
   claimed at most a minute before it, drops its own link, so none of its pulls reads that delete as
   the user's, and its next push, created after the answer, makes the event again and tracks it;
