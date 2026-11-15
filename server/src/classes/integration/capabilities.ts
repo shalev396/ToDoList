@@ -197,8 +197,8 @@ export interface CalendarProvider extends CreateFunnel {
     notice?: GuestNotice,
   ): Promise<WrittenEvent>;
   /**
-   * Its owner makes sure the integration reads `calendarId` (one TodoList just created an event in,
-   * so its sync keeps that event); whether it was added.
+   * Its owner makes sure the integration reads `calendarId`, the workspace's primary calendar (always
+   * a read calendar); whether it was added.
    */
   ensureReads(caller: Caller, calendarId: string): Promise<boolean>;
   /** A pulled event deleted, by its item (already gone is done); the item goes too. */

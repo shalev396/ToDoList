@@ -637,6 +637,8 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
     const calendar = created
       ? await integration.createCalendar(caller, input.newCalendarName)
       : await integration.primaryCandidate(caller, input.calendarId);
+    // The primary is always a read calendar (created ones already are); before anything is stored.
+    if (!created) await integration.ensureReads(caller, calendar.id);
     const primary = PrimaryCalendar.of(integration.id, calendar.id);
     const updated = await (
       await getWorkspaceRepository()

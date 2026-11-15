@@ -735,10 +735,28 @@ export class GoogleCalendarIntegration
    * A settings change never sets which calendars are TodoList's own: the stored list is kept,
    * whatever was sent (only createCalendar adds to it).
    */
-  protected override checkSelection(
+  protected override async checkSelection(
     config: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    return Promise.resolve(this.#createdCalendars.keptIn(config));
+    return this.#keepPrimaryRead(this.#createdCalendars.keptIn(config));
+  }
+
+  /**
+   * The workspace's primary calendar is always read: when this integration is the primary's and
+   * the owner's new list omits it, it stays in the list as a read calendar (not refused).
+   */
+  async #keepPrimaryRead(config: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const workspace = await (await getWorkspaceRepository()).findById(this.workspaceId);
+    const primary =
+      workspace === null ? null : WorkspaceSettings.from(workspace.settings).primaryCalendar;
+    if (primary?.integrationId !== this.id) return config;
+    const calendars: unknown[] = Array.isArray(config['calendars']) ? config['calendars'] : [];
+    if (
+      calendars.some((calendar) => (calendar as { id?: unknown } | null)?.id === primary.calendarId)
+    ) {
+      return config;
+    }
+    return { ...config, calendars: [...calendars, { id: primary.calendarId, mode: 'read' }] };
   }
 
   /** The calendars TodoList created on this integration, as stored. */
@@ -1011,10 +1029,13 @@ export class GoogleCalendarIntegration
   }
 
   /**
-   * Its owner makes sure it reads `calendarId` (the workspace calendar a recurring to-do was just
-   * created in), so its next sync keeps that calendar's events instead of sweeping them as an
-   * unread calendar's. Added in read mode when missing (no Google call); audited as
-   * `integration.update`. Whether it was added.
+   * Its owner makes sure it reads `calendarId`, the workspace's primary calendar: that calendar is
+   * always one the integration reads (any mode; `two_way` counts), so its next sync keeps that
+   * calendar's events instead of sweeping them as an unread calendar's, and the owner is told so
+   * when picking it. Added in read mode when missing (no Google call); audited as
+   * `integration.update` (`reason: primary_calendar_read`). Called when the owner sets the
+   * primary calendar and when a recurring to-do is created in it (which only restores the
+   * invariant). Whether it was added.
    */
   async ensureReads(caller: Caller, calendarId: string): Promise<boolean> {
     this.assertOwner(caller);
@@ -1026,7 +1047,7 @@ export class GoogleCalendarIntegration
     );
     await AuditLog.record(caller, Integration.Audit.update, this, {
       changed: ['config'],
-      reason: 'workspace_calendar_read',
+      reason: 'primary_calendar_read',
     });
     return true;
   }

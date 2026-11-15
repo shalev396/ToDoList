@@ -13,6 +13,7 @@ import { integrationOwners } from './integrationOwners.js';
 import { introduceTopics } from './introduceTopics.js';
 import { orphanedIntegrations } from './orphanedIntegrations.js';
 import { primaryCalendar } from './primaryCalendar.js';
+import { primaryCalendarRead } from './primaryCalendarRead.js';
 import { removeGoogleDrive } from './removeGoogleDrive.js';
 import type { Db, Migration } from './types.js';
 
@@ -30,6 +31,7 @@ export const MIGRATIONS: readonly Migration[] = [
   blockConnectors,
   removeGoogleDrive,
   primaryCalendar,
+  primaryCalendarRead,
 ];
 
 interface MigrationRecord {
