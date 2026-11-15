@@ -8,6 +8,7 @@ import { limits } from '../data/limits.ts';
 import {
   ERROR_CODE_KEYS,
   apiErrorCode,
+  apiErrorDetails,
   apiErrorStatus,
   apiOpenIn,
   cleanupProgressOf,
@@ -170,5 +171,48 @@ describe('cleanupProgressOf', () => {
       null,
     );
     assert.equal(cleanupProgressOf(new Error('offline')), null);
+  });
+});
+
+describe('apiErrorDetails', () => {
+  const failure = (status: number, data: unknown) => ({ response: { status, data } });
+
+  it('reads the field names and the item’s link of a write-back refusal', () => {
+    assert.deepEqual(
+      apiErrorDetails(
+        failure(409, {
+          message: 'x',
+          code: 'provider_partial_write',
+          details: { written: ['title'], refused: ['status'], uncertain: [] },
+        }),
+      ),
+      { written: ['title'], refused: ['status'], uncertain: [] },
+    );
+    assert.deepEqual(
+      apiErrorDetails(
+        failure(422, {
+          code: 'field_not_writable',
+          details: { fields: ['dueAt'], openIn: { provider: 'jira', url: 'https://j/1' } },
+        }),
+      ),
+      { fields: ['dueAt'], openIn: { provider: 'jira', url: 'https://j/1' } },
+    );
+  });
+
+  it('leaves out what isn’t a list of names or a known provider', () => {
+    assert.deepEqual(
+      apiErrorDetails(
+        failure(409, {
+          details: { written: ['title', 3], fields: 'dueAt', openIn: { provider: 'x', url: 'u' } },
+        }),
+      ),
+      {},
+    );
+  });
+
+  it('is null without details', () => {
+    assert.equal(apiErrorDetails(failure(409, { message: 'x' })), null);
+    assert.equal(apiErrorDetails(failure(409, { details: ['x'] })), null);
+    assert.equal(apiErrorDetails(new Error('x')), null);
   });
 });

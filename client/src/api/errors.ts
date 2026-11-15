@@ -9,6 +9,8 @@
  */
 import type { TFunction } from 'i18next';
 import { isErrorCode, type ErrorCode } from '@api-types/errorCodes.ts';
+import { PROVIDERS, type Provider } from '@api-types/domain.ts';
+import type { WriteBackErrorDetails } from '@api-types/items.ts';
 import type { CleanupProgress } from '@api-types/primaryCalendar.ts';
 import { limits } from '../data/limits.ts';
 
@@ -158,6 +160,43 @@ export function apiOpenIn(error: unknown): { provider: string; url: string } | n
   }
   const { provider, url } = openIn as { provider?: unknown; url?: unknown };
   return typeof provider === 'string' && typeof url === 'string' ? { provider, url } : null;
+}
+
+const isProvider = (value: string): value is Provider =>
+  (PROVIDERS as readonly string[]).includes(value);
+
+/**
+ * What a provider write-back refusal says beyond its code: `{message, code, details}`, where
+ * `details` holds field names (`fields`, `written`, `refused`, `uncertain`) and the item's own
+ * `openIn`. Null without details; a list that isn't all strings, and anything else, is left out.
+ */
+export function apiErrorDetails(error: unknown): WriteBackErrorDetails | null {
+  const data = responseOf(error)?.data;
+  const details =
+    typeof data === 'object' && data !== null && 'details' in data
+      ? (data as { details?: unknown }).details
+      : undefined;
+  if (typeof details !== 'object' || details === null || Array.isArray(details)) {
+    return null;
+  }
+  const record = details as Record<string, unknown>;
+  const names = (value: unknown): string[] | undefined =>
+    Array.isArray(value) && value.every((entry) => typeof entry === 'string') ? value : undefined;
+  const parsed: WriteBackErrorDetails = {};
+  for (const key of ['fields', 'written', 'refused', 'uncertain'] as const) {
+    const list = names(record[key]);
+    if (list !== undefined) {
+      parsed[key] = list;
+    }
+  }
+  const openIn = record['openIn'];
+  if (typeof openIn === 'object' && openIn !== null) {
+    const { provider, url } = openIn as { provider?: unknown; url?: unknown };
+    if (typeof provider === 'string' && typeof url === 'string' && isProvider(provider)) {
+      parsed.openIn = { provider, url };
+    }
+  }
+  return parsed;
 }
 
 /**
