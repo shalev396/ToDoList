@@ -376,6 +376,50 @@ describe('Jira', () => {
     ]);
   });
 
+  it('the fields land and the transition gets no answer: "may or may not have", audited as uncertain', async () => {
+    const jira = await connect('jira', { baseUrl: JIRA_SITE });
+    const item = await issue(jira);
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('GET', TRANSITIONS, json(200, LISTED));
+    on('PUT', ISSUE, json(204));
+    on('POST', `${ISSUE}/transitions`, json(503, {}));
+    await assert.rejects(
+      jira.updateTask(caller, item, { title: 'Ship it', status: 'done' }),
+      (error: unknown) =>
+        hasCode(409, 'provider_partial_write')(error) &&
+        (error as Error).message.includes('may or may not have taken status') &&
+        !(error as Error).message.includes('but not') &&
+        (error as { uncertain?: string[] }).uncertain?.join() === 'status' &&
+        (error as { refused?: string[] }).refused?.length === 0,
+    );
+    assert.deepEqual(await writes(item.id), [
+      {
+        operation: 'task.update',
+        itemId: item.id,
+        fields: ['title'],
+        uncertain: ['status'],
+        partial: true,
+      },
+      { operation: 'task.update', itemId: item.id, fields: ['title'] },
+    ]);
+  });
+
+  it('a write with no answer (a 5xx) is audited as unknown: it may have landed', async () => {
+    const jira = await connect('jira', { baseUrl: JIRA_SITE });
+    const item = await issue(jira);
+    on('GET', EDITMETA, json(200, EDITABLE));
+    on('PUT', ISSUE, json(502, {}));
+    await assert.rejects(
+      jira.updateTask(caller, item, { title: 'Renamed' }),
+      (error: unknown) =>
+        hasStatus(502)(error) && (error as Error).message.includes('may have been made there'),
+    );
+    assert.equal((await stored(item.id))?.title, 'Write the report', 'nothing saved here');
+    assert.deepEqual(await writes(item.id), [
+      { operation: 'task.update', itemId: item.id, fields: ['title'], outcome: 'unknown' },
+    ]);
+  });
+
   it('refused before the credential opens: cancelled, a null priority, a start date', async () => {
     const jira = await connect('jira', { baseUrl: JIRA_SITE });
     const item = await issue(jira);
@@ -697,6 +741,75 @@ describe('GitHub', () => {
 });
 
 describe('every tracker', () => {
+  it('read-only, at every tracker: each field it takes is 409 with zero requests, the credential unopened', async () => {
+    const cases: {
+      provider: Provider;
+      config: Record<string, unknown>;
+      item: Parameters<typeof mirror>[1];
+      patches: Parameters<Classes.TrackerIntegration['updateTask']>[2][];
+    }[] = [
+      {
+        provider: 'jira',
+        config: { baseUrl: JIRA_SITE },
+        item: { kind: 'issue', title: 'J', status: 'open', priority: 2, externalId: '10901' },
+        patches: [{ title: 'x' }, { status: 'done' }, { dueAt: new Date() }, { priority: 1 }],
+      },
+      {
+        provider: 'clickup',
+        config: {},
+        item: {
+          kind: 'task',
+          title: 'C',
+          status: 'open',
+          priority: 2,
+          externalId: 'ro86b0y',
+          props: { listId: '901' },
+        },
+        patches: [{ title: 'x' }, { status: 'done' }, { startAt: new Date() }, { priority: 1 }],
+      },
+      {
+        provider: 'linear',
+        config: {},
+        item: {
+          kind: 'issue',
+          title: 'L',
+          status: 'open',
+          priority: 2,
+          externalId: '4a1b2c3d-0000-4000-8000-0000000000d1',
+        },
+        patches: [{ title: 'x' }, { status: 'cancelled' }, { dueAt: new Date() }, { priority: 1 }],
+      },
+      {
+        provider: 'github',
+        config: { owner: 'octo', ownerType: 'user' },
+        item: {
+          kind: 'issue',
+          title: 'G',
+          status: 'open',
+          externalId: 'I_ro_1',
+          key: 'octo/repo#1',
+          props: { repo: 'octo/repo', number: 1 },
+        },
+        patches: [{ title: 'x' }, { status: 'done' }],
+      },
+    ];
+    for (const entry of cases) {
+      const tracker = await connect(entry.provider, entry.config, 'read');
+      const item = await mirror(tracker, entry.item);
+      const opened = await lastOpened(tracker);
+      for (const patch of entry.patches) {
+        await assert.rejects(
+          tracker.updateTask(caller, item, patch),
+          hasCode(409, 'integration_read_only'),
+          `${entry.provider} ${Object.keys(patch).join()}`,
+        );
+      }
+      assert.deepEqual(sent, [], `${entry.provider}: zero requests of any kind`);
+      assert.equal(await lastOpened(tracker), opened, `${entry.provider}: never opened`);
+      assert.deepEqual(await writes(item.id), []);
+    }
+  });
+
   it('read-only: a changed field is 409 with zero requests; resending what the item has is no write', async () => {
     const readOnly = await connect('clickup', {}, 'read');
     const item = await mirror(readOnly, {

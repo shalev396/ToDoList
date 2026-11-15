@@ -30,6 +30,7 @@ import { cachedCreateOptions } from '../../services/providerCreate/funnel.js';
 import { AppError } from '../../errors/AppError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ProviderItemMissingError } from '../../errors/ProviderItemMissingError.js';
+import { ProviderNoAnswerError } from '../../errors/ProviderNoAnswerError.js';
 import { ProviderPartialWriteError } from '../../errors/ProviderPartialWriteError.js';
 import { StatusNotAvailableError } from '../../errors/StatusNotAvailableError.js';
 import { fixtureSetDir } from '../../sync/fixtureSets.js';
@@ -121,9 +122,7 @@ export function setCreateTransportForTests(
 
 /** A write the provider refused, or may have made: the AppError the caller answers. */
 function writeFailure(provider: string, failure: WriteFailure): AppError {
-  if (failure.kind === 'unknown') {
-    return new AppError(502, `${provider} did not answer: the change may have been made there`);
-  }
+  if (failure.kind === 'unknown') return new ProviderNoAnswerError(provider);
   switch (failure.reason) {
     case 'auth':
       return new AppError(409, `${provider} refused the connection: reconnect it`);
@@ -266,8 +265,20 @@ export abstract class TrackerIntegration<
       );
     } catch (error) {
       const failure = error instanceof ProviderHttpError ? lookupFailure(error) : error;
-      if (ledger.isEmpty) throw failure;
-      throw await this.#partial(caller, stored, changes.fields, ledger);
+      const unknown = failure instanceof ProviderNoAnswerError;
+      if (ledger.isEmpty) {
+        // Sent, with no answer: it may have landed, so it is audited as such.
+        if (unknown) {
+          await this.recordWrite(caller, {
+            operation: 'task.update',
+            itemId: stored.id,
+            fields: [...changes.fields],
+            outcome: 'unknown',
+          });
+        }
+        throw failure;
+      }
+      throw await this.#partial(caller, stored, changes.fields, ledger, unknown);
     }
     // 5. Save what the provider confirmed.
     return this.#save(stored, ledger.values);
@@ -322,14 +333,16 @@ export abstract class TrackerIntegration<
 
   /**
    * A write-back that stopped part-way: what reached the provider is saved (best effort: the item
-   * may be gone) and audited as the edit's outcome (`partial: true`, with what was refused); the
-   * error to answer.
+   * may be gone) and audited as the edit's outcome (`partial: true`, with the rest as `refused`,
+   * or as `uncertain` when the step that stopped it got no answer and may have landed); the error
+   * to answer.
    */
   async #partial(
     caller: Caller,
     stored: ItemData,
     asked: readonly WritableField[],
     ledger: WriteLedger,
+    unknown: boolean,
   ): Promise<ProviderPartialWriteError> {
     try {
       await this.#save(stored, ledger.values);
@@ -337,15 +350,17 @@ export abstract class TrackerIntegration<
       if (!(error instanceof NotFoundError)) throw error;
     }
     const written = ledger.fields;
-    const refused = asked.filter((field) => !written.includes(field));
+    const rest = asked.filter((field) => !written.includes(field));
     await this.recordWrite(caller, {
       operation: 'task.update',
       itemId: stored.id,
       fields: [...written],
-      refused,
+      ...(unknown ? { uncertain: rest } : { refused: rest }),
       partial: true,
     });
-    return new ProviderPartialWriteError(this.provider, written, refused);
+    return unknown
+      ? new ProviderPartialWriteError(this.provider, written, [], rest)
+      : new ProviderPartialWriteError(this.provider, written, rest);
   }
 
   /** This integration's live mirrored item (404 for any other, a local one included). */
