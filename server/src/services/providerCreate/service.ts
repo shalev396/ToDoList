@@ -53,13 +53,13 @@ import {
   type PlainEventBody,
   type WriteResult,
 } from '../../classes/integration/index.js';
+import { definitionOf, strategyOf } from '../../classes/integration/definitions/index.js';
 import { ItemPolicy } from '../../classes/policies/ItemPolicy.js';
 import type { WorkspaceContext } from '../accessFilter.js';
 import { sha256Hex } from '../crypto/hashing.js';
 import { logger } from '../logger.js';
 import { cleanTitle } from './fields.js';
 import { checkedId } from './ids.js';
-import { jiraSitesOf } from './jiraSites.js';
 import { markAsCopy, storeMirroredItem } from './mirror.js';
 
 const AUDIT_ACTION = 'provider.create';
@@ -93,8 +93,8 @@ export async function listCreateTargets(
     ) {
       continue;
     }
-    // Calendar events need an OAuth grant.
-    if (provider === 'google_calendar' && integration.authMethod !== 'oauth') continue;
+    // What its way of connecting can create (Google Calendar: its OAuth grant only).
+    if (!integration.canCreate) continue;
     targets.push({
       integrationId: integration.id,
       provider,
@@ -145,15 +145,11 @@ export async function createOptions(
 
 // ─── the create ─────────────────────────────────────────────────────────────
 
-function hostOf(url: string): string | null {
-  try {
-    return new URL(url).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-}
-
-/** A link from a provider's answer: https, on the provider's own host; else nothing. */
+/**
+ * A link from a provider's answer: https, on the provider's own host (its definition's create
+ * rules: a Jira site of this integration, clickup.com, linear.app, github.com, google.com); else
+ * nothing.
+ */
 export function safeCopyUrl(
   integration: Pick<IntegrationData, 'provider' | 'authMethod' | 'config'>,
   url: string | null,
@@ -167,21 +163,8 @@ export function safeCopyUrl(
   } catch {
     return '';
   }
-  const on = (domain: string): boolean => host === domain || host.endsWith(`.${domain}`);
-  switch (integration.provider) {
-    case 'jira':
-      return jiraSitesOf(integration).some((site) => hostOf(site.siteUrl) === host) ? url : '';
-    case 'clickup':
-      return on('clickup.com') ? url : '';
-    case 'linear':
-      return on('linear.app') ? url : '';
-    case 'github':
-      return on('github.com') ? url : '';
-    case 'google_calendar':
-      return on('google.com') ? url : '';
-    default:
-      return '';
-  }
+  const rules = definitionOf(integration.provider)?.create ?? null;
+  return rules?.linkAllowed(host, integration) === true ? url : '';
 }
 
 function viewOf(copy: ItemCopy, now: Date = new Date()): ItemCopyView {
@@ -263,7 +246,11 @@ function assertTargetMatches(
   }
 }
 
-/** The failure a refusal is, in the words the UI maps. */
+/**
+ * The failure a refusal is, in the words the UI maps. A 403 means what the provider's definition
+ * says for an OAuth grant (GitHub: a permission the App lacks); a key or token that is refused
+ * cannot create.
+ */
 export function failureFor(
   integration: Pick<IntegrationData, 'provider' | 'authMethod'>,
   reason: Extract<WriteResult, { kind: 'refused' }>['reason'],
@@ -276,10 +263,8 @@ export function failureFor(
     case 'unreachable':
       return 'unreachable';
     case 'forbidden':
-      if (integration.provider === 'github' && integration.authMethod === 'oauth') {
-        return 'needs_permission';
-      }
-      return integration.authMethod === 'oauth' ? 'rejected' : 'token_cannot_create';
+      if (strategyOf(integration)?.kind !== 'oauth') return 'token_cannot_create';
+      return definitionOf(integration.provider)?.create?.forbiddenWithOAuth ?? 'rejected';
     default:
       return 'rejected';
   }
@@ -360,8 +345,8 @@ export async function createCopy(
     throw new AppError(409, 'Nothing can be created in this provider');
   }
   assertTargetMatches(integration, body.target);
-  const isCalendar = integration.provider === 'google_calendar';
-  if (isCalendar && integration.authMethod !== 'oauth') {
+  const isCalendar = isCalendarProvider(integration);
+  if (isCalendar && !integration.canCreate) {
     throw new AppError(409, 'Only Google Calendar connected with Google can create events');
   }
 
@@ -517,11 +502,7 @@ export async function createCopy(
   };
 
   try {
-    if (
-      isCalendar &&
-      body.target.provider === 'google_calendar' &&
-      isCalendarProvider(integration)
-    ) {
+    if (isCalendar && body.target.provider === 'google_calendar') {
       const calendarId = checkedId('calendarId', body.target.calendarId, 'calendarId');
       const event = calendarEvent(todo, fields, eventIdFor(requestId));
       if (event === null) {

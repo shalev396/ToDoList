@@ -57,7 +57,8 @@ export async function gcalSync(
 ): Promise<GcalDryRun | GcalConfirmed> {
   const caller = Caller.fromContext(ctx, Actor.user(userId));
   const integration = await Integration.findOwn(caller, input.integrationId);
-  if (!isCalendarProvider(integration) || integration.authMethod !== 'oauth') {
+  // Its way of connecting must be able to write (the OAuth grant, never the demo's service account).
+  if (!isCalendarProvider(integration) || !integration.canCreate) {
     throw new AppError(400, 'This is not a Google Calendar integration that can be written to');
   }
   if (integration.status === 'paused' || integration.status === 'expired') {

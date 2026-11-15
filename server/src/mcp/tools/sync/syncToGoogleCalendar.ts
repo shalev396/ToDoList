@@ -54,7 +54,7 @@ export const syncToGoogleCalendar = defineTool({
     const integration = integrations.find(
       (candidate) =>
         candidate.provider === 'google_calendar' &&
-        candidate.authMethod === 'oauth' &&
+        candidate.canCreate &&
         candidate.status !== 'paused' &&
         candidate.status !== 'expired',
     );
