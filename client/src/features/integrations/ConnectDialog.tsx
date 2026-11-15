@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { SaveStatus } from '@/components/ui/save-status';
 import { SelectField } from '@/components/ui/select';
 import type {
   CreateIntegrationRequestBody,
@@ -283,11 +284,12 @@ export function ConnectDialog({ workspaceId, provider, existingId, onClose }: Co
               <ExternalLink aria-hidden="true" className="size-3.5" />
             </a>
             <DialogFooter>
+              <SaveStatus state={busy ? 'saving' : error !== null ? 'error' : 'idle'} />
               <Button type="button" variant="ghost" onClick={onClose}>
                 {t('connect.cancel')}
               </Button>
               <Button type="submit" disabled={busy}>
-                {t(busy ? 'connect.dialog.saving' : 'connect.dialog.save')}
+                {t('connect.dialog.save')}
               </Button>
             </DialogFooter>
           </form>

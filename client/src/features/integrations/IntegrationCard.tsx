@@ -6,6 +6,7 @@ import { errorMessage } from '@/api/errors';
 import {
   useDisconnectIntegration,
   useStopSharing,
+  useUpdateIntegration,
   useSyncIntegration,
   useTestIntegration,
 } from '@/api/queries/integrations';
@@ -21,9 +22,11 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 import { ProviderIcon } from '@/features/landing/ProviderIcon';
 import { useLanguage } from '@/hooks/useLanguage';
 import type { IntegrationStatusView } from '@api-types/api-contracts';
+import type { IntegrationMode } from '@api-types/domain';
 import type {
   ConnectableProvider,
   IntegrationTestResult,
@@ -101,10 +104,12 @@ export function IntegrationCard({
   const [problem, setProblem] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmingStop, setConfirmingStop] = useState(false);
+  const [confirmingWrite, setConfirmingWrite] = useState(false);
   const testConnection = useTestIntegration(workspaceId);
   const syncNow = useSyncIntegration(workspaceId);
   const disconnect = useDisconnectIntegration(workspaceId);
   const stopSharing = useStopSharing(workspaceId);
+  const update = useUpdateIntegration(workspaceId);
   const name = t(`sources.${provider}`);
   const format = (value: string | Date) =>
     new Intl.DateTimeFormat(dateLocale(language), {
@@ -128,6 +133,19 @@ export function IntegrationCard({
       toast.success(t('connect.card.stopSharingDone', { count: dashboards }));
     } catch (failure) {
       setProblem(errorMessage(t, failure, 'connect.card.stopSharingError'));
+    }
+  };
+
+  /** Read-only or Read & write. Only turning writes on is confirmed first. */
+  const setMode = async (mode: IntegrationMode) => {
+    if (integration === undefined) {
+      return;
+    }
+    setProblem(null);
+    try {
+      await update.mutateAsync({ id: integration.id, body: { mode } });
+    } catch (failure) {
+      setProblem(errorMessage(t, failure, 'connect.card.modeError'));
     }
   };
 
@@ -276,6 +294,41 @@ export function IntegrationCard({
           ) : null}
         </div>
       )}
+      {integration === undefined ? null : (
+        <div data-mode={integration.mode} className="flex items-start gap-3 text-[13px]">
+          <div className="flex min-w-0 flex-1 flex-col">
+            <label htmlFor={`mode-${integration.id}`} className="font-medium">
+              {t('connect.card.mode')}:{' '}
+              {t(
+                integration.mode === 'read'
+                  ? 'connect.card.modeRead'
+                  : 'connect.card.modeReadWrite',
+              )}
+            </label>
+            <span className="text-muted-foreground">
+              {t(
+                integration.mode === 'read'
+                  ? 'connect.card.modeHintRead'
+                  : 'connect.card.modeHintReadWrite',
+                { name },
+              )}
+            </span>
+          </div>
+          <Switch
+            id={`mode-${integration.id}`}
+            data-mode-switch
+            checked={integration.mode === 'read_write'}
+            disabled={update.isPending}
+            onCheckedChange={(checked) => {
+              if (checked) {
+                setConfirmingWrite(true);
+              } else {
+                void setMode('read');
+              }
+            }}
+          />
+        </div>
+      )}
       {run === undefined ? null : <SyncStatus run={run} />}
       {test === null ? null : (
         <p role="status" data-test-result={test.ok ? 'ok' : test.code} className="text-[13px]">
@@ -421,6 +474,28 @@ export function IntegrationCard({
           </>
         )}
       </footer>
+
+      <AlertDialog open={confirmingWrite} onOpenChange={setConfirmingWrite}>
+        <AlertDialogContent data-mode-confirm>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('connect.card.modeConfirmTitle', { name })}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('connect.card.modeConfirmBody', { name })}
+              {provider === 'google_calendar' ? ` ${t('connect.card.modeConfirmGcal')}` : ''}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('connect.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                void setMode('read_write');
+              }}
+            >
+              {t('connect.card.modeConfirmAction')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmingStop} onOpenChange={setConfirmingStop}>
         <AlertDialogContent data-stop-sharing-confirm>

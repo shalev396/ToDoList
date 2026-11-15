@@ -23,7 +23,7 @@ import { historyAvailability } from './history';
 /** Layout changes are saved this long after the last one (one save per burst of moves). */
 export const AUTOSAVE_DELAY_MS = 800;
 
-export type EditorStatus = 'idle' | 'saving' | 'saved';
+export type EditorStatus = 'idle' | 'saving' | 'saved' | 'error';
 
 export interface DashboardEditor {
   /** The stored layouts with the changes not saved yet on top: what the grid shows. */
@@ -240,7 +240,16 @@ export function useDashboardEditor({
     undo,
     redo,
     flush,
-    status: busy ? 'saving' : open && editor.saved ? 'saved' : 'idle',
+    // "Saving" starts when the debounced save does, not when a change is merely waiting for it.
+    status: !open
+      ? 'idle'
+      : editor.saving
+        ? 'saving'
+        : editor.failed
+          ? 'error'
+          : editor.saved
+            ? 'saved'
+            : 'idle',
     busy,
     canUndo: active && !busy && availability.canUndo,
     canRedo: active && !busy && availability.canRedo,

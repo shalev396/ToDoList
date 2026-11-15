@@ -17,6 +17,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { SaveStatus } from '@/components/ui/save-status';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { IntegrationStatusView } from '@api-types/api-contracts';
 import type { OAuthResource } from '@api-types/integrations';
@@ -144,11 +145,11 @@ export function OAuthResourcePicker({
           </fieldset>
         )}
         <DialogFooter>
-          {saved ? (
-            <span role="status" className="text-[13px]">
-              {t('connect.oauth.saved')}
-            </span>
-          ) : null}
+          <SaveStatus
+            state={
+              update.isPending ? 'saving' : error !== null ? 'error' : saved ? 'saved' : 'idle'
+            }
+          />
           <Button type="button" variant="outline" onClick={onClose}>
             {t('connect.done')}
           </Button>

@@ -44,6 +44,7 @@ describe('editorSlice', () => {
       saving: false,
       conflict: null,
       saved: false,
+      failed: false,
     });
   });
 
@@ -149,6 +150,29 @@ describe('editorSlice', () => {
     assert.equal(failed.pendingLayout, null);
     assert.equal(failed.movedBlocks, null);
     assert.equal(failed.saving, false);
+    assert.equal(failed.saved, false, 'a stale "Saved" is cleared');
+    assert.equal(failed.failed, true);
+  });
+
+  it('a failure after a success leaves saved false, and the next change or save clears it', () => {
+    const saved = reducer(
+      reducer(withPending(), saveStarted()),
+      saveSucceeded({ version: 4, revision: 1 }),
+    );
+    assert.equal(saved.saved, true);
+    const failed = reducer(reducer(saved, saveStarted()), saveFailed());
+    assert.equal(failed.saved, false);
+    assert.equal(failed.failed, true);
+    assert.equal(reducer(failed, saveStarted()).failed, false);
+    const again = reducer(
+      failed,
+      layoutChanged({ dashboardId: 'd1', breakpoint: 'lg', items: [moved], moved: 'blk_a' }),
+    );
+    assert.equal(again.failed, false);
+  });
+
+  it('a pending change alone is not "saving": only a started save is', () => {
+    assert.equal(withPending().saving, false);
   });
 
   it('a conflict is held while it is recovered, then cleared with the version recovered to', () => {
@@ -181,6 +205,8 @@ describe('editorSlice', () => {
     assert.deepEqual(done.pendingLayout, { lg: [moved] });
     const failed = reducer(writing, writeFailed());
     assert.equal(failed.saving, false);
+    assert.equal(failed.saved, false);
+    assert.equal(failed.failed, true);
     assert.equal(failed.baseVersion, 3);
     assert.deepEqual(failed.pendingLayout, { lg: [moved] });
   });

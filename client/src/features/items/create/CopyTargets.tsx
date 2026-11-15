@@ -300,7 +300,15 @@ function Chip({
           type="button"
           aria-pressed={selected}
           disabled={!target.writable}
-          title={target.writable ? undefined : t('items.newTodo.notWritable')}
+          title={
+            target.writable
+              ? undefined
+              : t(
+                  target.mode === 'read'
+                    ? 'items.newTodo.readOnlyTarget'
+                    : 'items.newTodo.notWritable',
+                )
+          }
           aria-label={
             done
               ? t('items.newTodo.change', { source })
@@ -340,6 +348,11 @@ function Chip({
           </button>
         ) : null}
       </div>
+      {target.mode === 'read' ? (
+        <p className="ms-3 mt-1 text-xs text-muted-foreground" data-read-only-hint="">
+          {t('items.newTodo.readOnlyTarget')}
+        </p>
+      ) : null}
       {target.needsConsent && selected ? (
         <p className="ms-3 mt-1 text-xs text-muted-foreground">{t('items.newTodo.needsConsent')}</p>
       ) : null}
@@ -387,7 +400,11 @@ export function CopyTargets({
     }
     preselected.current = preselect;
     const target = info.targets.find((entry) => entry.integrationId === preselect);
-    if (target?.writable === true && value[preselect] === undefined) {
+    if (
+      target?.writable === true &&
+      target.mode === 'read_write' &&
+      value[preselect] === undefined
+    ) {
       onChange({
         ...value,
         [preselect]: startFunnel(target.provider, preselect, readRemembered(userId, preselect)),

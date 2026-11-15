@@ -1,5 +1,6 @@
 export const common = {
   aria: { toggleTheme: 'Toggle theme' },
+  saveStatus: { saving: 'Saving…', saved: 'Saved', error: 'Couldn’t save' },
   theme: { light: 'Light', dark: 'Dark', system: 'System' },
   nav: {
     signIn: 'Sign In',

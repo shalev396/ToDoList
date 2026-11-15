@@ -34,6 +34,8 @@ export interface EditorState {
   conflict: { currentVersion: number } | null;
   /** A save finished in this session (the header says "Saved"). */
   saved: boolean;
+  /** The last save or write failed (the header says so until the next change or save). */
+  failed: boolean;
 }
 
 export const initialEditorState: EditorState = {
@@ -45,6 +47,7 @@ export const initialEditorState: EditorState = {
   saving: false,
   conflict: null,
   saved: false,
+  failed: false,
 };
 
 /** Each breakpoint's entries that `keep` accepts; null when none are left. */
@@ -108,9 +111,11 @@ const editorSlice = createSlice({
       state.pendingLayout = pending;
       state.revision += 1;
       state.saved = false;
+      state.failed = false;
     },
     saveStarted: (state) => {
       state.saving = true;
+      state.failed = false;
     },
     /** Saved as `version`; the change is cleared unless a newer one (`revision`) came in. */
     saveSucceeded: (state, action: PayloadAction<{ version: number; revision: number }>) => {
@@ -118,6 +123,7 @@ const editorSlice = createSlice({
       state.saving = false;
       state.conflict = null;
       state.saved = true;
+      state.failed = false;
       if (state.revision === action.payload.revision) {
         state.pendingLayout = null;
         state.movedBlocks = null;
@@ -126,6 +132,8 @@ const editorSlice = createSlice({
     /** Not saved: the change is dropped, so the page shows the saved layout again. */
     saveFailed: (state) => {
       state.saving = false;
+      state.saved = false;
+      state.failed = true;
       state.conflict = null;
       state.pendingLayout = null;
       state.movedBlocks = null;
@@ -156,10 +164,13 @@ const editorSlice = createSlice({
       }
       state.saving = false;
       state.saved = true;
+      state.failed = false;
     },
     /** A write other than a layout save failed; pending positions stay for their own save. */
     writeFailed: (state) => {
       state.saving = false;
+      state.saved = false;
+      state.failed = true;
     },
     pendingDropped: (state) => {
       state.pendingLayout = null;

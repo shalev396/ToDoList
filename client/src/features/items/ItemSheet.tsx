@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { SaveStatus } from '@/components/ui/save-status';
 import { SelectField } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -578,13 +579,18 @@ function OverlayControls({
           save({ attrs: { [key]: value } });
         }}
       />
-      <p role="status" className="min-h-4 text-[13px] text-muted-foreground">
-        {overlay.isPending
-          ? t('items.sheet.saving')
-          : overlay.isSuccess
-            ? t('items.sheet.saved')
-            : null}
-      </p>
+      <SaveStatus
+        className="self-start"
+        state={
+          overlay.isPending
+            ? 'saving'
+            : overlay.isError && apiOpenIn(overlay.error) === null
+              ? 'error'
+              : overlay.isSuccess
+                ? 'saved'
+                : 'idle'
+        }
+      />
       {overlay.isError && apiOpenIn(overlay.error) === null ? (
         <p role="alert" className="flex items-center gap-1.5 text-[13px] text-destructive">
           <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />

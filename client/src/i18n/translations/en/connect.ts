@@ -56,6 +56,16 @@ export const connect = {
     stopSharingDone_one: 'Removed from {{count}} dashboard. Its items are private to you again.',
     stopSharingDone_other: 'Removed from {{count}} dashboards. Its items are private to you again.',
     stopSharingError: 'Sharing couldn’t be stopped. Try again.',
+    mode: 'Access',
+    modeRead: 'Read-only',
+    modeReadWrite: 'Read & write',
+    modeHintRead: 'TodoList only reads from {{name}}. Nothing is changed there.',
+    modeHintReadWrite: 'TodoList can create items in {{name}}.',
+    modeConfirmTitle: 'Let TodoList write to {{name}}?',
+    modeConfirmBody: 'TodoList will then be able to create items in {{name}}.',
+    modeConfirmGcal: 'It will also be able to push your events to Google Calendar.',
+    modeConfirmAction: 'Allow writing',
+    modeError: 'The access couldn’t be changed. Try again.',
   },
   testCodes: {
     auth_failed: 'The provider rejected the credential. Replace it.',
@@ -131,6 +141,7 @@ export const connect = {
     remove: 'Removed events: {{n}}',
     confirm: 'Sync now',
     notConnected: 'Connect Google Calendar first.',
+    readOnly: 'Read-only: switch it to Read & write on the Integrations page',
     failed: 'The calendar sync could not run. Check the Google Calendar connection and try again.',
   },
   link: {
@@ -201,7 +212,6 @@ export const connect = {
     loading: 'Loading your calendars…',
     loadFailed: 'Your calendars couldn’t be loaded. Try again.',
     save: 'Save calendars',
-    saved: 'Saved.',
     saveFailed: 'The calendars couldn’t be saved. Try again.',
   },
 };

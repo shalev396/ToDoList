@@ -12,8 +12,6 @@ export const dashboard = {
   done: 'Done',
   undo: 'Undo',
   redo: 'Redo',
-  saving: 'Saving…',
-  saved: 'Saved',
   editHint: 'Drag a block by its handle, or select it and use the arrow keys.',
   editHintPhone: 'Drag a block by its handle to change the order.',
   draftNote: 'Draft, waiting for an owner to publish',

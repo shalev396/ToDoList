@@ -14,6 +14,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
+import type { IntegrationMode } from '@api-types/domain';
 import { SyncStatus } from './SyncStatus';
 
 interface Counts {
@@ -25,10 +26,12 @@ interface Counts {
 function GcalSyncDialog({
   workspaceId,
   integrationId,
+  mode,
   onClose,
 }: {
   workspaceId: string;
   integrationId: string;
+  mode: IntegrationMode;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -109,13 +112,23 @@ function GcalSyncDialog({
             <li>{t('connect.gcalSync.remove', { n: counts.remove })}</li>
           </ul>
         )}
+        {mode === 'read' && runId === null ? (
+          <p data-gcal-read-only className="text-sm text-muted-foreground">
+            {t('connect.gcalSync.readOnly')}
+          </p>
+        ) : null}
         {run === undefined ? null : <SyncStatus run={run} />}
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={onClose}>
             {t(runId === null ? 'connect.cancel' : 'connect.done')}
           </Button>
           {runId === null ? (
-            <Button type="button" disabled={counts === null || busy} onClick={() => void confirm()}>
+            <Button
+              type="button"
+              disabled={counts === null || busy || mode === 'read'}
+              title={mode === 'read' ? t('connect.gcalSync.readOnly') : undefined}
+              onClick={() => void confirm()}
+            >
               {t('connect.gcalSync.confirm')}
             </Button>
           ) : null}
@@ -161,6 +174,7 @@ export function GcalSyncButton({ className }: { className?: string | undefined }
         <GcalSyncDialog
           workspaceId={workspaceId}
           integrationId={calendar.id}
+          mode={calendar.mode}
           onClose={() => {
             setOpen(false);
           }}

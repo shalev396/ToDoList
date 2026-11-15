@@ -39,6 +39,7 @@ export const items = {
     privateNotice:
       'This to-do is private, but members will see the new item among {{source}} items.',
     notWritable: 'Not available here',
+    readOnlyTarget: 'Read-only: switch it to Read & write on the Integrations page',
     hints: { default: 'default', primary: 'primary' },
     createHere: 'Create',
     createIn: 'Create in other tools',
@@ -155,8 +156,6 @@ export const items = {
     topicDefault: 'As in {{source}}',
     note: 'Your note',
     notePlaceholder: 'Add a note only you can see',
-    saved: 'Saved',
-    saving: 'Saving…',
     edit: 'Edit',
     editTitle: 'Title',
     editDue: 'Due date',

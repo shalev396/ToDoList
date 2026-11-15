@@ -1,5 +1,6 @@
 export const common = {
   aria: { toggleTheme: 'החלף ערכת נושא' },
+  saveStatus: { saving: 'שומר…', saved: 'נשמר', error: 'השמירה נכשלה' },
   theme: { light: 'בהיר', dark: 'כהה', system: 'מערכת' },
   nav: {
     signIn: 'התחבר',

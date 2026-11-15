@@ -15,6 +15,7 @@ import {
 import { useDashboard, useDashboards } from '@/api/queries/dashboards';
 import { PageMetadata } from '@/components/shared/PageMetadata';
 import { Button } from '@/components/ui/button';
+import { SaveStatus } from '@/components/ui/save-status';
 import { buttonVariants } from '@/components/ui/button-variants';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { dateLocale, longDate } from '@/components/items/format';
@@ -187,27 +188,11 @@ function DashboardActions({
       </>
     );
   }
-  const status =
-    editor.status === 'saving'
-      ? t('dashboard.saving')
-      : editor.status === 'saved'
-        ? t('dashboard.saved')
-        : '';
   return (
     <>
-      {/* Always present, so the status is announced; shown only while there is one. On phones
-          it comes after the buttons, so they never move when it appears. */}
-      <p aria-live="polite" className="sr-only">
-        {status}
-      </p>
-      {status === '' ? null : (
-        <span
-          aria-hidden="true"
-          className="order-last text-[13px] text-muted-foreground sm:order-first"
-        >
-          {status}
-        </span>
-      )}
+      {/* Always reserves its room and is announced; on phones it comes after the buttons, so
+          they never move. */}
+      <SaveStatus state={editor.status} className="order-last sm:order-first" />
       {onAdd === null ? null : (
         <Button
           variant="outline"
