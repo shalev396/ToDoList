@@ -55,6 +55,11 @@ export const ERROR_CODES = [
   'integration_not_owner',
   /** A recurring to-do needs the workspace's primary calendar, and there is none to create it in. */
   'primary_calendar_unset',
+  /**
+   * Created at the provider, but not stored here yet (the answer carries `details.written`): it
+   * appears after the next sync. Retrying with the same idempotency key makes nothing twice.
+   */
+  'created_not_stored',
   /** A push for a Google Calendar integration that is not the workspace's primary calendar. */
   'calendar_not_primary',
   /**

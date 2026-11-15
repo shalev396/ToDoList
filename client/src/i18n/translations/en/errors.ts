@@ -47,6 +47,8 @@ export const errors = {
       'Only the person who connected that tool can change this there. You can still keep your own value in TodoList where the tool has none.',
     primaryCalendarUnset:
       'Recurring to-dos go to the workspace calendar, and this workspace has none yet. Ask the workspace owner to choose one.',
+    createdNotStored:
+      'It was created in the calendar, but it isn’t showing here yet. It appears after the next sync.',
     providerWritesOff: 'Creating items in your other tools is turned off on this server.',
     createRateLimited: 'You have created a lot of items there this hour. Try again later.',
     needsDueDate: 'A calendar event needs a due date.',

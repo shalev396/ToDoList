@@ -46,6 +46,7 @@ export const ERROR_CODE_KEYS: Readonly<Record<ErrorCode, string>> = {
   event_has_guests: 'errors.codes.eventHasGuests',
   integration_not_owner: 'errors.codes.integrationNotOwner',
   primary_calendar_unset: 'errors.codes.primaryCalendarUnset',
+  created_not_stored: 'errors.codes.createdNotStored',
   provider_writes_off: 'errors.codes.providerWritesOff',
   create_rate_limited: 'errors.codes.createRateLimited',
   needs_due_date: 'errors.codes.needsDueDate',
