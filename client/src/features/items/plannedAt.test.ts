@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   formatPlannedAt,
+  createCommitPolicy,
   createLatestWins,
   isCommittable,
-  isPickerChange,
   isPlannedTime,
   isRealDate,
   parsePlannedAt,
+  type FieldEvent,
 } from './plannedAt.ts';
 
 describe('plannedAt', () => {
@@ -58,12 +59,87 @@ describe('plannedAt', () => {
   });
 });
 
-describe('isPickerChange', () => {
-  it('is false for keyboard typing and true for a pick', () => {
-    assert.equal(isPickerChange({ inputType: 'insertText' } as unknown as Event), false);
-    assert.equal(isPickerChange({ inputType: 'deleteContentBackward' } as unknown as Event), false);
-    assert.equal(isPickerChange({} as Event), true);
-    assert.equal(isPickerChange({ inputType: '' } as unknown as Event), true);
+describe('createCommitPolicy (Chromium’s events)', () => {
+  // Chromium 157: each typed segment of <input type="date"> fires `input` as a plain Event, no
+  // `inputType`, while the input has the focus; a pick from its picker fires the same Event. The
+  // policy reads only what the page sees: pointer presses, keys, changes (focused or not), blur.
+  const replay = (events: FieldEvent[]) => {
+    const policy = createCommitPolicy();
+    return events.map((event) => policy.handle(event));
+  };
+  const change = (focused = true): FieldEvent => ({ type: 'change', focused });
+  const key = (name: string): FieldEvent => ({ type: 'keydown', key: name });
+
+  it('typing over a whole date saves nothing per segment, then once on blur', () => {
+    // Click into the day, type 1, 1 (2026-12-01, then 2026-12-11), Tab to the month, type 0 2.
+    const actions = replay([
+      { type: 'pointerdown' },
+      key('1'),
+      change(),
+      key('1'),
+      change(),
+      key('Tab'),
+      key('0'),
+      change(),
+      key('2'),
+      change(),
+      { type: 'blur' },
+    ]);
+    assert.deepEqual(
+      actions.filter((action) => action !== null),
+      ['commit'],
+    );
+    assert.equal(actions.at(-1), 'commit');
+  });
+
+  it('typing a time ("0930AM") saves once, on Enter', () => {
+    const actions = replay([
+      key('0'),
+      change(),
+      key('9'),
+      change(),
+      key('3'),
+      change(),
+      key('0'),
+      change(),
+      key('A'),
+      key('Enter'),
+    ]);
+    assert.deepEqual(
+      actions.filter((action) => action !== null),
+      ['commit'],
+    );
+  });
+
+  it('a pick from the picker saves at once, with the focus still on the input', () => {
+    assert.deepEqual(replay([{ type: 'pointerdown' }, change()]), [null, 'commit']);
+    // A second pick in a row saves again.
+    assert.deepEqual(replay([{ type: 'pointerdown' }, change(), change()]), [
+      null,
+      'commit',
+      'commit',
+    ]);
+  });
+
+  it('a key after the press makes the next changes typing again', () => {
+    assert.deepEqual(replay([{ type: 'pointerdown' }, key('ArrowUp'), change()]), [
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it('a change while the input has lost the focus is saved', () => {
+    assert.deepEqual(replay([change(false)]), ['commit']);
+  });
+
+  it('Escape puts the saved value back; blur forgets the press', () => {
+    assert.deepEqual(replay([key('Escape')]), ['reset']);
+    assert.deepEqual(replay([{ type: 'pointerdown' }, { type: 'blur' }, change()]), [
+      null,
+      'commit',
+      null,
+    ]);
   });
 });
 

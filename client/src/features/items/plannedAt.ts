@@ -66,14 +66,50 @@ export function formatPlannedAt({ date, time }: PlannedParts): string | null {
   return TIME.test(time) ? `${date}T${time}` : date;
 }
 
+/** What a date or time input tells its commit policy. */
+export type FieldEvent =
+  | { type: 'pointerdown' }
+  | { type: 'keydown'; key: string }
+  /** The value changed; `focused`: the input still has the focus. */
+  | { type: 'change'; focused: boolean }
+  | { type: 'blur' };
+
+/** What to do with the draft: save it, put the saved value back, or wait. */
+export type FieldAction = 'commit' | 'reset' | null;
+
 /**
- * Whether a `change` on a date or time input came from the native picker rather than the keyboard.
- * Typing fires an `InputEvent` with an `inputType`; a pick does not. Typed segments wait for blur
- * or Enter, so typing over a whole date never saves each segment.
+ * When a date or time input's draft is saved. Chromium fires a plain `Event` (no `inputType`) for
+ * every typed segment, exactly as for a pick, so the event can't tell typing from picking. So:
+ * - blur and Enter save; Escape puts the saved value back;
+ * - a change saves at once only when it is a pick: it follows a press of the pointer on the input
+ *   with no key pressed since (the picker's button, or a tap that opened a phone's picker), or the
+ *   input has lost the focus (a picker that took it, a script);
+ * - any other change (typing, arrow keys) waits for blur or Enter, so typing over a whole date
+ *   never saves its segments one by one.
+ * The caller still checks that the draft is whole (isCommittable) before saving a pick.
  */
-export function isPickerChange(nativeEvent: Event): boolean {
-  const inputType = (nativeEvent as { inputType?: unknown }).inputType;
-  return typeof inputType !== 'string' || inputType === '';
+export function createCommitPolicy() {
+  let pressed = false;
+  return {
+    handle(event: FieldEvent): FieldAction {
+      switch (event.type) {
+        case 'pointerdown':
+          pressed = true;
+          return null;
+        case 'keydown':
+          pressed = false;
+          if (event.key === 'Enter') {
+            return 'commit';
+          }
+          return event.key === 'Escape' ? 'reset' : null;
+        case 'change':
+          return pressed || !event.focused ? 'commit' : null;
+        case 'blur':
+          pressed = false;
+          return 'commit';
+      }
+    },
+  };
 }
 
 /**

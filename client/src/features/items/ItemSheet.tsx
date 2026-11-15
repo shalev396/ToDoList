@@ -2,7 +2,7 @@ import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMembers } from '@/api/queries/members';
 import { ownerOf } from './owner';
-import { CircleAlert, ExternalLink, Pencil } from 'lucide-react';
+import { CircleAlert, ExternalLink, Lock, Pencil } from 'lucide-react';
 import { SourceDot } from '@/components/items/SourceDot';
 import { dateLocale, initials, longDate } from '@/components/items/format';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -31,20 +31,23 @@ import { SourcePreview } from './SourcePreview';
 import { describeProps, type ItemField } from './itemFields';
 import { useItemParam } from './useItemParam';
 import {
+  createCommitPolicy,
   createLatestWins,
   formatPlannedAt,
   isCommittable,
-  isPickerChange,
   parsePlannedAt,
+  type FieldAction,
 } from './plannedAt';
+import { MirroredEditor } from './editing/MirroredEditor';
 import { dateInZone, noonInZone } from './zonedDate';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
 /**
  * The item detail (FRONTEND.md §1: item detail lives in a Sheet, `?item=<id>`): a right Sheet on
- * desktop, a full-width drawer on phones. The back button closes it. The source owns a mirrored
- * item, so only the overlay (pin, note, hide, topic) is editable there; a local to-do is edited
- * in place.
+ * desktop, a full-width drawer on phones. The back button closes it. A local to-do is edited in
+ * place; a mirrored item's provider fields are written back by its integration's owner, and the
+ * fields its provider lacks are kept in TodoList (MirroredEditor). The overlay (pin, note, hide,
+ * topic, planned for) is any editor's.
  */
 export function ItemSheet() {
   const { t } = useTranslation();
@@ -126,13 +129,27 @@ function ItemBody({ item }: { item: ItemDetail }) {
   const [focus, setFocus] = useState<{ integrationId: string; anyway: boolean } | null>(null);
   const sourceName = t(`sources.${item.source.provider}`);
   const fields = describeProps(item.props);
-  const [editing, setEditing] = useState(false);
   const [refused, setRefused] = useState<{ provider: string; url: string } | null>(null);
 
   return (
     <>
       <SheetHeader className="gap-1 pe-14">
-        <p className="text-[13px] text-muted-foreground">{t(`items.kinds.${item.kind}`)}</p>
+        <p className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
+          {t(`items.kinds.${item.kind}`)}
+          {item.editing.mode === 'read' ? (
+            <span
+              data-read-only-marker=""
+              title={t('items.edit.readOnlyLabel', { source: sourceName })}
+              className="inline-flex h-5 items-center gap-1 rounded-full border px-2 text-[12px]"
+            >
+              <Lock aria-hidden="true" className="size-3" />
+              {t('items.edit.readOnly')}
+              <span className="sr-only">
+                : {t('items.edit.readOnlyLabel', { source: sourceName })}
+              </span>
+            </span>
+          ) : null}
+        </p>
         <SheetTitle
           dir="auto"
           className="text-lg leading-snug [overflow-wrap:anywhere]"
@@ -205,32 +222,10 @@ function ItemBody({ item }: { item: ItemDetail }) {
 
         {isLocal ? (
           canWrite ? (
-            editing ? (
-              <EditForm
-                item={item}
-                timeZone={timeZone}
-                onDone={() => {
-                  setEditing(false);
-                }}
-              />
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="self-start"
-                onClick={() => {
-                  setEditing(true);
-                }}
-              >
-                <Pencil aria-hidden="true" />
-                {t('items.sheet.edit')}
-              </Button>
-            )
+            <LocalEditor item={item} timeZone={timeZone} />
           ) : null
         ) : (
-          <p className="text-[13px] text-muted-foreground" data-mirrored-note="">
-            {t('items.sheet.mirrored', { source: sourceName })} {t('items.sheet.mirroredOpen')}
-          </p>
+          <MirroredEditor item={item} timeZone={timeZone} source={sourceName} canEdit={canWrite} />
         )}
 
         {refused === null ? null : (
@@ -375,19 +370,62 @@ function hostOf(url: string): string {
   }
 }
 
+/** A local to-do: the Edit button, the form, and how its save went. */
+function LocalEditor({ item, timeZone }: { item: ItemDetail; timeZone: string }) {
+  const { t } = useTranslation();
+  const { workspace } = useCurrentWorkspace();
+  const update = useUpdateItem(workspace?.id ?? '', item.id);
+  const [editing, setEditing] = useState(false);
+  const state = update.isPending
+    ? 'saving'
+    : update.isError
+      ? 'error'
+      : update.isSuccess
+        ? 'saved'
+        : 'idle';
+  return editing ? (
+    <div className="flex flex-col gap-2">
+      <EditForm
+        item={item}
+        timeZone={timeZone}
+        update={update}
+        onDone={() => {
+          setEditing(false);
+        }}
+      />
+      <SaveStatus className="self-start" state={state} />
+    </div>
+  ) : (
+    <div className="flex flex-wrap items-center gap-3">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => {
+          update.reset();
+          setEditing(true);
+        }}
+      >
+        <Pencil aria-hidden="true" />
+        {t('items.sheet.edit')}
+      </Button>
+      <SaveStatus state={state} />
+    </div>
+  );
+}
+
 /** A local to-do, edited in place: title, due date and status. */
 function EditForm({
   item,
   timeZone,
+  update,
   onDone,
 }: {
   item: ItemDetail;
   timeZone: string;
+  update: ReturnType<typeof useUpdateItem>;
   onDone: () => void;
 }) {
   const { t } = useTranslation();
-  const { workspace } = useCurrentWorkspace();
-  const update = useUpdateItem(workspace?.id ?? '', item.id);
   const [title, setTitle] = useState(item.title);
   const [due, setDue] = useState(item.dueAt === null ? '' : dateInZone(item.dueAt, timeZone));
   const [status, setStatus] = useState<ItemStatus>(item.status);
@@ -496,8 +534,11 @@ function OverlayControls({
     time: useId(),
   };
   const planned = parsePlannedAt(item.overlay.plannedAt);
-  // The date and time are drafts: a whole real value from the picker is saved at once, anything
-  // else waits for blur or Enter and is never sent. Escape drops what was never saved.
+  // The date and time are drafts: a whole real value picked from the picker is saved at once,
+  // anything typed waits for blur or Enter, and a partial value is never sent. Escape drops what
+  // was never saved (createCommitPolicy: Chromium can't tell typing from picking by the event).
+  const [datePolicy] = useState(createCommitPolicy);
+  const [timePolicy] = useState(createCommitPolicy);
   const [plannedDraft, setPlannedDraft] = useState(planned);
   const [plannedSeen, setPlannedSeen] = useState(item.overlay.plannedAt ?? null);
   if (plannedSeen !== (item.overlay.plannedAt ?? null)) {
@@ -517,6 +558,16 @@ function OverlayControls({
       plannedQueue.push(next);
     }
   };
+
+  /** What the policy said, done to a draft (`pick`: a change, saved only when whole). */
+  const act = (action: FieldAction, draft: { date: string; time: string }, pick = false) => {
+    if (action === 'reset') {
+      setPlannedDraft(planned);
+    } else if (action === 'commit' && (!pick || isCommittable(draft))) {
+      commitPlanned(draft);
+    }
+  };
+  const focused = (target: EventTarget) => target === document.activeElement;
 
   const save = (body: Parameters<typeof overlay.mutate>[0]) => {
     overlay.mutate(body, { onError: refused });
@@ -598,23 +649,20 @@ function OverlayControls({
             min="1970-01-01"
             max="2999-12-31"
             value={plannedDraft.date}
+            onPointerDown={() => {
+              datePolicy.handle({ type: 'pointerdown' });
+            }}
             onChange={(event) => {
               const draft = { date: event.target.value, time: plannedDraft.time };
               setPlannedDraft(draft);
-              // Typed segments wait for blur or Enter; only a pick from the picker saves now.
-              if (isPickerChange(event.nativeEvent) && isCommittable(draft)) {
-                commitPlanned(draft);
-              }
+              const focus = focused(event.target);
+              act(datePolicy.handle({ type: 'change', focused: focus }), draft, true);
             }}
             onBlur={() => {
-              commitPlanned(plannedDraft);
+              act(datePolicy.handle({ type: 'blur' }), plannedDraft);
             }}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                commitPlanned(plannedDraft);
-              } else if (event.key === 'Escape') {
-                setPlannedDraft(planned);
-              }
+              act(datePolicy.handle({ type: 'keydown', key: event.key }), plannedDraft);
             }}
           />
           <Input
@@ -625,26 +673,32 @@ function OverlayControls({
             className="w-auto"
             value={plannedDraft.time}
             disabled={planned.date === ''}
+            onPointerDown={() => {
+              timePolicy.handle({ type: 'pointerdown' });
+            }}
             onChange={(event) => {
               const draft = { date: planned.date, time: event.target.value };
               setPlannedDraft(draft);
-              if (
-                isPickerChange(event.nativeEvent) &&
-                event.target.value !== '' &&
-                isCommittable(draft)
-              ) {
-                commitPlanned(draft);
+              const action = timePolicy.handle({
+                type: 'change',
+                focused: focused(event.target),
+              });
+              // A cleared time picked away is not a pick of a time: it waits for blur.
+              if (event.target.value !== '') {
+                act(action, draft, true);
               }
             }}
             onBlur={() => {
-              commitPlanned({ date: planned.date, time: plannedDraft.time });
+              act(timePolicy.handle({ type: 'blur' }), {
+                date: planned.date,
+                time: plannedDraft.time,
+              });
             }}
             onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                commitPlanned({ date: planned.date, time: plannedDraft.time });
-              } else if (event.key === 'Escape') {
-                setPlannedDraft(planned);
-              }
+              act(timePolicy.handle({ type: 'keydown', key: event.key }), {
+                date: planned.date,
+                time: plannedDraft.time,
+              });
             }}
           />
           {planned.date === '' ? null : (

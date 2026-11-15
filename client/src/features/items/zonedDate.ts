@@ -8,6 +8,18 @@ export function dateInZone(iso: string | Date, timeZone: string): string {
   }).format(new Date(iso));
 }
 
+/** The wall-clock time (`HH:MM`, 24-hour) of an instant in an IANA time zone. */
+export function timeInZone(iso: string | Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(new Date(iso));
+  const part = (type: string): string => parts.find((entry) => entry.type === type)?.value ?? '00';
+  return `${part('hour')}:${part('minute')}`;
+}
+
 /** How far the zone's wall clock is ahead of UTC at an instant, in milliseconds. */
 function offsetAt(instant: Date, timeZone: string): number {
   const parts = new Intl.DateTimeFormat('en-US', {

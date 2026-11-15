@@ -110,6 +110,7 @@ function SelectField({
   'aria-label'?: string;
   'aria-labelledby'?: string;
   'aria-invalid'?: boolean;
+  'aria-describedby'?: string | undefined;
 }) {
   const enc = (v: string) => (v === '' ? EMPTY : v);
   return (

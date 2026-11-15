@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { dateInZone, noonInZone } from './zonedDate.ts';
+import { dateInZone, noonInZone, timeInZone } from './zonedDate.ts';
 
 describe('dateInZone', () => {
   it('is the calendar date in the zone, not in UTC', () => {
@@ -25,5 +25,13 @@ describe('noonInZone', () => {
     for (const zone of ['Asia/Jerusalem', 'America/Los_Angeles', 'Pacific/Auckland']) {
       assert.equal(dateInZone(noonInZone('2026-10-25', zone), zone), '2026-10-25');
     }
+  });
+});
+
+describe('timeInZone', () => {
+  it('is the 24-hour wall clock in the zone', () => {
+    assert.equal(timeInZone('2026-11-11T22:30:00Z', 'Asia/Jerusalem'), '00:30');
+    assert.equal(timeInZone('2026-07-01T13:05:00Z', 'Asia/Jerusalem'), '16:05');
+    assert.equal(timeInZone('2026-07-01T00:00:00Z', 'UTC'), '00:00');
   });
 });

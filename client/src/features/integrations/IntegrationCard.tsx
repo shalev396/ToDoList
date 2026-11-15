@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router-dom';
 import { ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { errorMessage } from '@/api/errors';
@@ -28,6 +29,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Switch } from '@/components/ui/switch';
 import { ProviderIcon } from '@/features/landing/ProviderIcon';
 import { useLanguage } from '@/hooks/useLanguage';
+import { integrationAnchor } from './anchor';
 import type { IntegrationStatusView } from '@api-types/api-contracts';
 import type { IntegrationMode } from '@api-types/domain';
 import type {
@@ -128,6 +130,19 @@ export function IntegrationCard({
   const stopSharing = useStopSharing(workspaceId);
   const update = useUpdateIntegration(workspaceId);
   const name = t(`sources.${provider}`);
+  // The item sheet links here (`#integration-<id>`) to switch the mode: the card comes into view
+  // with its mode switch focused, once it has loaded.
+  const { hash } = useLocation();
+  const card = useRef<HTMLElement>(null);
+  const anchor = integration === undefined ? undefined : integrationAnchor(integration.id);
+  useEffect(() => {
+    if (anchor === undefined || hash !== `#${anchor}`) {
+      return;
+    }
+    card.current?.scrollIntoView({ block: 'center' });
+    const target = card.current?.querySelector<HTMLElement>('[data-mode-switch]') ?? card.current;
+    target?.focus({ preventScroll: true });
+  }, [anchor, hash]);
   const format = (value: string | Date) =>
     new Intl.DateTimeFormat(dateLocale(language), {
       dateStyle: 'medium',
@@ -251,11 +266,14 @@ export function IntegrationCard({
 
   return (
     <article
+      ref={card}
+      id={anchor}
+      tabIndex={anchor === undefined ? undefined : -1}
       data-integration-card={provider}
       data-status={status ?? 'none'}
       data-coming-soon={comingSoon ? 'true' : undefined}
       aria-label={name}
-      className="flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4"
+      className="flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4 outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <header className="flex items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sunken">
