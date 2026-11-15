@@ -445,36 +445,58 @@ export interface CatalogIssue {
 }
 
 /**
- * Catalog rules a schema-valid block must also meet (BUILDER.md §8, validation layer 2): its viz
- * fits its type, a data block has a query (or a saved view), filter blocks set a variable and
- * action blocks name their action. Pointers are relative to the block.
+ * Catalog rules a schema-valid block must also meet (BUILDER.md §8, validation layer 2), one
+ * function per rule; the Block classes (classes/dashboard/blocks/) apply the ones their type has, in
+ * this order: its viz fits its type (vizIssues), a data block has a query or a saved view and any
+ * other block takes none (queryRuleIssues), filter blocks set a variable (filterVariableIssues)
+ * and action blocks name their action (actionNameIssues). Pointers are relative to the block.
  */
-export function checkBlock(block: Block): CatalogIssue[] {
+
+/** The viz fits the type's viz schema. */
+export function vizIssues(block: Block): CatalogIssue[] {
+  const viz = BLOCK_CATALOG[block.type].vizSchema.safeParse(block.viz);
+  if (viz.success) return [];
+  return viz.error.issues.map((issue) => ({
+    pointer: toPointer(['viz', ...issue.path]),
+    message: issue.message,
+  }));
+}
+
+/** A data block (requiredQuery) has a query or a saved view; any other block takes no query. */
+export function queryRuleIssues(block: Block): CatalogIssue[] {
   const entry = BLOCK_CATALOG[block.type];
-  const issues: CatalogIssue[] = [];
-  const viz = entry.vizSchema.safeParse(block.viz);
-  if (!viz.success) {
-    for (const issue of viz.error.issues) {
-      issues.push({ pointer: toPointer(['viz', ...issue.path]), message: issue.message });
-    }
-  }
   const hasSavedView = (block.savedViewId ?? null) !== null;
   if (entry.requiredQuery && block.query === undefined && !hasSavedView) {
-    issues.push({
-      pointer: '/query',
-      message: `a ${block.type} block needs a query or a saved view`,
-    });
+    return [{ pointer: '/query', message: `a ${block.type} block needs a query or a saved view` }];
   }
   if (!entry.requiredQuery && block.query !== undefined) {
-    issues.push({ pointer: '/query', message: `a ${block.type} block takes no query` });
+    return [{ pointer: '/query', message: `a ${block.type} block takes no query` }];
   }
-  if (block.type === 'filter' && block.sets === undefined) {
-    issues.push({ pointer: '/sets', message: 'a filter block sets a $page variable' });
-  }
-  if (block.type === 'action' && block.action === undefined) {
-    issues.push({ pointer: '/action', message: 'an action block names its action' });
-  }
-  return issues;
+  return [];
+}
+
+/** A filter block sets a `$page` variable. */
+export function filterVariableIssues(block: Block): CatalogIssue[] {
+  return block.sets === undefined
+    ? [{ pointer: '/sets', message: 'a filter block sets a $page variable' }]
+    : [];
+}
+
+/** An action block names its action. */
+export function actionNameIssues(block: Block): CatalogIssue[] {
+  return block.action === undefined
+    ? [{ pointer: '/action', message: 'an action block names its action' }]
+    : [];
+}
+
+/** Every catalog rule of the block's type, in the order above. */
+export function checkBlock(block: Block): CatalogIssue[] {
+  return [
+    ...vizIssues(block),
+    ...queryRuleIssues(block),
+    ...(block.type === 'filter' ? filterVariableIssues(block) : []),
+    ...(block.type === 'action' ? actionNameIssues(block) : []),
+  ];
 }
 
 // ─── describeCatalog() ──────────────────────────────────────────────────────

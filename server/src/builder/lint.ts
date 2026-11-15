@@ -45,6 +45,13 @@ export interface LintIssue {
   message: string;
 }
 
+/** What a lint depends on besides the block: the actor's mode, and the workspace's topic ids. */
+export interface LintScope {
+  mode: LintMode;
+  /** Without them the deleted-page check is skipped. */
+  topicIds?: ReadonlySet<string> | undefined;
+}
+
 /** Blocks that render item or container rows, each with its "Open in <provider>" link. */
 const ROW_BLOCKS: ReadonlySet<BlockType> = new Set([
   'list',
@@ -202,7 +209,7 @@ class Linter {
     });
   }
 
-  private fields(block: Block, base: string): void {
+  fields(block: Block, base: string): void {
     const { query } = block;
     if (query !== undefined) {
       if (query.where !== undefined) this.group(query.where, `${base}/query/where`);
@@ -250,7 +257,7 @@ class Linter {
   }
 
   /** Every string in the block, judged by where it sits (textPolicy). */
-  private text(block: Block, base: string): void {
+  text(block: Block, base: string): void {
     for (const { text, path } of strings(block)) {
       const pointer = `${base}${toPointer(path)}`;
       switch (textPolicy(path)) {
@@ -268,28 +275,64 @@ class Linter {
     }
   }
 
-  private sourceLink(block: Block, base: string): void {
-    if (!ROW_BLOCKS.has(block.type)) return;
-    for (const [key, value] of Object.entries(block.viz)) {
-      if (!/source/i.test(key)) continue;
-      const hides = OFF_VALUES.has(value) || (value === true && /hide/i.test(key));
-      if (hides) {
-        this.add(
-          'source_link_hidden',
-          'error',
-          `${base}/viz${toPointer([key])}`,
-          'rows always link to their source: this block cannot turn that off',
-        );
-      }
-    }
-  }
-
   block(block: Block, index: number): void {
     const base = `/blocks/${String(index)}`;
     this.fields(block, base);
-    this.sourceLink(block, base);
+    if (ROW_BLOCKS.has(block.type)) {
+      for (const found of lintSourceLink(block)) {
+        this.issues.push({ ...found, pointer: `${base}${found.pointer}` });
+      }
+    }
     this.text(block, base);
   }
+}
+
+/*
+ * One block's lint, rule by rule, its pointers relative to the block. The Block classes
+ * (classes/dashboard/blocks/) run them in this order: fields, then the source link of a block that
+ * renders rows, then text.
+ */
+
+/**
+ * `private_field` for every field path the block's query and display rules name; with the
+ * workspace's topic ids, `deleted_topic` for a topic rule that names a topic it no longer has.
+ */
+export function lintFields(block: Block, scope: LintScope): LintIssue[] {
+  const linter = new Linter(scope.mode, scope.topicIds);
+  linter.fields(block, '');
+  return linter.issues;
+}
+
+/**
+ * `source_link_hidden`, an error in every mode: a viz option that turns "Open in <provider>" off.
+ * Only for a block that renders rows (its class knows).
+ */
+export function lintSourceLink(block: Block): LintIssue[] {
+  const issues: LintIssue[] = [];
+  for (const [key, value] of Object.entries(block.viz)) {
+    if (!/source/i.test(key)) continue;
+    const hides = OFF_VALUES.has(value) || (value === true && /hide/i.test(key));
+    if (hides) {
+      issues.push({
+        code: 'source_link_hidden',
+        severity: 'error',
+        pointer: `/viz${toPointer([key])}`,
+        message: 'rows always link to their source: this block cannot turn that off',
+      });
+    }
+  }
+  return issues;
+}
+
+/**
+ * `hardcoded_text` (a warning in the UI, an error for agents) for every string outside the title
+ * and a note's note that is not data, structure or a value the catalog allows; `private_field` for
+ * a credential-shaped viz field path.
+ */
+export function lintText(block: Block, scope: LintScope): LintIssue[] {
+  const linter = new Linter(scope.mode, scope.topicIds);
+  linter.text(block, '');
+  return linter.issues;
 }
 
 /**
