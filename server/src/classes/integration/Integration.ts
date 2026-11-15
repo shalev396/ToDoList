@@ -77,6 +77,7 @@ import type { AuthKind, AuthStrategy, SecretJson } from './auth/AuthStrategy.js'
 import { OAuthAuth } from './auth/OAuthAuth.js';
 import { UnofferedAuth } from './auth/UnofferedAuth.js';
 import {
+  isAddedContentRemover,
   isCalendarProvider,
   isCreateFunnel,
   isResourcePicker,
@@ -151,6 +152,8 @@ export abstract class Integration<
     stopSharing: 'integration.stop_sharing',
     /** A change made at the provider for an item or a calendar (write-back): field names only. */
     write: 'integration.write',
+    /** What TodoList added at the provider, taken back before a disconnect: counts only. */
+    cleanup: 'integration.cleanup',
   });
 
   readonly #credential: Credential<TSecret>;
@@ -772,9 +775,26 @@ export abstract class Integration<
    * A disconnect that stopped part-way (a failure after step 1) resumes: on the soft-deleted
    * integration (findOwnIncludingDeleted) the steps run again (each is idempotent), without a
    * second audit entry.
+   *
+   * With `removeAdded` ("Also remove everything TodoList added"), an integration that can take it
+   * back (AddedContentRemover: Google Calendar; 400 for any other) does so first, while it is
+   * still connected and read & write (409 `integration_read_only` otherwise); a failure there
+   * stops before anything is disconnected. Not for one already disconnected (409).
    */
-  async disconnect(caller: Caller): Promise<void> {
+  async disconnect(caller: Caller, options: { removeAdded?: boolean } = {}): Promise<void> {
     this.assertOwner(caller);
+    if (options.removeAdded === true) {
+      if (!isAddedContentRemover(this)) {
+        throw new AppError(400, 'removeAdded: TodoList adds nothing at this provider');
+      }
+      if (this.isDeleted) {
+        throw new AppError(
+          409,
+          'Already disconnected: what TodoList added can no longer be removed',
+        );
+      }
+      await this.removeAdded(caller);
+    }
     await this.#disconnectSteps(caller);
   }
 

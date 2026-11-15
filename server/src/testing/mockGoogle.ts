@@ -11,7 +11,10 @@
  *   `nextAuthorize('no_app_calendars')` grants all but `calendar.app.created` once (a grant from
  *   before TodoList asked for it).
  * - calendars.insert needs `calendar.app.created` (or the full `calendar` scope): 403 otherwise.
- *   A created calendar belongs to the account, owned, and takes events.
+ *   A created calendar belongs to the account, owned, and takes events; calendars.delete takes
+ *   only a calendar the account made that way (a primary one is 400).
+ * - `failNextWrite(status)` makes the next Calendar API write answer that status (a 5xx: no answer
+ *   to rely on).
  * - token: the code grant (client secret, redirect URI and PKCE S256 checked; a code works once,
  *   for 10 minutes) and the refresh grant (a revoked grant is `invalid_grant`).
  * - revoke: a refresh or access token ends its whole grant, as Google does.
@@ -105,6 +108,8 @@ export interface MockGoogle {
   grants(): { issued: number; revoked: number; live: number };
   /** Every request the stand-in received, in order: its method, path and query (no body). */
   requests(): readonly { method: string; path: string; query: string }[];
+  /** The next Calendar API write (not a GET, not the token endpoint) answers `status` instead. */
+  failNextWrite(status: number): void;
   reset(): void;
   close(): Promise<void>;
 }
@@ -173,6 +178,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
   let created = new Map<string, (CalendarEntry & { timeZone: string | null })[]>();
   let epoch = randomBytes(4).toString('hex');
   let seq = 0;
+  let failWrite: number | null = null;
 
   const calendarsOf = (who: MockGoogleAccount): CalendarEntry[] => [
     { id: who.email, summary: who.email, primary: true, accessRole: 'owner' },
@@ -476,6 +482,29 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     send(res, 200, wire(existing));
   }
 
+  /** calendars.delete: a secondary calendar the account owns goes with its events; never a primary. */
+  function deleteCalendar(
+    who: MockGoogleAccount,
+    calendar: CalendarEntry,
+    res: ServerResponse,
+  ): void {
+    if (calendar.primary) {
+      apiError(res, 400, 'Cannot delete primary calendar.');
+      return;
+    }
+    const own = created.get(who.sub) ?? [];
+    if (!own.some((entry) => entry.id === calendar.id)) {
+      apiError(res, 403, 'Forbidden');
+      return;
+    }
+    created.set(
+      who.sub,
+      own.filter((entry) => entry.id !== calendar.id),
+    );
+    calendars.delete(calendar.id);
+    send(res, 204);
+  }
+
   async function calendarApi(
     path: string,
     url: URL,
@@ -484,6 +513,12 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
   ): Promise<void> {
     const grant = grantOf(req, res);
     if (grant === null) return;
+    if (failWrite !== null && req.method !== 'GET') {
+      const status = failWrite;
+      failWrite = null;
+      apiError(res, status, 'Backend Error');
+      return;
+    }
     const who = grant.account;
     if (path === '/calendars') {
       if (req.method === 'POST') await insertCalendar(req, res, grant);
@@ -514,6 +549,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     if (match[2] === undefined) {
       if (req.method === 'GET')
         send(res, 200, { id: calendar.id, summary: calendar.summary, timeZone: 'UTC' });
+      else if (req.method === 'DELETE') deleteCalendar(who, calendar, res);
       else apiError(res, 405, 'Method Not Allowed');
       return;
     }
@@ -541,6 +577,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     epoch = randomBytes(4).toString('hex');
     seq = 0;
     next = null;
+    failWrite = null;
   };
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -668,6 +705,9 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
       return { issued: grants.length, revoked, live: grants.length - revoked };
     },
     requests: (): readonly { method: string; path: string; query: string }[] => [...received],
+    failNextWrite(status): void {
+      failWrite = status;
+    },
     reset,
     close: () =>
       new Promise<void>((resolve) => {

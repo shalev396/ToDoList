@@ -41,7 +41,9 @@ export interface CalendarLinkPatch {
 
 export interface ICalendarLinkRepository {
   /**
-   * The unique indexes (DATA.md §6) have no `workspaceId`: callers must first resolve the parent
+   * The item's one link of this integration (`patch.itemId`), created or updated, now at `key`:
+   * a link that moves to another calendar (the primary calendar changed) keeps its row. The
+   * unique indexes (DATA.md §6) have no `workspaceId`: callers must first resolve the parent
    * integration with a workspace-scoped `findById`.
    */
   upsert(
@@ -58,6 +60,8 @@ export interface ICalendarLinkRepository {
   ): Promise<CalendarLinkData | null>;
   /** Links that are not tombstoned. */
   listLive(workspaceId: string, integrationId: string): Promise<CalendarLinkData[]>;
+  /** The item's links that are not tombstoned, of any integration of the workspace. */
+  listLiveForItem(workspaceId: string, itemId: string): Promise<CalendarLinkData[]>;
   /** Tombstoned links whose tombstone is newer than `since` (the 30-day window). */
   listTombstonedSince(
     workspaceId: string,
@@ -75,6 +79,11 @@ export interface ICalendarLinkRepository {
     id: string,
     deletedBy: CalendarLinkDeletedBy,
   ): Promise<CalendarLinkData | null>;
+  /**
+   * Every link of the integration, tombstoned or not, removed (what TodoList added was taken back
+   * before a disconnect). Returns how many.
+   */
+  removeForIntegration(workspaceId: string, integrationId: string): Promise<number>;
 }
 
 export const CALENDAR_LINK_TABLE_NAME = 'CalendarLinks';

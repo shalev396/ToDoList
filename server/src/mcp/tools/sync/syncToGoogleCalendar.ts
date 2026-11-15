@@ -4,14 +4,16 @@ import { AppError } from '../../../errors/AppError.js';
 import type { PlanNarrowing } from '../../../gcal/plan.js';
 import { gcalSync } from '../../../services/gcalSync.js';
 import { Integration } from '../../../classes/integration/index.js';
+import { Workspace } from '../../../classes/workspace/index.js';
 import { toolCaller } from '../../auth/principal.js';
 import { RuleGroupSchema } from '../../../types/builder.js';
 import { defineTool } from '../../tool.js';
 
 /**
- * The one agent-triggered provider write (MCP.md §5.7): to the personal Google Calendar through
- * the member's OAuth grant, via services/gcalSync.ts. A dry run (the default) returns the diff and
- * writes nothing.
+ * The one agent-triggered provider write (MCP.md §5.7): to the workspace's primary calendar,
+ * through the OAuth grant of the member's own integration it is on, via services/gcalSync.ts. A
+ * dry run (the default) returns the diff and writes nothing. The agent never chooses the calendar
+ * (nor sets the primary one).
  */
 const ItemRef = z.object({ id: z.string(), title: z.string() });
 
@@ -19,7 +21,7 @@ export const syncToGoogleCalendar = defineTool({
   name: 'sync_to_google_calendar',
   title: 'Push to Google Calendar',
   description:
-    'Pushes the filtered items (with a due date in range) to the personal Google Calendar set on the Google Calendar integration; the agent does not choose the calendar. dryRun defaults to true: only the create/update/skip diff, nothing written. With dryRun false it queues the push and returns its run id (poll get_sync_status). Writes are idempotent per item.',
+    'Pushes the filtered items (with a date in range) to the workspace calendar its owner chose (the primary calendar, on your own Google Calendar connection); the agent does not choose the calendar. dryRun defaults to true: only the create/update/skip diff, nothing written. With dryRun false it queues the push and returns its run id (poll get_sync_status). Writes are idempotent per item.',
   toolset: 'sync',
   inputSchema: z.strictObject({
     itemFilter: RuleGroupSchema.optional().describe(
@@ -49,17 +51,24 @@ export const syncToGoogleCalendar = defineTool({
   scopes: ['gcal:write'],
   minRole: 'editor',
   async handler(ctx, input) {
-    // The member's own calendar only, with their own items only (ruling 12).
-    const integrations = await Integration.listOwn(toolCaller(ctx));
-    const integration = integrations.find(
+    // The workspace's primary calendar, on one of the member's own integrations only.
+    const { primary } = await Workspace.primaryCalendarStatusOf(ctx.workspace.id);
+    if (primary === null) {
+      throw new AppError(409, 'No workspace calendar is set: a workspace owner chooses one.');
+    }
+    const integration = (await Integration.listOwn(toolCaller(ctx))).find(
       (candidate) =>
+        candidate.id === primary.integrationId &&
         candidate.provider === 'google_calendar' &&
         candidate.canCreate &&
         candidate.status !== 'paused' &&
         candidate.status !== 'expired',
     );
     if (integration === undefined) {
-      throw new AppError(409, 'No Google Calendar integration is connected.');
+      throw new AppError(
+        409,
+        'The workspace calendar is pushed by the member whose calendar it is.',
+      );
     }
     const range: NonNullable<PlanNarrowing['range']> = {
       ...(input.range?.from === undefined ? {} : { from: input.range.from }),

@@ -77,6 +77,22 @@ before(async () => {
   ).id;
   await (await models.getMembershipRepository()).create(wid, { userId: ownerId, role: 'owner' });
   iid = await connect();
+  // Its owner made its primary calendar the workspace's while it was read & write, then switched
+  // it back: the primary calendar is suspended (read-only), which is what these tests hold.
+  for (const mode of ['read_write', 'read'] as const) {
+    if (mode === 'read') {
+      const primary = await api.call('PUT', `${W()}/primary-calendar`, {
+        token,
+        body: { integrationId: iid, calendarId: ALICE.email },
+      });
+      assert.equal(primary.status, 200, primary.text);
+    }
+    const switched = await api.call('PATCH', `${W()}/integrations/${iid}`, {
+      token,
+      body: { mode },
+    });
+    assert.equal(switched.status, 200, switched.text);
+  }
   for (const [title, days] of [
     ['Dentist', 2],
     ['Gym', 3],
@@ -161,9 +177,83 @@ const pushRuns = async (): Promise<number> =>
   ).length;
 
 describe('Google Calendar while read-only', () => {
-  it('a new connection is read-only', async () => {
+  it('a new connection is read-only (and this one is again)', async () => {
     const stored = await (await models.getIntegrationRepository()).findById(wid, iid);
     assert.equal(stored?.mode, 'read');
+    const audits = await (
+      await models.getAuditLogRepository()
+    ).list(wid, { action: 'integration.mode' }, 10);
+    // Switched on (to choose the primary calendar), then off again: it started read-only.
+    assert.deepEqual(audits.map((entry) => entry.meta['to']).reverse(), ['read_write', 'read']);
+  });
+
+  it('its primary calendar is suspended; it can’t be chosen again while read-only', async () => {
+    const before = writes();
+    const shown = await api.call('GET', `${W()}/primary-calendar`, { token });
+    assert.equal(shown.status, 200, shown.text);
+    assert.deepEqual(data(shown.body), {
+      state: 'suspended',
+      reason: 'read_only',
+      mine: true,
+      integrationId: iid,
+      calendarId: ALICE.email,
+    });
+    for (const body of [
+      { integrationId: iid, calendarId: ALICE.email },
+      { integrationId: iid, newCalendarName: 'TodoList' },
+    ]) {
+      const refused = await api.call('PUT', `${W()}/primary-calendar`, { token, body });
+      assert.equal(refused.status, 409, refused.text);
+      assert.equal(refused.body?.['code'], 'integration_read_only');
+    }
+    assert.deepEqual(writes(), before);
+  });
+
+  it('the class writes: a pushed event’s delete, a calendar, the clean-up: refused, nothing sent', async () => {
+    const { Actor } = await import('../base/Actor.js');
+    const { Caller } = await import('../base/Caller.js');
+    const { Integration, GoogleCalendarIntegration } = await import('./index.js');
+    const { eventIdFor } = await import('../../gcal/diff.js');
+    const caller = await Caller.enter(wid, Actor.user(ownerId));
+    assert.ok(caller);
+    const integration = await Integration.findOwn(caller, iid);
+    assert.ok(integration instanceof GoogleCalendarIntegration);
+    const links = await models.getCalendarLinkRepository();
+    await links.upsert(
+      wid,
+      iid,
+      { calendarId: ALICE.email, googleEventId: eventIdFor('ro-linked-1') },
+      { itemId: 'ro-linked-1', direction: 'to_google' },
+    );
+    const before = writes();
+    const readOnly = (error: unknown): boolean =>
+      (error as { code?: unknown }).code === 'integration_read_only';
+    await assert.rejects(
+      integration.deleteLinkedEvent(caller, { itemId: 'ro-linked-1' }),
+      readOnly,
+    );
+    await assert.rejects(integration.createCalendar(caller, 'TodoList'), readOnly);
+    await assert.rejects(integration.removeAdded(caller), readOnly);
+    await assert.rejects(integration.primaryCandidate(caller, ALICE.email), readOnly);
+    // A to-do's delete leaves the event for the next push while it is read-only.
+    assert.equal(await GoogleCalendarIntegration.deleteEventsOfDeletedItem(wid, 'ro-linked-1'), 0);
+    assert.deepEqual(writes(), before);
+    const kept = await links.findByItem(wid, iid, 'ro-linked-1');
+    assert.equal(kept?.tombstonedAt, null);
+    // Out of the way of the dry runs below (a link with no item is one more removal).
+    await links.tombstone(wid, kept.id, 'dashboard');
+  });
+
+  it('disconnect with "Also remove what TodoList added": 409, still connected, nothing sent', async () => {
+    const before = writes();
+    const refused = await api.call('DELETE', `${W()}/integrations/${iid}?removeAdded=true`, {
+      token,
+    });
+    assert.equal(refused.status, 409, refused.text);
+    assert.equal(refused.body?.['code'], 'integration_read_only');
+    assert.deepEqual(writes(), before);
+    const stored = await (await models.getIntegrationRepository()).findById(wid, iid);
+    assert.equal(stored?.deletedAt, null);
   });
 
   it('an event from a to-do: 409 integration_read_only, nothing written', async () => {

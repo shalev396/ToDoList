@@ -38,6 +38,7 @@ export {
   type PickerKind,
 } from './definitions/index.js';
 export {
+  isAddedContentRemover,
   isCalendarProvider,
   isCreateFunnel,
   isResourcePicker,
@@ -46,6 +47,8 @@ export {
   isTaskProvider,
   supportsApiKey,
   supportsOAuth,
+  type AddedContentRemover,
+  type AddedRemoval,
   type CalendarDryRun,
   type CreatedRecord,
   type CreateFields,

@@ -5,6 +5,7 @@ import {
   type TopicRule,
   type IWorkspaceRepository,
   type JoinLinkData,
+  type PrimaryCalendarData,
   type WeekStart,
   type WorkspaceData,
   type WorkspaceSettings,
@@ -36,6 +37,16 @@ const workspaceSchema = new mongoose.Schema<WorkspaceFields>(
       topicRules: { type: [topicRuleSchema], default: [] },
       allowAgentPublish: { type: Boolean, default: false },
       attributes: { type: [mongoose.Schema.Types.Mixed], default: undefined },
+      primaryCalendar: {
+        type: new mongoose.Schema<PrimaryCalendarData>(
+          {
+            integrationId: { type: String, required: true },
+            calendarId: { type: String, required: true },
+          },
+          { _id: false },
+        ),
+        default: null,
+      },
     },
     joinLink: {
       type: new mongoose.Schema(
@@ -88,6 +99,18 @@ function storedAttributes(settings: {
     : [{ ...BUILTIN_IMPORTANCE }, ...stored];
 }
 
+/** The primary calendar as stored, when one is set (absent otherwise, as before it existed). */
+function primaryCalendarOf(stored: PrimaryCalendarData | null | undefined): {
+  primaryCalendar?: PrimaryCalendarData;
+} {
+  return typeof stored?.integrationId === 'string' &&
+    stored.integrationId !== '' &&
+    typeof stored.calendarId === 'string' &&
+    stored.calendarId !== ''
+    ? { primaryCalendar: { integrationId: stored.integrationId, calendarId: stored.calendarId } }
+    : {};
+}
+
 function toWorkspaceData(doc: WorkspaceFields): WorkspaceData {
   return {
     id: doc._id,
@@ -100,6 +123,7 @@ function toWorkspaceData(doc: WorkspaceFields): WorkspaceData {
       topicRules: storedRules(doc.settings).map(({ match, topicId }) => ({ match, topicId })),
       allowAgentPublish: doc.settings.allowAgentPublish ?? false,
       attributes: storedAttributes(doc.settings),
+      ...primaryCalendarOf(doc.settings.primaryCalendar),
     },
     deletedAt: doc.deletedAt ?? null,
     createdAt: doc.createdAt,
@@ -170,6 +194,22 @@ export const WorkspaceRepository: IWorkspaceRepository = {
         $set: {
           ...setFields(patch, ['name', 'slug']),
           ...setFields(patch.settings ?? {}, PATCHABLE_SETTINGS, 'settings.'),
+        },
+      },
+      { new: true, runValidators: true },
+    ).lean<WorkspaceFields>();
+    return doc ? toWorkspaceData(doc) : null;
+  },
+
+  async setPrimaryCalendar(id, primary) {
+    const doc = await WorkspaceMongoModel.findOneAndUpdate(
+      { _id: id, deletedAt: null },
+      {
+        $set: {
+          'settings.primaryCalendar':
+            primary === null
+              ? null
+              : { integrationId: primary.integrationId, calendarId: primary.calendarId },
         },
       },
       { new: true, runValidators: true },

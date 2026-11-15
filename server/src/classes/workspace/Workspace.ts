@@ -35,18 +35,24 @@ import {
 import type { Role as RoleName } from '../../types/domain.js';
 import type { Env } from '../../types/env.d.ts';
 import { PLAN_LIMITS } from '../../types/limits.js';
+import type {
+  PrimaryCalendarView,
+  SetPrimaryCalendarRequestBody,
+} from '../../types/primaryCalendar.js';
 import { Actor, type ActorRef } from '../base/Actor.js';
 import { AuditTarget } from '../base/AuditTarget.js';
 import { Caller } from '../base/Caller.js';
 import type { Auditable, SoftDeletable } from '../base/contracts.js';
 import { Entity } from '../base/Entity.js';
 import { AuditLog } from '../AuditLog.js';
+import { Integration, isCalendarProvider } from '../integration/index.js';
 import { WorkspacePolicy } from '../policies/WorkspacePolicy.js';
 import { AccountClosingDeletion, OwnerDeletion } from './cascade.js';
 import { assertInvitableRole } from './Invite.js';
 import { JoinLink, type JoinLinkState } from './JoinLink.js';
 import { Member } from './Member.js';
 import { assertOwner } from './ownerOnly.js';
+import { PrimaryCalendar, PrimaryCalendarStatus } from './PrimaryCalendar.js';
 import { Topic } from './Topic.js';
 import { TopicRules } from './TopicRules.js';
 import { WorkspaceSettings, type SettingsInput } from './WorkspaceSettings.js';
@@ -102,6 +108,9 @@ export interface UpdateWorkspaceInput {
   /** Only the settings given change; topicRules are replaced as a whole. */
   settings?: SettingsInput | undefined;
 }
+
+/** The audit action of a change to the workspace's primary calendar (set, or cleared). */
+export const PRIMARY_CALENDAR_AUDIT = 'workspace.primary_calendar';
 
 export interface SetJoinLinkInput {
   enabled: boolean;
@@ -579,6 +588,91 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
       { role: link.role },
     );
     return { workspaceId: workspace.id };
+  }
+
+  // ─── The primary calendar (plan Addendum A2) ─────────────────────────────
+  // The one Google calendar TodoList pushes the workspace's dated items to. A workspace owner
+  // chooses it among the Google Calendar integrations they own (never another member's grant)
+  // that are read & write; it is suspended while that integration is read-only or after it is
+  // disconnected. MCP neither sets nor clears it.
+
+  /**
+   * Whether the primary calendar is pushed to now (dispatchers, the push): unset, active, or
+   * suspended. Reads the workspace and the integration it is on.
+   */
+  static async primaryCalendarStatusOf(workspaceId: string): Promise<PrimaryCalendarStatus> {
+    const data = await (await getWorkspaceRepository()).findById(workspaceId);
+    const primary = data === null ? null : WorkspaceSettings.from(data.settings).primaryCalendar;
+    return Workspace.#statusOf(workspaceId, primary);
+  }
+
+  /** Any member: the primary calendar as they may see it (its ids to its integration's owner only). */
+  async primaryCalendar(caller: Caller): Promise<PrimaryCalendarView> {
+    this.#assertCaller(caller);
+    return (await Workspace.#statusOf(this.id, this.#settings.primaryCalendar)).viewFor(
+      caller.userId,
+    );
+  }
+
+  /**
+   * Owner only: the primary calendar is now a calendar of a Google Calendar integration the caller
+   * owns (404 for anyone else's) that is read & write (409 `integration_read_only`): one its
+   * account can write (`calendarId`, 400 otherwise), or a new one TodoList creates there
+   * (`newCalendarName`: read by the integration and recorded as TodoList's own; 409
+   * `scope_missing` for a grant from before that permission). Audited as
+   * `workspace.primary_calendar` with the integration and whether a calendar was created, never
+   * a calendar's id or name.
+   */
+  async setPrimaryCalendar(
+    caller: Caller,
+    input: SetPrimaryCalendarRequestBody,
+  ): Promise<PrimaryCalendarView> {
+    assertOwner(caller);
+    this.#assertCaller(caller);
+    const integration = await Integration.findOwn(caller, input.integrationId);
+    if (!isCalendarProvider(integration)) {
+      throw new AppError(400, 'integrationId: not a Google Calendar integration');
+    }
+    const created = 'newCalendarName' in input;
+    const calendar = created
+      ? await integration.createCalendar(caller, input.newCalendarName)
+      : await integration.primaryCandidate(caller, input.calendarId);
+    const primary = PrimaryCalendar.of(integration.id, calendar.id);
+    const updated = await (
+      await getWorkspaceRepository()
+    ).setPrimaryCalendar(this.id, primary.toJSON());
+    if (updated === null) throw new AppError(404, 'Workspace not found');
+    await AuditLog.record(caller, PRIMARY_CALENDAR_AUDIT, this.auditTarget(), {
+      integrationId: integration.id,
+      created,
+    });
+    return (await Workspace.#statusOf(this.id, primary)).viewFor(caller.userId);
+  }
+
+  /** Owner only: no primary calendar, so nothing is pushed. Audited as `workspace.primary_calendar`. */
+  async clearPrimaryCalendar(caller: Caller): Promise<PrimaryCalendarView> {
+    assertOwner(caller);
+    this.#assertCaller(caller);
+    const updated = await (await getWorkspaceRepository()).setPrimaryCalendar(this.id, null);
+    if (updated === null) throw new AppError(404, 'Workspace not found');
+    await AuditLog.record(caller, PRIMARY_CALENDAR_AUDIT, this.auditTarget(), { cleared: true });
+    return PrimaryCalendarStatus.of(null, null).viewFor(caller.userId);
+  }
+
+  /** The status of `primary`: its integration as it is now (gone when deleted or elsewhere). */
+  static async #statusOf(
+    workspaceId: string,
+    primary: PrimaryCalendar | null,
+  ): Promise<PrimaryCalendarStatus> {
+    if (primary === null) return PrimaryCalendarStatus.of(null, null);
+    const integration = await Integration.forWorker(primary.integrationId);
+    if (integration?.workspaceId !== workspaceId || !isCalendarProvider(integration)) {
+      return PrimaryCalendarStatus.of(primary, null);
+    }
+    return PrimaryCalendarStatus.of(primary, {
+      ownerUserId: integration.ownerUserId,
+      writable: integration.allowsWrites,
+    });
   }
 
   // ─── Attributes (H4) ─────────────────────────────────────────────────────

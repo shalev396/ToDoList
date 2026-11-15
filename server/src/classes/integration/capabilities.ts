@@ -130,10 +130,33 @@ export interface LinkedItemRef {
   readonly itemId: string;
 }
 
-/** A push: the plan's ops, as of `now`. */
+/**
+ * A push: the plan's ops, as of `now`, to the workspace's primary calendar `calendarId` (the one
+ * the pull after the writes reads back).
+ */
 export interface CalendarPushRequest {
   ops: readonly WireOp[];
   now: Date;
+  calendarId: string;
+}
+
+/** What "Also remove everything TodoList added" removed (counts only). */
+export interface AddedRemoval {
+  /** Pushed events deleted at the provider. */
+  events: number;
+  /** Calendars TodoList created, deleted. */
+  calendars: number;
+  /** Calendars TodoList created, kept because they hold events it did not add. */
+  calendarsKept: number;
+}
+
+/**
+ * An integration that can take back what TodoList added at its provider, before its owner
+ * disconnects it ("Also remove everything TodoList added"): only what TodoList itself made, and
+ * only while it is read & write (409 `integration_read_only`).
+ */
+export interface AddedContentRemover {
+  removeAdded(caller: Caller): Promise<AddedRemoval>;
 }
 
 /**
@@ -167,16 +190,24 @@ export interface CalendarProvider extends CreateFunnel {
   /** A pulled event deleted, by its item (already gone is done); the item goes too. */
   deleteEvent(caller: Caller, item: ItemRef, notice?: GuestNotice): Promise<void>;
   /**
-   * An event TodoList pushed, deleted by its CalendarLink of this integration (looked up by the
-   * item it was pushed for, on the push target: 404 otherwise); the link is tombstoned. For the
-   * push's clean-up (an item deleted, a disconnect).
+   * An event TodoList pushed, deleted by its CalendarLink of this integration (the live
+   * `to_google` link of the item it was pushed for, whose event id is the one TodoList gives that
+   * item: 404 otherwise); the link is tombstoned. For the push's clean-up (an item deleted, a
+   * disconnect).
    */
   deleteLinkedEvent(caller: Caller, link: LinkedItemRef): Promise<void>;
   /**
    * A calendar of TodoList's own, named `name` (Google's `calendars.insert`, which needs the
-   * `calendar.app.created` scope: a grant without it is 409 `scope_missing`).
+   * `calendar.app.created` scope: a grant without it is 409 `scope_missing`). It is read from
+   * then on and recorded as TodoList's own (the only kind of calendar TodoList may delete).
    */
   createCalendar(caller: Caller, name: string): Promise<GoogleCalendarEntry>;
+  /**
+   * Whether `calendarId` may be the workspace's primary calendar on this integration: its owner's
+   * (404), read & write (409 `integration_read_only`), and a calendar of the account it can write
+   * (400 otherwise). The calendar as the account lists it.
+   */
+  primaryCandidate(caller: Caller, calendarId: string): Promise<GoogleCalendarEntry>;
   /** What a push would do now (allowed in read-only mode: it writes nothing). */
   dryRun(caller: Caller, narrowing?: PlanNarrowing, now?: Date): Promise<CalendarDryRun>;
   /** The push, start to commit: the run's id. */
@@ -241,7 +272,15 @@ export function isCalendarProvider(
     'deleteEvent',
     'deleteLinkedEvent',
     'createCalendar',
+    'primaryCandidate',
   ].every((name) => hasMethod(integration, name));
+}
+
+/** Can take back what TodoList added at its provider (AddedContentRemover). */
+export function isAddedContentRemover(
+  integration: Integration,
+): integration is Integration & AddedContentRemover {
+  return hasMethod(integration, 'removeAdded');
 }
 
 /** Can create one item from a to-do: a task or a calendar event. */

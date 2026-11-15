@@ -1,9 +1,9 @@
 /**
- * "Sync to Google Calendar": the one sanctioned provider write besides "Also create in",
- * projecting dashboard items onto the member's own calendar through the Calendar API with the
- * account's own OAuth grant (`authMethod: oauth`). A write happens only when a user configures a
- * push and confirms it, and only for a read & write integration (the write gate of
- * GoogleCalendarIntegration: 409 `integration_read_only` otherwise).
+ * "Sync to Google Calendar": projecting the workspace's dated items onto its primary calendar
+ * (plan Addendum A2) through the Calendar API, with the OAuth grant of the integration that
+ * calendar is on (`authMethod: oauth`). Only that integration's owner pushes, only to that
+ * calendar (409 `calendar_not_primary` for any other integration), and only while it is read &
+ * write (the write gate of GoogleCalendarIntegration: 409 `integration_read_only` otherwise).
  *
  * A push runs in the request (GoogleCalendarIntegration#push): a `SyncRuns` row (trigger
  * `calendar_push`), the diff's ops through the Calendar API, then the commit (gcal/commit.ts:
@@ -45,9 +45,10 @@ export interface GcalSyncInput {
 }
 
 /**
- * A push to the member's own Google Calendar integration (404 for another member's, ruling 1),
- * of their own items only (loadPlan, ruling 12). A confirmed push needs it to be read & write
- * (409 `integration_read_only`, before anything is planned or recorded).
+ * A push to the workspace's primary calendar, on the member's own Google Calendar integration
+ * (404 for another member's, ruling 1; 409 `calendar_not_primary` when the primary calendar is
+ * not on it), of the dated items its owner may see (loadPlan). A confirmed push needs it to be
+ * read & write (409 `integration_read_only`, before anything is planned or recorded).
  */
 export async function gcalSync(
   ctx: WorkspaceContext,
@@ -77,5 +78,8 @@ export async function gcalSync(
       'The daily limit of new calendar events is used up. Try again tomorrow.',
     );
   }
-  return { dryRun: false, runId: await integration.push(caller, { ops: plan.ops, now }) };
+  return {
+    dryRun: false,
+    runId: await integration.push(caller, { ops: plan.ops, now, calendarId: plan.cfg.calendarId }),
+  };
 }

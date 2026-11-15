@@ -357,6 +357,33 @@ describe('Google Calendar writes once read & write', () => {
     });
   });
 
+  it('an edit or delete Google gives no answer to (a 5xx) is audited as unknown, then 502', async () => {
+    const { item } = await pulled('Flaky');
+    mock.failNextWrite(503);
+    await assert.rejects(
+      alice.updateEvent(caller, item, { title: 'Flaky (moved)' }),
+      hasStatus(502),
+    );
+    assert.deepEqual((await audits()).at(0), {
+      operation: 'event.update',
+      itemId: item.id,
+      fields: ['title'],
+      outcome: 'unknown',
+    });
+    mock.failNextWrite(500);
+    await assert.rejects(alice.deleteEvent(caller, item), hasStatus(502));
+    assert.deepEqual((await audits()).at(0), {
+      operation: 'event.delete',
+      itemId: item.id,
+      outcome: 'unknown',
+    });
+    // A refusal (a 4xx) is a clear no: not audited.
+    mock.failNextWrite(403);
+    const count = (await audits()).length;
+    await assert.rejects(alice.deleteEvent(caller, item), hasStatus(409));
+    assert.equal((await audits()).length, count);
+  });
+
   it('updateEvent: all day (the other form cleared); an invalid edit 400; a gone event 404', async () => {
     const { eventId, item } = await pulled('Trip');
     await alice.updateEvent(caller, item, {
@@ -380,10 +407,12 @@ describe('Google Calendar writes once read & write', () => {
 
   it('an event with other guests: 409 event_has_guests unless notifyGuests, sent as sendUpdates', async () => {
     const meeting = await pulled('Team sync', { attendeesCount: 3, guestsCount: 2 });
-    // Pulled before guestsCount was kept: two attendees or more read as guests.
+    // Pulled before guestsCount was kept: any attendee reads as a guest (it fails closed: an event
+    // made through the API lists its one guest, not its organizer).
     const older = await pulled('Old review', { attendeesCount: 2, guestsCount: undefined });
+    const oneGuest = await pulled('One guest', { attendeesCount: 1, guestsCount: undefined });
     const before = writes();
-    for (const { item } of [meeting, older]) {
+    for (const { item } of [meeting, older, oneGuest]) {
       await assert.rejects(
         alice.updateEvent(caller, item, { title: 'Moved' }),
         hasCode(409, 'event_has_guests'),
@@ -420,10 +449,11 @@ describe('Google Calendar writes once read & write', () => {
     await assert.rejects(alice.deleteEvent(caller, item), hasStatus(404));
   });
 
-  it('deleteLinkedEvent: only this integration’s live link on the push target; the link is tombstoned', async () => {
+  it('deleteLinkedEvent: only this integration’s live to_google link with TodoList’s event id; tombstoned', async () => {
+    const { eventIdFor } = await import('../../gcal/diff.js');
     const links = await models.getCalendarLinkRepository();
     const pushed = mock.addEvent(ALICE.email, {
-      id: 'h5pushed0001',
+      id: eventIdFor('todo-pushed-1'),
       summary: 'Pushed to-do',
       start: { date: '2026-11-28' },
       end: { date: '2026-11-29' },
@@ -434,16 +464,28 @@ describe('Google Calendar writes once read & write', () => {
       { calendarId: ALICE.email, googleEventId: pushed.id },
       { itemId: 'todo-pushed-1', direction: 'to_google' },
     );
+    // An event id TodoList never gives that item, and a link made from Google's side.
     await links.upsert(
       wid,
       alice.id,
       { calendarId: 'other@group.calendar.example', googleEventId: 'h5elsewhere1' },
       { itemId: 'todo-elsewhere-1', direction: 'to_google' },
     );
+    await links.upsert(
+      wid,
+      alice.id,
+      { calendarId: ALICE.email, googleEventId: eventIdFor('todo-from-google-1') },
+      { itemId: 'todo-from-google-1', direction: 'from_google' },
+    );
     const before = writes();
-    for (const itemId of ['todo-elsewhere-1', 'no-such-item']) {
+    for (const itemId of ['todo-elsewhere-1', 'todo-from-google-1', 'no-such-item', '']) {
       await assert.rejects(alice.deleteLinkedEvent(caller, { itemId }), hasStatus(404));
     }
+    // Not a string (an operator object from an unchecked caller): 404, nothing read as a match.
+    await assert.rejects(
+      alice.deleteLinkedEvent(caller, { itemId: { $ne: null } } as unknown as { itemId: string }),
+      hasStatus(404),
+    );
     assert.deepEqual(since(before), []);
     await alice.deleteLinkedEvent(caller, { itemId: 'todo-pushed-1' });
     assert.deepEqual(since(before), ['POST /token', `DELETE ${eventPath(pushed.id)}`]);
@@ -478,6 +520,22 @@ describe('Google Calendar writes once read & write', () => {
       [{ id: created.id, summary: 'TodoList', timeZone: TZ }],
     );
     assert.deepEqual((await audits()).at(0), { operation: 'calendar.create' });
+    // Read from now on, and recorded as TodoList's own (the only kind it may ever delete).
+    const stored = await (await models.getIntegrationRepository()).findById(wid, alice.id);
+    const config = stored?.config as {
+      calendars: { id: string; mode: string }[];
+      appCreatedCalendars?: string[];
+    };
+    assert.ok(config.calendars.some((calendar) => calendar.id === created.id));
+    assert.deepEqual(config.appCreatedCalendars, [created.id]);
+    // A settings change can't add to (or drop) that list.
+    const reloaded = await load(alice.id);
+    await reloaded.update(caller, {
+      config: { ...config, appCreatedCalendars: [ALICE.email, 'forged@group.calendar.example'] },
+    });
+    const after = (await (await models.getIntegrationRepository()).findById(wid, alice.id))
+      ?.config as { appCreatedCalendars?: string[] };
+    assert.deepEqual(after.appCreatedCalendars, [created.id]);
     const inserted = await alice.insertEvent(caller, created.id, event('h5mine00001'));
     assert.equal(inserted.kind, 'created');
     await assert.rejects(alice.createCalendar(caller, '   '), hasStatus(400));

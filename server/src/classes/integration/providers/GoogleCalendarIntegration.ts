@@ -7,18 +7,25 @@
  * - an event created from a to-do (insertEvent, a recurring one with one strictly parsed RRULE
  *   line); a pulled event's edit (updateEvent) or delete (deleteEvent), by its item of this
  *   integration on a calendar it reads, an event with other guests only when the caller says
- *   whether to notify them; a pushed event's delete by its CalendarLink (deleteLinkedEvent); a
- *   calendar of TodoList's own (createCalendar, which needs the `calendar.app.created` scope);
- *   and the push: the diff's ops
- *   applied through the Calendar API (writers/calendarOps.ts); all only inside the write session,
- *   so a read-only integration never writes; a dry run writes nothing and is always allowed;
+ *   whether to notify them; a pushed event's delete by its CalendarLink (deleteLinkedEvent, also
+ *   right after a to-do with a pushed event is deleted: deleteEventsOfDeletedItem); a calendar of
+ *   TodoList's own (createCalendar, which needs the `calendar.app.created` scope; it is read and
+ *   recorded as TodoList's own, the only kind of calendar TodoList may ever delete); and the push
+ *   to the workspace's primary calendar: the diff's ops applied through the Calendar API
+ *   (writers/calendarOps.ts); all only inside the write session, so a read-only integration never
+ *   writes; a dry run writes nothing and is always allowed;
+ * - the primary calendar: whether a calendar of this account may be it (primaryCandidate);
  * - the pull after a push: Google-side edits and deletes of what was pushed;
+ * - "Also remove everything TodoList added" before a disconnect (removeAdded): every pushed event,
+ *   then each calendar TodoList created that holds nothing else, then the links;
  * - disconnect: the grant is revoked at Google, unless another live integration (in any
  *   workspace) uses the same Google account, since revoking ends the grant for all of them.
  */
 import { z } from 'zod';
 
-import type { Caller } from '../../base/Caller.js';
+import { Actor } from '../../base/Actor.js';
+import { Caller } from '../../base/Caller.js';
+import { AuditLog } from '../../AuditLog.js';
 import { AppError } from '../../../errors/AppError.js';
 import { EventHasGuestsError } from '../../../errors/EventHasGuestsError.js';
 import { NotFoundError } from '../../../errors/NotFoundError.js';
@@ -26,8 +33,9 @@ import { ProviderItemMissingError } from '../../../errors/ProviderItemMissingErr
 import { ScopeMissingError } from '../../../errors/ScopeMissingError.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
 import { applyCommit } from '../../../gcal/commit.js';
-import { ORIGIN, PAST_WINDOW_DAYS } from '../../../gcal/diff.js';
-import { loadPlan, readGcalConfig, type PlanNarrowing } from '../../../gcal/plan.js';
+import { eventIdFor, ORIGIN, PAST_WINDOW_DAYS } from '../../../gcal/diff.js';
+import { loadPlan, type PlanNarrowing } from '../../../gcal/plan.js';
+import type { CalendarLinkData } from '../../../models/definitions/CalendarLink.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
 import type { ItemData } from '../../../models/definitions/Item.js';
 import {
@@ -56,6 +64,8 @@ import type {
 import { cachedCreateOptions } from '../../../services/providerCreate/funnel.js';
 import type { OAuthAuth } from '../auth/OAuthAuth.js';
 import type {
+  AddedContentRemover,
+  AddedRemoval,
   CalendarDryRun,
   CalendarProvider,
   CalendarPushRequest,
@@ -128,13 +138,26 @@ const CalendarName = z
 
 /**
  * Whether a pulled event has guests beyond the calendar's owner: its `guestsCount`, or (an item
- * pulled before that was kept) two or more attendees.
+ * pulled before that was kept) any attendee at all. The fallback fails closed: the count may or
+ * may not hold the owner (an event made through the API lists only its guests), so one attendee
+ * already asks the caller whether to notify.
  */
 function hasGuests(item: ItemData): boolean {
   const { guestsCount, attendeesCount } = item.props;
   if (typeof guestsCount === 'number') return guestsCount > 0;
-  return typeof attendeesCount === 'number' && attendeesCount >= 2;
+  return typeof attendeesCount === 'number' && attendeesCount >= 1;
 }
+
+/** A Google answer that leaves the outcome unknown (no answer, a timeout, a 5xx): it may have landed. */
+function outcomeUnknown(error: unknown): boolean {
+  if (!(error instanceof CalendarApiError)) return false;
+  return error.status === null || error.status >= 500;
+}
+
+/** Events.list from the start of time: every event of a calendar (deleted ones marked so). */
+const ALL_EVENTS_FROM = '1970-01-01T00:00:00.000Z';
+/** Pages read to decide whether a calendar TodoList created holds anything else. */
+const MAX_FOREIGN_PAGES = 5;
 
 /** One pulled event of this integration: its item, and where it is at Google. */
 interface OwnEvent {
@@ -231,6 +254,7 @@ export class GoogleCalendarIntegration
   extends Integration<GoogleCalendarConfig, GoogleCalendarSecret, CalendarWriter>
   implements
     CalendarProvider,
+    AddedContentRemover,
     ResourcePicker<'calendars'>,
     Revocable,
     SupportsOAuth<GoogleCalendarSecret>
@@ -295,24 +319,41 @@ export class GoogleCalendarIntegration
 
   /**
    * Its owner reads exactly these calendars (each one of the account's: 400 otherwise). A calendar
-   * it already read keeps its mode, a new one is read only; the push target stays only if chosen.
+   * it already read keeps its mode, a new one is read only. Where TodoList pushes is the
+   * workspace's primary calendar, never this choice.
    */
   async choose(caller: Caller, ids: readonly string[]): Promise<Integration> {
     const calendars = new Set((await this.pickerResources(caller)).map((entry) => entry.id));
     if (ids.some((id) => !calendars.has(id))) {
       throw new AppError(400, 'config.calendars: not a calendar of this connection');
     }
-    const { targetCalendarId, calendars: current, ...rest } = this.config;
+    const { calendars: current, ...rest } = this.config;
     const modes = new Map(current.map((calendar) => [calendar.id, calendar.mode]));
     return this.update(caller, {
       config: {
         ...rest,
         calendars: ids.map((id) => ({ id, mode: modes.get(id) ?? 'read' })),
-        ...(targetCalendarId !== undefined && ids.includes(targetCalendarId)
-          ? { targetCalendarId }
-          : {}),
       },
     });
+  }
+
+  /**
+   * Whether `calendarId` may be the workspace's primary calendar here: this integration is the
+   * caller's (404) and connected with Google (400), it is read & write (409
+   * `integration_read_only`), and the account can write that calendar (`owner` or `writer`; 400
+   * otherwise: Google's calendarList, a read).
+   */
+  async primaryCandidate(caller: Caller, calendarId: string): Promise<GoogleCalendarEntry> {
+    this.assertOwner(caller);
+    if (!this.canCreate) {
+      throw new AppError(400, 'integrationId: not a Google Calendar connected with Google');
+    }
+    this.assertWritable(caller);
+    const entry = (await this.listCalendars(caller)).find((calendar) => calendar.id === calendarId);
+    if (entry === undefined || (entry.accessRole !== 'owner' && entry.accessRole !== 'writer')) {
+      throw new AppError(400, 'calendarId: not a calendar this Google account can write');
+    }
+    return entry;
   }
 
   /**
@@ -407,14 +448,11 @@ export class GoogleCalendarIntegration
     const event = await this.#ownEvent(item.id);
     this.assertWritable(caller);
     const sendUpdates = GoogleCalendarIntegration.#guestUpdates(event.stored, notice);
-    const updated = await this.#calendarWrite(caller, (writer) =>
+    const meta = { operation: 'event.update', itemId: event.stored.id, fields: [...edit.fields] };
+    const updated = await this.#calendarWrite(caller, meta, (writer) =>
       writer.update(event.calendarId, event.eventId, edit.changes, sendUpdates),
     );
-    await this.recordWrite(caller, {
-      operation: 'event.update',
-      itemId: event.stored.id,
-      fields: [...edit.fields],
-    });
+    await this.recordWrite(caller, meta);
     await this.#refreshItem(event, updated.record, timeZone);
     return { id: updated.id, etag: updated.etag, updated: updated.updated };
   }
@@ -429,10 +467,11 @@ export class GoogleCalendarIntegration
     const event = await this.#ownEvent(item.id);
     this.assertWritable(caller);
     const sendUpdates = GoogleCalendarIntegration.#guestUpdates(event.stored, notice);
-    await this.#calendarWrite(caller, (writer) =>
+    const meta = { operation: 'event.delete', itemId: event.stored.id };
+    await this.#calendarWrite(caller, meta, (writer) =>
       writer.remove(event.calendarId, event.eventId, sendUpdates),
     );
-    await this.recordWrite(caller, { operation: 'event.delete', itemId: event.stored.id });
+    await this.recordWrite(caller, meta);
     await (
       await getItemRepository()
     ).softDeleteBySource(this.workspaceId, this.#account, [event.stored.source.externalId]);
@@ -440,30 +479,32 @@ export class GoogleCalendarIntegration
 
   /**
    * An event TodoList pushed, deleted by its CalendarLink: this integration's live link for the
-   * item, in this workspace, on the push target (404 otherwise). A pushed event has no guests.
-   * Audited as `integration.write` (`event.delete`) right after Google takes it; then the link is
-   * tombstoned (deleted from TodoList's side), so no push makes it again.
+   * item, in this workspace, pushed to Google (`to_google`), whose event id is the one TodoList
+   * gives that item (eventIdFor): 404 otherwise, so nothing but an event TodoList made for this
+   * item can be deleted this way, on whichever calendar it was pushed to. A pushed event has no
+   * guests. Audited as `integration.write` (`event.delete`) right after Google takes it (with
+   * `outcome: 'unknown'` when Google did not answer); then the link is tombstoned (deleted from
+   * TodoList's side), so no push makes it again.
    */
   async deleteLinkedEvent(caller: Caller, link: LinkedItemRef): Promise<void> {
     this.assertOwner(caller);
+    const itemId = (link as { itemId?: unknown }).itemId;
+    if (typeof itemId !== 'string' || itemId === '') throw new NotFoundError();
     const links = await getCalendarLinkRepository();
-    const found = await links.findByItem(this.workspaceId, this.id, link.itemId);
-    const target = this.config.targetCalendarId;
-    if (found?.tombstonedAt !== null || found.calendarId !== target) throw new NotFoundError();
-    const calendarId = checkedId('calendarId', found.calendarId, 'link');
-    const eventId = checkedId('eventId', found.googleEventId, 'link');
-    this.assertWritable(caller);
-    await this.#calendarWrite(caller, (writer) => writer.remove(calendarId, eventId));
-    await this.recordWrite(caller, { operation: 'event.delete', itemId: link.itemId });
-    await links.tombstone(this.workspaceId, found.id, 'dashboard');
+    const found = await links.findByItem(this.workspaceId, this.id, itemId);
+    if (found === null || !GoogleCalendarIntegration.#isOwnLiveLink(found)) {
+      throw new NotFoundError();
+    }
+    await this.#deleteLink(caller, found);
   }
 
   /**
    * Its owner creates a calendar of TodoList's own, named `name` (one line, 1–255 characters), in
    * the workspace's zone (Google's `calendars.insert`). The grant must carry
    * `calendar.app.created`: one from before TodoList asked for it is 409 `scope_missing` (its
-   * owner connects again), checked before anything is opened or sent. The new calendar is not
-   * read until its owner picks it. Audited as `integration.write` (`calendar.create`).
+   * owner connects again), checked before anything is opened or sent. Right after Google creates
+   * it, it is read by this integration and recorded as TodoList's own (`appCreatedCalendars`: the
+   * only calendars TodoList may ever delete). Audited as `integration.write` (`calendar.create`).
    */
   async createCalendar(caller: Caller, name: string): Promise<GoogleCalendarEntry> {
     this.assertWritable(caller);
@@ -475,16 +516,91 @@ export class GoogleCalendarIntegration
         'Google Calendar needs a new permission to create calendars: connect it again to grant it',
       );
     }
-    const created = await this.#calendarWrite(caller, (writer) =>
+    const meta = { operation: 'calendar.create' };
+    const created = await this.#calendarWrite(caller, meta, (writer) =>
       writer.insertCalendar(summary, caller.settings.timezone),
     );
-    await this.recordWrite(caller, { operation: 'calendar.create' });
+    await this.#recordCreated(created.id);
+    await this.recordWrite(caller, meta);
     return {
       id: created.id,
       summary: created.summary ?? summary,
       primary: false,
       accessRole: 'owner',
     };
+  }
+
+  /**
+   * "Also remove everything TodoList added" (before its owner disconnects it): only while it is
+   * read & write (409 `integration_read_only`, before anything is read or sent).
+   * 1. every live event TodoList pushed with it (deleteLinkedEvent's checks and write);
+   * 2. each calendar TodoList created on it (`appCreatedCalendars`, nothing else ever), when it
+   *    holds no event TodoList did not add (one that does is kept: its events are the user's);
+   * 3. its links, every one.
+   * A failure stops it (what was deleted stays deleted, the rest is still linked, so a retry goes
+   * on). Each Google write is audited as `integration.write`; the whole as `integration.cleanup`
+   * with counts only.
+   */
+  async removeAdded(caller: Caller): Promise<AddedRemoval> {
+    this.assertWritable(caller);
+    const links = await getCalendarLinkRepository();
+    let events = 0;
+    for (const link of await links.listLive(this.workspaceId, this.id)) {
+      if (!GoogleCalendarIntegration.#isOwnLiveLink(link)) continue;
+      await this.#deleteLink(caller, link);
+      events += 1;
+    }
+    let calendars = 0;
+    let calendarsKept = 0;
+    for (const calendarId of this.config.appCreatedCalendars ?? []) {
+      const holds = await this.#holdsOtherEvents(calendarId);
+      if (holds === 'gone') continue;
+      if (holds === 'yes') {
+        calendarsKept += 1;
+        continue;
+      }
+      await this.#removeCreatedCalendar(caller, calendarId);
+      calendars += 1;
+    }
+    await links.removeForIntegration(this.workspaceId, this.id);
+    const removed: AddedRemoval = { events, calendars, calendarsKept };
+    await AuditLog.record(caller, Integration.Audit.cleanup, this, { ...removed });
+    return removed;
+  }
+
+  /**
+   * Right after a to-do is deleted: each event TodoList pushed for it is deleted at once, through
+   * its integration's write session, as that integration's owner (the push is theirs). An
+   * integration that is read-only, gone, or whose owner left keeps its link: its next push (once
+   * read & write again) removes the event. A Google failure never fails the delete: the link stays
+   * for the next push. Returns how many events were deleted.
+   */
+  static async deleteEventsOfDeletedItem(workspaceId: string, itemId: string): Promise<number> {
+    let deleted = 0;
+    const links = await (await getCalendarLinkRepository()).listLiveForItem(workspaceId, itemId);
+    for (const link of links) {
+      if (!GoogleCalendarIntegration.#isOwnLiveLink(link)) continue;
+      const data = await (
+        await getIntegrationRepository()
+      ).findById(workspaceId, link.integrationId);
+      if (data === null) continue;
+      const integration = Integration.from(data);
+      if (!(integration instanceof GoogleCalendarIntegration) || !integration.allowsWrites) {
+        continue;
+      }
+      const owner = await Caller.enter(workspaceId, Actor.user(integration.ownerUserId));
+      if (owner === null) continue;
+      try {
+        await integration.#deleteLink(owner, link);
+        deleted += 1;
+      } catch (error) {
+        logger.warn('A deleted to-do’s calendar event was left for the next push', {
+          integrationId: integration.id,
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+      }
+    }
+    return deleted;
   }
 
   /** Its owner: what a push would create, update and remove now. Nothing is written. */
@@ -504,10 +620,11 @@ export class GoogleCalendarIntegration
    * links, audit, the run's counts). A read-only integration is refused first (assertWritable),
    * before any run is recorded; the mode is the one this integration was loaded with, so a switch
    * made while the push runs is seen by the next one. Ops left when PUSH_BUDGET_MS runs out wait
-   * for the next run. Returns the run's id. 409 to reconnect, 502 when Google is silent (or the
+   * for the next run; the pull reads back `calendarId`, the workspace's primary calendar the plan
+   * pushed to. Returns the run's id. 409 to reconnect, 502 when Google is silent (or the
    * credential can't be opened).
    */
-  async push(caller: Caller, { ops, now }: CalendarPushRequest): Promise<string> {
+  async push(caller: Caller, { ops, now, calendarId }: CalendarPushRequest): Promise<string> {
     this.assertWritable(caller);
     const { workspaceId } = this;
     const runs = await getSyncRunRepository();
@@ -551,7 +668,7 @@ export class GoogleCalendarIntegration
     // The pull that follows the writes (their etags are the links' by then, so our echoes are
     // skipped): Google-side edits and deletes of what we pushed. A failed pull never fails the
     // push; the token is kept and the next run lists again.
-    const calendars = await this.#pullAfterPush(now);
+    const calendars = await this.#pullAfterPush(calendarId, now);
     await applyCommit(this.toJSON(), { runId: run.id, opResults, calendars }, new Date());
     return run.id;
   }
@@ -570,10 +687,29 @@ export class GoogleCalendarIntegration
     return this.handBackGrant('A Google Calendar grant could not be revoked');
   }
 
-  /** The Calendar API writer, acting with the strategy's headers (a fresh access token) for this one session. */
+  /**
+   * The Calendar API writer, acting with the strategy's headers (a fresh access token) for this
+   * one session; the only calendars it may delete are those TodoList created on this integration.
+   */
   protected async createWriter(secret: GoogleCalendarSecret): Promise<CalendarWriter> {
     const auth = this.oauth.bind({ secret, client: this.oauth.client(), now: new Date() });
-    return calendarWriter(await auth.headers('write'));
+    return calendarWriter(await auth.headers('write'), {
+      deletableCalendars: this.config.appCreatedCalendars ?? [],
+    });
+  }
+
+  /**
+   * A settings change never sets which calendars are TodoList's own: the stored list is kept,
+   * whatever was sent (only createCalendar adds to it).
+   */
+  protected override checkSelection(
+    config: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const kept = this.config.appCreatedCalendars ?? [];
+    const rest = Object.fromEntries(
+      Object.entries(config).filter(([key]) => key !== 'appCreatedCalendars'),
+    );
+    return Promise.resolve(kept.length === 0 ? rest : { ...rest, appCreatedCalendars: [...kept] });
   }
 
   protected probe(adapter: TestableAdapter, context: AdapterContext): Promise<unknown> {
@@ -585,13 +721,109 @@ export class GoogleCalendarIntegration
     return { provider: 'google_calendar', accountId: this.accountId, integrationId: this.id };
   }
 
-  /** `fn` with the writer, inside the write session; a failure as the caller answers it. */
-  async #calendarWrite<T>(caller: Caller, fn: (writer: CalendarWriter) => Promise<T>): Promise<T> {
+  /**
+   * `fn` with the writer, inside the write session; a failure as the caller answers it. One whose
+   * outcome is unknown (no answer, a timeout, a 5xx: it may have landed) is audited first, as
+   * `integration.write` with `meta` and `outcome: 'unknown'`.
+   */
+  async #calendarWrite<T>(
+    caller: Caller,
+    meta: Record<string, unknown>,
+    fn: (writer: CalendarWriter) => Promise<T>,
+  ): Promise<T> {
     try {
       return await this.withWriteSession(caller, ({ writer }) => fn(writer));
     } catch (error) {
+      if (outcomeUnknown(error)) await this.recordWrite(caller, { ...meta, outcome: 'unknown' });
       throw calendarFailure(error);
     }
+  }
+
+  /** A live link to an event TodoList pushed: `to_google`, with the event id it gives the item. */
+  static #isOwnLiveLink(link: CalendarLinkData): boolean {
+    return (
+      link.tombstonedAt === null &&
+      link.direction === 'to_google' &&
+      typeof link.itemId === 'string' &&
+      link.googleEventId === eventIdFor(link.itemId)
+    );
+  }
+
+  /** One of this integration's own live links: its event deleted, audited, then the link tombstoned. */
+  async #deleteLink(caller: Caller, link: CalendarLinkData): Promise<void> {
+    const calendarId = checkedId('calendarId', link.calendarId, 'link');
+    const eventId = checkedId('eventId', link.googleEventId, 'link');
+    this.assertWritable(caller);
+    const meta = { operation: 'event.delete', itemId: link.itemId };
+    await this.#calendarWrite(caller, meta, (writer) => writer.remove(calendarId, eventId));
+    await this.recordWrite(caller, meta);
+    await (await getCalendarLinkRepository()).tombstone(this.workspaceId, link.id, 'dashboard');
+  }
+
+  /**
+   * A calendar TodoList created on this integration, deleted (the write session's writer refuses
+   * any other calendar). Audited as `integration.write` (`calendar.delete`).
+   */
+  async #removeCreatedCalendar(caller: Caller, calendarId: string): Promise<void> {
+    const meta = { operation: 'calendar.delete' };
+    try {
+      await this.withWriteSession(caller, ({ writer }) => writer.removeCalendar(calendarId));
+    } catch (error) {
+      if (outcomeUnknown(error)) await this.recordWrite(caller, { ...meta, outcome: 'unknown' });
+      throw calendarFailure(error);
+    }
+    await this.recordWrite(caller, meta);
+  }
+
+  /**
+   * Whether a calendar TodoList created holds an event it did not add (a read: events.list):
+   * `yes` (one, or more than the pages read), `no`, or `gone` (Google no longer has it). Deleted
+   * events and TodoList's own (`origin: todolist`) don't count.
+   */
+  async #holdsOtherEvents(calendarId: string): Promise<'yes' | 'no' | 'gone'> {
+    try {
+      return await this.#withGrant(async (auth) => {
+        const reader = calendarReader(auth);
+        let pageToken: string | null = null;
+        for (let page = 0; page < MAX_FOREIGN_PAGES; page += 1) {
+          const result = await reader.list(calendarId, { timeMin: ALL_EVENTS_FROM }, pageToken);
+          const other = result.items.some((raw) => {
+            if (raw['status'] === 'cancelled') return false;
+            const ext = raw['extendedProperties'] as
+              | { private?: Record<string, unknown> }
+              | undefined;
+            return ext?.private?.['origin'] !== ORIGIN;
+          });
+          if (other) return 'yes';
+          if (result.nextPageToken === null) return 'no';
+          pageToken = result.nextPageToken;
+        }
+        return 'yes';
+      });
+    } catch (error) {
+      const status = statusOf(error);
+      if (status === 404 || status === 410) return 'gone';
+      throw calendarFailure(error);
+    }
+  }
+
+  /**
+   * A calendar Google just created for TodoList: read by this integration from now on, and
+   * recorded as TodoList's own (written straight to the stored settings: never a settings change
+   * its owner could make).
+   */
+  async #recordCreated(calendarId: string): Promise<void> {
+    const { calendars, appCreatedCalendars = [], ...rest } = this.config;
+    const config = {
+      ...rest,
+      calendars: calendars.some((calendar) => calendar.id === calendarId)
+        ? calendars.map((calendar) => ({ ...calendar }))
+        : [...calendars.map((calendar) => ({ ...calendar })), { id: calendarId, mode: 'read' }],
+      appCreatedCalendars: appCreatedCalendars.includes(calendarId)
+        ? [...appCreatedCalendars]
+        : [...appCreatedCalendars, calendarId],
+    };
+    await (await getIntegrationRepository()).update(this.workspaceId, this.id, { config });
   }
 
   /**
@@ -699,10 +931,8 @@ export class GoogleCalendarIntegration
     });
   }
 
-  /** The pull for the push target, with its own grant; nothing when it fails. */
-  async #pullAfterPush(now: Date): Promise<PulledCalendar[]> {
-    const target = readGcalConfig(this.toJSON()).targetCalendarId;
-    if (target === null) return [];
+  /** The pull for the primary calendar the push went to, with its own grant; nothing when it fails. */
+  async #pullAfterPush(target: string, now: Date): Promise<PulledCalendar[]> {
     try {
       const state = await (
         await getSyncStateRepository()

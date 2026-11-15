@@ -2,8 +2,9 @@
  * The dispatched Google Calendar sync for OAuth integrations (TODO B7): the same push and two-way
  * pull as the manual `gcal-sync` (GoogleCalendarIntegration#push), for every eligible integration
  * at once (the `gcal-dispatch` action; no schedule invokes it for now), so Google-side edits and
- * deletes are picked up without waiting for a push. A read-only integration is never pushed: it
- * is not eligible.
+ * deletes are picked up without waiting for a push. Only the integration the workspace's primary
+ * calendar is on is pushed, and only while that primary calendar is active: a read-only
+ * integration (the primary calendar suspended) is not eligible.
  *
  * The per-day create cap (4,000) and `maxOpsPerRun` apply as in the manual path (both live in
  * loadPlan). Each `gcal-run` job carries the integration id only (services/syncJobs.ts).
@@ -11,14 +12,16 @@
 import { Actor } from '../classes/base/Actor.js';
 import { Caller } from '../classes/base/Caller.js';
 import { Integration, isCalendarProvider } from '../classes/integration/index.js';
+import { Workspace } from '../classes/workspace/index.js';
 import { AppError } from '../errors/AppError.js';
 import type { IntegrationData } from '../models/definitions/Integration.js';
 import { logger } from '../services/logger.js';
-import { loadPlan, readGcalConfig } from './plan.js';
+import { loadPlan } from './plan.js';
 
 /**
- * Whether the dispatch may sync this integration: a live, read & write Google Calendar OAuth
- * integration with a credential and a push target, not paused, expired or failed on auth.
+ * Whether the dispatch may sync this integration, as stored: a live, read & write Google Calendar
+ * OAuth integration with a credential, not paused, expired or failed on auth. That it is the
+ * workspace's primary calendar is checked apart (isGcalScheduleTarget).
  */
 export function isGcalScheduleEligible(integration: IntegrationData): boolean {
   return (
@@ -30,16 +33,25 @@ export function isGcalScheduleEligible(integration: IntegrationData): boolean {
     (integration.status === 'active' ||
       integration.status === 'expiring' ||
       integration.status === 'error') &&
-    integration.lastError?.code !== 'auth_failed' &&
-    readGcalConfig(integration).targetCalendarId !== null
+    integration.lastError?.code !== 'auth_failed'
   );
+}
+
+/** Eligible, and the integration the workspace's active primary calendar is on. */
+async function isGcalScheduleTarget(integration: IntegrationData): Promise<boolean> {
+  if (!isGcalScheduleEligible(integration)) return false;
+  const status = await Workspace.primaryCalendarStatusOf(integration.workspaceId);
+  return status.isActive && status.primary?.isOn(integration.id) === true;
 }
 
 /** Every integration the dispatch would sync now. */
 export async function listGcalScheduleTargets(): Promise<IntegrationData[]> {
-  return (await Integration.listForDispatch())
-    .map((integration) => integration.toJSON())
-    .filter(isGcalScheduleEligible);
+  const targets: IntegrationData[] = [];
+  for (const integration of await Integration.listForDispatch()) {
+    const data = integration.toJSON();
+    if (await isGcalScheduleTarget(data)) targets.push(data);
+  }
+  return targets;
 }
 
 export type ScheduledGcalOutcome =
@@ -55,7 +67,7 @@ export async function runScheduledGcalSync(
   if (
     integration === null ||
     !isCalendarProvider(integration) ||
-    !isGcalScheduleEligible(integration.toJSON())
+    !(await isGcalScheduleTarget(integration.toJSON()))
   ) {
     return { ran: false, reason: 'not_eligible' };
   }
@@ -68,7 +80,14 @@ export async function runScheduledGcalSync(
     if (caller === null) {
       throw new AppError(409, 'The member who connected this integration is gone');
     }
-    return { ran: true, runId: await integration.push(caller, { ops: plan.ops, now }) };
+    return {
+      ran: true,
+      runId: await integration.push(caller, {
+        ops: plan.ops,
+        now,
+        calendarId: plan.cfg.calendarId,
+      }),
+    };
   } catch (error) {
     if (error instanceof AppError) {
       // 409 (reconnect needed, read-only, or the member is gone) and 502 (Google silent): the push

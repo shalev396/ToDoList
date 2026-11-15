@@ -50,15 +50,15 @@ interface Out {
 }
 
 describe('sync_to_google_calendar', () => {
-  it('answers isError without a Google Calendar integration, and pushes nothing', async () => {
+  it('answers isError without a workspace calendar, and pushes nothing', async () => {
     const result = await call({});
     assert.equal(result.isError, true);
-    assert.match(errorText(result), /No Google Calendar integration/);
+    assert.match(errorText(result), /No workspace calendar is set/);
   });
 
   it('a dry run lists what would be created, and writes nothing', async () => {
     const integrations = await models.getIntegrationRepository();
-    // The key's user's own calendar: only its owner pushes to it (PERMISSIONS-V2 ruling 12).
+    // The workspace calendar is on the key's user's own integration: only they push to it.
     const created = await integrations.create(team.workspace.id, {
       connectedBy: team.editor.id,
       provider: 'google_calendar',
@@ -67,8 +67,11 @@ describe('sync_to_google_calendar', () => {
       authMethod: 'oauth',
       topicId: 'personal',
       mode: 'read_write',
-      config: { calendars: [{ id: 'primary', mode: 'two_way' }], targetCalendarId: 'primary' },
+      config: { calendars: [{ id: 'primary', mode: 'two_way' }] },
     });
+    await (
+      await models.getWorkspaceRepository()
+    ).setPrimaryCalendar(team.workspace.id, { integrationId: created.id, calendarId: 'primary' });
     const items = await models.getItemRepository();
     const due = new Date(Date.now() + 2 * 86_400_000);
     const task = await items.createLocal(team.workspace.id, {
@@ -82,18 +85,42 @@ describe('sync_to_google_calendar', () => {
       title: 'Undated thing',
       topicId: 'personal',
     });
-    // Another member's shared to-do is visible to the editor, but never copied to their calendar.
-    await items.createLocal(team.workspace.id, {
+    // Another member's shared to-do is visible to the calendar's owner, so it is pushed too; their
+    // private one is not visible, so it is not.
+    const shared = await items.createLocal(team.workspace.id, {
       ownerUserId: team.owner.id,
       title: 'The owner’s shared to-do',
       topicId: 'personal',
       dueAt: due,
     });
+    await items.createLocal(team.workspace.id, {
+      ownerUserId: team.owner.id,
+      title: 'The owner’s private to-do',
+      topicId: 'personal',
+      dueAt: due,
+      visibility: 'private',
+    });
+    // Planned for a day, with no due date: pushed as well.
+    const planned = await items.createLocal(team.workspace.id, {
+      ownerUserId: team.editor.id,
+      title: 'Planned for Saturday',
+      topicId: 'personal',
+    });
+    await items.setOverlay(team.workspace.id, planned.id, {
+      plannedAt: new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10),
+    });
 
     const out = structured(await call({})) as Out;
     assert.equal(out.dryRun, true);
     assert.equal(out.runId, null);
-    assert.deepEqual(out.diff.create, [{ id: task.id, title: 'Plan the week' }]);
+    assert.deepEqual(
+      [...out.diff.create].sort((a, b) => a.title.localeCompare(b.title)),
+      [
+        { id: task.id, title: 'Plan the week' },
+        { id: planned.id, title: 'Planned for Saturday' },
+        { id: shared.id, title: 'The owner’s shared to-do' },
+      ],
+    );
     assert.deepEqual(out.diff.update, []);
 
     const narrowed = structured(

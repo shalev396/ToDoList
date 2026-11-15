@@ -15,6 +15,7 @@ import { agentKeysRouter } from './agentKeys.js';
 import { integrationsRouter } from './integrations.js';
 import { syncRouter } from './sync.js';
 import { gcalSyncRouter } from './gcalSync.js';
+import { primaryCalendarRouter } from './primaryCalendar.js';
 import { connectLinksRouter } from './connectLinks.js';
 import { topicsRouter } from './topics.js';
 import { providerCreateRouter } from './providerCreate.js';
@@ -41,6 +42,7 @@ router.use('/', agentKeysRouter);
 router.use('/', integrationsRouter);
 router.use('/', syncRouter);
 router.use('/', gcalSyncRouter);
+router.use('/', primaryCalendarRouter);
 router.use('/', connectLinksRouter);
 router.use('/', accountRouter);
 

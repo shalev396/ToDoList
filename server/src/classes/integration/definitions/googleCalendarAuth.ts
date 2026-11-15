@@ -115,10 +115,7 @@ const googleApp: OAuthAppOptions = {
     return {
       accountId: account.data.sub,
       label: account.data.email,
-      config:
-        primary === null
-          ? { calendars: [] }
-          : { calendars: [{ id: primary, mode: 'two_way' }], targetCalendarId: primary },
+      config: primary === null ? { calendars: [] } : { calendars: [{ id: primary, mode: 'read' }] },
       topicSlug: 'personal',
     };
   },

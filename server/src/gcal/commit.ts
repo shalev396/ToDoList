@@ -3,7 +3,9 @@
  * changes the pull listed.
  *
  * - op results: a created or updated event gets its link (etag, hash, times), a delete its
- *   tombstone; every write is audited (`gcal.write`); a 412 is a conflict, settled by the next pull;
+ *   tombstone; a create went to the workspace's primary calendar (its link moves there when the
+ *   primary calendar changed), an update to its link's calendar; every write is audited
+ *   (`gcal.write`); a 412 is a conflict, settled by the next pull;
  * - echoes (`etag == link.lastEtag`) are our own writes and are skipped;
  * - a changed event of a linked item: last write wins between Google's `updated` and the user's
  *   edit time (a tie goes to Google); the loser's values go to `AuditLogs.meta`, redacted;
@@ -34,8 +36,8 @@ import {
 import { redactString } from '../services/secretPatterns.js';
 import { mapCalendarEvent } from '../sync/providers/google_calendar.js';
 import type { GoogleCalendarEvent } from '../sync/providers/google_calendar.js';
+import { PrimaryCalendar } from '../classes/workspace/PrimaryCalendar.js';
 import { eventIdFor, hashEvent, parseOpId, projectEvent, type PushItem } from './diff.js';
-import { readGcalConfig } from './plan.js';
 
 const OpResult = z.object({
   opId: z.string().max(200),
@@ -91,6 +93,7 @@ export function toPushItem(item: ItemData): PushItem {
     allDay: item.allDay,
     source: { provider: item.source.provider, url: item.source.url },
     calendarSync: item.overlay.calendarSync,
+    plannedAt: item.overlay.plannedAt,
     editedAt: edits.length === 0 ? null : new Date(Math.max(...edits.map((d) => d.getTime()))),
   };
 }
@@ -107,6 +110,8 @@ interface Run {
   workspaceId: string;
   runId: string;
   timeZone: string;
+  /** Where this run's creates went: the workspace's primary calendar, when it is on this integration. */
+  primaryCalendarId: string | null;
   counts: CommitCounts;
   failures: number;
 }
@@ -155,9 +160,7 @@ async function applyOpResult(run: Run, result: z.infer<typeof OpResult>): Promis
   }
   const item = await (await getItemRepository()).findById(workspaceId, op.itemId);
   const calendarId =
-    link?.tombstonedAt === null
-      ? link.calendarId
-      : readGcalConfig(run.integration).targetCalendarId;
+    op.type === 'update' && link?.tombstonedAt === null ? link.calendarId : run.primaryCalendarId;
   if (calendarId === null) {
     run.failures += 1;
     return;
@@ -318,6 +321,12 @@ async function applyCalendar(
 
 // ─── the commit ─────────────────────────────────────────────────────────────
 
+/** The primary calendar's id when it is on this integration; null otherwise. */
+function primaryCalendarFor(stored: unknown, integrationId: string): string | null {
+  const primary = PrimaryCalendar.from(stored);
+  return primary?.isOn(integrationId) === true ? primary.calendarId : null;
+}
+
 /** Applies one commit and closes its run. Throws AppError(409) for a run that is not open. */
 export async function applyCommit(
   integration: IntegrationData,
@@ -340,6 +349,7 @@ export async function applyCommit(
     workspaceId,
     runId: body.runId,
     timeZone: workspace.settings.timezone,
+    primaryCalendarId: primaryCalendarFor(workspace.settings.primaryCalendar, integration.id),
     counts: { pulled: 0, created: 0, updated: 0, deleted: 0, echoesSkipped: 0, conflicts: 0 },
     failures: 0,
   };

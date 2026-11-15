@@ -135,10 +135,8 @@ describe('Google Calendar with OAuth, against the mock', () => {
     assert.equal(integration.status, 'active');
     // Read-only, like every new connection: nothing is pushed until its owner switches it.
     assert.equal(integration.mode, 'read');
-    assert.deepEqual(integration.config, {
-      calendars: [{ id: ALICE.email, mode: 'two_way' }],
-      targetCalendarId: ALICE.email,
-    });
+    // It reads the account's primary calendar; where TodoList pushes is the workspace's choice.
+    assert.deepEqual(integration.config, { calendars: [{ id: ALICE.email, mode: 'read' }] });
     const credential = await (await models.getCredentialRepository()).findMeta(wid, iid);
     assert.equal(credential?.kind, 'oauth');
     const list = await call('GET', integrationsPath());
@@ -154,6 +152,19 @@ describe('Google Calendar with OAuth, against the mock', () => {
     const switched = await call('PATCH', integrationsPath(`/${iid}`), { mode: 'read_write' });
     assert.equal(switched.status, 200, switched.text);
     assert.equal((switched.body?.['data'] as Record<string, unknown>)['mode'], 'read_write');
+    // The workspace owner makes its primary calendar the workspace's: the pushes go there.
+    const primary = await call('PUT', `/api/private/workspaces/${wid}/primary-calendar`, {
+      integrationId: iid,
+      calendarId: ALICE.email,
+    });
+    assert.equal(primary.status, 200, primary.text);
+    assert.deepEqual(primary.body?.['data'], {
+      state: 'active',
+      reason: null,
+      mine: true,
+      integrationId: iid,
+      calendarId: ALICE.email,
+    });
   });
 
   it('lists the account’s calendars for the picker', async () => {

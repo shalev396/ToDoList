@@ -74,3 +74,18 @@ export const UpdateMemberBody = z.strictObject({
 export const SetDefaultWorkspaceBody = z.strictObject({
   workspaceId: z.string().min(1).max(100),
 });
+
+/**
+ * `PUT …/primary-calendar`: a calendar of one of the owner's Google Calendar integrations, or a new
+ * calendar TodoList creates there (its name: one line, checked by createCalendar).
+ */
+export const SetPrimaryCalendarBody = z.union([
+  z.strictObject({
+    integrationId: z.string().min(1).max(100),
+    calendarId: z.string().min(1).max(255),
+  }),
+  z.strictObject({
+    integrationId: z.string().min(1).max(100),
+    newCalendarName: z.string().max(1000),
+  }),
+]);

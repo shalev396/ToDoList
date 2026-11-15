@@ -492,6 +492,7 @@ describe('ItemRepository', () => {
       hidden: null,
       topicOverride: null,
       calendarSync: null,
+      plannedAt: null,
       editedAt: null,
       copyOf: null,
       copyOfOwner: null,
@@ -541,6 +542,7 @@ describe('ItemRepository', () => {
       hidden: false,
       topicOverride: null,
       calendarSync: null,
+      plannedAt: null,
       editedAt: null,
       copyOf: null,
       copyOfOwner: null,
@@ -1857,7 +1859,7 @@ describe('AgentKeyRepository', () => {
 });
 
 describe('CalendarLinkRepository', () => {
-  it('upserts by (calendar, event), finds by item, and tombstones once', async () => {
+  it('upserts by item, finds by item, and tombstones once', async () => {
     const key = { calendarId: 'primary', googleEventId: 'el0001' };
     const link = await CalendarLinkRepository.upsert('w-cal', 'i-gcal', key, {
       itemId: 'it-1',
@@ -1882,6 +1884,38 @@ describe('CalendarLinkRepository', () => {
       (await CalendarLinkRepository.findByItem('w-cal', 'i-gcal', 'it-1'))?.deletedBy,
       'google',
     );
+  });
+
+  it('a link that moves to another calendar keeps its row; lists by item; removes all', async () => {
+    const first = await CalendarLinkRepository.upsert(
+      'w-cal-2',
+      'i-gcal-2',
+      { calendarId: 'old-cal', googleEventId: 'el0002' },
+      { itemId: 'it-2', direction: 'to_google', pushedHash: 'h1' },
+    );
+    await CalendarLinkRepository.tombstone('w-cal-2', first.id, 'dashboard');
+    const moved = await CalendarLinkRepository.upsert(
+      'w-cal-2',
+      'i-gcal-2',
+      { calendarId: 'new-cal', googleEventId: 'el0002' },
+      { itemId: 'it-2', direction: 'to_google', pushedHash: 'h2', tombstonedAt: null },
+    );
+    assert.deepEqual(
+      [moved.id, moved.calendarId, moved.tombstonedAt, moved.pushedHash],
+      [first.id, 'new-cal', null, 'h2'],
+    );
+    await CalendarLinkRepository.upsert(
+      'w-cal-2',
+      'i-other',
+      { calendarId: 'cal-x', googleEventId: 'el0002' },
+      { itemId: 'it-2', direction: 'to_google' },
+    );
+    const forItem = await CalendarLinkRepository.listLiveForItem('w-cal-2', 'it-2');
+    assert.deepEqual(forItem.map((link) => link.integrationId).sort(), ['i-gcal-2', 'i-other']);
+    assert.deepEqual(await CalendarLinkRepository.listLiveForItem('w-other', 'it-2'), []);
+    assert.equal(await CalendarLinkRepository.removeForIntegration('w-cal-2', 'i-gcal-2'), 1);
+    assert.equal(await CalendarLinkRepository.findByItem('w-cal-2', 'i-gcal-2', 'it-2'), null);
+    assert.equal((await CalendarLinkRepository.listLiveForItem('w-cal-2', 'it-2')).length, 1);
   });
 });
 

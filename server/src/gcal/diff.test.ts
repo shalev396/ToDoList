@@ -42,6 +42,7 @@ function item(id: string, overrides: Partial<PushItem> = {}): PushItem {
     allDay: false,
     source: { provider: 'jira', url: 'https://example.atlassian.net/browse/FAKE-1' },
     calendarSync: null,
+    plannedAt: null,
     editedAt: null,
     ...overrides,
   };
@@ -222,5 +223,92 @@ describe('buildOps', () => {
     const far = item(ID_A, { dueAt: new Date('2027-06-01T09:00:00Z') });
     const old = item(ID_B, { dueAt: new Date('2026-08-01T09:00:00Z') });
     assert.equal(buildOps([far, old], [], cfg(), NOW).ops.length, 0);
+  });
+});
+
+describe('a planned date (overlay.plannedAt)', () => {
+  it('a planned day is an all-day event that day, before its due date', () => {
+    const event = project(item(ID_A, { plannedAt: '2026-11-14' }));
+    assert.deepEqual([event.start, event.end], [{ date: '2026-11-14' }, { date: '2026-11-15' }]);
+  });
+
+  it('a planned time is a 15-minute event at that local time', () => {
+    const event = project(item(ID_A, { plannedAt: '2026-11-14T10:00', dueAt: null }));
+    assert.deepEqual(event.start, { dateTime: '2026-11-14T08:00:00.000Z', timeZone: TZ });
+    assert.deepEqual(event.end, { dateTime: '2026-11-14T08:15:00.000Z', timeZone: TZ });
+  });
+
+  it('dates an undated item; a malformed one reads as none', () => {
+    assert.ok(projectEvent(item(ID_A, { dueAt: null, plannedAt: '2026-11-14' }), WS, TZ));
+    assert.equal(projectEvent(item(ID_A, { dueAt: null, plannedAt: 'soon' }), WS, TZ), null);
+    // An item without a plan projects exactly as before (no re-push of what was pushed).
+    assert.equal(
+      hashEvent(project(item(ID_A))),
+      hashEvent(project(item(ID_A, { plannedAt: null }))),
+    );
+  });
+
+  it('a new plan changes the event: an update', () => {
+    const it0 = item(ID_A);
+    const result = buildOps([{ ...it0, plannedAt: '2026-11-14' }], [linkFor(it0)], cfg(), NOW);
+    assert.deepEqual(
+      result.ops.map((op) => op.type),
+      ['update'],
+    );
+  });
+});
+
+describe('the primary calendar changed', () => {
+  it('an event on the old calendar is deleted there and created on the new one, in one run', () => {
+    const it0 = item(ID_A);
+    const result = buildOps(
+      [it0],
+      [linkFor(it0, { calendarId: 'old@example.test' })],
+      cfg({ calendarId: 'new@example.test' }),
+      NOW,
+    );
+    assert.deepEqual(
+      result.ops.map((op) => [op.type, op.calendarId, op.eventId]),
+      [
+        ['delete', 'old@example.test', eventIdFor(ID_A)],
+        ['create', 'new@example.test', eventIdFor(ID_A)],
+      ],
+    );
+  });
+
+  it('a plan that deletes nothing moves nothing (never a copy on both calendars)', () => {
+    const it0 = item(ID_A);
+    const result = buildOps(
+      [it0],
+      [linkFor(it0, { calendarId: 'old@example.test' })],
+      cfg({ calendarId: 'new@example.test', allowDelete: false }),
+      NOW,
+    );
+    assert.deepEqual(result.ops, []);
+    assert.deepEqual(
+      result.skipped.map((entry) => entry.reason),
+      ['not_moved'],
+    );
+  });
+
+  it('a tombstone on the old calendar does not hold the item back from the new one', () => {
+    const it0 = item(ID_A);
+    const old = linkFor(it0, {
+      calendarId: 'old@example.test',
+      tombstonedAt: new Date(NOW.getTime() - 60_000),
+    });
+    const moved = buildOps([it0], [old], cfg({ calendarId: 'new@example.test' }), NOW);
+    assert.deepEqual(
+      moved.ops.map((op) => [op.type, op.calendarId]),
+      [['create', 'new@example.test']],
+    );
+    // On the same calendar it still holds, as before.
+    const held = buildOps(
+      [it0],
+      [{ ...old, calendarId: 'new@example.test' }],
+      cfg({ calendarId: 'new@example.test' }),
+      NOW,
+    );
+    assert.deepEqual(held.ops, []);
   });
 });

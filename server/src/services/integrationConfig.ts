@@ -152,3 +152,11 @@ export function parseCredential(authMethod: AuthMethod, body: unknown): Record<s
   }
   throw new AppError(400, INVALID_CREDENTIAL);
 }
+
+/**
+ * `DELETE …/integrations/:iid?removeAdded=true`: also take back what TodoList added at the
+ * provider first ("Also remove everything TodoList added"). Absent or `false`: a plain disconnect.
+ */
+export const DisconnectQuery = z.strictObject({
+  removeAdded: z.enum(['true', 'false']).optional(),
+});

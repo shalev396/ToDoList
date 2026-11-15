@@ -285,8 +285,16 @@ router.post(
 
 /**
  * Its owner. 204. Disconnects: the integration is deleted first, then its credential is wiped (and
- * checked gone), then its items and containers are soft-deleted.
+ * checked gone), then its items and containers are soft-deleted. `?removeAdded=true` (Google
+ * Calendar: "Also remove everything TodoList added to this calendar") first deletes every event
+ * TodoList pushed with it and each calendar TodoList created there that holds nothing else, then
+ * its links; it needs the integration read & write (409 `integration_read_only`), 400 for another
+ * provider, and a Google failure (502, 409 to reconnect) stops before anything is disconnected.
+ * Audited as `integration.cleanup` (counts only).
  */
+export interface DisconnectIntegrationQuery {
+  removeAdded?: 'true' | 'false';
+}
 router.delete(
   '/workspaces/:wid/integrations/:iid',
   requireWorkspace('viewer'),

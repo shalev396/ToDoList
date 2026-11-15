@@ -379,7 +379,10 @@ describe('every provider class, read-only: refused before anything is sent', () 
           }),
           readOnly,
         );
-        await assert.rejects(integration.push(caller(), { ops: [], now: NOW }), readOnly);
+        await assert.rejects(
+          integration.push(caller(), { ops: [], now: NOW, calendarId: 'primary' }),
+          readOnly,
+        );
         await assert.rejects(
           integration.insertEvent(
             caller(),

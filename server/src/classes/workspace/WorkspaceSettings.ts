@@ -1,6 +1,7 @@
 /**
  * A workspace's settings (DATA.md §3.2) as an immutable value object: its time zone, the first day
- * of the week, whether agents may publish, its topic rules and its attribute definitions. The
+ * of the week, whether agents may publish, its topic rules, its attribute definitions and its
+ * primary calendar (changed only through Workspace#setPrimaryCalendar, never a patch). The
  * stored data is kept as it came (so `toJSON` is exactly what the repository holds); the rules and
  * definitions are value objects of their own.
  */
@@ -12,6 +13,7 @@ import type {
 } from '../../models/definitions/Workspace.js';
 import { canonicalTimeZone } from '../../utils/timeZone.js';
 import { AttributeDefinitions } from './AttributeDefinitions.js';
+import { PrimaryCalendar } from './PrimaryCalendar.js';
 import { TopicRules } from './TopicRules.js';
 
 /** What an owner may change: only the settings given change; topic rules are replaced whole. */
@@ -27,11 +29,13 @@ export class WorkspaceSettings {
   readonly #data: Readonly<WorkspaceSettingsData>;
   readonly #topicRules: TopicRules;
   readonly #attributes: AttributeDefinitions;
+  readonly #primaryCalendar: PrimaryCalendar | null;
 
   private constructor(data: WorkspaceSettingsData) {
     this.#data = Object.freeze(structuredClone(data));
     this.#topicRules = TopicRules.of(data.topicRules);
     this.#attributes = AttributeDefinitions.of(data);
+    this.#primaryCalendar = PrimaryCalendar.from(data.primaryCalendar);
     Object.freeze(this);
   }
 
@@ -78,6 +82,11 @@ export class WorkspaceSettings {
 
   get attributes(): AttributeDefinitions {
     return this.#attributes;
+  }
+
+  /** The workspace's primary calendar; null when none is set. */
+  get primaryCalendar(): PrimaryCalendar | null {
+    return this.#primaryCalendar;
   }
 
   /** The settings as stored: a deep copy. */

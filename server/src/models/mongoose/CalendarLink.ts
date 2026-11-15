@@ -79,14 +79,18 @@ function toCalendarLinkData(doc: CalendarLinkFields): CalendarLinkData {
 
 export const CalendarLinkRepository: ICalendarLinkRepository = {
   async upsert(workspaceId, integrationId, key, patch) {
+    // One link per item and integration (the unique index): found by its item, so a link whose
+    // event moved to another calendar keeps its row instead of colliding with it.
     const doc = await CalendarLinkMongoModel.findOneAndUpdate(
+      { workspaceId, integrationId, itemId: patch.itemId },
       {
-        workspaceId,
-        integrationId,
-        calendarId: key.calendarId,
-        googleEventId: key.googleEventId,
+        $set: {
+          ...setFields(patch, PATCH_KEYS),
+          calendarId: key.calendarId,
+          googleEventId: key.googleEventId,
+        },
+        $setOnInsert: { _id: randomUUID() },
       },
-      { $set: setFields(patch, PATCH_KEYS), $setOnInsert: { _id: randomUUID() } },
       { upsert: true, new: true, runValidators: true },
     ).lean<CalendarLinkFields>();
     return toCalendarLinkData(doc);
@@ -105,6 +109,15 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
     const docs = await CalendarLinkMongoModel.find({
       workspaceId,
       integrationId,
+      tombstonedAt: null,
+    }).lean<CalendarLinkFields[]>();
+    return docs.map(toCalendarLinkData);
+  },
+
+  async listLiveForItem(workspaceId, itemId) {
+    const docs = await CalendarLinkMongoModel.find({
+      workspaceId,
+      itemId,
       tombstonedAt: null,
     }).lean<CalendarLinkFields[]>();
     return docs.map(toCalendarLinkData);
@@ -137,5 +150,10 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
       { new: true, runValidators: true },
     ).lean<CalendarLinkFields>();
     return doc ? toCalendarLinkData(doc) : null;
+  },
+
+  async removeForIntegration(workspaceId, integrationId) {
+    const result = await CalendarLinkMongoModel.deleteMany({ workspaceId, integrationId });
+    return result.deletedCount;
   },
 };

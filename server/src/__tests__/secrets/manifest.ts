@@ -486,6 +486,17 @@ export const MANIFEST: readonly Entry[] = [
     body: (c) => ({ integrationId: c.integrations.gcal }),
     expect: [2, 4],
   },
+  // The workspace's primary calendar: any member reads its state (ids to its owner only); a
+  // workspace owner sets it (the seeded Google Calendar is read-only and never reached Google:
+  // 4xx) or clears it.
+  { method: 'GET', path: `${W}/primary-calendar`, expect: [2] },
+  {
+    method: 'PUT',
+    path: `${W}/primary-calendar`,
+    body: (c) => ({ integrationId: c.integrations.gcal, calendarId: 'primary' }),
+    expect: [2, 4],
+  },
+  { method: 'DELETE', path: `${W}/primary-calendar`, expect: [2], noBadInput: true },
   {
     method: 'POST',
     path: `${W}/connect-links/consume`,

@@ -15,6 +15,7 @@ export { IntegrationsController } from './integrations.js';
 export { SyncController } from './sync.js';
 export { ConnectLinksController } from './connectLinks.js';
 export { GcalSyncController } from './gcalSync.js';
+export { PrimaryCalendarController } from './primaryCalendar.js';
 export { GoogleCalendarOAuthController } from './googleCalendarOAuth.js';
 export { ProviderOAuthController } from './providerOAuth.js';
 export { TopicsController } from './topics.js';

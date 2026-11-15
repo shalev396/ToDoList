@@ -8,6 +8,15 @@ export interface TopicRule {
   topicId: string;
 }
 
+/**
+ * The workspace's primary calendar (plan Addendum A2): one Google calendar of a Google Calendar
+ * integration its owner chose. Every push goes there (classes/workspace/PrimaryCalendar.ts).
+ */
+export interface PrimaryCalendarData {
+  integrationId: string;
+  calendarId: string;
+}
+
 export interface WorkspaceSettings {
   timezone: string;
   weekStart: WeekStart;
@@ -24,6 +33,11 @@ export interface WorkspaceSettings {
    * attribute methods of IWorkspaceRepository.
    */
   attributes?: AttributeDef[];
+  /**
+   * Where TodoList pushes the workspace's dated items; null (or absent, before it existed): none.
+   * Change it only through `setPrimaryCalendar`.
+   */
+  primaryCalendar?: PrimaryCalendarData | null;
 }
 
 /** A workspace (DATA.md §3.2). */
@@ -113,6 +127,11 @@ export interface IWorkspaceRepository {
   setJoinLink(id: string, link: JoinLinkData | null): Promise<boolean>;
   /** Global: the live workspace a join token's hash belongs to. */
   findByJoinTokenHash(tokenHash: string): Promise<WorkspaceData | null>;
+  /** Sets (or, null, clears) the primary calendar of a live workspace. Null when it is not found. */
+  setPrimaryCalendar(
+    id: string,
+    primary: PrimaryCalendarData | null,
+  ): Promise<WorkspaceData | null>;
   /** Sets `deletedAt`. False when there was nothing to delete. */
   softDelete(id: string): Promise<boolean>;
 }

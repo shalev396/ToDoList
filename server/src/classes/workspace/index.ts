@@ -13,6 +13,11 @@ export {
 export { JoinLink, type IssuedJoinLink, type JoinLinkState } from './JoinLink.js';
 export { Member, type UpdateMemberInput } from './Member.js';
 export {
+  PrimaryCalendar,
+  PrimaryCalendarStatus,
+  type PrimaryCalendarIntegrationState,
+} from './PrimaryCalendar.js';
+export {
   Topic,
   type CreateTopicInput,
   type CreateTopicPageInput,
@@ -22,6 +27,7 @@ export {
 } from './Topic.js';
 export { TopicRules, type TopicInput } from './TopicRules.js';
 export {
+  PRIMARY_CALENDAR_AUDIT,
   Workspace,
   type CreateWorkspaceDeps,
   type CreateWorkspaceInput,

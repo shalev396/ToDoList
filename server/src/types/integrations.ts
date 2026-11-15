@@ -6,7 +6,6 @@
  * carries one, in any form. An integration is shown as `IntegrationStatusView`
  * (models/definitions/Integration.ts) and nothing else.
  */
-import type { Query } from './builder.js';
 import type { AuthMethod, ItemKind, ItemStatus, SyncRunStatus, SyncTrigger } from './domain.js';
 
 /** Providers an owner can connect through the API. Slack, Notion and local are not among them. */
@@ -65,11 +64,20 @@ export interface MoodleConfig {
   siteUrl: string;
 }
 
+/**
+ * Where TodoList pushes is the workspace's primary calendar (types/primaryCalendar.ts), never a
+ * setting of the connection: a stored `targetCalendarId` or `pushFilter` from before is ignored
+ * (and dropped when the settings are saved).
+ */
 export interface GoogleCalendarConfig {
+  /** The calendars read (pulled as items). */
   calendars: { id: string; mode: 'two_way' | 'read' }[];
-  targetCalendarId?: string;
-  /** Which items are pushed to the calendar: a builder query (BUILDER.md). */
-  pushFilter?: Query;
+  /**
+   * The calendars TodoList created on this account (createCalendar): the only calendars it may
+   * ever delete, when its owner disconnects with "Also remove everything TodoList added". Kept by
+   * the server: a value sent in a settings change is ignored.
+   */
+  appCreatedCalendars?: string[];
   horizonDays?: number;
   maxOpsPerRun?: number;
 }

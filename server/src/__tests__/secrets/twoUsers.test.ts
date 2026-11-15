@@ -181,8 +181,12 @@ before(async () => {
     label: mark('google account email', `a-google-${MARK}@gmail.example`),
     authMethod: 'oauth',
     topicId: null,
-    config: { calendars: [], targetCalendarId: `a-target-${MARK}` },
+    config: { calendars: [] },
   });
+  // A's calendar is the workspace's primary calendar: B sees that one is set, never its ids.
+  await (
+    await models.getWorkspaceRepository()
+  ).setPrimaryCalendar(wid, { integrationId: oauth.id, calendarId: `a-target-${MARK}` });
   mark('calendar target', `a-target-${MARK}`);
   // Unshared integrations' ids: B never learns them (an audit entry shows only the provider).
   for (const [key, iid] of Object.entries(integrations)) {

@@ -62,6 +62,12 @@ async function connect(): Promise<string> {
     body: { mode: 'read_write' },
   });
   assert.equal(switched.status, 200, switched.text);
+  // Its primary calendar becomes the workspace's: the pushes go there.
+  const primary = await api.call('PUT', `/api/private/workspaces/${wid}/primary-calendar`, {
+    token,
+    body: { integrationId: id, calendarId: ALICE.email },
+  });
+  assert.equal(primary.status, 200, primary.text);
   return id;
 }
 

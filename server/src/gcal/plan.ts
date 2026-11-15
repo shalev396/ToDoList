@@ -1,11 +1,17 @@
 /**
- * Loads what the diff needs for one integration and runs it: the push filter (a Logic Bridge
- * query, compiled with the base filter like any /query) as the integration's owner, over their
- * own items only (their integrations and their own local to-dos: PERMISSIONS-V2 ruling 12, so no
- * other member's data leaves their control through this calendar), the live and recently
- * tombstoned links, and what is left of the daily creation cap.
+ * Loads what the diff needs for the workspace's primary calendar and runs it (plan Addendum A2).
+ * Only the integration the primary calendar is on is planned (409 `calendar_not_primary` for any
+ * other), and only into that calendar.
+ *
+ * The push set is fixed: every item with a date (a planned date `overlay.plannedAt`, a start or a
+ * due date) that the integration's owner may see (ItemPolicy as them: their own integrations, the
+ * shared ones and the to-dos they may see), as a Logic Bridge query compiled with the base filter
+ * like any /query; the items Google Calendar itself mirrors are left out (they are its events
+ * already), and so are those with `overlay.calendarSync === false` (diff.ts). Then the live and
+ * recently tombstoned links, and what is left of the daily creation cap.
  */
 import { AppError } from '../errors/AppError.js';
+import { CalendarNotPrimaryError } from '../errors/CalendarNotPrimaryError.js';
 import type { IntegrationData } from '../models/definitions/Integration.js';
 import {
   getCalendarLinkRepository,
@@ -17,6 +23,7 @@ import type { ItemQueryRow } from '../types/builder.js';
 import { Actor } from '../classes/base/Actor.js';
 import { Caller } from '../classes/base/Caller.js';
 import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
+import { PrimaryCalendar } from '../classes/workspace/PrimaryCalendar.js';
 import { runWorkspaceQuery } from '../services/workspaceQuery.js';
 import { zonedTime } from '../sync/transports/fixtureDates.js';
 import {
@@ -44,8 +51,6 @@ export interface CalendarEntry {
 /** `Integrations.config` of a Google Calendar integration, with the defaults filled in. */
 export interface GcalConfig {
   calendars: CalendarEntry[];
-  targetCalendarId: string | null;
-  pushFilter: unknown;
   horizonDays: number;
   maxOpsPerRun: number;
 }
@@ -62,29 +67,24 @@ export function readGcalConfig(integration: IntegrationData): GcalConfig {
       }
     }
   }
-  const target = raw['targetCalendarId'];
   const horizon = raw['horizonDays'];
   const maxOps = raw['maxOpsPerRun'];
   return {
     calendars,
-    targetCalendarId: typeof target === 'string' && target !== '' ? target : null,
-    pushFilter: raw['pushFilter'],
     horizonDays: typeof horizon === 'number' ? horizon : DEFAULT_HORIZON_DAYS,
     maxOpsPerRun: typeof maxOps === 'number' ? maxOps : DEFAULT_MAX_OPS,
   };
 }
 
-/** Every item with a date. */
-const DEFAULT_PUSH_FILTER = {
-  source: 'items',
-  where: {
-    combinator: 'or',
-    rules: [
-      { field: 'dueAt', operator: 'notNull' },
-      { field: 'startAt', operator: 'notNull' },
-    ],
-  },
-} as const;
+/** The push rule: every item with a date (planned, start or due). Not configurable. */
+const PUSH_RULE: RuleGroup = {
+  combinator: 'or',
+  rules: [
+    { field: 'overlay.plannedAt', operator: 'notNull' },
+    { field: 'dueAt', operator: 'notNull' },
+    { field: 'startAt', operator: 'notNull' },
+  ],
+};
 
 /** Narrows the plan to some items (the MCP dry run): nothing is deleted then. */
 export interface PlanNarrowing {
@@ -93,24 +93,16 @@ export interface PlanNarrowing {
 }
 
 export interface LoadedPlan extends BuildResult {
-  cfg: PushConfig;
+  /** `calendarId` is the primary calendar's. */
+  cfg: PushConfig & { calendarId: string };
   config: GcalConfig;
 }
 
-function andWhere(base: unknown, extra: RuleGroup): RuleGroup {
-  const rules: RuleGroup['rules'] = [];
-  if (typeof base === 'object' && base !== null) rules.push(base as RuleGroup);
-  rules.push(extra);
-  return { combinator: 'and', rules };
-}
-
-function pushQuery(config: GcalConfig, narrowing: PlanNarrowing | undefined, tz: string): unknown {
-  const filter: unknown = config.pushFilter ?? DEFAULT_PUSH_FILTER;
-  const base = (typeof filter === 'object' && filter !== null ? filter : DEFAULT_PUSH_FILTER) as {
-    where?: unknown;
-  };
-  const query: Record<string, unknown> = { ...base, source: 'items', limit: QUERY_LIMIT };
-  if (narrowing?.where !== undefined) query['where'] = andWhere(base.where, narrowing.where);
+function pushQuery(narrowing: PlanNarrowing | undefined, tz: string): unknown {
+  const query: Record<string, unknown> = { source: 'items', where: PUSH_RULE, limit: QUERY_LIMIT };
+  if (narrowing?.where !== undefined) {
+    query['where'] = { combinator: 'and', rules: [PUSH_RULE, narrowing.where] };
+  }
   const range = narrowing?.range;
   if (range?.from !== undefined || range?.to !== undefined) {
     const from = range.from === undefined ? new Date(0) : localMidnight(range.from, tz);
@@ -147,7 +139,11 @@ export async function remainingCreates(integration: IntegrationData, now: Date):
   return Math.max(0, DAILY_CREATE_CAP - used);
 }
 
-/** Items to push → ops, for `integration` at `now`. Throws 409 when its member is gone. */
+/**
+ * Items to push → ops, for `integration` at `now`, into the workspace's primary calendar. 409
+ * `calendar_not_primary` unless the primary calendar is on this integration; 409 when its member
+ * is gone.
+ */
 export async function loadPlan(
   integration: IntegrationData,
   now: Date,
@@ -160,15 +156,18 @@ export async function loadPlan(
   if (caller === null) {
     throw new AppError(409, 'The member who connected this integration is gone');
   }
+  const primary = PrimaryCalendar.from(caller.settings.primaryCalendar);
+  if (primary?.isOn(integration.id) !== true) throw new CalendarNotPrimaryError(integration.id);
   const ctx = caller.context;
   const timeZone = ctx.settings.timezone;
 
+  // Everything its owner may see (their own, the shared integrations, the to-dos they may see).
   const result = await runWorkspaceQuery(
     ctx,
     owner,
-    { draft: pushQuery(config, narrowing, timeZone) },
+    { draft: pushQuery(narrowing, timeZone) },
     now,
-    await ItemPolicy.ownFor(caller),
+    await ItemPolicy.for(caller),
   );
   const rows = (result.rows ?? []).filter(
     (row): row is ItemQueryRow => 'kind' in row && row.source.provider !== 'google_calendar',
@@ -191,6 +190,7 @@ export async function loadPlan(
       allDay: row.allDay,
       source: { provider: row.source.provider, url: row.source.url },
       calendarSync: row.overlay.calendarSync,
+      plannedAt: row.overlay.plannedAt,
       editedAt:
         updated !== null && edited !== null
           ? new Date(Math.max(+updated, +edited))
@@ -209,9 +209,9 @@ export async function loadPlan(
   ]);
   const links: PushLink[] = [...live, ...stones];
 
-  const cfg: PushConfig = {
+  const cfg: PushConfig & { calendarId: string } = {
     workspaceId,
-    calendarId: config.targetCalendarId,
+    calendarId: primary.calendarId,
     timeZone,
     horizonDays: config.horizonDays,
     maxOps: config.maxOpsPerRun,

@@ -4,6 +4,11 @@
  *
  * - in scope with no link: `create`; with a link whose `pushedHash` no longer matches the
  *   projection: `update`; a live link whose item is gone or out of scope: `delete`;
+ * - a live link on another calendar than the primary one (the workspace's primary calendar
+ *   changed): `delete` there and `create` in the primary calendar, in the same run; never one
+ *   without the other, so a narrowed or truncated plan (no deletes) leaves it where it is;
+ * - an item projects to its planned time when it has one (`overlay.plannedAt`), else to its start
+ *   or due date;
  * - a tombstoned link (30 days) blocks re-creation unless the item was edited after `tombstonedAt`;
  * - event ids are deterministic (`el` + the item id in base32hex), so a repeated create is
  *   idempotent; an op id carries the type, the item and the projection hash, which the commit
@@ -11,6 +16,7 @@
  * - at most `maxOps` ops per run, at most `maxCreates` creates (what is left of the daily cap).
  */
 
+import { PlannedAt } from '../classes/item/PlannedAt.js';
 import { sha256Hex } from '../services/crypto/hashing.js';
 import { stableStringify } from '../sync/hash.js';
 
@@ -33,6 +39,8 @@ export interface PushItem {
   source: { provider: string; url: string };
   /** `overlay.calendarSync === false` stops projecting. */
   calendarSync: boolean | null;
+  /** `overlay.plannedAt`: when the user plans to do it (a local date, or date and time). */
+  plannedAt: string | null;
   /** The user's last edit: `max(updatedAt, overlay.editedAt)`. */
   editedAt: Date | null;
 }
@@ -100,7 +108,7 @@ export interface PlanEntry {
 export interface SkippedItem {
   itemId: string;
   title: string;
-  reason: 'unchanged' | 'tombstoned' | 'daily_cap' | 'no_target_calendar';
+  reason: 'unchanged' | 'tombstoned' | 'daily_cap' | 'no_target_calendar' | 'not_moved';
 }
 
 export interface BuildResult {
@@ -175,19 +183,42 @@ function addDays(day: string, days: number): string {
 const isWebUrl = (url: string): boolean => /^https?:\/\//i.test(url);
 
 /**
- * The event an item projects to, or null when it has no date. All-day items span local dates (end
- * exclusive); a due-only item is all-day on its local date, or the 15 minutes before it.
+ * A planned item's time: an all-day event on the planned date, or one starting at the planned
+ * time. A timed plan lasts FIFTEEN_MIN_MS, the same as every projected event without an end (a
+ * start alone, a due time), so one rule holds and a plan claims no more of the calendar than a
+ * reminder-sized slot; the user stretches it in Google if they want.
+ */
+function plannedTimes(planned: PlannedAt, timeZone: string): { start: EventTime; end: EventTime } {
+  if (!planned.hasTime) {
+    return { start: { date: planned.date }, end: { date: addDays(planned.date, 1) } };
+  }
+  const from = planned.startIn(timeZone);
+  return {
+    start: { dateTime: from.toISOString(), timeZone },
+    end: { dateTime: new Date(from.getTime() + FIFTEEN_MIN_MS).toISOString(), timeZone },
+  };
+}
+
+/**
+ * The event an item projects to, or null when it has no date. A planned item (`plannedAt`) is at
+ * its plan (plannedTimes). Otherwise all-day items span local dates (end exclusive); a due-only
+ * item is all-day on its local date, or the 15 minutes before it.
  */
 export function projectEvent(
   item: PushItem,
   workspaceId: string,
   timeZone: string,
 ): EventBody | null {
+  const planned = PlannedAt.from(item.plannedAt);
   const anchor = item.startAt ?? item.dueAt;
-  if (anchor === null) return null;
+  if (anchor === null && planned === null) return null;
   let start: EventTime;
   let end: EventTime;
-  if (item.allDay) {
+  if (planned !== null) {
+    ({ start, end } = plannedTimes(planned, timeZone));
+  } else if (anchor === null) {
+    return null;
+  } else if (item.allDay) {
     const first = localDate(anchor, timeZone);
     const last =
       item.startAt !== null && item.endAt !== null ? localDate(item.endAt, timeZone) : first;
@@ -262,6 +293,10 @@ export function buildOps(
   const creates: Planned[] = [];
   const skipped: SkippedItem[] = [];
   const projected = new Set<string>();
+  /** Items whose live link is on another calendar than the primary one: moved this run. */
+  const moving = new Set<string>();
+  const elsewhere = (link: PushLink): boolean =>
+    cfg.calendarId !== null && link.calendarId !== cfg.calendarId;
 
   for (const item of items) {
     if (item.calendarSync === false) continue;
@@ -272,7 +307,17 @@ export function buildOps(
     projected.add(item.id);
     const ref = { itemId: item.id, title: item.title };
     const hash = hashEvent(event);
-    const link = live.get(item.id);
+    const found = live.get(item.id);
+    let link = found;
+    if (found !== undefined && elsewhere(found)) {
+      // Its event is on the old primary calendar: deleted there and created here, together.
+      if (!cfg.allowDelete) {
+        skipped.push({ ...ref, reason: 'not_moved' });
+        continue;
+      }
+      moving.add(item.id);
+      link = undefined;
+    }
     if (link !== undefined) {
       if (link.pushedHash === hash) {
         skipped.push({ ...ref, reason: 'unchanged' });
@@ -291,7 +336,9 @@ export function buildOps(
       });
       continue;
     }
-    const stone = tombstoned.get(item.id)?.tombstonedAt ?? null;
+    // A tombstone on another calendar (the primary one changed since) doesn't hold the item back.
+    const tomb = moving.has(item.id) ? undefined : tombstoned.get(item.id);
+    const stone = tomb === undefined || elsewhere(tomb) ? null : tomb.tombstonedAt;
     if (stone !== null && !(item.editedAt !== null && item.editedAt.getTime() > stone.getTime())) {
       skipped.push({ ...ref, reason: 'tombstoned' });
       continue;
@@ -319,7 +366,7 @@ export function buildOps(
   if (cfg.allowDelete) {
     const titles = new Map(items.map((item) => [item.id, item.title]));
     for (const link of live.values()) {
-      if (projected.has(link.itemId)) continue;
+      if (projected.has(link.itemId) && !moving.has(link.itemId)) continue;
       removes.push({
         op: {
           opId: opIdOf('delete', link.itemId, 'none'),

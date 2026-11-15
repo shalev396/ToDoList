@@ -12,7 +12,11 @@ import type {
   UpdateIntegrationResponseData,
 } from '../routes/private/integrations.js';
 import { Integration } from '../classes/integration/index.js';
-import { CreateIntegrationBody, UpdateIntegrationBody } from '../services/integrationConfig.js';
+import {
+  CreateIntegrationBody,
+  DisconnectQuery,
+  UpdateIntegrationBody,
+} from '../services/integrationConfig.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
 
@@ -96,12 +100,13 @@ const update: RequestHandler = async (req, res): Promise<void> => {
 };
 
 const remove: RequestHandler = async (req, res): Promise<void> => {
+  const query = parseOr400(DisconnectQuery, req.query);
   const request = req as WorkspaceRequest;
   const integration = await Integration.findOwnIncludingDeleted(
     request.caller,
     routeParam(req, 'iid'),
   );
-  await integration.disconnect(request.caller);
+  await integration.disconnect(request.caller, { removeAdded: query.removeAdded === 'true' });
   res.status(204).end();
 };
 

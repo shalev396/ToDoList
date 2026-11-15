@@ -196,16 +196,14 @@ describe('parseProviderConfig: client keys are never echoed', () => {
     }
   });
 
-  it('a push filter pointer replaces a long or secret-shaped key', () => {
+  it('a retired push filter is dropped unread, whatever keys it holds', () => {
     for (const key of [LONG_KEY, TOKEN_KEY]) {
-      assert.throws(
-        () =>
-          parseProviderConfig('google_calendar', {
-            calendars: [],
-            pushFilter: { source: 'items', where: { [key]: 1 } },
-          }),
-        badRequest(/^config\.pushFilter/, key),
-      );
+      const config = parseProviderConfig('google_calendar', {
+        calendars: [],
+        pushFilter: { source: 'items', where: { [key]: 1 } },
+      });
+      assert.deepEqual(config, { calendars: [] });
+      assert.equal(JSON.stringify(config).includes(key), false);
     }
   });
 });
@@ -240,7 +238,11 @@ describe('parseProviderConfig: one strict schema per provider (400 names the fie
     ],
     ['google_calendar', { calendars: [], horizonDays: 0 }, /^config\.horizonDays: /],
     ['google_calendar', { calendars: [], maxOpsPerRun: 10_000 }, /^config\.maxOpsPerRun: /],
-    ['google_calendar', { calendars: [], pushFilter: { source: 'nope' } }, /^config\.pushFilter/],
+    [
+      'google_calendar',
+      { calendars: [], appCreatedCalendars: ['a', 'a'] },
+      /^config\.appCreatedCalendars: /,
+    ],
     ['github', { owner: 'bad/owner', ownerType: 'user' }, /^config\.owner: /],
     ['github', { owner: '-dash', ownerType: 'user' }, /^config\.owner: /],
     ['github', { owner: 'shalev396', ownerType: 'team' }, /^config\.ownerType: /],
@@ -286,18 +288,14 @@ describe('parseProviderConfig: one strict schema per provider (400 names the fie
     });
   });
 
-  it('a valid push filter (a builder query) is kept', () => {
-    const pushFilter = {
-      source: 'items',
-      where: { combinator: 'and', rules: [{ field: 'status', operator: '=', value: 'open' }] },
-    };
+  it('a stored push target and filter are read, then dropped: the workspace decides', () => {
     const config = parseProviderConfig('google_calendar', {
       calendars: [{ id: 'primary', mode: 'two_way' }],
       targetCalendarId: 'primary',
-      pushFilter,
+      pushFilter: { source: 'items' },
       maxOpsPerRun: 50,
     });
-    assert.deepEqual(config['pushFilter'], pushFilter);
+    assert.deepEqual(config, { calendars: [{ id: 'primary', mode: 'two_way' }], maxOpsPerRun: 50 });
   });
 
   it('config holds settings only: a secret-shaped value is refused, by its path and never echoed', () => {

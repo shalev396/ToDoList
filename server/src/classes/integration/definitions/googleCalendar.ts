@@ -6,10 +6,6 @@
  */
 import { z } from 'zod';
 
-import { compileQuery, parseQuery } from '../../../builder/compile.js';
-import { QueryValidationError } from '../../../builder/errors.js';
-import { validationContext } from '../../../builder/validate.js';
-import { AppError } from '../../../errors/AppError.js';
 import { googleCalendarAdapter } from '../../../sync/providers/google_calendar.js';
 import type { OAuthAuth } from '../auth/OAuthAuth.js';
 import type { ServiceAccountAuth } from '../auth/ServiceAccountAuth.js';
@@ -29,19 +25,17 @@ export {
   type GoogleCalendarSecret,
 } from './googleCalendarAuth.js';
 
-/** The push filter as the Logic Bridge parses it, compiled against the whitelist (never run). */
-function pushFilterQuery(input: unknown): unknown {
-  try {
-    const query = parseQuery(input);
-    compileQuery(query, validationContext());
-    return query;
-  } catch (error) {
-    if (error instanceof QueryValidationError) {
-      throw new AppError(400, `config.pushFilter${error.pointer}: ${error.reason}`);
-    }
-    throw error;
-  }
-}
+/** The most calendars TodoList records as its own on one connection. */
+const MAX_APP_CREATED_CALENDARS = 50;
+
+/**
+ * The settings a connection stored before the workspace's primary calendar (plan Addendum A2)
+ * decided where the push goes: still read (an older client, a document the migration has not
+ * reached), never kept.
+ */
+const RETIRED_KEYS: readonly string[] = ['targetCalendarId', 'pushFilter'];
+
+const uniqueIds = (ids: readonly string[]): boolean => new Set(ids).size === ids.length;
 
 const googleCalendar: DefinitionSpec<
   GoogleCalendarSecret,
@@ -61,16 +55,20 @@ const googleCalendar: DefinitionSpec<
           (calendars) => new Set(calendars.map(({ id }) => id)).size === calendars.length,
           'Calendar ids must differ',
         ),
+      /** Kept by the server (GoogleCalendarIntegration#checkSelection): a sent value is ignored. */
+      appCreatedCalendars: z
+        .array(CalendarId)
+        .max(MAX_APP_CREATED_CALENDARS)
+        .refine(uniqueIds, 'Calendar ids must differ')
+        .optional(),
+      /** Retired (RETIRED_KEYS): read, then dropped by normalizeConfig. */
       targetCalendarId: CalendarId.optional(),
-      /** A builder query, checked by the Logic Bridge (pushFilterQuery). */
       pushFilter: z.unknown().optional(),
       horizonDays: z.int().min(1).max(365).optional(),
       maxOpsPerRun: z.int().min(1).max(200).optional(),
     }),
   normalizeConfig: (config) =>
-    config['pushFilter'] === undefined
-      ? config
-      : { ...config, pushFilter: pushFilterQuery(config['pushFilter']) },
+    Object.fromEntries(Object.entries(config).filter(([key]) => !RETIRED_KEYS.includes(key))),
   connection: { topic: () => 'personal', accountId: () => null, label: () => null },
   adapter: googleCalendarAdapter,
   create: {

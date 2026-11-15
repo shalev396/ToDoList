@@ -24,7 +24,11 @@
  *   `import { x as y }`, `export { x as y }`, a destructured `await import(…)` and a re-export
  *   all fail, as does any `as` rename of a factory or a dynamic import whose target is unknown.
  * - MCP never switches the mode: nothing under src/mcp/ names `setMode`, `checkMode` or
- *   `UpdateIntegrationBody`.
+ *   `UpdateIntegrationBody`; nor does it choose the workspace's primary calendar or take back
+ *   what TodoList added (`setPrimaryCalendar`, `clearPrimaryCalendar`, `removeAdded`).
+ * - a calendar's delete (the writer's `removeCalendar`, which its allow-list takes only for the
+ *   calendars TodoList created on the integration) is called once in all of server/src: in
+ *   GoogleCalendarIntegration.ts, inside a `withWriteSession(…)` call.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -36,7 +40,8 @@ const WRITERS = 'classes/integration/writers/';
 const TRACKER_BASE = 'classes/integration/TrackerIntegration.ts';
 const GOOGLE = 'classes/integration/providers/GoogleCalendarIntegration.ts';
 const WRITER_NAMES = /\b(?:createWriteClient|calendarWriter|guardedTransport)\b/;
-const MODE_SWITCH_NAMES = /\b(?:setMode|checkMode|UpdateIntegrationBody)\b/;
+const MODE_SWITCH_NAMES =
+  /\b(?:setMode|checkMode|UpdateIntegrationBody|setPrimaryCalendar|clearPrimaryCalendar|removeAdded)\b/;
 
 /** Where a pinned call must sit: a `createWriter` body, or a `withWriteSession(…)` call. */
 type Within = 'createWriter' | 'writeSession';
@@ -167,6 +172,20 @@ function hookSites(
   return sites;
 }
 
+/** Every `.removeCalendar(` call in non-test code anywhere: where it sits. */
+function calendarDeleteSites(files: ReadonlyMap<string, string>): Site[] {
+  const sites: Site[] = [];
+  for (const [file, source] of files) {
+    if (isTest(file)) continue;
+    const { masked } = scan(source);
+    const sessions = writeSessionCalls(masked);
+    for (const match of masked.matchAll(/\.\s*removeCalendar\s*\(/g)) {
+      sites.push({ file, inCreateWriter: false, inWriteSession: inside(sessions, match.index) });
+    }
+  }
+  return sites;
+}
+
 /** Import statements with a braced clause, blanked: `import { a, type B } from`. */
 const NAMED_IMPORT = /\bimport\s*(?:type\s+)?(?:[\w$]+\s*,\s*)?\{[^}]*\}\s*from(?=\s*['"`])/g;
 
@@ -234,7 +253,9 @@ function violations(files: ReadonlyMap<string, string>): string[] {
     }
     if (file.startsWith('mcp/')) {
       const named = MODE_SWITCH_NAMES.exec(text);
-      if (named !== null) found.push(`${file}: names ${named[0]}: MCP never switches the mode`);
+      if (named !== null) {
+        found.push(`${file}: names ${named[0]}: MCP never switches the mode or the calendar`);
+      }
     }
   }
   for (const { name, file, within } of PINNED) {
@@ -558,6 +579,22 @@ ${provider}`,
     );
   });
 
+  it('MCP code never chooses the primary calendar or takes back what TodoList added', () => {
+    assert.deepEqual(
+      flagged({
+        'mcp/tools/calendar/primary.ts': `export const p = (w: W, c: C) => w.setPrimaryCalendar(c, x);`,
+        'mcp/tools/calendar/clear.ts': `export const q = (w: W, c: C) => w.clearPrimaryCalendar(c);`,
+        'mcp/tools/calendar/clean.ts': `export const r = (i: I, c: C) => i.removeAdded(c);`,
+        'mcp/tools/calendar/fine.ts': `export const status = 'primary';`,
+      }),
+      [
+        'mcp/tools/calendar/clean.ts',
+        'mcp/tools/calendar/clear.ts',
+        'mcp/tools/calendar/primary.ts',
+      ],
+    );
+  });
+
   it('allows the pinned sites, type-only imports and tests', () => {
     assert.deepEqual(
       flagged({
@@ -611,5 +648,18 @@ describe('server/src write paths', () => {
 
   it('only the provider classes reach a provider writer', () => {
     assert.deepEqual(violations(files), []);
+  });
+
+  it('a calendar is deleted at one call, inside withWriteSession, in GoogleCalendarIntegration', () => {
+    assert.deepEqual(calendarDeleteSites(files), [
+      { file: GOOGLE, inCreateWriter: false, inWriteSession: true },
+    ]);
+    // The scan sees a delete moved out of the session.
+    const moved = new Map([
+      [GOOGLE, 'async x() { await writer.removeCalendar(id); await this.withWriteSession(c, f); }'],
+    ]);
+    assert.deepEqual(calendarDeleteSites(moved), [
+      { file: GOOGLE, inCreateWriter: false, inWriteSession: false },
+    ]);
   });
 });

@@ -244,3 +244,14 @@ export type { ConsumeConnectLinkResponseData } from '../routes/private/connectLi
 export type { CatalogDescription, CatalogField } from './builder.js';
 
 export type { GcalSyncRequestBody, GcalSyncResponseData } from '../routes/private/gcalSync.js';
+
+export type {
+  PrimaryCalendarSuspension,
+  PrimaryCalendarView,
+  SetPrimaryCalendarRequestBody,
+} from './primaryCalendar.js';
+export type {
+  GetPrimaryCalendarResponseData,
+  SetPrimaryCalendarResponseData,
+  ClearPrimaryCalendarResponseData,
+} from '../routes/private/primaryCalendar.js';
