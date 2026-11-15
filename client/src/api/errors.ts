@@ -170,7 +170,10 @@ export function cleanupProgressOf(error: unknown): CleanupProgress | null {
   if (typeof progress !== 'object' || progress === null) {
     return null;
   }
-  const { events, calendars, calendarsKept, remaining } = progress as Record<string, unknown>;
+  const { events, calendars, calendarsKept, remaining, skipped, failed } = progress as Record<
+    string,
+    unknown
+  >;
   const count = (value: unknown): number | null =>
     typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
   const parsed = {
@@ -179,6 +182,8 @@ export function cleanupProgressOf(error: unknown): CleanupProgress | null {
     calendarsKept: count(calendarsKept),
     remaining: count(remaining),
   };
+  // Older servers do not send these two.
+  const extra = { skipped: count(skipped) ?? 0, failed: count(failed) ?? 0 };
   return parsed.events === null ||
     parsed.calendars === null ||
     parsed.calendarsKept === null ||
@@ -189,5 +194,6 @@ export function cleanupProgressOf(error: unknown): CleanupProgress | null {
         calendars: parsed.calendars,
         calendarsKept: parsed.calendarsKept,
         remaining: parsed.remaining,
+        ...extra,
       };
 }

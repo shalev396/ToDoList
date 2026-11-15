@@ -144,7 +144,19 @@ describe('apiOpenIn', () => {
 });
 
 describe('cleanupProgressOf', () => {
-  const progress = { events: 12, calendars: 1, calendarsKept: 0, remaining: 30 };
+  const progress = {
+    events: 12,
+    calendars: 1,
+    calendarsKept: 0,
+    remaining: 30,
+    skipped: 2,
+    failed: 3,
+  };
+  it('reads skipped and failed, which default to 0 when absent', () => {
+    const old = { events: 12, calendars: 1, calendarsKept: 0, remaining: 30 };
+    const error = failed(409, { code: 'cleanup_incomplete', progress: old });
+    assert.deepEqual(cleanupProgressOf(error), { ...old, skipped: 0, failed: 0 });
+  });
   it('reads the progress of a cleanup_incomplete 409', () => {
     const error = failed(409, { message: 'Out of time', code: 'cleanup_incomplete', progress });
     assert.deepEqual(cleanupProgressOf(error), progress);
