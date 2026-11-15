@@ -188,10 +188,15 @@ test('plugin.json, hooks.json and .mcp.json have the documented shape', () => {
   for (const file of ['.mcp.json']) {
     const server = read(file).mcpServers.todolist;
     assert.equal(server.type, 'http');
-    assert.equal(server.headers.Authorization, 'Bearer ${TODOLIST_AGENT_KEY}');
+    // address and key come from the plugin's userConfig, never a literal or an env var
+    assert.equal(server.url, '${user_config.mcp_url}');
+    assert.equal(server.headers.Authorization, 'Bearer ${user_config.agent_key}');
     assert.ok(!/elk_[A-Za-z0-9_-]{8,}/.test(JSON.stringify(server)));
   }
-  assert.match(read('.mcp.json').mcpServers.todolist.url, /^\$\{TODOLIST_MCP_URL:-https:\/\//);
+  const { userConfig } = read('.claude-plugin/plugin.json');
+  assert.match(userConfig.mcp_url.default, /^https:\/\/[^/]+\/api\/mcp$/);
+  assert.equal(userConfig.agent_key.sensitive, true);
+  assert.ok(!('default' in userConfig.agent_key));
 
   for (const skill of ['daily', 'tasks', 'builder', 'sync']) {
     const text = readFileSync(join(root, `skills/todolist-${skill}/SKILL.md`), 'utf8');

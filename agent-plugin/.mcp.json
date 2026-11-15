@@ -2,9 +2,9 @@
   "mcpServers": {
     "todolist": {
       "type": "http",
-      "url": "${TODOLIST_MCP_URL:-https://dev.todolist.example/api/mcp}",
+      "url": "${user_config.mcp_url}",
       "headers": {
-        "Authorization": "Bearer ${TODOLIST_AGENT_KEY}"
+        "Authorization": "Bearer ${user_config.agent_key}"
       }
     }
   }

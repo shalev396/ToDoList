@@ -487,11 +487,14 @@ In `app.ts`, mount `app.use('/api/mcp', parseBody, mcpRouter)` next to the exist
 
 ## 13. Connecting agents
 
+**The address:** Settings → Agent keys → **Connect an agent** shows the MCP address of the stage the user is on (`<the app's API base>/mcp`, and `/mcp/readonly`), so nothing is hardcoded per stage. Every client below takes that address.
+
 | Client | How |
 |---|---|
+| **Claude Code** | The TodoList plugin (`agent-plugin/`). On enable it asks for the address and the key (`userConfig`; the key goes to the system's secure credential store). The address defaults to prod. |
 | **Claude** | Customize → Connectors → Add → Custom → Web. Paste `https://<domain>/api/mcp` (or `/readonly`) and set up auth or headers ([Claude help](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp)). It must be publicly reachable over HTTPS. |
 | **Grok Bot** | Add a custom connector with the remote URL plus `Authorization: Bearer elk_…`. Remi gets its own key (`read sync builder:write`), so the audit log shows "Remi". |
-| **Cursor / VS Code** | `mcp.json`: `{"url":"https://<domain>/api/mcp","headers":{"Authorization":"Bearer ${env:ELYTRA_AGENT_KEY}"}}` |
+| **Cursor / VS Code** | `agent-plugin/cursor/mcp.json`: `{"url":"${env:TODOLIST_MCP_URL}","headers":{"Authorization":"Bearer ${env:TODOLIST_AGENT_KEY}"}}` |
 
 **One key per agent, least scope.** Start every new agent on `/readonly`.
 

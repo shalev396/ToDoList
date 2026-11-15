@@ -9,5 +9,21 @@
   "license": "MIT",
   "keywords": ["todolist", "mcp", "tasks", "dashboard"],
   "icon": "./.claude-plugin/icon.png",
-  "privacyPolicyUrl": "https://todolist.shalev396.com/privacy"
+  "privacyPolicyUrl": "https://todolist.shalev396.com/privacy",
+  "userConfig": {
+    "mcp_url": {
+      "type": "string",
+      "title": "TodoList MCP address",
+      "description": "Copy it from TodoList, Settings > Agent keys, on the site you use. It ends in /api/mcp, or /api/mcp/readonly for read-only tools.",
+      "default": "https://todolist.shalev396.com/api/mcp",
+      "required": true
+    },
+    "agent_key": {
+      "type": "string",
+      "title": "Agent key",
+      "description": "An elk_ key created in Settings > Agent keys on the same site. Kept in your system's secure credential store.",
+      "sensitive": true,
+      "required": true
+    }
+  }
 }

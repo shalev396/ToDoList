@@ -2,18 +2,11 @@
 
 Connects an AI agent to TodoList over MCP, teaches it how to use the product (skills), and holds it to the task methodology (hooks). Works in Claude Code (full plugin), Cursor (MCP config plus a rule) and any MCP client.
 
-## 1. Get an agent key
+## 1. Get an agent key and the address
 
-In TodoList open **Settings -> Agent keys**, create a key and pick its scopes (`read` is enough to look around; add `items:write` to create to-dos, `builder:write` to edit dashboards). Copy the `elk_...` key once: it is shown only at creation.
+In TodoList open **Settings -> Agent keys**, create a key and pick its scopes (`read` is enough to look around; add `items:write` to create to-dos, `builder:write` to edit dashboards). Copy the `elk_...` key once: it is shown only at creation. Never commit it.
 
-Set two environment variables. Never commit the key.
-
-```sh
-export TODOLIST_AGENT_KEY=elk_...                       # your key
-export TODOLIST_MCP_URL=https://<your-host>/api/mcp     # default in .mcp.json is a dev placeholder
-```
-
-Create the key in the app on that stage (Settings, agent keys). The read-only endpoint is `/api/mcp/readonly`.
+The same page shows **Connect an agent**: the MCP address of the site you are on (`https://<site>/api/mcp`, and `/api/mcp/readonly` for read-only tools). Each stage (dev, QA, prod) shows its own address, and a key works only on the stage that made it.
 
 ## 2. Claude Code
 
@@ -28,21 +21,26 @@ Install from a marketplace that lists this folder (the marketplace is the GitHub
 /plugin install todolist --marketplace shalev396/TodoList
 ```
 
-Start `claude` from a shell where the two variables are set. The `todolist` MCP server, four skills (`todolist-daily`, `todolist-tasks`, `todolist-builder`, `todolist-sync`) and the hooks load together. Hook state and the audit log live in the plugin data directory.
+When the plugin is enabled, Claude Code asks for two values (the plugin's `userConfig`):
+
+- **TodoList MCP address**: paste it from **Connect an agent**. It defaults to the production site, `https://todolist.shalev396.com/api/mcp`.
+- **Agent key**: the `elk_...` key. Claude Code keeps it in the system's secure credential store, not in `settings.json`.
+
+Change either later in `/config` (the key: disable and re-enable the plugin). The `todolist` MCP server, four skills (`todolist-daily`, `todolist-tasks`, `todolist-builder`, `todolist-sync`) and the hooks load together. Hook state and the audit log live in the plugin data directory.
 
 ## 3. Cursor
 
-1. Copy `cursor/mcp.json` to `.cursor/mcp.json` in your project (or merge it into `~/.cursor/mcp.json`). It reads `${env:TODOLIST_MCP_URL}` and `${env:TODOLIST_AGENT_KEY}`, so start Cursor from a shell that has them.
+1. Copy `cursor/mcp.json` to `.cursor/mcp.json` in your project (or merge it into `~/.cursor/mcp.json`). It reads `${env:TODOLIST_MCP_URL}` (the address from **Connect an agent**) and `${env:TODOLIST_AGENT_KEY}`, so start Cursor from a shell that has them.
 2. Copy `cursor/rules/todolist.mdc` to `.cursor/rules/todolist.mdc`.
 3. Cursor has no hooks for this: the rule carries the methodology and the server still enforces the builder preview rule (D12).
 
 ## 4. Any other MCP client
 
-Streamable HTTP, URL `$TODOLIST_MCP_URL`, header `Authorization: Bearer $TODOLIST_AGENT_KEY`. To poke at it with the MCP Inspector:
+Streamable HTTP, the address from **Connect an agent**, header `Authorization: Bearer <key>`. In Claude (web, desktop): Connectors -> Add custom connector, paste the address, and add the header under Request headers. To poke at it with the MCP Inspector:
 
 ```sh
 npx @modelcontextprotocol/inspector
-# transport: Streamable HTTP, URL: $TODOLIST_MCP_URL, header Authorization: Bearer <key>
+# transport: Streamable HTTP, URL: the address, header Authorization: Bearer <key>
 ```
 
 Smoke test from the repo (`server/`): `TODOLIST_AGENT_KEY=... TODOLIST_MCP_URL=... npm run mcp:smoke` prints a pass/fail table and never the key. It creates one open "Smoke test" to-do.
