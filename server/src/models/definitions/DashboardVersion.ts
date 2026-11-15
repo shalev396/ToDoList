@@ -53,6 +53,8 @@ export interface IDashboardVersionRepository {
     keepLatest: number,
     keepVersions: readonly number[],
   ): Promise<number>;
+  /** The workspace was deleted: removes every version of its dashboards. Returns how many. */
+  deleteForWorkspace(workspaceId: string): Promise<number>;
 }
 
 export const DASHBOARD_VERSION_TABLE_NAME = 'DashboardVersions';

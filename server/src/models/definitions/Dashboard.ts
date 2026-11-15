@@ -139,6 +139,11 @@ export interface IDashboardRepository {
    * their layouts, blocks and filters). Returns how many.
    */
   softDeleteForTopic(workspaceId: string, topicId: string): Promise<number>;
+  /**
+   * The workspace was deleted: removes every dashboard of it, soft-deleted ones too (hard delete).
+   * Returns how many.
+   */
+  deleteForWorkspace(workspaceId: string): Promise<number>;
 }
 
 export const DASHBOARD_TABLE_NAME = 'Dashboards';

@@ -231,4 +231,8 @@ export const DashboardRepository: IDashboardRepository = {
     );
     return result.modifiedCount;
   },
+
+  async deleteForWorkspace(workspaceId) {
+    return (await DashboardMongoModel.deleteMany({ workspaceId })).deletedCount;
+  },
 };

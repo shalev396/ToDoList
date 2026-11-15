@@ -37,6 +37,8 @@ export interface IViewRepository {
   update(workspaceId: string, id: string, patch: ViewPatch): Promise<ViewData | null>;
   /** Hard delete. False when there was nothing to delete. */
   delete(workspaceId: string, id: string): Promise<boolean>;
+  /** The workspace was deleted: removes every view of it. Returns how many. */
+  deleteForWorkspace(workspaceId: string): Promise<number>;
 }
 
 export const VIEW_TABLE_NAME = 'Views';

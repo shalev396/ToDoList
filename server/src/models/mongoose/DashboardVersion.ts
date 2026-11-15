@@ -110,4 +110,8 @@ export const DashboardVersionRepository: IDashboardVersionRepository = {
     });
     return result.deletedCount;
   },
+
+  async deleteForWorkspace(workspaceId) {
+    return (await DashboardVersionMongoModel.deleteMany({ workspaceId })).deletedCount;
+  },
 };

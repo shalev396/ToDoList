@@ -81,4 +81,8 @@ export const ViewRepository: IViewRepository = {
     const result = await ViewMongoModel.deleteOne({ _id: id, workspaceId });
     return result.deletedCount > 0;
   },
+
+  async deleteForWorkspace(workspaceId) {
+    return (await ViewMongoModel.deleteMany({ workspaceId })).deletedCount;
+  },
 };
