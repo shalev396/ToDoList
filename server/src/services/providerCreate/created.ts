@@ -5,12 +5,12 @@
  * item in.
  */
 import { asObject, asString } from '../../sync/providers/trackerCommon.js';
-import { mapClickUpTask, type ClickUpTask } from '../../sync/providers/clickup.js';
+import { CLICKUP_API, mapClickUpTask, type ClickUpTask } from '../../sync/providers/clickup.js';
 import { mapJiraIssue, JIRA_ISSUE_FIELDS, type JiraIssue } from '../../sync/providers/jira.js';
 import { mapLinearIssue, type LinearIssue } from '../../sync/providers/linear.js';
+import { GITHUB_API } from '../../sync/providers/github.js';
 import { mapWorkItem, readRestIssue, isFailure } from '../../sync/providers/github/mapping.js';
 import type { RestIssue } from '../../sync/providers/github/mapping.js';
-import { OAUTH_ENDPOINTS } from '../../sync/providers/oauthEndpoints.js';
 import type { MappedItem } from '../../sync/types.js';
 import { checkedId, splitRepo } from './ids.js';
 import { pickJiraSite } from './jiraSites.js';
@@ -40,7 +40,7 @@ export async function readBackJira(
   const result = mapJiraIssue(issue, {
     accountId: integration.accountId,
     baseUrl: site.siteUrl,
-    idPrefix: integration.authMethod === 'oauth' ? `${site.id}:` : '',
+    idPrefix: session.authKind === 'oauth' ? `${site.id}:` : '',
     connectedBy: integration.connectedBy,
     meAccountId: me.accountId ?? '',
     timeZone: env.timeZone,
@@ -54,7 +54,7 @@ export async function readBackClickup(
   env: ReadBackEnv,
 ): Promise<MappedItem | null> {
   const { integration, read, headers } = session;
-  const api = OAUTH_ENDPOINTS.clickup.api;
+  const api = CLICKUP_API;
   const id = record.id;
   if (!/^[A-Za-z0-9]{1,40}$/.test(id)) return null;
   const { data: task } = await read.getJson<ClickUpTask>(`${api}/task/${id}`, headers);
@@ -100,7 +100,7 @@ export async function readBackGithub(
   const { owner, name } = splitRepo(repo);
   const number = Number(record.id);
   if (!Number.isInteger(number) || number < 1) return null;
-  const api = OAUTH_ENDPOINTS.github.api;
+  const api = GITHUB_API;
   const { data: issue } = await read.getJson<RestIssue>(
     `${api}/repos/${owner}/${name}/issues/${String(number)}`,
     headers,

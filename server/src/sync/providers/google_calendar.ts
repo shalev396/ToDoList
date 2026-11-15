@@ -15,7 +15,8 @@
  * - Recurring events stay series (`singleEvents=false`): the master carries `props.recurrence`, an
  *   exception its `recurringEventId` and `originalStartAt`, for expansion in the client. A
  *   cancelled occurrence stays live as `status: cancelled` (the client hides that occurrence).
- * - Auth, by `authMethod`:
+ * - Auth: the integration's strategy (`ctx.auth`, classes/integration/auth) hands each resource
+ *   its headers:
  *   - `service_account`: a service-account JWT traded for an access token (googleAuth.ts), scope
  *     calendar.readonly, once per resource;
  *   - `oauth`: the user's refresh token (sealed `{refreshToken, scope}`, opened by the vault for
@@ -46,7 +47,6 @@ import type {
   ProviderAdapter,
   ResourceResult,
 } from '../types.js';
-import { bearerHeaders, CALENDAR_READONLY_SCOPE, serviceAccountToken } from './googleAuth.js';
 import { pageTokens } from './googleListing.js';
 
 export const GOOGLE_CALENDAR: Provider = 'google_calendar';
@@ -431,32 +431,13 @@ async function* listEvents(
   }
 }
 
-/** OAuth access tokens, one per run (the run's context): memory only, gone with the run. */
-const oauthTokens = new WeakMap<AdapterContext, Promise<string>>();
-
-/** The run's auth header: the user's OAuth grant, or the service account's JWT exchange. */
-async function authHeaders(ctx: AdapterContext): Promise<Record<string, string>> {
-  if (ctx.integration.authMethod !== 'oauth') {
-    return bearerHeaders(await serviceAccountToken(ctx, GOOGLE_CALENDAR, CALENDAR_READONLY_SCOPE));
-  }
-  let token = oauthTokens.get(ctx);
-  if (token === undefined) {
-    // Loaded on first use: it reads the environment, which adapters never do at import.
-    token = import('../../services/googleOAuthClient.js').then(({ refreshAccessToken }) =>
-      refreshAccessToken(ctx.client, ctx.secret['refreshToken'] ?? ''),
-    );
-    oauthTokens.set(ctx, token);
-  }
-  return bearerHeaders(await token);
-}
-
 async function* fetchCalendar(
   ctx: AdapterContext,
   resource: string,
   calendarId: string,
   state: SyncStateData | null,
 ): AsyncGenerator<AdapterPage, ResourceResult> {
-  const headers = await authHeaders(ctx);
+  const headers = await ctx.auth.headers();
   const syncToken = state?.syncToken ?? null;
   if (syncToken !== null && !ctx.fullSyncDue) {
     try {
@@ -485,7 +466,7 @@ async function* fetchCalendar(
  * Labelled by the account's email, as connected.
  */
 async function testOAuthConnection(ctx: AdapterContext): Promise<ConnectionTestResult> {
-  const headers = await authHeaders(ctx);
+  const headers = await ctx.auth.headers();
   const list = `${googleEndpoints().calendar}/users/me/calendarList`;
   const ids = calendarIds(ctx.integration);
   if (ids.length === 0) await ctx.client.getJson<unknown>(`${list}?maxResults=1`, headers);
@@ -500,11 +481,11 @@ async function testOAuthConnection(ctx: AdapterContext): Promise<ConnectionTestR
  * sync needs. Labelled by the first calendar's name; the account id is the service account.
  */
 async function testConnection(ctx: AdapterContext): Promise<ConnectionTestResult> {
-  if (ctx.integration.authMethod === 'oauth') return testOAuthConnection(ctx);
+  if (ctx.auth.kind === 'oauth') return testOAuthConnection(ctx);
   const ids = calendarIds(ctx.integration);
   const [first] = ids;
   if (first === undefined) throw new ProviderHttpError(GOOGLE_CALENDAR, null, 'not_found');
-  const headers = await authHeaders(ctx);
+  const headers = await ctx.auth.headers();
   let label: string | null = null;
   for (const id of ids) {
     const { data } = await ctx.client.getJson<unknown>(calendarUrl(id), headers);

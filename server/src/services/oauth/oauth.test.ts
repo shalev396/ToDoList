@@ -274,9 +274,13 @@ describe('the state: single use, 10 minutes, its provider, its browser', () => {
 
   it('expired after 10 minutes', async () => {
     const { state, nonce } = await start('jira');
-    const service = await import('./service.js');
+    const { JiraIntegration, OAuthFlow } = await import('../../classes/integration/index.js');
     assert.equal(
-      await service.completeProviderOAuth('jira', { state, code: 'c' }, nonce, later(10.5)),
+      await OAuthFlow.consume(
+        JiraIntegration,
+        { query: { state, code: 'c' }, browserNonce: nonce },
+        later(10.5),
+      ),
       '/en/integrations?oauth_error=oauth_state_expired',
     );
   });
@@ -551,6 +555,21 @@ describe('the routes', () => {
     const listing = `/api/private/workspaces/${wid}/integrations/oauth/providers`;
     const viewer = await api.call('GET', listing, { token: viewerToken });
     assert.equal(viewer.status, 200, viewer.text);
+    // Additive: what each provider can do, from its class (Integration.capabilitiesOf).
+    const { capabilities } = viewer.body?.['data'] as {
+      capabilities: { provider: string; picker: string | null; comingSoon: boolean }[];
+    };
+    assert.deepEqual(
+      capabilities.map(({ provider, picker, comingSoon }) => [provider, picker, comingSoon]),
+      [
+        ['jira', 'sites', false],
+        ['clickup', 'workspaces', false],
+        ['linear', null, false],
+        ['moodle', null, true],
+        ['google_calendar', 'calendars', false],
+        ['github', null, false],
+      ],
+    );
     const outsider = await api.call('GET', listing, { token: outsiderToken });
     assert.equal(outsider.status, 404, outsider.text);
   });
@@ -813,13 +832,13 @@ describe('locally, nothing reaches a real provider', () => {
 
   it('without the stand-in an OAuth integration syncs live, over the plain transport', async () => {
     const { syncModeFor } = await import('../../sync/syncMode.js');
-    const { transportForIntegration } = await import('./transport.js');
+    const { sessionTransport } = await import('../../classes/integration/definitions/index.js');
     setOAuthBaseUrlForTests(null);
     try {
       for (const provider of MOCK_OAUTH_PROVIDERS) {
         assert.equal(syncModeFor({ authMethod: 'oauth', provider }, 'live'), 'live');
         const inner = { send: (): Promise<HttpResponse> => assert.fail('no request') };
-        assert.equal(transportForIntegration(inner, { provider, authMethod: 'oauth' }), inner);
+        assert.equal(sessionTransport({ provider, authMethod: 'oauth' }, inner), inner);
       }
       // A token integration follows the mode the test forced, as before.
       assert.equal(
@@ -891,12 +910,15 @@ describe('the allow-list and secrecy', () => {
   });
 
   it("the stand-in is a test seam: the providers' endpoints otherwise, and loopback only", async () => {
-    const { oauthEndpoints } = await import('../../sync/providers/oauthEndpoints.js');
+    const { LinearIntegration } = await import('../../classes/integration/index.js');
     const { callbackUrl, setCallbackOriginForTests } = await import('./common.js');
     setOAuthBaseUrlForTests(null);
     setCallbackOriginForTests(null);
     try {
-      assert.equal(oauthEndpoints('linear').token, 'https://api.linear.app/oauth/token');
+      assert.equal(
+        LinearIntegration.definition.auth.oauth.endpoints().token,
+        'https://api.linear.app/oauth/token',
+      );
       assert.equal(
         callbackUrl('/api/public/oauth/linear/callback'),
         'https://localhost/api/public/oauth/linear/callback',

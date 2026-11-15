@@ -1,19 +1,49 @@
-import type { AuthMethod } from '../../../types/domain.js';
-import { AuthStrategy } from './AuthStrategy.js';
+import { bearerHeaders, serviceAccountToken } from '../../../sync/providers/googleAuth.js';
+import type { AuthMethod, Provider } from '../../../types/domain.js';
+import {
+  AuthStrategy,
+  type AdapterAuth,
+  type AuthSession,
+  type CredentialShape,
+  type SecretJson,
+} from './AuthStrategy.js';
+
+export interface ServiceAccountAuthOptions {
+  provider: Provider;
+  /** The one scope each exchanged token carries (read only). */
+  scope: string;
+  credential: CredentialShape;
+}
 
 /**
- * Google Calendar read through a service account: the demo's fixture-mode calendar only (its
- * credential is FAKE, and nobody connects this way: Google Calendar connects with Google
- * sign-in). The sync adapter signs its own token exchange, so there are no static headers.
+ * Read through a Google service account: the demo's fixture-mode calendar only (its credential is
+ * FAKE, and nobody connects this way: Google Calendar connects with Google sign-in). There are no
+ * static headers: each call of a session signs an assertion and trades it for an access token
+ * through the session's client (sync/providers/googleAuth.ts), one exchange per resource.
  */
-export class ServiceAccountAuth extends AuthStrategy {
-  static readonly instance = new ServiceAccountAuth();
-
+export class ServiceAccountAuth<
+  TSecret extends SecretJson = SecretJson,
+> extends AuthStrategy<TSecret> {
   readonly kind = 'service_account';
   readonly methods: readonly [AuthMethod, ...AuthMethod[]] = ['service_account'];
+  readonly provider: Provider;
+  readonly scope: string;
+  protected override readonly credentialShape: CredentialShape;
 
-  /** No header: the adapter exchanges the key for a token itself (sync/providers/googleAuth.ts). */
-  private constructor() {
+  constructor(options: ServiceAccountAuthOptions) {
     super((): Record<string, string> => ({}));
+    this.provider = options.provider;
+    this.scope = options.scope;
+    this.credentialShape = options.credential;
+  }
+
+  /** Every call of the session exchanges a fresh assertion: nothing is kept between them. */
+  override bind(session: AuthSession<TSecret>): AdapterAuth {
+    return {
+      kind: this.kind,
+      headers: async (): Promise<Record<string, string>> =>
+        bearerHeaders(await serviceAccountToken(session, this.provider, this.scope)),
+      query: () => ({}),
+    };
   }
 }

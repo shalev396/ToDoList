@@ -69,7 +69,6 @@ export const LEGACY_DB_IMPORTERS = [
   'src/services/connectLinks.ts',
   'src/services/dashboards.ts',
   'src/services/items.ts',
-  'src/services/oauth/common.ts',
   'src/services/personas.ts',
   'src/services/providerCreate/mirror.ts',
   'src/services/providerCreate/service.ts',

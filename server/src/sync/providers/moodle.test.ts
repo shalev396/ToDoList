@@ -27,6 +27,8 @@ import {
   TIME_ZONE,
   type Kit,
 } from '../../testing/trackerTestKit.js';
+import { bindAuth } from '../../classes/integration/definitions/IntegrationDefinition.js';
+import { MOODLE } from '../../classes/integration/definitions/moodle.js';
 
 const SITE = 'https://example.invalid/moodle';
 const FAKE_TOKEN = 'FAKE0123456789abcdef0123456789ab';
@@ -222,10 +224,13 @@ function contextFor(
   transport: Transport,
   secret: Record<string, string> = {},
 ): AdapterContext {
+  const client = moodleAdapter.createClient(transport);
   return {
     integration,
     secret,
-    client: moodleAdapter.createClient(transport),
+    client,
+    // The headers come from the integration's auth strategy, as in a run.
+    auth: bindAuth(MOODLE.auth, integration.authMethod, { secret, client, now: FIXTURE_NOW }),
     now: FIXTURE_NOW,
     timeZone: TIME_ZONE,
     fullSyncDue: false,

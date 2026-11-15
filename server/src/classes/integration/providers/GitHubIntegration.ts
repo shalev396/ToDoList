@@ -2,47 +2,26 @@ import { AppError } from '../../../errors/AppError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
 import { getWorkspaceRepository } from '../../../models/index.js';
 import { readBackGithub } from '../../../services/providerCreate/created.js';
-import { githubOptions } from '../../../services/providerCreate/funnel.js';
 import { splitRepo } from '../../../services/providerCreate/ids.js';
 import { topicIdBySlug } from '../../../services/topics.js';
 import { TOPIC_RULES_MAX } from '../../../services/workspaces.js';
 import type { GitHubConfig } from '../../../types/integrations.js';
-import type {
-  CreateOptionsQuery,
-  CreateOptionsResponseData,
-  CreateTarget,
-} from '../../../types/providerCreate.js';
-import { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
-import type { HeaderBuilder } from '../auth/AuthStrategy.js';
-import { OAuthAuth } from '../auth/OAuthAuth.js';
+import type { CreateTarget } from '../../../types/providerCreate.js';
+import type { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
+import type { OAuthAuth } from '../auth/OAuthAuth.js';
 import type { SupportsApiKey, SupportsOAuth } from '../capabilities.js';
+import { GITHUB, type GitHubSecret } from '../definitions/github.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
 import {
   TrackerIntegration,
   type PreparedCreate,
-  type TrackerReadSession,
   type TrackerWriteSession,
 } from '../TrackerIntegration.js';
 import { githubIssueBody, type CreateFields } from '../writers/trackerWriter.js';
 
-/** `{accessToken, refreshToken, …}` (OAuth) or `{token, projectsToken?}` (personal tokens). */
-export type GitHubSecret = Readonly<{
-  accessToken?: string;
-  refreshToken?: string;
-  accessTokenExpiresAt?: string;
-  scope?: string;
-  token?: string;
-  projectsToken?: string;
-}>;
+export type { GitHubSecret };
 
 const GITHUB_API_VERSION = '2022-11-28';
-
-/** A bearer token (the personal token, else the OAuth one) and GitHub's fixed headers. */
-const githubHeaders: HeaderBuilder<GitHubSecret> = (secret) => ({
-  authorization: `Bearer ${secret.token ?? secret.accessToken ?? ''}`,
-  'x-github-api-version': GITHUB_API_VERSION,
-  'user-agent': 'TodoList',
-});
 
 /**
  * GitHub: issues and pull requests of the account's repositories (and Projects boards), and an
@@ -52,32 +31,28 @@ export class GitHubIntegration
   extends TrackerIntegration<GitHubConfig, GitHubSecret>
   implements SupportsOAuth<GitHubSecret>, SupportsApiKey<GitHubSecret>
 {
-  static readonly #oauth = new OAuthAuth<GitHubSecret>({
-    provider: 'github',
-    refresh: 'stored',
-    headers: githubHeaders,
-  });
-  static readonly #apiKey = new ApiKeyAuth<GitHubSecret>({
-    methods: ['fine_grained_pat'],
-    headers: githubHeaders,
-  });
+  /** What GitHub is: its strategies, config, rules, adapter, funnel and fixtures. */
+  static readonly definition = GITHUB;
 
   static {
-    IntegrationRegistry.instance.register('github', (data) => new GitHubIntegration(data));
+    IntegrationRegistry.instance.register(GitHubIntegration, (data) => new GitHubIntegration(data));
   }
-
-  protected readonly createSteps = ['repo', 'label'] as const;
 
   private constructor(data: IntegrationData) {
     super(data);
   }
 
   get oauth(): OAuthAuth<GitHubSecret> {
-    return GitHubIntegration.#oauth;
+    return GitHubIntegration.definition.auth.oauth;
   }
 
   get apiKey(): ApiKeyAuth<GitHubSecret> {
-    return GitHubIntegration.#apiKey;
+    return GitHubIntegration.definition.auth.apiKey;
+  }
+
+  /** GitHub's fixed headers on every create-path call, beside the strategy's auth header. */
+  protected override get providerHeaders(): Record<string, string> {
+    return { 'x-github-api-version': GITHUB_API_VERSION, 'user-agent': 'TodoList' };
   }
 
   /**
@@ -104,13 +79,6 @@ export class GitHubIntegration
    * doesn't fail every sync on its boards (and a new one turns them back on).
    */
   protected override readonly learnedCapabilities = { boards: 'boardsEnabled' } as const;
-
-  protected readOptions(
-    session: TrackerReadSession,
-    query: CreateOptionsQuery,
-  ): Promise<CreateOptionsResponseData> {
-    return githubOptions(session, query);
-  }
 
   protected async prepare(
     session: TrackerWriteSession,

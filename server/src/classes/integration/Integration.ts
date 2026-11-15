@@ -49,21 +49,9 @@ import {
   getSyncStateRepository,
 } from '../../models/index.js';
 import { removeConnectorEverywhere } from '../../services/dashboards.js';
-import {
-  assertSameAccount,
-  assertUserConnectable,
-  EMPTY_UPDATE_MESSAGE,
-  defaultLabel,
-  isConnectableProvider,
-  isPlaceholderAccountId,
-  parseProviderConfig,
-  planConnection,
-  type ConnectionInput,
-} from '../../services/integrationConfig.js';
+import { assertUserConnectable, EMPTY_UPDATE_MESSAGE } from '../../services/integrationConfig.js';
 import { logger } from '../../services/logger.js';
 import { OAuthFailure } from '../../services/oauth/common.js';
-import { isOAuthProviderId, OAUTH_PROVIDER_DEFS } from '../../services/oauth/providers.js';
-import { transportForIntegration } from '../../services/oauth/transport.js';
 import { writeModeFor } from '../../services/providerCreate/mode.js';
 import { enqueueSync } from '../../services/syncJobs.js';
 import { assertTopicOf, topicIdBySlug } from '../../services/topics.js';
@@ -82,11 +70,11 @@ import {
   type IntegrationMode,
   type Provider,
 } from '../../types/domain.js';
-import type { IntegrationTestResult } from '../../types/integrations.js';
-import { ApiKeyAuth } from './auth/ApiKeyAuth.js';
-import type { AuthStrategy, SecretJson } from './auth/AuthStrategy.js';
-import { ServiceAccountAuth } from './auth/ServiceAccountAuth.js';
-import { isRevocable, supportsApiKey, supportsOAuth } from './capabilities.js';
+import type { IntegrationTestResult, ProviderCapabilities } from '../../types/integrations.js';
+import type { AuthKind, AuthStrategy, SecretJson } from './auth/AuthStrategy.js';
+import { OAuthAuth } from './auth/OAuthAuth.js';
+import { UnofferedAuth } from './auth/UnofferedAuth.js';
+import { isCreateFunnel, isResourcePicker, isRevocable } from './capabilities.js';
 import {
   beforeDeadline,
   canTest,
@@ -103,6 +91,14 @@ import {
   type TestRateLimited,
 } from './connectionTest.js';
 import { Credential } from './Credential.js';
+import { isPlaceholderAccountId } from './definitions/fields.js';
+import {
+  DEFINITIONS,
+  requireDefinition,
+  strategyForMethod,
+  type ConnectionInput,
+  type IntegrationDefinition,
+} from './definitions/index.js';
 import { IntegrationRegistry } from './IntegrationRegistry.js';
 import { Mode } from './Mode.js';
 
@@ -315,6 +311,30 @@ export abstract class Integration<
     return integration.withReadSession((session) => fn(session.secret));
   }
 
+  /**
+   * What each connectable provider can do and how it connects, read from its class: its
+   * definition (auth methods, picker, revoke page, coming soon) and the contracts its class
+   * implements (ResourcePicker, Revocable, CreateFunnel). In the order of CONNECTABLE_PROVIDERS.
+   */
+  static capabilitiesOf(): ProviderCapabilities[] {
+    return DEFINITIONS.flatMap((definition) => {
+      const cls = IntegrationRegistry.instance.classOf(definition.provider);
+      if (cls === null) return [];
+      const can = cls.prototype;
+      return [
+        {
+          provider: definition.provider,
+          authMethods: definition.userAuthMethods,
+          picker: isResourcePicker(can) ? definition.picker : null,
+          revokesOnDisconnect: isRevocable(can),
+          revokePage: definition.revokePage,
+          canCreate: isCreateFunnel(can) && definition.create !== null,
+          comingSoon: definition.comingSoon,
+        },
+      ];
+    });
+  }
+
   static #owned(caller: Caller, data: IntegrationData | null): Integration {
     if (data === null || !caller.can(IntegrationPolicy.instance, 'read', data)) {
       throw new NotFoundError();
@@ -386,7 +406,7 @@ export abstract class Integration<
     caller.require('editor');
     const workspaceId = caller.workspaceId;
     if (options.demo !== true) assertUserConnectable(input.provider);
-    const plan = planConnection(input);
+    const plan = requireDefinition(input.provider).planConnection(input);
     if (plan.topicId !== undefined && plan.topicId !== null) {
       await assertTopicOf(workspaceId, plan.topicId);
     }
@@ -494,8 +514,9 @@ export abstract class Integration<
       }
     }
     const reconnectable = (data: IntegrationData): ConnectedIntegration => {
-      if (data.authMethod !== 'oauth') throw new OAuthFailure('oauth_failed');
-      return { integration: Integration.from(data), created: false };
+      const integration = Integration.from(data);
+      if (integration.auth.kind !== 'oauth') throw new OAuthFailure('oauth_failed');
+      return { integration, created: false };
     };
     const find = async (): Promise<IntegrationData | null> =>
       (await integrations.listForOwner(workspaceId, caller.userId)).find(
@@ -649,9 +670,18 @@ export abstract class Integration<
     return { ...toIntegrationStatus(this.toJSON()), canSwitchMode: this.canSwitchMode };
   }
 
-  /** The status view (toView). */
-  toStatusView(): IntegrationStatusView {
-    return this.toView();
+  /** How it connects: its auth strategy's kind (`oauth`, `api_key`, `service_account`). */
+  get authKind(): AuthKind {
+    return this.auth.kind;
+  }
+
+  /**
+   * Whether this connection can create items at its provider at all (its definition's create
+   * rules, for its way of connecting): Google Calendar only with its OAuth grant, never the demo's
+   * service account. Whether it may now is `allowsWrites`.
+   */
+  get canCreate(): boolean {
+    return this.definition?.create?.authKinds.includes(this.authKind) ?? false;
   }
 
   /**
@@ -676,9 +706,9 @@ export abstract class Integration<
 
   /** Does this OAuth grant lack the scope that creates items (Jira, Linear)? */
   async needsWriteConsent(): Promise<boolean> {
-    const provider: string = this.provider;
-    if (this.authMethod !== 'oauth' || !isOAuthProviderId(provider)) return false;
-    const needed = OAUTH_PROVIDER_DEFS[provider].writeScopes;
+    const auth = this.auth;
+    if (!(auth instanceof OAuthAuth)) return false;
+    const needed = auth.writeScopes;
     if (needed.length === 0) return false;
     const meta = await Credential.meta(this.workspaceId, this.id);
     const granted = new Set(meta?.scopes ?? []);
@@ -694,12 +724,12 @@ export abstract class Integration<
    */
   readConfig(caller: Caller): Record<string, unknown> {
     this.assertOwner(caller);
-    const provider = this.provider;
-    if (!isConnectableProvider(provider)) {
+    const definition = this.definition;
+    if (definition === null) {
       throw new AppError(409, 'This integration has no settings to show');
     }
     try {
-      return parseProviderConfig(provider, this.toJSON().config);
+      return definition.parseConfig(this.toJSON().config);
     } catch (error) {
       if (!(error instanceof AppError)) throw error;
       throw new AppError(409, 'This integration’s settings no longer validate: save them again');
@@ -720,12 +750,12 @@ export abstract class Integration<
       patch.topicId = input.topicId;
     }
     if (input.config !== undefined) {
-      const provider = this.provider;
-      if (!isConnectableProvider(provider)) {
+      const definition = this.definition;
+      if (definition === null) {
         throw new AppError(400, 'config: this integration has no settings to change');
       }
-      const config = parseProviderConfig(provider, input.config);
-      assertSameAccount(this.toJSON(), config);
+      const config = definition.parseConfig(input.config);
+      definition.assertSameAccount(this.toJSON(), config);
       // A Jira site or ClickUp workspace is only one the grant covers (checked here, not just in the UI).
       patch.config = await this.checkSelection(config);
     }
@@ -940,7 +970,7 @@ export abstract class Integration<
   async #disconnectSteps(by: AuditScope): Promise<void> {
     const { workspaceId, id } = this;
     const integrations = await getIntegrationRepository();
-    if (!this.isDeleted && this.authMethod === 'oauth' && isRevocable(this)) {
+    if (!this.isDeleted && this.auth.kind === 'oauth' && isRevocable(this)) {
       await this.revokeGrant();
     }
     // False when another request deleted it meanwhile: that one audits, this one finishes the steps.
@@ -993,20 +1023,25 @@ export abstract class Integration<
   /** The connection test's provider call (the adapter's `test`): what the account says it is. */
   protected abstract probe(adapter: TestableAdapter, context: AdapterContext): Promise<unknown>;
 
-  /** The auth strategy of the stored `authMethod`. */
+  /**
+   * What the provider is (its class's `static definition`): its strategies, config, rules and
+   * fixtures. Null for a provider nobody connects (UnlistedIntegration).
+   */
+  protected get definition(): IntegrationDefinition<TSecret> | null {
+    const defined = this.constructor as { readonly definition?: IntegrationDefinition<TSecret> };
+    return defined.definition ?? null;
+  }
+
+  /**
+   * The auth strategy of the stored `authMethod`, from the definition. A method this class does
+   * not offer: no headers, its credential checked as that method (UnofferedAuth).
+   */
   protected get auth(): AuthStrategy<TSecret> {
     const method = this.authMethod;
-    if (supportsOAuth(this) && this.oauth.handles(method)) {
-      return this.oauth;
-    }
-    if (supportsApiKey(this) && this.apiKey.handles(method)) {
-      return this.apiKey;
-    }
-    if (method === 'service_account') {
-      return ServiceAccountAuth.instance;
-    }
-    // A method this class does not offer: its credential is validated as that method, no headers.
-    return new ApiKeyAuth<TSecret>({ methods: [method], headers: () => ({}) });
+    return (
+      this.definition?.authFor(method) ??
+      new UnofferedAuth<TSecret>(method, strategyForMethod(method))
+    );
   }
 
   /** The adapter of this provider (the sync's strategy object), or null when none is registered. */
@@ -1035,9 +1070,31 @@ export abstract class Integration<
       (other) =>
         other.id !== this.id &&
         other.provider === this.provider &&
-        other.authMethod === 'oauth' &&
-        other.accountId === this.accountId,
+        other.accountId === this.accountId &&
+        Integration.from(other).auth.kind === 'oauth',
     );
+  }
+
+  /**
+   * Hands the OAuth grant back to the provider (its strategy's revocation endpoint), best effort:
+   * never throws (a failure is logged as `failure`). Left in place when another live integration
+   * (in any workspace) uses the same account, whose grant revoking would end too. The Revocable
+   * classes' revokeGrant.
+   */
+  protected async handBackGrant(failure: string): Promise<void> {
+    const auth = this.auth;
+    if (!(auth instanceof OAuthAuth) || auth.endpoints().revoke === null) return;
+    try {
+      if (await this.sharesGrant()) return;
+      await this.withReadSession(async ({ secret }) => {
+        await auth.revoke(secret);
+      });
+    } catch (error) {
+      logger.warn(failure, {
+        integrationId: this.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
   }
 
   // ─── Hooks the provider classes override ─────────────────────────────────
@@ -1089,7 +1146,15 @@ export abstract class Integration<
         return { code: 'fixtures_missing', error };
       }
       try {
-        return { probe: await this.#probeWith(adapter, timeZone, NO_SECRET, transport, deadline) };
+        return {
+          probe: await this.#probeWith(
+            adapter,
+            timeZone,
+            NO_SECRET as TSecret,
+            transport,
+            deadline,
+          ),
+        };
       } catch (error) {
         return failed(error);
       }
@@ -1102,7 +1167,7 @@ export abstract class Integration<
     try {
       const found = await this.withReadSession((session) => {
         progress.opened = true;
-        const transport = transportForIntegration(connectionTestTransport(), this.data);
+        const transport = this.auth.transport(connectionTestTransport());
         return this.#probeWith(adapter, timeZone, session.secret, transport, deadline);
       });
       return { probe: found };
@@ -1120,15 +1185,19 @@ export abstract class Integration<
   async #probeWith(
     adapter: TestableAdapter,
     timeZone: string,
-    secret: SecretJson,
+    secret: TSecret,
     transport: Transport,
     deadline: number,
   ): Promise<Probe> {
+    const client = adapter.createClient(testTransport(transport, deadline), NO_WAIT);
+    const now = new Date();
     const context: AdapterContext = {
       integration: this.toJSON(),
       secret,
-      client: adapter.createClient(testTransport(transport, deadline), NO_WAIT),
-      now: new Date(),
+      // The headers come from the integration's auth strategy, never from the adapter.
+      auth: this.auth.bind({ secret, client, now }),
+      client,
+      now,
       timeZone,
       fullSyncDue: false,
     };
@@ -1156,9 +1225,9 @@ export abstract class Integration<
       }
     }
     const learned: ConnectionTestPatch = {};
-    const provider = this.provider;
-    if (isConnectableProvider(provider)) {
-      const label = defaultLabel(provider, this.toJSON().config);
+    const definition = this.definition;
+    if (definition !== null) {
+      const label = definition.defaultLabel(this.toJSON().config);
       if (this.label === label && found.accountLabel !== label) {
         learned.label = { from: label, to: this.learnedLabel(found.accountLabel) };
       }

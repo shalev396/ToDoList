@@ -10,7 +10,8 @@
  * provider says is trusted as a path.
  */
 import { AppError } from '../../errors/AppError.js';
-import { OAUTH_ENDPOINTS } from '../../sync/providers/oauthEndpoints.js';
+import { CLICKUP_API } from '../../sync/providers/clickup.js';
+import { GITHUB_API } from '../../sync/providers/github.js';
 import { asObject, asString } from '../../sync/providers/trackerCommon.js';
 import type {
   CreateOption,
@@ -157,7 +158,7 @@ export async function clickupOptions(
   query: CreateOptionsQuery,
 ): Promise<CreateOptionsResponseData> {
   const { read, headers, integration } = session;
-  const api = OAUTH_ENDPOINTS.clickup.api;
+  const api = CLICKUP_API;
   const get = async (path: string): Promise<Record<string, unknown>> =>
     asObject((await read.getJson<unknown>(`${api}${path}`, headers)).data) ?? {};
   const named = (items: Record<string, unknown>[]): CreateOption[] =>
@@ -256,13 +257,13 @@ export async function githubOptions(
   session: CreateSession,
   query: CreateOptionsQuery,
 ): Promise<CreateOptionsResponseData> {
-  const { read, headers, integration } = session;
-  const api = OAUTH_ENDPOINTS.github.api;
+  const { read, headers, authKind } = session;
+  const api = GITHUB_API;
   const get = async (path: string): Promise<unknown> =>
     (await read.getJson<unknown>(`${api}${path}`, headers)).data;
   if (query.step === 'repo') {
     const repos: Record<string, unknown>[] = [];
-    if (integration.authMethod === 'oauth') {
+    if (authKind === 'oauth') {
       // A GitHub App's user token reaches the repositories of its installations.
       const installations = list(
         asObject(await get('/user/installations?per_page=20'))?.['installations'],

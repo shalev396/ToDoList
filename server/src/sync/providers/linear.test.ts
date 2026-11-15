@@ -25,6 +25,8 @@ import {
   TIME_ZONE,
   type Kit,
 } from '../../testing/trackerTestKit.js';
+import { bindAuth } from '../../classes/integration/definitions/IntegrationDefinition.js';
+import { LINEAR } from '../../classes/integration/definitions/linear.js';
 
 const VIEWER = 'b6a1c7d2-0000-4000-8000-000000000001';
 
@@ -182,10 +184,13 @@ function contextFor(
   transport: Transport,
   secret: Record<string, string> = {},
 ): AdapterContext {
+  const client = linearAdapter.createClient(transport, instantClock());
   return {
     integration,
     secret,
-    client: linearAdapter.createClient(transport, instantClock()),
+    client,
+    // The headers come from the integration's auth strategy, as in a run.
+    auth: bindAuth(LINEAR.auth, integration.authMethod, { secret, client, now: FIXTURE_NOW }),
     now: FIXTURE_NOW,
     timeZone: TIME_ZONE,
     fullSyncDue: false,

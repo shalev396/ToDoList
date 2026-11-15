@@ -1,15 +1,17 @@
 /**
- * The OAuth and API endpoints of the providers that connect with OAuth besides Google (GitHub,
- * Jira, ClickUp, Linear), verified against each provider's own documentation (INTEGRATIONS-SETUP.md).
+ * The test stand-in for the providers that connect with OAuth besides Google (GitHub, Jira,
+ * ClickUp, Linear). Each provider's own endpoints are its definition's
+ * (classes/integration/definitions/*: the OAuth strategy); this module only knows where a test's
+ * in-process stand-in (testing/mockOAuthProviders.ts) serves them.
  *
- * A test may point every one of them at its in-process stand-in (testing/mockOAuthProviders.ts)
- * with setOAuthBaseUrlForTests: a loopback http origin, nothing else. The setter throws in a
- * server, so there it is always the provider itself.
+ * setOAuthBaseUrlForTests points every one of them at a loopback http origin, nothing else. The
+ * setter throws in a server, so there it is always the provider itself.
  */
 import { assertUnderTest } from '../../config/testSwitches.js';
+import { OAUTH_SIGN_IN_PROVIDERS, type OAuthSignInProvider } from '../../types/integrations.js';
 
-export const OAUTH_PROVIDERS = ['github', 'jira', 'clickup', 'linear'] as const;
-export type OAuthProviderId = (typeof OAUTH_PROVIDERS)[number];
+export const OAUTH_PROVIDERS = OAUTH_SIGN_IN_PROVIDERS;
+export type OAuthProviderId = OAuthSignInProvider;
 
 export interface OAuthProviderEndpoints {
   authorize: string;
@@ -20,32 +22,9 @@ export interface OAuthProviderEndpoints {
   api: string;
 }
 
-export const OAUTH_ENDPOINTS: Readonly<Record<OAuthProviderId, OAuthProviderEndpoints>> = {
-  github: {
-    authorize: 'https://github.com/login/oauth/authorize',
-    token: 'https://github.com/login/oauth/access_token',
-    revoke: null,
-    api: 'https://api.github.com',
-  },
-  jira: {
-    authorize: 'https://auth.atlassian.com/authorize',
-    token: 'https://auth.atlassian.com/oauth/token',
-    revoke: null,
-    api: 'https://api.atlassian.com',
-  },
-  clickup: {
-    authorize: 'https://app.clickup.com/api',
-    token: 'https://api.clickup.com/api/v2/oauth/token',
-    revoke: null,
-    api: 'https://api.clickup.com/api/v2',
-  },
-  linear: {
-    authorize: 'https://linear.app/oauth/authorize',
-    token: 'https://api.linear.app/oauth/token',
-    revoke: 'https://api.linear.app/oauth/revoke',
-    api: 'https://api.linear.app',
-  },
-};
+export function isOAuthProviderId(value: unknown): value is OAuthProviderId {
+  return typeof value === 'string' && (OAUTH_PROVIDERS as readonly string[]).includes(value);
+}
 
 /** `http://127.0.0.1:<port>` or `http://localhost:<port>`, nothing more. */
 const LOOPBACK_ORIGIN = /^http:\/\/(?:127\.0\.0\.1|localhost):\d{1,5}$/;
@@ -76,23 +55,20 @@ export function oauthMockOrigin(): string | null {
   return mockOrigin;
 }
 
-/** Where the stand-in serves a provider: everything under `/<provider>`. */
-function mockEndpoints(origin: string, provider: OAuthProviderId): OAuthProviderEndpoints {
-  const base = `${origin}/${provider}`;
+/**
+ * The endpoints to call: the provider's own (`real`), or, while a test points at the stand-in,
+ * where it serves them (everything under `/<provider>`).
+ */
+export function standInEndpoints(
+  provider: OAuthProviderId,
+  real: OAuthProviderEndpoints,
+): OAuthProviderEndpoints {
+  if (mockOrigin === null) return real;
+  const base = `${mockOrigin}/${provider}`;
   return {
     authorize: `${base}/authorize`,
     token: `${base}/token`,
-    revoke: OAUTH_ENDPOINTS[provider].revoke === null ? null : `${base}/revoke`,
+    revoke: real.revoke === null ? null : `${base}/revoke`,
     api: `${base}/api`,
   };
-}
-
-/** The endpoints to call: the provider's, or a test's stand-in. */
-export function oauthEndpoints(provider: OAuthProviderId): OAuthProviderEndpoints {
-  return mockOrigin === null ? OAUTH_ENDPOINTS[provider] : mockEndpoints(mockOrigin, provider);
-}
-
-/** The stand-in's URL of one provider's token or revoke endpoint while a test points at it. */
-export function mockOAuthUrl(provider: OAuthProviderId, name: 'token' | 'revoke'): string | null {
-  return mockOrigin === null ? null : mockEndpoints(mockOrigin, provider)[name];
 }

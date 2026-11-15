@@ -9,7 +9,8 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import type * as Models from '../models/index.js';
 import { startApiHarness, type ApiHarness } from '../testing/apiHarness.js';
-import type * as Service from './googleCalendarOAuth.js';
+import type * as Classes from '../classes/integration/index.js';
+import { pkceChallenge } from './crypto/hashing.js';
 import { forceSyncModeForTests } from '../config/testSwitches.js';
 import { setGoogleBaseUrlForTests } from '../sync/providers/googleEndpoints.js';
 import { setAppSecretsForTests } from './appSecrets.js';
@@ -22,7 +23,15 @@ const CLIENT = {
 };
 
 let api: ApiHarness;
-let service: typeof Service;
+let classes: typeof Classes;
+
+/** The Google Calendar callback, as its route runs it (OAuthFlow.consume). */
+const consume = (
+  query: Record<string, unknown>,
+  browserNonce: string | null,
+  now?: Date,
+): Promise<string> =>
+  classes.OAuthFlow.consume(classes.GoogleCalendarIntegration, { query, browserNonce }, now);
 let models: typeof Models;
 let token: string;
 let ownerId: string;
@@ -38,7 +47,7 @@ before(async () => {
   setAppSecretsForTests({ 'google-calendar-oauth': CLIENT });
   // Never contacted: every callback below fails before the exchange.
   setGoogleBaseUrlForTests('http://127.0.0.1:9');
-  service = await import('./googleCalendarOAuth.js');
+  classes = await import('../classes/integration/index.js');
   models = await import('../models/index.js');
   const login = await api.login('oauth-owner@example.test');
   token = login.token;
@@ -138,7 +147,7 @@ describe('POST …/integrations/google-calendar/oauth/start', () => {
     assert.equal(record.workspaceId, wid);
     assert.equal(record.provider, 'google_calendar');
     assert.equal(record.usedAt, null);
-    assert.equal(service.pkceChallenge(record.codeVerifier), params['code_challenge']);
+    assert.equal(pkceChallenge(record.codeVerifier), params['code_challenge']);
     assert.match(record.codeVerifier, /^[A-Za-z0-9_-]{43}$/);
     assert.ok(!url.href.includes(record.codeVerifier), 'the verifier never leaves the server');
   });
@@ -200,7 +209,7 @@ describe('PKCE', () => {
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=+$/, '');
-    assert.equal(service.pkceChallenge(verifier), expected);
+    assert.equal(pkceChallenge(verifier), expected);
     assert.match(expected, /^[A-Za-z0-9_-]{43}$/);
   });
 });
@@ -211,7 +220,7 @@ describe('the state: single use, 10 minutes, its provider, its browser', () => {
   it('expired after 10 minutes', async () => {
     const { state, nonce } = await start();
     assert.equal(
-      await service.completeGoogleCalendarOAuth({ state, code: 'c' }, nonce, later(10.5)),
+      await consume({ state, code: 'c' }, nonce, later(10.5)),
       '/en/integrations?oauth_error=oauth_state_expired',
     );
   });
@@ -219,14 +228,8 @@ describe('the state: single use, 10 minutes, its provider, its browser', () => {
   it('reused: the second callback is refused', async () => {
     const { state, nonce } = await start();
     const query = { state, error: 'access_denied' };
-    assert.equal(
-      await service.completeGoogleCalendarOAuth(query, nonce),
-      '/en/integrations?oauth_error=oauth_denied',
-    );
-    assert.equal(
-      await service.completeGoogleCalendarOAuth(query, nonce),
-      '/en/integrations?oauth_error=oauth_state_used',
-    );
+    assert.equal(await consume(query, nonce), '/en/integrations?oauth_error=oauth_denied');
+    assert.equal(await consume(query, nonce), '/en/integrations?oauth_error=oauth_state_used');
     const record = await (await models.getOAuthStateRepository()).findByStateHash(sha256(state));
     assert.ok(record?.usedAt instanceof Date);
   });
@@ -246,7 +249,7 @@ describe('the state: single use, 10 minutes, its provider, its browser', () => {
       createdAt: new Date(),
     });
     assert.equal(
-      await service.completeGoogleCalendarOAuth({ state, code: 'c' }, 'n'.repeat(43)),
+      await consume({ state, code: 'c' }, 'n'.repeat(43)),
       '/en/integrations?oauth_error=oauth_state_invalid',
     );
   });
@@ -254,7 +257,7 @@ describe('the state: single use, 10 minutes, its provider, its browser', () => {
   it('an unknown or malformed state is refused', async () => {
     for (const state of ['', 'short', 'x'.repeat(43), '<script>'.repeat(6)]) {
       assert.equal(
-        await service.completeGoogleCalendarOAuth({ state, code: 'c' }, null),
+        await consume({ state, code: 'c' }, null),
         '/en/integrations?oauth_error=oauth_state_invalid',
       );
     }
@@ -263,26 +266,23 @@ describe('the state: single use, 10 minutes, its provider, its browser', () => {
   it('another browser (no cookie, or another nonce) is refused, and that burns the state', async () => {
     const { state, nonce } = await start();
     assert.equal(
-      await service.completeGoogleCalendarOAuth({ state, code: 'c' }, null),
+      await consume({ state, code: 'c' }, null),
       '/en/integrations?oauth_error=oauth_state_invalid',
     );
     assert.equal(
-      await service.completeGoogleCalendarOAuth({ state, code: 'c' }, nonce),
+      await consume({ state, code: 'c' }, nonce),
       '/en/integrations?oauth_error=oauth_state_used',
     );
     const other = await start();
     assert.equal(
-      await service.completeGoogleCalendarOAuth({ state: other.state, code: 'c' }, nonce),
+      await consume({ state: other.state, code: 'c' }, nonce),
       '/en/integrations?oauth_error=oauth_state_invalid',
     );
   });
 
   it('returns to the language the flow started in', async () => {
     const { state, nonce } = await start({ lng: 'he' });
-    assert.equal(
-      await service.completeGoogleCalendarOAuth({ state }, nonce),
-      '/he/integrations?oauth_error=oauth_failed',
-    );
+    assert.equal(await consume({ state }, nonce), '/he/integrations?oauth_error=oauth_failed');
   });
 });
 

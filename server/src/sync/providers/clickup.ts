@@ -1,7 +1,8 @@
 /**
  * ClickUp adapter (read-only mirror, DATA.md §8). GET requests only.
  *
- * - Auth: the personal token as the raw `Authorization` header (secret `{token}`).
+ * - Auth: the integration's strategy's headers (`ctx.auth`): a personal token as the raw
+ *   `Authorization` header, an OAuth grant's bearer token.
  * - Rate limit: 100 requests a minute per token, so the client spaces requests 650 ms apart.
  * - `lists`: for every workspace (`GET /team`) its spaces, and for each space the lists inside
  *   folders (`/space/{id}/folder`) and the folderless ones (`/space/{id}/list`) → containers
@@ -29,7 +30,9 @@ import type {
 import { dateOnlyDueAt, epochMsToDate, localDateString, sortedStrings } from './trackerCommon.js';
 
 const PROVIDER = 'clickup' as const;
-const API = 'https://api.clickup.com/api/v2';
+/** ClickUp's API base: the sync's, the funnel's and the OAuth app's (definitions/clickup.ts). */
+export const CLICKUP_API = 'https://api.clickup.com/api/v2';
+const API = CLICKUP_API;
 /** 100 requests a minute per token (BACKEND.md §12), with headroom. */
 export const CLICKUP_MIN_INTERVAL_MS = 650;
 
@@ -207,14 +210,6 @@ function selectedTeams<T extends { id?: Id }>(ctx: AdapterContext, teams: T[]): 
   return teams.filter((team) => ids.has(String(team.id ?? '')));
 }
 
-function headers(ctx: AdapterContext): Record<string, string> {
-  // Fixtures mode has no secret: an empty value, and the fixture transport ignores headers.
-  // OAuth: a Bearer access token; a personal token goes as is.
-  const accessToken = ctx.secret['accessToken'];
-  if (accessToken !== undefined) return { authorization: `Bearer ${accessToken}` };
-  return { authorization: ctx.secret['token'] ?? '' };
-}
-
 async function get<T>(
   ctx: AdapterContext,
   path: string,
@@ -222,7 +217,7 @@ async function get<T>(
 ): Promise<T> {
   const url = new URL(`${API}${path}`);
   for (const [name, value] of params) url.searchParams.append(name, value);
-  const { data } = await ctx.client.getJson<T>(url.href, headers(ctx));
+  const { data } = await ctx.client.getJson<T>(url.href, await ctx.auth.headers());
   return data;
 }
 

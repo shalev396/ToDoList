@@ -39,7 +39,11 @@ import {
   RedirectRefusedError,
 } from './errors.js';
 import { GOOGLE_ENDPOINTS, mockGoogleEndpoint } from './providers/googleEndpoints.js';
-import { mockOAuthUrl, OAUTH_ENDPOINTS, OAUTH_PROVIDERS } from './providers/oauthEndpoints.js';
+import {
+  oauthMockOrigin,
+  OAUTH_PROVIDERS,
+  type OAuthProviderId,
+} from './providers/oauthEndpoints.js';
 
 export { ProviderHttpError } from './errors.js';
 
@@ -62,21 +66,46 @@ export const GOOGLE_TOKEN_URL: string = GOOGLE_ENDPOINTS.token;
 export const GOOGLE_REVOKE_URL: string = GOOGLE_ENDPOINTS.revoke;
 
 /**
+ * The token and revocation endpoints of the OAuth providers besides Google: with Google's, the
+ * only URLs exchangeToken() and revokeToken() may POST to. Written out here on purpose, not taken
+ * from the provider definitions (classes/integration/definitions): the network allow-list is this
+ * layer's own, so no definition can widen it. A test checks every definition's endpoints are on it.
+ */
+export const OAUTH_TOKEN_ENDPOINTS: Readonly<
+  Record<OAuthProviderId, { token: string; revoke: string | null }>
+> = {
+  github: { token: 'https://github.com/login/oauth/access_token', revoke: null },
+  jira: { token: 'https://auth.atlassian.com/oauth/token', revoke: null },
+  clickup: { token: 'https://api.clickup.com/api/v2/oauth/token', revoke: null },
+  linear: {
+    token: 'https://api.linear.app/oauth/token',
+    revoke: 'https://api.linear.app/oauth/revoke',
+  },
+};
+
+/**
  * The exact URLs exchangeToken() may POST to. Compared as written: a scheme, port, path, query or
  * case variant is refused, not normalized.
  */
 const TOKEN_EXCHANGE_URLS: ReadonlySet<string> = new Set([
   GOOGLE_TOKEN_URL,
-  ...OAUTH_PROVIDERS.map((provider) => OAUTH_ENDPOINTS[provider].token),
+  ...OAUTH_PROVIDERS.map((provider) => OAUTH_TOKEN_ENDPOINTS[provider].token),
 ]);
 const REVOKE_URLS: ReadonlySet<string> = new Set([
   GOOGLE_REVOKE_URL,
-  ...OAUTH_PROVIDERS.flatMap((provider) => OAUTH_ENDPOINTS[provider].revoke ?? []),
+  ...OAUTH_PROVIDERS.flatMap((provider) => OAUTH_TOKEN_ENDPOINTS[provider].revoke ?? []),
 ]);
 
 /** The provider stand-in's token or revoke URLs, while a test points at it. */
-const mockUrls = (name: 'token' | 'revoke'): string[] =>
-  OAUTH_PROVIDERS.flatMap((provider) => mockOAuthUrl(provider, name) ?? []);
+function mockUrls(name: 'token' | 'revoke'): string[] {
+  const origin = oauthMockOrigin();
+  if (origin === null) return [];
+  return OAUTH_PROVIDERS.flatMap((provider) =>
+    name === 'revoke' && OAUTH_TOKEN_ENDPOINTS[provider].revoke === null
+      ? []
+      : [`${origin}/${provider}/${name}`],
+  );
+}
 
 /** An allow-listed URL, or a stand-in's own while a test points at it. */
 const tokenUrlAllowed = (url: string): boolean =>

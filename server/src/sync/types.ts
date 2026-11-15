@@ -37,14 +37,41 @@ import type { Clock, ReadOnlyClient, Transport } from './http.js';
  * and hands the same object to every fetch() of the run, and never to another run, so an adapter
  * may key per-run memory on it (a WeakMap, as GitHub and Moodle do).
  */
+/** How an integration proves itself to its provider. */
+export type AuthKind = 'oauth' | 'api_key' | 'service_account';
+
+/**
+ * What a request is for: some providers sign a write differently (none today), and GitHub reads
+ * its Projects boards with a token of their own (`boards`).
+ */
+export type HeaderPurpose = 'read' | 'write' | 'boards';
+
+/**
+ * How a run's provider calls prove themselves: built by the integration's auth strategy
+ * (classes/integration/auth) from the opened secret. An adapter never builds an auth header from
+ * the secret itself: it asks here, once per call or per resource.
+ */
+export interface AdapterAuth {
+  readonly kind: AuthKind;
+  /**
+   * The auth headers of a call: a bearer token, Basic credentials, a personal token. A provider
+   * that trades its credential for a token first (Google) does so here, through the run's client.
+   * Fixtures mode has no secret: empty values (the fixture transport ignores headers).
+   */
+  headers(purpose?: HeaderPurpose): Promise<Readonly<Record<string, string>>>;
+  /** A credential the provider takes in the query string instead (Moodle's `wstoken`). */
+  query(): Readonly<Record<string, string>>;
+}
+
 export interface AdapterContext {
   integration: IntegrationData;
   /**
-   * The decrypted provider secret (DATA.md §3.5), e.g. `{token}` or `{email, token}`, valid only
-   * during this run: `{}` in fixtures mode. Use it to build request headers; never log, store,
-   * return or cache it.
+   * The decrypted provider secret (DATA.md §3.5), valid only during this run: `{}` in fixtures
+   * mode. Request headers come from `auth`, never from here; never log, store, return or cache it.
    */
   secret: Readonly<Record<string, string>>;
+  /** The run's auth headers, from the integration's auth strategy (AdapterAuth). */
+  auth: AdapterAuth;
   /** Built with the adapter's createClient() over the run's transport. */
   client: ReadOnlyClient;
   /** The run's time, for windows such as "events in the next 60 days". */

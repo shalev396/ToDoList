@@ -4,7 +4,7 @@
  */
 import { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
-import { OAUTH_ENDPOINTS } from '../../sync/providers/oauthEndpoints.js';
+import { ATLASSIAN_API } from '../../sync/providers/jira.js';
 import { asObject, asString } from '../../sync/providers/trackerCommon.js';
 import { isValidId } from './ids.js';
 
@@ -56,7 +56,7 @@ export function jiraSitesOf(
       out.push({
         id: cloudId,
         name: name(site?.['name'], cloudId),
-        base: `${OAUTH_ENDPOINTS.jira.api}/ex/jira/${cloudId}`,
+        base: `${ATLASSIAN_API}/ex/jira/${cloudId}`,
         siteUrl: url.replace(/\/+$/, ''),
       });
     }

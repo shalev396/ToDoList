@@ -1,7 +1,8 @@
 /**
  * Jira Cloud adapter (read-only mirror, DATA.md §8). GET requests only.
  *
- * - Auth: Basic base64(email:token) from the secret `{email, token}`. Site: `config.baseUrl`.
+ * - Auth: the integration's strategy's headers (`ctx.auth`: Basic email:token for an API token, a
+ *   bearer token for an OAuth grant). Site: `config.baseUrl`.
  * - `projects`: `GET /rest/api/3/project/search` (paged by startAt) → containers `type: project`.
  *   Always a full listing, so a project that disappears is swept.
  * - `issues`: `GET /rest/api/3/search/jql?jql=…&fields=…` (paged by `nextPageToken`) → `kind: issue`.
@@ -16,7 +17,6 @@
 import { isRestrictedName } from '../../builder/catalog.js';
 import type { ItemStatus } from '../../types/domain.js';
 import { createReadOnlyClient, ProviderHttpError } from '../http.js';
-import { OAUTH_ENDPOINTS } from './oauthEndpoints.js';
 import { registerAdapter } from '../registry.js';
 import type {
   AdapterContext,
@@ -31,6 +31,11 @@ import type { SyncStateData } from '../../models/definitions/SyncState.js';
 import { asDate, asObject, asString, dateOnlyDueAt, sortedStrings } from './trackerCommon.js';
 
 const PROVIDER = 'jira' as const;
+/**
+ * Atlassian's API gateway: an OAuth grant reads each chosen site under `<gateway>/ex/jira/<cloudId>`
+ * (and its OAuth app's identity calls go there: definitions/jira.ts).
+ */
+export const ATLASSIAN_API = 'https://api.atlassian.com';
 const PAGE_SIZE = 100;
 const PROJECT_PAGE_SIZE = 50;
 /** Jira throttles per endpoint with 429 + Retry-After (honoured by the client); keep a light gap. */
@@ -325,11 +330,11 @@ interface JiraSite {
  */
 function sitesOf(ctx: AdapterContext): JiraSite[] {
   const sites = ctx.integration.config['sites'];
-  if (ctx.integration.authMethod !== 'oauth' || !Array.isArray(sites)) {
+  if (ctx.auth.kind !== 'oauth' || !Array.isArray(sites)) {
     const base = baseUrlOf(ctx);
     return [{ base, siteUrl: base, prefix: '' }];
   }
-  const gateway = OAUTH_ENDPOINTS.jira.api;
+  const gateway = ATLASSIAN_API;
   const out: JiraSite[] = [];
   for (const site of sites as unknown[]) {
     const { cloudId, url } = obj(site) ?? {};
@@ -343,15 +348,6 @@ function sitesOf(ctx: AdapterContext): JiraSite[] {
   return out;
 }
 
-function headers(ctx: AdapterContext): Record<string, string> {
-  // OAuth: a Bearer access token. Fixtures mode has no secret: empty values, and the fixture
-  // transport ignores headers.
-  const accessToken = ctx.secret['accessToken'];
-  if (accessToken !== undefined) return { authorization: `Bearer ${accessToken}` };
-  const credential = `${ctx.secret['email'] ?? ''}:${ctx.secret['token'] ?? ''}`;
-  return { authorization: `Basic ${Buffer.from(credential).toString('base64')}` };
-}
-
 interface JiraMyself {
   accountId?: string;
   displayName?: string;
@@ -362,7 +358,7 @@ interface JiraMyself {
 async function fetchMyself(ctx: AdapterContext, site: JiraSite): Promise<JiraMyself> {
   const { data } = await ctx.client.getJson<JiraMyself>(
     `${site.base}/rest/api/3/myself`,
-    headers(ctx),
+    await ctx.auth.headers(),
   );
   return data;
 }
@@ -386,7 +382,7 @@ async function* fetchSiteProjects(
     const url = new URL(`${base}/rest/api/3/project/search`);
     url.searchParams.set('startAt', String(startAt));
     url.searchParams.set('maxResults', String(PROJECT_PAGE_SIZE));
-    const { data } = await ctx.client.getJson<ProjectPage>(url.href, headers(ctx));
+    const { data } = await ctx.client.getJson<ProjectPage>(url.href, await ctx.auth.headers());
     const values = data.values ?? [];
     const containers: MappedContainer[] = [];
     const failures: AdapterFailure[] = [];
@@ -456,7 +452,7 @@ async function* fetchIssues(
       url.searchParams.set('expand', 'names');
       url.searchParams.set('maxResults', String(PAGE_SIZE));
       if (pageToken !== null) url.searchParams.set('nextPageToken', pageToken);
-      const { data } = await ctx.client.getJson<SearchPage>(url.href, headers(ctx));
+      const { data } = await ctx.client.getJson<SearchPage>(url.href, await ctx.auth.headers());
       const items: MappedItem[] = [];
       const failures: AdapterFailure[] = [];
       for (const issue of data.issues ?? []) {

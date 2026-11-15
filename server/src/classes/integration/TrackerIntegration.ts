@@ -17,7 +17,6 @@
 import type { Caller } from '../base/Caller.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { cachedCreateOptions } from '../../services/providerCreate/funnel.js';
-import { transportForIntegration } from '../../services/oauth/transport.js';
 import { AppError } from '../../errors/AppError.js';
 import { fixtureSetDir } from '../../sync/fixtureSets.js';
 import { createReadOnlyClient, type ReadOnlyClient, type Transport } from '../../sync/http.js';
@@ -27,12 +26,12 @@ import type { AdapterContext, MappedItem } from '../../sync/types.js';
 import type {
   CreateOptionsQuery,
   CreateOptionsResponseData,
-  CreateStep,
   CreateTarget,
 } from '../../types/providerCreate.js';
-import type { SecretJson } from './auth/AuthStrategy.js';
+import type { AuthKind, SecretJson } from './auth/AuthStrategy.js';
 import type { CreatedTask, CreateTaskRequest, TaskProvider } from './capabilities.js';
 import type { TestableAdapter } from './connectionTest.js';
+import type { CreateRules } from './definitions/IntegrationDefinition.js';
 import { Integration } from './Integration.js';
 import {
   createWriteClient,
@@ -42,7 +41,7 @@ import {
   type WriteResult,
 } from './writers/trackerWriter.js';
 
-/** The recorded fixture set the funnel reads in the fixtures sync mode. */
+/** The recorded fixture set the funnel reads in the fixtures sync mode, unless the definition names one. */
 export const FIXTURE_SET = 'create-options';
 const CREATE_TIMEOUT_MS = 12_000;
 /** The read-back may take this long; then the create is reported as is. */
@@ -54,7 +53,9 @@ const READ_BACK_BUDGET_MS = 5_000;
  */
 export interface TrackerReadSession {
   integration: IntegrationData;
-  /** Authorization (and the provider's fixed headers) for this integration's calls. */
+  /** How it connects (its auth strategy's kind): a GitHub App's grant reads other repositories. */
+  authKind: AuthKind;
+  /** Authorization (its auth strategy's) and the provider's fixed headers for its calls. */
   headers: Record<string, string>;
   read: ReadOnlyClient;
   fixtures: boolean;
@@ -106,9 +107,6 @@ export abstract class TrackerIntegration<
   extends Integration<TConfig, TSecret, TrackerWriteSession>
   implements TaskProvider
 {
-  /** The steps of this provider's funnel, in order. */
-  protected abstract readonly createSteps: readonly CreateStep[];
-
   /**
    * One funnel step's choices. Only for a caller who could create here now: nothing is read at a
    * provider that cannot be written to (demo data, fixtures, a read-only integration).
@@ -118,7 +116,7 @@ export abstract class TrackerIntegration<
     query: CreateOptionsQuery,
   ): Promise<CreateOptionsResponseData> {
     this.assertWritable(caller);
-    if (!this.createSteps.includes(query.step)) {
+    if (!this.createRules.steps.includes(query.step)) {
       throw new AppError(400, 'step: not a step of this provider');
     }
     return cachedCreateOptions(`${caller.userId}|${this.id}|${JSON.stringify(query)}`, () =>
@@ -150,11 +148,27 @@ export abstract class TrackerIntegration<
     return { result: state.result, mapped: state.mapped };
   }
 
-  /** One step's options through the read session. */
-  protected abstract readOptions(
+  /** One step's options through the read session: the definition's funnel reader. */
+  protected readOptions(
     session: TrackerReadSession,
     query: CreateOptionsQuery,
-  ): Promise<CreateOptionsResponseData>;
+  ): Promise<CreateOptionsResponseData> {
+    const read = this.createRules.readOptions;
+    if (read === undefined) throw new AppError(400, 'step: not a step of this provider');
+    return read(session, query);
+  }
+
+  /** What can be created here (the definition's): the funnel's steps and reader. */
+  protected get createRules(): CreateRules {
+    const rules = this.definition?.create ?? null;
+    if (rules === null) throw new Error(`${this.provider} creates nothing`);
+    return rules;
+  }
+
+  /** The provider's fixed headers on every create-path call, beside the strategy's auth header. */
+  protected get providerHeaders(): Record<string, string> {
+    return {};
+  }
 
   /** Validates the target and builds the one create. Throws AppError (400) before anything is sent. */
   protected abstract prepare(
@@ -165,10 +179,11 @@ export abstract class TrackerIntegration<
 
   /** The provider's write session: the live transport, the read client and the write client. */
   protected createWriter(secret: TSecret): Promise<TrackerWriteSession> {
-    const transport = transportForIntegration(transportFactory(CREATE_TIMEOUT_MS), this.toJSON());
+    const transport = this.auth.transport(transportFactory(CREATE_TIMEOUT_MS));
     return Promise.resolve({
       integration: this.toJSON(),
-      headers: this.auth.headers(secret, 'write'),
+      authKind: this.auth.kind,
+      headers: { ...this.auth.headers(secret, 'write'), ...this.providerHeaders },
       read: this.readClient(transport),
       write: createWriteClient(transport, this.writeBases()),
       fixtures: false,
@@ -192,19 +207,22 @@ export abstract class TrackerIntegration<
   /** The funnel's read session: the recorded set in the fixtures mode, else the credential. */
   async #withFunnelSession<T>(fn: (session: TrackerReadSession) => Promise<T>): Promise<T> {
     if (this.usesFixtures) {
-      const set = await loadFixtureSet(fixtureSetDir({ provider: this.provider }, FIXTURE_SET));
+      const name = this.definition?.fixtures.createOptions ?? FIXTURE_SET;
+      const set = await loadFixtureSet(fixtureSetDir({ provider: this.provider }, name));
       return fn({
         integration: this.toJSON(),
+        authKind: this.auth.kind,
         headers: {},
         read: this.readClient(fixtureTransport(set)),
         fixtures: true,
       });
     }
     return this.withReadSession(({ headers }) => {
-      const transport = transportForIntegration(transportFactory(CREATE_TIMEOUT_MS), this.toJSON());
+      const transport = this.auth.transport(transportFactory(CREATE_TIMEOUT_MS));
       return fn({
         integration: this.toJSON(),
-        headers: { ...headers },
+        authKind: this.auth.kind,
+        headers: { ...headers, ...this.providerHeaders },
         read: this.readClient(transport),
         fixtures: false,
       });

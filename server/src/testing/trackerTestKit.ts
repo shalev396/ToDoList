@@ -76,12 +76,15 @@ export async function startKit(dbName: string): Promise<Kit> {
         ownerId: OWNER,
         settings: { topicRules: [] },
       });
+      // Connected with the provider's key, as a user's token connection is: its strategy builds
+      // the headers (loaded here, once the database has started: the definitions read the stage).
+      const { definitionOf } = await import('../classes/integration/definitions/index.js');
       const integration = await integrations.create(workspace.id, {
         connectedBy: OWNER,
         provider,
         accountId: `acct-${String(kits)}`,
         label: 'Demo',
-        authMethod: 'none',
+        authMethod: definitionOf(provider)?.keyMethods[0] ?? 'none',
         topicId: options.topicId === undefined ? 'work' : options.topicId,
         config: options.config ?? {},
       });

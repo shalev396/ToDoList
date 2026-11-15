@@ -4,7 +4,7 @@ import { GoogleCalendarOAuthController, ProviderOAuthController } from '../../co
 /**
  * OAuth callbacks (INTEGRATIONS-SETUP.md, conventions): the provider redirects the browser here,
  * so they are public. Authenticated by the single-use `state` (bound to the user, the workspace
- * and the browser) and PKCE; see services/googleCalendarOAuth.ts.
+ * and the browser) and PKCE; see classes/integration/OAuthFlow.ts.
  */
 const router = Router();
 
@@ -19,7 +19,7 @@ router.get('/google-calendar/callback', GoogleCalendarOAuthController.callback);
 // ─── GET /api/public/oauth/:provider/callback?code&state ────────────────────
 
 /**
- * GitHub, Jira, ClickUp and Linear (services/oauth/service.ts): the same contract as Google
+ * GitHub, Jira, ClickUp and Linear (OAuthFlow, the same flow): the same contract as Google
  * Calendar's callback. Any other `:provider` is a 404.
  */
 router.get('/:provider/callback', ProviderOAuthController.callback);

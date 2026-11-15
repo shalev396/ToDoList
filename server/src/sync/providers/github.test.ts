@@ -58,6 +58,8 @@ import {
   type RestRepo,
   type WorkItem,
 } from './github/mapping.js';
+import { bindAuth } from '../../classes/integration/definitions/IntegrationDefinition.js';
+import { GITHUB } from '../../classes/integration/definitions/github.js';
 
 const TZ = 'Asia/Jerusalem';
 const ME = 'shalev396';
@@ -793,10 +795,15 @@ function contextOf(
     integration?: IntegrationData;
   } = {},
 ): AdapterContext {
+  const integration = options.integration ?? integrationOf(options.config);
+  const secret = options.secret ?? {};
+  const client = githubAdapter.createClient(transport);
   return {
-    integration: options.integration ?? integrationOf(options.config),
-    secret: options.secret ?? {},
-    client: githubAdapter.createClient(transport),
+    integration,
+    secret,
+    client,
+    // The headers come from the integration's auth strategy, as in a run.
+    auth: bindAuth(GITHUB.auth, integration.authMethod, { secret, client, now: FIXTURE_NOW }),
     now: FIXTURE_NOW,
     timeZone: TZ,
     fullSyncDue: options.fullSyncDue ?? false,

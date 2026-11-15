@@ -22,7 +22,11 @@ import {
   type AppSecretName,
   type AppSecretSpec,
 } from './appSecrets.js';
-import { googleOAuthCredentials } from './googleOAuthClient.js';
+import { GOOGLE_CALENDAR_OAUTH } from '../classes/integration/definitions/googleCalendar.js';
+
+/** Google Calendar's OAuth app credentials, as its strategy reads them. */
+const googleOAuthCredentials = (): ReturnType<typeof GOOGLE_CALENDAR_OAUTH.credentials> =>
+  GOOGLE_CALENDAR_OAUTH.credentials();
 
 const NAMES: AppSecretName[] = [
   'google-calendar-oauth',

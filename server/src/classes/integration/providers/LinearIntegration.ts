@@ -1,40 +1,24 @@
 import type { Caller } from '../../base/Caller.js';
 import { AppError } from '../../../errors/AppError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
-import { logger } from '../../../services/logger.js';
-import { oauthClient } from '../../../services/oauth/client.js';
 import { readBackLinear } from '../../../services/providerCreate/created.js';
-import { linearOptions } from '../../../services/providerCreate/funnel.js';
 import { createReadOnlyClient, type ReadOnlyClient, type Transport } from '../../../sync/http.js';
-import { LINEAR_DOCUMENTS } from '../../../sync/providers/linear.js';
-import { oauthEndpoints } from '../../../sync/providers/oauthEndpoints.js';
+import { LINEAR_DOCUMENTS, LINEAR_ENDPOINT } from '../../../sync/providers/linear.js';
 import type { EmptyConfig } from '../../../types/integrations.js';
-import type {
-  CreateOptionsQuery,
-  CreateOptionsResponseData,
-  CreateTarget,
-} from '../../../types/providerCreate.js';
-import { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
-import type { HeaderBuilder } from '../auth/AuthStrategy.js';
-import { OAuthAuth } from '../auth/OAuthAuth.js';
+import type { CreateTarget } from '../../../types/providerCreate.js';
+import type { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
+import type { OAuthAuth } from '../auth/OAuthAuth.js';
 import type { Revocable, SupportsApiKey, SupportsOAuth } from '../capabilities.js';
+import { LINEAR, type LinearSecret } from '../definitions/linear.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
 import {
   TrackerIntegration,
   type PreparedCreate,
-  type TrackerReadSession,
   type TrackerWriteSession,
 } from '../TrackerIntegration.js';
 import { linearIssueInput, type CreateFields } from '../writers/trackerWriter.js';
 
-/** `{accessToken, refreshToken, …}` (OAuth) or `{apiKey}` (a personal API key). */
-export type LinearSecret = Readonly<{
-  accessToken?: string;
-  refreshToken?: string;
-  accessTokenExpiresAt?: string;
-  scope?: string;
-  apiKey?: string;
-}>;
+export type { LinearSecret };
 
 /** The funnel's Linear read documents, and the one that fetches a created issue. All queries. */
 export const LINEAR_CREATE_DOCUMENTS: Readonly<Record<string, string>> = {
@@ -60,14 +44,6 @@ export const LINEAR_CREATE_DOCUMENTS: Readonly<Record<string, string>> = {
 }`,
 };
 
-/** An OAuth grant's bearer token, or the personal API key as it is. */
-const linearHeaders: HeaderBuilder<LinearSecret> = (secret) => {
-  const accessToken = secret.accessToken;
-  return {
-    authorization: accessToken === undefined ? (secret.apiKey ?? '') : `Bearer ${accessToken}`,
-  };
-};
-
 /**
  * Linear: issues read through its GraphQL API (allow-listed documents only), an issue created in
  * a team (and project, state). Its OAuth grant is revoked at Linear when it is disconnected.
@@ -76,32 +52,23 @@ export class LinearIntegration
   extends TrackerIntegration<EmptyConfig, LinearSecret>
   implements Revocable, SupportsOAuth<LinearSecret>, SupportsApiKey<LinearSecret>
 {
-  static readonly #oauth = new OAuthAuth<LinearSecret>({
-    provider: 'linear',
-    refresh: 'stored',
-    headers: linearHeaders,
-  });
-  static readonly #apiKey = new ApiKeyAuth<LinearSecret>({
-    methods: ['personal_api_key'],
-    headers: linearHeaders,
-  });
+  /** What Linear is: its strategies, config, rules, adapter, funnel and fixtures. */
+  static readonly definition = LINEAR;
 
   static {
-    IntegrationRegistry.instance.register('linear', (data) => new LinearIntegration(data));
+    IntegrationRegistry.instance.register(LinearIntegration, (data) => new LinearIntegration(data));
   }
-
-  protected readonly createSteps = ['linearTeam', 'linearProject', 'state'] as const;
 
   private constructor(data: IntegrationData) {
     super(data);
   }
 
   get oauth(): OAuthAuth<LinearSecret> {
-    return LinearIntegration.#oauth;
+    return LinearIntegration.definition.auth.oauth;
   }
 
   get apiKey(): ApiKeyAuth<LinearSecret> {
-    return LinearIntegration.#apiKey;
+    return LinearIntegration.definition.auth.apiKey;
   }
 
   /** Its owner hands the OAuth grant back to Linear (revokeGrant). */
@@ -115,26 +82,8 @@ export class LinearIntegration
    * throws. Left in place when another live integration (any workspace) uses the same account,
    * whose grant revoking would end too.
    */
-  protected override async revokeGrant(): Promise<void> {
-    if (oauthEndpoints('linear').revoke === null) return;
-    try {
-      if (await this.sharesGrant()) return;
-      await this.withReadSession(async ({ secret }) => {
-        await oauthClient('linear').revokeToken(secret.refreshToken ?? secret.accessToken ?? '');
-      });
-    } catch (error) {
-      logger.warn('An OAuth grant could not be revoked', {
-        integrationId: this.id,
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-    }
-  }
-
-  protected readOptions(
-    session: TrackerReadSession,
-    query: CreateOptionsQuery,
-  ): Promise<CreateOptionsResponseData> {
-    return linearOptions(session, query);
+  protected override revokeGrant(): Promise<void> {
+    return this.handBackGrant('An OAuth grant could not be revoked');
   }
 
   /** The read client with the funnel's and the read-back's GraphQL documents. */
@@ -144,7 +93,7 @@ export class LinearIntegration
       transport,
       maxRetries: 1,
       graphql: {
-        endpoint: 'https://api.linear.app/graphql',
+        endpoint: LINEAR_ENDPOINT,
         documents: { ...LINEAR_CREATE_DOCUMENTS },
       },
     });

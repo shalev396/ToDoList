@@ -3,7 +3,8 @@
  * allow-listed below: the client refuses any other operation, and any document with a mutation
  * or subscription.
  *
- * - Auth: the personal API key as the raw `Authorization` header (secret `{apiKey}`).
+ * - Auth: the integration's strategy's headers (`ctx.auth`): a personal API key as the raw
+ *   `Authorization` header, an OAuth grant's bearer token.
  * - Rate limit: 2,500 requests an hour per key, so pages are 50 and requests are spaced 500 ms.
  * - `projects`: `Projects` (paged by `after`) → containers `type: project`. Always full.
  * - `issues`: `AssignedIssues` filtered to `assignee: {isMe: {eq: true}}` (paged by `after`).
@@ -29,7 +30,9 @@ import type {
 import { asDate, asString, dateOnlyDueAt, sortedStrings } from './trackerCommon.js';
 
 const PROVIDER = 'linear' as const;
-export const LINEAR_ENDPOINT = 'https://api.linear.app/graphql';
+/** Linear's API base: its GraphQL endpoint and its OAuth app's (definitions/linear.ts). */
+export const LINEAR_API = 'https://api.linear.app';
+export const LINEAR_ENDPOINT = `${LINEAR_API}/graphql`;
 const PAGE_SIZE = 50;
 const MIN_INTERVAL_MS = 500;
 
@@ -229,20 +232,12 @@ export function mapLinearIssue(issue: LinearIssue, env: LinearMapEnv): LinearMap
   return { item, container };
 }
 
-function headers(ctx: AdapterContext): Record<string, string> {
-  // OAuth: a Bearer access token. A personal API key goes as is. Fixtures mode has no secret:
-  // an empty value, and the fixture transport ignores headers.
-  const accessToken = ctx.secret['accessToken'];
-  if (accessToken !== undefined) return { authorization: `Bearer ${accessToken}` };
-  return { authorization: ctx.secret['apiKey'] ?? '' };
-}
-
 interface LinearViewer {
   viewer: { id?: string; name?: string; displayName?: string; email?: string };
 }
 
 async function fetchViewer(ctx: AdapterContext): Promise<LinearViewer['viewer']> {
-  const data = await ctx.client.graphql<LinearViewer>('Viewer', {}, headers(ctx));
+  const data = await ctx.client.graphql<LinearViewer>('Viewer', {}, await ctx.auth.headers());
   return data.viewer;
 }
 
@@ -264,7 +259,7 @@ async function* fetchProjects(ctx: AdapterContext): AsyncGenerator<AdapterPage, 
     const data: { projects: Connection<LinearProject> } = await ctx.client.graphql(
       'Projects',
       { first: PAGE_SIZE, after },
-      headers(ctx),
+      await ctx.auth.headers(),
     );
     const containers: MappedContainer[] = [];
     const failures: AdapterFailure[] = [];
@@ -319,7 +314,7 @@ async function* fetchIssues(
     const data: { issues: Connection<LinearIssue> } = await ctx.client.graphql(
       'AssignedIssues',
       { first: PAGE_SIZE, after, filter },
-      headers(ctx),
+      await ctx.auth.headers(),
     );
     const containers = new Map<string, MappedContainer>();
     const items: MappedItem[] = [];

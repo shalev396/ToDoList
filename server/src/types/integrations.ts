@@ -7,7 +7,7 @@
  * (models/definitions/Integration.ts) and nothing else.
  */
 import type { Query } from './builder.js';
-import type { SyncRunStatus, SyncTrigger } from './domain.js';
+import type { AuthMethod, SyncRunStatus, SyncTrigger } from './domain.js';
 
 /** Providers an owner can connect through the API. Slack, Notion and local are not among them. */
 export const CONNECTABLE_PROVIDERS = [
@@ -182,9 +182,34 @@ export interface OAuthProviderInfo {
   installUrl: string | null;
 }
 
+/**
+ * What a provider can do and how it connects, from its class (Integration.capabilitiesOf): the
+ * Integrations page reads this instead of keeping its own lists.
+ */
+export interface ProviderCapabilities {
+  provider: ConnectableProvider;
+  /** How users connect it: `oauth` (sign-in) first, then the key methods (never the demo's). */
+  authMethods: AuthMethod[];
+  /**
+   * What its OAuth grant lets its owner pick after connecting: Jira sites, ClickUp workspaces,
+   * Google calendars; null: nothing.
+   */
+  picker: 'sites' | 'workspaces' | 'calendars' | null;
+  /** TodoList hands the OAuth grant back to the provider when it is disconnected. */
+  revokesOnDisconnect: boolean;
+  /** Where a user revokes the app themselves when TodoList doesn't (null: nowhere to point). */
+  revokePage: string | null;
+  /** An item can be created there from a to-do ("Also create in"). */
+  canCreate: boolean;
+  /** Listed, but not open to connect yet. */
+  comingSoon: boolean;
+}
+
 export interface OAuthProvidersResponse {
   stage: 'dev' | 'qa' | 'prod';
   providers: OAuthProviderInfo[];
+  /** Every connectable provider's capabilities, in the order of CONNECTABLE_PROVIDERS. */
+  capabilities: ProviderCapabilities[];
 }
 
 /** A Jira site (cloud id) or ClickUp workspace a grant can read. */

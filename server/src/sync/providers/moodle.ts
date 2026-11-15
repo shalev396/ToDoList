@@ -252,7 +252,7 @@ function siteUrlOf(ctx: AdapterContext): string {
 }
 
 /**
- * One web-service call. The token is added to the query here and nowhere else. Moodle's own
+ * One web-service call. The token (the auth strategy's query) is added here and nowhere else. Moodle's own
  * error body (HTTP 200) becomes a ProviderHttpError without any of its text.
  */
 async function callMoodle<T>(
@@ -261,7 +261,7 @@ async function callMoodle<T>(
   params: Record<string, string> = {},
 ): Promise<T> {
   const url = new URL(`${siteUrlOf(ctx)}/webservice/rest/server.php`);
-  url.searchParams.set('wstoken', ctx.secret['token'] ?? '');
+  for (const [name, value] of Object.entries(ctx.auth.query())) url.searchParams.set(name, value);
   url.searchParams.set('wsfunction', wsfunction);
   url.searchParams.set('moodlewsrestformat', 'json');
   for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);

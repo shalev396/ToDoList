@@ -55,6 +55,8 @@ import {
   type GoogleCalendarEvent,
   type GoogleEventAttendee,
 } from './google_calendar.js';
+import { bindAuth } from '../../classes/integration/definitions/IntegrationDefinition.js';
+import { GOOGLE_CALENDAR_AUTH } from '../../classes/integration/definitions/googleCalendarAuth.js';
 
 const NOW = new Date('2026-11-12T08:00:00.000Z');
 const COLLEGE = 'college@example.invalid';
@@ -494,10 +496,13 @@ function contextFor(
   secret: Readonly<Record<string, string>>,
   clock?: Clock,
 ): AdapterContext {
+  const client = googleCalendarAdapter.createClient(transport, clock);
   return {
     integration: s.integration,
     secret,
-    client: googleCalendarAdapter.createClient(transport, clock),
+    client,
+    // The headers come from the integration's auth strategy, as in a run.
+    auth: bindAuth(GOOGLE_CALENDAR_AUTH, s.integration.authMethod, { secret, client, now: NOW }),
     now: NOW,
     timeZone: 'Asia/Jerusalem',
     fullSyncDue: false,

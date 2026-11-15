@@ -152,7 +152,7 @@ describe('capability contracts', () => {
     assert.deepEqual(row('google_calendar'), [false, true, true, true, false]);
     assert.deepEqual(row('moodle'), [false, false, false, false, true]);
     assert.deepEqual(row('slack'), [false, false, false, false, false]);
-    assert.equal(MoodleIntegration.comingSoon, true);
+    assert.equal(MoodleIntegration.definition.comingSoon, true);
   });
 
   it('each auth strategy shapes its own headers (OAuth bearer, API key as the provider wants it)', () => {

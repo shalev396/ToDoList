@@ -1,92 +1,93 @@
 import { AppError } from '../../../errors/AppError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
-import { oauthClient } from '../../../services/oauth/client.js';
-import { clickupTeams } from '../../../services/oauth/providers.js';
 import { readBackClickup } from '../../../services/providerCreate/created.js';
-import { clickupOptions } from '../../../services/providerCreate/funnel.js';
 import { checkedId } from '../../../services/providerCreate/ids.js';
 import type { ClickUpConfig, OAuthResource } from '../../../types/integrations.js';
-import type {
-  CreateOptionsQuery,
-  CreateOptionsResponseData,
-  CreateTarget,
-} from '../../../types/providerCreate.js';
-import { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
-import type { HeaderBuilder } from '../auth/AuthStrategy.js';
-import { OAuthAuth } from '../auth/OAuthAuth.js';
-import type { SupportsApiKey, SupportsOAuth } from '../capabilities.js';
-import { checkGrantSelection } from '../grantSelection.js';
+import type { CreateTarget } from '../../../types/providerCreate.js';
+import type { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
+import type { OAuthAuth } from '../auth/OAuthAuth.js';
+import type { Caller } from '../../base/Caller.js';
+import type { ResourcePicker, SupportsApiKey, SupportsOAuth } from '../capabilities.js';
+import { CLICKUP, clickupTeams, type ClickUpSecret } from '../definitions/clickup.js';
+import type { PickerKind } from '../definitions/IntegrationDefinition.js';
+import { grantResourcesFor } from '../grantSelection.js';
+import type { Integration } from '../Integration.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
 import {
   TrackerIntegration,
   type PreparedCreate,
-  type TrackerReadSession,
   type TrackerWriteSession,
 } from '../TrackerIntegration.js';
 import { clickupTaskBody, type CreateFields } from '../writers/trackerWriter.js';
 
-/** `{accessToken, …}` (OAuth) or `{token}` (a personal token). */
-export type ClickUpSecret = Readonly<{ accessToken?: string; scope?: string; token?: string }>;
-
-/** An OAuth grant's bearer token, or the personal token as it is. */
-const clickupHeaders: HeaderBuilder<ClickUpSecret> = (secret) => {
-  const accessToken = secret.accessToken;
-  return {
-    authorization: accessToken === undefined ? (secret.token ?? '') : `Bearer ${accessToken}`,
-  };
-};
+export type { ClickUpSecret };
 
 /** ClickUp: the tasks of the chosen workspaces' lists, and a task created in a list. */
 export class ClickUpIntegration
   extends TrackerIntegration<ClickUpConfig, ClickUpSecret>
-  implements SupportsOAuth<ClickUpSecret>, SupportsApiKey<ClickUpSecret>
+  implements
+    SupportsOAuth<ClickUpSecret>,
+    SupportsApiKey<ClickUpSecret>,
+    ResourcePicker<OAuthResource>
 {
-  static readonly #oauth = new OAuthAuth<ClickUpSecret>({
-    provider: 'clickup',
-    refresh: 'stored',
-    headers: clickupHeaders,
-  });
-  static readonly #apiKey = new ApiKeyAuth<ClickUpSecret>({
-    methods: ['personal_token'],
-    headers: clickupHeaders,
-  });
+  /** What ClickUp is: its strategies, config, rules, adapter, funnel and fixtures. */
+  static readonly definition = CLICKUP;
 
   static {
-    IntegrationRegistry.instance.register('clickup', (data) => new ClickUpIntegration(data));
+    IntegrationRegistry.instance.register(
+      ClickUpIntegration,
+      (data) => new ClickUpIntegration(data),
+    );
   }
-
-  protected readonly createSteps = ['workspace', 'space', 'folder', 'list'] as const;
 
   private constructor(data: IntegrationData) {
     super(data);
   }
 
   get oauth(): OAuthAuth<ClickUpSecret> {
-    return ClickUpIntegration.#oauth;
+    return ClickUpIntegration.definition.auth.oauth;
   }
 
   get apiKey(): ApiKeyAuth<ClickUpSecret> {
-    return ClickUpIntegration.#apiKey;
+    return ClickUpIntegration.definition.auth.apiKey;
   }
 
-  /** The workspaces an OAuth grant can read, live from ClickUp, for the owner to pick from. */
-  async grantResources(): Promise<OAuthResource[]> {
-    return this.withReadSession(({ secret }) =>
-      clickupTeams(oauthClient('clickup'), secret.accessToken ?? ''),
-    );
+  /** An OAuth grant reaches workspaces to pick from; a personal token reads what it reads. */
+  get pickerKind(): PickerKind | null {
+    return this.authKind === 'oauth' ? 'workspaces' : null;
   }
 
-  protected override checkSelection(
+  /** Its owner: the workspaces the OAuth grant can read, live from ClickUp. */
+  async pickerResources(caller: Caller): Promise<OAuthResource[]> {
+    this.assertOwner(caller);
+    return this.#grantTeams();
+  }
+
+  /** Its owner reads exactly these workspaces (each one the grant covers). */
+  async choose(caller: Caller, ids: readonly string[]): Promise<Integration> {
+    this.assertOwner(caller);
+    return this.update(caller, { config: { ...this.config, teamIds: [...ids] } });
+  }
+
+  /** The chosen `teamIds` of an OAuth connection, each one the grant covers (400 otherwise). */
+  protected override async checkSelection(
     config: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    return checkGrantSelection(this.data, config, () => this.grantResources());
+    const chosen = config['teamIds'];
+    if (this.authKind !== 'oauth' || chosen === undefined) return config;
+    const grant = await grantResourcesFor(this, () => this.#grantTeams());
+    const known = new Set(grant.map((resource) => resource.id));
+    if ((chosen as string[]).some((id) => !known.has(id))) {
+      throw new AppError(400, 'config.teamIds: not a workspace of this connection');
+    }
+    return config;
   }
 
-  protected readOptions(
-    session: TrackerReadSession,
-    query: CreateOptionsQuery,
-  ): Promise<CreateOptionsResponseData> {
-    return clickupOptions(session, query);
+  /** The workspaces the OAuth grant reaches, in a read session. */
+  async #grantTeams(): Promise<OAuthResource[]> {
+    return this.withReadSession(({ secret }) =>
+      clickupTeams(this.oauth.client(), secret.accessToken ?? ''),
+    );
   }
 
   protected prepare(

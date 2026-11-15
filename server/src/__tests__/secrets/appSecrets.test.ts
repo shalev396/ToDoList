@@ -20,9 +20,13 @@ import {
   resetAppSecretsForTests,
   type AppSecretName,
 } from '../../services/appSecrets.js';
-import { googleOAuthCredentials } from '../../services/googleOAuthClient.js';
+import { GOOGLE_CALENDAR_OAUTH } from '../../classes/integration/definitions/googleCalendar.js';
 import { logger } from '../../services/logger.js';
 import { findSecrets } from '../../services/secretPatterns.js';
+
+/** Google Calendar's OAuth app credentials, as its strategy reads them. */
+const googleOAuthCredentials = (): ReturnType<typeof GOOGLE_CALENDAR_OAUTH.credentials> =>
+  GOOGLE_CALENDAR_OAUTH.credentials();
 
 // ─── capture of stdout and stderr (the logger, console, the SDK) ─────────────────────────────────
 

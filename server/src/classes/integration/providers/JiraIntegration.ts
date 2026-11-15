@@ -1,50 +1,29 @@
 import { AppError } from '../../../errors/AppError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
-import { oauthClient } from '../../../services/oauth/client.js';
-import { jiraAccessibleSites } from '../../../services/oauth/providers.js';
 import { readBackJira } from '../../../services/providerCreate/created.js';
-import { jiraOptions, readJiraTeamField } from '../../../services/providerCreate/funnel.js';
+import { readJiraTeamField } from '../../../services/providerCreate/funnel.js';
 import { checkedId } from '../../../services/providerCreate/ids.js';
 import { jiraSitesOf, pickJiraSite } from '../../../services/providerCreate/jiraSites.js';
 import type { JiraConfig, OAuthResource } from '../../../types/integrations.js';
-import type {
-  CreateOptionsQuery,
-  CreateOptionsResponseData,
-  CreateTarget,
-} from '../../../types/providerCreate.js';
-import { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
-import type { HeaderBuilder } from '../auth/AuthStrategy.js';
-import { OAuthAuth } from '../auth/OAuthAuth.js';
-import type { SupportsApiKey, SupportsOAuth } from '../capabilities.js';
+import type { CreateTarget } from '../../../types/providerCreate.js';
+import type { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
+import type { OAuthAuth } from '../auth/OAuthAuth.js';
+import type { Caller } from '../../base/Caller.js';
+import type { ResourcePicker, SupportsApiKey, SupportsOAuth } from '../capabilities.js';
 import { labelWithSite } from '../connectionTest.js';
-import { checkGrantSelection } from '../grantSelection.js';
+import { JIRA, jiraAccessibleSites, type JiraSecret } from '../definitions/jira.js';
+import type { PickerKind } from '../definitions/IntegrationDefinition.js';
+import { grantResourcesFor } from '../grantSelection.js';
+import type { Integration } from '../Integration.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
 import {
   TrackerIntegration,
   type PreparedCreate,
-  type TrackerReadSession,
   type TrackerWriteSession,
 } from '../TrackerIntegration.js';
 import { jiraIssueBody, type CreateFields } from '../writers/trackerWriter.js';
 
-/** `{accessToken, refreshToken, …}` (OAuth) or `{email, token}` (an API token). */
-export type JiraSecret = Readonly<{
-  accessToken?: string;
-  refreshToken?: string;
-  accessTokenExpiresAt?: string;
-  scope?: string;
-  email?: string;
-  token?: string;
-}>;
-
-/** An OAuth grant's bearer token, or Basic with the account email and API token. */
-const jiraHeaders: HeaderBuilder<JiraSecret> = (secret) => {
-  const accessToken = secret.accessToken;
-  if (accessToken !== undefined) return { authorization: `Bearer ${accessToken}` };
-  return {
-    authorization: `Basic ${Buffer.from(`${secret.email ?? ''}:${secret.token ?? ''}`).toString('base64')}`,
-  };
-};
+export type { JiraSecret };
 
 /**
  * Jira: issues read from one or more sites (an OAuth grant's chosen sites through Atlassian's
@@ -52,62 +31,87 @@ const jiraHeaders: HeaderBuilder<JiraSecret> = (secret) => {
  */
 export class JiraIntegration
   extends TrackerIntegration<JiraConfig, JiraSecret>
-  implements SupportsOAuth<JiraSecret>, SupportsApiKey<JiraSecret>
+  implements SupportsOAuth<JiraSecret>, SupportsApiKey<JiraSecret>, ResourcePicker<OAuthResource>
 {
-  static readonly #oauth = new OAuthAuth<JiraSecret>({
-    provider: 'jira',
-    refresh: 'stored',
-    headers: jiraHeaders,
-  });
-  static readonly #apiKey = new ApiKeyAuth<JiraSecret>({
-    methods: ['api_token_basic'],
-    headers: jiraHeaders,
-  });
+  /** What Jira is: its strategies, config, rules, adapter, funnel and fixtures. */
+  static readonly definition = JIRA;
 
   static {
-    IntegrationRegistry.instance.register('jira', (data) => new JiraIntegration(data));
+    IntegrationRegistry.instance.register(JiraIntegration, (data) => new JiraIntegration(data));
   }
-
-  protected readonly createSteps = ['site', 'project', 'issueType', 'team'] as const;
 
   private constructor(data: IntegrationData) {
     super(data);
   }
 
   get oauth(): OAuthAuth<JiraSecret> {
-    return JiraIntegration.#oauth;
+    return JiraIntegration.definition.auth.oauth;
   }
 
   get apiKey(): ApiKeyAuth<JiraSecret> {
-    return JiraIntegration.#apiKey;
+    return JiraIntegration.definition.auth.apiKey;
   }
 
-  /** The sites an OAuth grant can read, live from Atlassian, for the owner to pick from. */
-  async grantResources(): Promise<OAuthResource[]> {
-    return this.withReadSession(async ({ secret }) =>
-      (await jiraAccessibleSites(oauthClient('jira'), secret.accessToken ?? '')).map((site) => ({
-        id: site.cloudId,
-        name: site.name,
-        url: site.url,
-      })),
-    );
+  /** An OAuth grant reaches sites to pick from; a token connection reads its one site. */
+  get pickerKind(): PickerKind | null {
+    return this.authKind === 'oauth' ? 'sites' : null;
   }
 
-  protected override checkSelection(
+  /** Its owner: the sites the OAuth grant can read, live from Atlassian. */
+  async pickerResources(caller: Caller): Promise<OAuthResource[]> {
+    this.assertOwner(caller);
+    return this.#grantSites();
+  }
+
+  /** Its owner reads exactly these sites (each one the grant covers), named as Atlassian names them. */
+  async choose(caller: Caller, ids: readonly string[]): Promise<Integration> {
+    this.assertOwner(caller);
+    const sites = new Map((await this.#grantSites()).map((site) => [site.id, site]));
+    const chosen = ids.flatMap((id) => {
+      const site = sites.get(id);
+      return site === undefined ? [] : [{ cloudId: site.id, url: site.url, name: site.name }];
+    });
+    if (ids.length === 0 || chosen.length !== ids.length) {
+      throw new AppError(400, 'config.sites: not a site of this connection');
+    }
+    return this.update(caller, { config: { ...this.config, sites: chosen } });
+  }
+
+  /**
+   * The chosen `sites` of an OAuth connection, each one the grant covers (400 otherwise). A
+   * site's `url` and `name` are Atlassian's own, never kept from the request, since the url
+   * becomes every issue's link.
+   */
+  protected override async checkSelection(
     config: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
-    return checkGrantSelection(this.data, config, () => this.grantResources());
+    const chosen = config['sites'];
+    if (this.authKind !== 'oauth' || chosen === undefined) return config;
+    const grant = await grantResourcesFor(this, () => this.#grantSites());
+    const byId = new Map(grant.map((resource) => [resource.id, resource]));
+    const sites = (chosen as { cloudId: string }[]).map(({ cloudId }) => byId.get(cloudId));
+    if (sites.some((site) => site === undefined)) {
+      throw new AppError(400, 'config.sites: not a site of this connection');
+    }
+    return {
+      ...config,
+      sites: sites.map((site) => ({ cloudId: site?.id, url: site?.url, name: site?.name })),
+    };
   }
 
   protected override learnedLabel(accountLabel: string): string {
     return labelWithSite(accountLabel, this.accountId);
   }
 
-  protected readOptions(
-    session: TrackerReadSession,
-    query: CreateOptionsQuery,
-  ): Promise<CreateOptionsResponseData> {
-    return jiraOptions(session, query);
+  /** The sites the OAuth grant reaches (its accessible resources), in a read session. */
+  async #grantSites(): Promise<OAuthResource[]> {
+    return this.withReadSession(async ({ secret }) =>
+      (await jiraAccessibleSites(this.oauth.client(), secret.accessToken ?? '')).map((site) => ({
+        id: site.cloudId,
+        name: site.name,
+        url: site.url,
+      })),
+    );
   }
 
   /** The write client creates only at this integration's own sites. */

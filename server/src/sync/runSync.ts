@@ -56,7 +56,7 @@ import { classifyTopic, defaultTopicForIntegration } from '../services/topicRule
 import { logger } from '../services/logger.js';
 import type { IntegrationStatus, SyncRunStatus, SyncTrigger } from '../types/domain.js';
 import type { SyncMode } from '../types/env.d.ts';
-import { transportForIntegration } from '../services/oauth/transport.js';
+import { sessionAuth, sessionTransport } from '../classes/integration/definitions/index.js';
 import { FixtureMissingError, ProviderHttpError } from './errors.js';
 import { containerSourceHash, itemSourceHash } from './hash.js';
 import type { Clock, Transport } from './http.js';
@@ -681,7 +681,7 @@ async function syncAll(
   if (adapter === null) throw new SyncRunError('no_adapter');
   const chosen = opts.transport ?? (await selectTransport(adapter, mode, opts.fixtureSet));
   // A test that points at its provider stand-in: live OAuth syncs reach only that stand-in.
-  const transport = mode === 'live' ? transportForIntegration(chosen, run.integration) : chosen;
+  const transport = mode === 'live' ? sessionTransport(run.integration, chosen) : chosen;
   const resources = [...new Set(adapter.resources(run.integration))];
   // Names starting with `__` are the engine's (`__run__`).
   if (resources.some((resource) => resource.startsWith('__'))) {
@@ -694,10 +694,13 @@ async function syncAll(
     fullSyncCompleted = await withProviderSecret(run.integration, mode, async (secret) => {
       progress.inSecretScope = true;
       // One context for every resource of the run (the contract): adapters key run memory on it.
+      const client = adapter.createClient(transport, opts.clock);
       const ctx: AdapterContext = {
         integration: run.integration,
         secret,
-        client: adapter.createClient(transport, opts.clock),
+        // The headers come from the integration's auth strategy, never from the adapter.
+        auth: sessionAuth(run.integration, secret, client, run.now),
+        client,
         now: run.now,
         timeZone: run.workspace.settings.timezone,
         fullSyncDue,

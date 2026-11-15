@@ -28,7 +28,8 @@
  * first 50 fields; per card, its first 50 field values (a board has at most 50 fields, so none is
  * missed), 20 assignees and 50 labels. `nodes(ids:)` batches 100 ids.
  *
- * Secret: `{token, projectsToken?}`. Repos and issues use `token`; boards use
+ * Auth: the integration's strategy's headers (`ctx.auth`). For personal tokens (`{token,
+ * projectsToken?}`), repos and issues use `token`; boards (`headers('boards')`) use
  * `projectsToken ?? token` (a classic token with `read:project`: fine-grained tokens can't read a
  * user's boards). In fixtures mode the secret is `{}` and the fixture transport ignores headers.
  */
@@ -84,7 +85,9 @@ import {
 } from './github/queries.js';
 
 const PROVIDER: Provider = 'github';
-const API_ORIGIN = 'https://api.github.com';
+/** GitHub's REST and GraphQL API: the sync's, the funnel's and the OAuth app's (definitions/github.ts). */
+export const GITHUB_API = 'https://api.github.com';
+const API_ORIGIN = GITHUB_API;
 const API_VERSION = '2022-11-28';
 /** GitHub refuses REST calls without a User-Agent. A generic client name, nothing personal. */
 const USER_AGENT = 'TodoList-sync';
@@ -185,28 +188,17 @@ function readConfig(config: Record<string, unknown>): GithubConfig {
 
 // ─── Requests ───────────────────────────────────────────────────────────────
 
-/** Built without asserting: the secret is `{}` in fixtures mode. */
-function repoToken(ctx: AdapterContext): string {
-  // A fine-grained PAT is `token`; a GitHub App user token (OAuth) is `accessToken`.
-  return ctx.secret['token'] ?? ctx.secret['accessToken'] ?? '';
-}
-
-/** Boards read with `projectsToken` when there is one, else with `token`. */
-function boardsToken(ctx: AdapterContext): string {
-  const projects = ctx.secret['projectsToken'];
-  return projects !== undefined && projects !== '' ? projects : repoToken(ctx);
-}
-
-function apiHeaders(token: string): Record<string, string> {
+/** GitHub's fixed headers beside the auth headers of the integration's strategy (`ctx.auth`). */
+function apiHeaders(auth: Readonly<Record<string, string>>): Record<string, string> {
   return {
-    authorization: `Bearer ${token}`,
+    ...auth,
     'x-github-api-version': API_VERSION,
     'user-agent': USER_AGENT,
   };
 }
 
-function restHeaders(token: string): Record<string, string> {
-  return { ...apiHeaders(token), accept: 'application/vnd.github+json' };
+function restHeaders(auth: Readonly<Record<string, string>>): Record<string, string> {
+  return { ...apiHeaders(auth), accept: 'application/vnd.github+json' };
 }
 
 function badResponse(status: number | null): ProviderHttpError {
@@ -342,7 +334,7 @@ function syncedRepos(memory: RunMemory): RepoRef[] {
 async function fetchLogin(ctx: AdapterContext): Promise<string> {
   const { status, data } = await ctx.client.getJson<unknown>(
     `${API_ORIGIN}/user`,
-    restHeaders(repoToken(ctx)),
+    restHeaders(await ctx.auth.headers()),
   );
   const login = nonEmpty(section(data)['login']);
   if (login === null) throw badResponse(status);
@@ -474,7 +466,7 @@ async function repoCounts(
     const data = await ctx.client.graphql<NodesData<RepoCountsNode>>(
       'RepoCounts',
       { ids },
-      apiHeaders(repoToken(ctx)),
+      apiHeaders(await ctx.auth.headers()),
     );
     byPosition(data, ids).forEach((node, index) => {
       const openIssues = node?.issues?.totalCount;
@@ -515,7 +507,7 @@ async function* fetchRepos(
   const etag = state?.etag ?? null;
   const reuse =
     !ctx.fullSyncDue && etag !== null && stored?.filter === filter ? { etag, stored } : null;
-  const headers = restHeaders(repoToken(ctx));
+  const headers = restHeaders(await ctx.auth.headers());
 
   let first: RestPage<RestRepo>;
   try {
@@ -649,7 +641,7 @@ async function listBoards(
   ctx: AdapterContext,
   owner: string,
 ): Promise<{ login: string; boards: GqlBoard[] }> {
-  const headers = apiHeaders(boardsToken(ctx));
+  const headers = apiHeaders(await ctx.auth.headers('boards'));
   const boards: GqlBoard[] = [];
   const cursors = new Set<string>();
   let login = owner;
@@ -673,7 +665,7 @@ async function listBoards(
 
 /** Every card of a board: the first page came with `Boards`, the rest come from `BoardItems`. */
 async function boardCards(ctx: AdapterContext, owner: string, board: GqlBoard): Promise<GqlCard[]> {
-  const headers = apiHeaders(boardsToken(ctx));
+  const headers = apiHeaders(await ctx.auth.headers('boards'));
   const cards = (board.items?.nodes ?? []).filter((card): card is GqlCard => card !== null);
   const cursors = new Set<string>();
   let after = nextCursor(board.items?.pageInfo, cursors);
@@ -854,7 +846,7 @@ async function pullDetails(
     const data = await ctx.client.graphql<NodesData<PullDetailsNode>>(
       'PullRequestDetails',
       { ids: batch },
-      apiHeaders(repoToken(ctx)),
+      apiHeaders(await ctx.auth.headers()),
     );
     byPosition(data, batch).forEach((node, index) => {
       const id = batch[index];
@@ -900,7 +892,7 @@ async function* fetchIssues(
   const full = ctx.fullSyncDue || cursor === null || state?.syncToken !== scope;
   const since = full ? null : cursor;
   const cutoff = new Date(ctx.now.getTime() - config.issues.closedWithinDays * DAY_MS);
-  const headers = restHeaders(repoToken(ctx));
+  const headers = restHeaders(await ctx.auth.headers());
 
   for (const repo of repos) {
     const url = issuesUrl(repo, since);
@@ -969,14 +961,14 @@ async function testConnection(ctx: AdapterContext): Promise<ConnectionTestResult
   if (owner === '') {
     return { accountLabel: login, capabilities: { repos: false, boards: false } };
   }
-  const repos = await works(() =>
-    ctx.client.getJson(reposUrl(ctx, config, 1), restHeaders(repoToken(ctx))),
+  const repos = await works(async () =>
+    ctx.client.getJson(reposUrl(ctx, config, 1), restHeaders(await ctx.auth.headers())),
   );
   const boards = await works(async () => {
     const data = await ctx.client.graphql<BoardsData>(
       'Boards',
       { owner, first: 1, after: null, items: 1 },
-      apiHeaders(boardsToken(ctx)),
+      apiHeaders(await ctx.auth.headers('boards')),
     );
     if ((data.repositoryOwner ?? null) === null) {
       throw new ProviderHttpError(PROVIDER, 200, 'not_found');

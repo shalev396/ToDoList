@@ -1,19 +1,18 @@
 import { type Request, type RequestHandler } from 'express';
 
 import { Actor } from '../classes/base/Actor.js';
+import { OAuthFlow } from '../classes/integration/index.js';
 import { OAUTH_STATE_TTL_MS } from '../models/definitions/OAuthState.js';
 import type {
   ListGoogleCalendarsResponseData,
   StartGoogleCalendarOAuthResponseData,
 } from '../routes/private/integrations.js';
+import { OAUTH_COOKIE, OAUTH_COOKIE_PATH } from '../services/oauth/common.js';
 import {
-  completeGoogleCalendarOAuth,
+  GOOGLE_CALENDAR_OAUTH_CLASS,
   listGoogleCalendars,
-  OAUTH_COOKIE,
-  OAUTH_COOKIE_PATH,
   StartOAuthBody,
-  startGoogleCalendarOAuth,
-} from '../services/googleCalendarOAuth.js';
+} from '../services/oauth/service.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
 
@@ -38,7 +37,7 @@ export function browserNonceOf(req: Request): string | null {
 const start: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(StartOAuthBody, req.body ?? {});
   const request = req as WorkspaceRequest;
-  const started = await startGoogleCalendarOAuth(request.workspace, request.caller.actor, body);
+  const started = await OAuthFlow.start(request.caller, GOOGLE_CALENDAR_OAUTH_CLASS, body);
   res.cookie(OAUTH_COOKIE, started.browserNonce, {
     ...cookieOptions(),
     maxAge: OAUTH_STATE_TTL_MS,
@@ -50,9 +49,9 @@ const start: RequestHandler = async (req, res): Promise<void> => {
 
 /** Public: Google's redirect lands here; always a 302 to the fixed client page. */
 const callback: RequestHandler = async (req, res): Promise<void> => {
-  const location = await completeGoogleCalendarOAuth(
-    req.query,
-    browserNonceOf(req),
+  const location = await OAuthFlow.consume(
+    GOOGLE_CALENDAR_OAUTH_CLASS,
+    { query: req.query, browserNonce: browserNonceOf(req) },
     new Date(),
     Actor.originOf(req),
   );

@@ -26,12 +26,11 @@ import {
 } from '../../services/crypto/secretHygiene.js';
 import { stageKeyProvider } from '../../services/crypto/stageKeyProvider.js';
 import { logger } from '../../services/logger.js';
-import { isOAuthProviderId } from '../../services/oauth/providers.js';
-import { accessTokenStale } from '../../services/oauth/secret.js';
 import { ProviderHttpError } from '../../sync/errors.js';
 import type { Provider } from '../../types/domain.js';
 import type { SecretJson } from './auth/AuthStrategy.js';
-import { OAuthAuth } from './auth/OAuthAuth.js';
+import type { OAuthAuth } from './auth/OAuthAuth.js';
+import { definitionOf } from './definitions/index.js';
 
 export type { SecretJson };
 
@@ -201,8 +200,10 @@ export class Credential<TSecret extends SecretJson = SecretJson> {
     } finally {
       plaintext.fill(0);
     }
-    if (isOAuthProviderId(provider) && accessTokenStale(secret, new Date())) {
-      secret = await this.refreshIfStale(OAuthAuth.storedToken(provider), workspaceId);
+    // The provider's OAuth strategy keeps a stored access token fresh (a per-call grant never is).
+    const oauth = definitionOf(provider)?.auth.oauth;
+    if (oauth?.needsRefresh(secret, new Date()) === true) {
+      secret = await this.refreshIfStale(oauth, workspaceId);
     }
     const values = secretValuesOf(secret);
     let result: T;

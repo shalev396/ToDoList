@@ -22,6 +22,7 @@ import type {
 import type { SecretJson } from './auth/AuthStrategy.js';
 import type { ApiKeyAuth } from './auth/ApiKeyAuth.js';
 import type { OAuthAuth } from './auth/OAuthAuth.js';
+import type { PickerKind } from './definitions/IntegrationDefinition.js';
 import type { Integration } from './Integration.js';
 import type { PlainEventBody } from './writers/calendarApi.js';
 import type { CreatedRecord, CreateFields, WriteResult } from './writers/trackerWriter.js';
@@ -92,6 +93,24 @@ export interface CalendarProvider extends CreateFunnel {
   push(caller: Caller, request: CalendarPushRequest): Promise<string>;
 }
 
+/** One thing a grant lets its owner pick: a Jira site, a ClickUp workspace, a calendar. */
+export interface PickerResource {
+  id: string;
+}
+
+/**
+ * A connection whose grant reaches several resources, of which its owner picks the ones to read
+ * (Jira sites, ClickUp workspaces, Google calendars). Its owner only.
+ */
+export interface ResourcePicker<R extends PickerResource = PickerResource> {
+  /** What this connection lets its owner pick now; null: nothing (a token connection reads its one site). */
+  readonly pickerKind: PickerKind | null;
+  /** The resources the grant reaches, live from the provider. */
+  pickerResources(caller: Caller): Promise<R[]>;
+  /** Reads exactly these from now on (each must be one the grant reaches: 400 otherwise). */
+  choose(caller: Caller, ids: readonly string[]): Promise<Integration>;
+}
+
 /** Connects through the provider's OAuth sign-in. */
 export interface SupportsOAuth<TSecret extends SecretJson = SecretJson> {
   readonly oauth: OAuthAuth<TSecret>;
@@ -122,6 +141,12 @@ export function isCreateFunnel(
   integration: Integration,
 ): integration is Integration & CreateFunnel {
   return hasMethod(integration, 'createOptions');
+}
+
+export function isResourcePicker(
+  integration: Integration,
+): integration is Integration & ResourcePicker {
+  return hasMethod(integration, 'pickerResources') && hasMethod(integration, 'choose');
 }
 
 export function isRevocable(integration: Integration): integration is Integration & Revocable {

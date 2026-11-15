@@ -23,6 +23,8 @@ import {
   TIME_ZONE,
   type Kit,
 } from '../../testing/trackerTestKit.js';
+import { bindAuth } from '../../classes/integration/definitions/IntegrationDefinition.js';
+import { CLICKUP } from '../../classes/integration/definitions/clickup.js';
 
 const API = 'https://api.clickup.com/api/v2';
 
@@ -173,10 +175,13 @@ function contextFor(
   transport: Transport,
   secret: Record<string, string> = {},
 ): AdapterContext {
+  const client = clickupAdapter.createClient(transport, instantClock());
   return {
     integration,
     secret,
-    client: clickupAdapter.createClient(transport, instantClock()),
+    client,
+    // The headers come from the integration's auth strategy, as in a run.
+    auth: bindAuth(CLICKUP.auth, integration.authMethod, { secret, client, now: FIXTURE_NOW }),
     now: FIXTURE_NOW,
     timeZone: TIME_ZONE,
     fullSyncDue: false,

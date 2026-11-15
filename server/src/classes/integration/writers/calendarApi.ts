@@ -63,7 +63,7 @@ function writtenEvent(data: unknown): WrittenEvent {
 }
 
 async function request(
-  accessToken: string,
+  auth: Readonly<Record<string, string>>,
   method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
   url: string,
   body?: unknown,
@@ -76,7 +76,7 @@ async function request(
     response = await fetch(url, {
       method,
       headers: {
-        authorization: `Bearer ${accessToken}`,
+        ...auth,
         accept: 'application/json',
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
         ...headers,
@@ -119,8 +119,8 @@ export interface CalendarReader {
   ): Promise<EventsPage>;
 }
 
-/** A reader acting with `accessToken`: GET events.list only. */
-export function calendarReader(accessToken: string): CalendarReader {
+/** A reader acting with the grant's auth headers (its strategy's): GET events.list only. */
+export function calendarReader(auth: Readonly<Record<string, string>>): CalendarReader {
   return {
     async list(calendarId, query, pageToken): Promise<EventsPage> {
       const url = new URL(eventsUrl(calendarId));
@@ -129,7 +129,7 @@ export function calendarReader(accessToken: string): CalendarReader {
       url.searchParams.set('maxResults', '250');
       for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value);
       if (pageToken !== null) url.searchParams.set('pageToken', pageToken);
-      const data = (await request(accessToken, 'GET', url.href)) as Record<string, unknown> | null;
+      const data = (await request(auth, 'GET', url.href)) as Record<string, unknown> | null;
       const items = Array.isArray(data?.['items']) ? (data['items'] as unknown[]) : [];
       const str = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
       return {
@@ -143,14 +143,14 @@ export function calendarReader(accessToken: string): CalendarReader {
   };
 }
 
-/** A writer acting with `accessToken` (kept by the caller for one push only). */
-export function calendarWriter(accessToken: string): CalendarWriter {
+/** A writer acting with the grant's auth headers (its strategy's, for one push only). */
+export function calendarWriter(auth: Readonly<Record<string, string>>): CalendarWriter {
   const call = (
     method: 'POST' | 'PATCH' | 'DELETE',
     url: string,
     body?: unknown,
     headers: Record<string, string> = {},
-  ): Promise<unknown> => request(accessToken, method, url, body, headers);
+  ): Promise<unknown> => request(auth, method, url, body, headers);
 
   return {
     async insert(calendarId, event): Promise<WrittenEvent> {

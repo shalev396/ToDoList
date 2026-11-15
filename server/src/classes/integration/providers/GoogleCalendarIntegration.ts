@@ -22,7 +22,6 @@ import {
   getSyncRunRepository,
   getSyncStateRepository,
 } from '../../../models/index.js';
-import { googleTokenClient, refreshAccessToken } from '../../../services/googleOAuthClient.js';
 import { logger } from '../../../services/logger.js';
 import { ProviderHttpError, type ReadOnlyClient } from '../../../sync/http.js';
 import { googleEndpoints } from '../../../sync/providers/googleEndpoints.js';
@@ -33,16 +32,19 @@ import type {
   CreateOptionsResponseData,
 } from '../../../types/providerCreate.js';
 import { cachedCreateOptions } from '../../../services/providerCreate/funnel.js';
-import { OAuthAuth } from '../auth/OAuthAuth.js';
+import type { OAuthAuth } from '../auth/OAuthAuth.js';
 import type {
   CalendarDryRun,
   CalendarProvider,
   CalendarPushRequest,
   GoogleCalendarEntry,
+  ResourcePicker,
   Revocable,
   SupportsOAuth,
 } from '../capabilities.js';
+import type { PickerKind } from '../definitions/IntegrationDefinition.js';
 import type { TestableAdapter } from '../connectionTest.js';
+import { GOOGLE_CALENDAR, type GoogleCalendarSecret } from '../definitions/googleCalendar.js';
 import { Integration } from '../Integration.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
 import {
@@ -56,13 +58,7 @@ import {
 import { applyOps, type OpResult } from '../writers/calendarOps.js';
 import type { WriteResult } from '../writers/trackerWriter.js';
 
-/** `{refreshToken, scope}` (OAuth) or `{clientEmail, privateKey}` (the demo's service account). */
-export type GoogleCalendarSecret = Readonly<{
-  refreshToken?: string;
-  scope?: string;
-  clientEmail?: string;
-  privateKey?: string;
-}>;
+export type { GoogleCalendarSecret };
 
 /** How long one push may write; the rest waits for the next run (API Gateway stops at 30 s). */
 export const PUSH_BUDGET_MS = 20_000;
@@ -148,18 +144,18 @@ async function pullOwnEvents(
 
 export class GoogleCalendarIntegration
   extends Integration<GoogleCalendarConfig, GoogleCalendarSecret, CalendarWriter>
-  implements CalendarProvider, Revocable, SupportsOAuth<GoogleCalendarSecret>
+  implements
+    CalendarProvider,
+    ResourcePicker<GoogleCalendarEntry>,
+    Revocable,
+    SupportsOAuth<GoogleCalendarSecret>
 {
-  /** The access token is fetched per call (refreshAccessToken), so the headers come from it. */
-  static readonly #oauth = new OAuthAuth<GoogleCalendarSecret>({
-    provider: 'google_calendar',
-    refresh: 'per_call',
-    headers: (): Record<string, string> => ({}),
-  });
+  /** What Google Calendar is: its strategies, config, rules, adapter and picker. */
+  static readonly definition = GOOGLE_CALENDAR;
 
   static {
     IntegrationRegistry.instance.register(
-      'google_calendar',
+      GoogleCalendarIntegration,
       (data) => new GoogleCalendarIntegration(data),
     );
   }
@@ -169,13 +165,13 @@ export class GoogleCalendarIntegration
   }
 
   get oauth(): OAuthAuth<GoogleCalendarSecret> {
-    return GoogleCalendarIntegration.#oauth;
+    return GoogleCalendarIntegration.definition.auth.oauth;
   }
 
   /** Its owner: the account's calendars (calendarList), primary first. */
   async listCalendars(caller: Caller): Promise<GoogleCalendarEntry[]> {
     this.assertOwner(caller);
-    return this.#withAccessToken(async (accessToken, client) => {
+    return this.#withGrant(async (auth, client) => {
       const entries: GoogleCalendarEntry[] = [];
       let pageToken: string | null = null;
       for (let page = 0; page < MAX_CALENDAR_PAGES; page += 1) {
@@ -184,7 +180,7 @@ export class GoogleCalendarIntegration
         if (pageToken !== null) url.searchParams.set('pageToken', pageToken);
         const { data } = await client.getJson<{ items?: unknown; nextPageToken?: unknown }>(
           url.href,
-          { authorization: `Bearer ${accessToken}` },
+          auth,
         );
         const items = Array.isArray(data.items) ? (data.items as unknown[]) : [];
         for (const item of items) {
@@ -198,6 +194,38 @@ export class GoogleCalendarIntegration
         pageToken = next;
       }
       return entries.sort((a, b) => Number(b.primary) - Number(a.primary));
+    });
+  }
+
+  /** A Google grant reaches the account's calendars to pick from (the demo's service account: none). */
+  get pickerKind(): PickerKind | null {
+    return this.authKind === 'oauth' ? 'calendars' : null;
+  }
+
+  /** Its owner: the account's calendars (listCalendars). */
+  pickerResources(caller: Caller): Promise<GoogleCalendarEntry[]> {
+    return this.listCalendars(caller);
+  }
+
+  /**
+   * Its owner reads exactly these calendars (each one of the account's: 400 otherwise). A calendar
+   * it already read keeps its mode, a new one is read only; the push target stays only if chosen.
+   */
+  async choose(caller: Caller, ids: readonly string[]): Promise<Integration> {
+    const calendars = new Set((await this.listCalendars(caller)).map((entry) => entry.id));
+    if (ids.some((id) => !calendars.has(id))) {
+      throw new AppError(400, 'config.calendars: not a calendar of this connection');
+    }
+    const { targetCalendarId, calendars: current, ...rest } = this.config;
+    const modes = new Map(current.map((calendar) => [calendar.id, calendar.mode]));
+    return this.update(caller, {
+      config: {
+        ...rest,
+        calendars: ids.map((id) => ({ id, mode: modes.get(id) ?? 'read' })),
+        ...(targetCalendarId !== undefined && ids.includes(targetCalendarId)
+          ? { targetCalendarId }
+          : {}),
+      },
     });
   }
 
@@ -344,37 +372,30 @@ export class GoogleCalendarIntegration
    * Disconnect: hands the grant back to Google (best effort: never throws). Left in place when
    * another live integration uses the same Google account, whose grant revoking would end too.
    */
-  protected override async revokeGrant(): Promise<void> {
-    try {
-      if (await this.sharesGrant()) return;
-      await this.withReadSession(async ({ secret }) => {
-        await googleTokenClient().revokeToken(secret.refreshToken ?? '');
-      });
-    } catch (error) {
-      logger.warn('A Google Calendar grant could not be revoked', {
-        integrationId: this.id,
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-    }
+  protected override revokeGrant(): Promise<void> {
+    return this.handBackGrant('A Google Calendar grant could not be revoked');
   }
 
-  /** The Calendar API writer, acting with a fresh access token for this one session. */
+  /** The Calendar API writer, acting with the strategy's headers (a fresh access token) for this one session. */
   protected async createWriter(secret: GoogleCalendarSecret): Promise<CalendarWriter> {
-    return calendarWriter(await refreshAccessToken(googleTokenClient(), secret.refreshToken ?? ''));
+    const auth = this.oauth.bind({ secret, client: this.oauth.client(), now: new Date() });
+    return calendarWriter(await auth.headers('write'));
   }
 
   protected probe(adapter: TestableAdapter, context: AdapterContext): Promise<unknown> {
     return adapter.test(context);
   }
 
-  /** Runs `fn` with a fresh access token for the integration's grant (a read session). */
-  async #withAccessToken<T>(
-    fn: (accessToken: string, client: ReadOnlyClient) => Promise<T>,
+  /**
+   * Runs `fn` with the grant's auth headers (its strategy trades the refresh token for a fresh
+   * access token) and the app's client, inside a read session.
+   */
+  async #withGrant<T>(
+    fn: (auth: Readonly<Record<string, string>>, client: ReadOnlyClient) => Promise<T>,
   ): Promise<T> {
     return this.withReadSession(async ({ secret }) => {
-      const client = googleTokenClient();
-      const accessToken = await refreshAccessToken(client, secret.refreshToken ?? '');
-      return fn(accessToken, client);
+      const client = this.oauth.client();
+      return fn(await this.oauth.bind({ secret, client, now: new Date() }).headers(), client);
     });
   }
 
@@ -390,8 +411,8 @@ export class GoogleCalendarIntegration
         now.getTime() - PAST_WINDOW_DAYS * 24 * 60 * 60 * 1000,
       ).toISOString();
       const calendars = [{ id: target, syncToken: state?.syncToken ?? null }];
-      return await this.#withAccessToken(async (accessToken) => {
-        const reader = calendarReader(accessToken);
+      return await this.#withGrant(async (auth) => {
+        const reader = calendarReader(auth);
         const results: PulledCalendar[] = [];
         for (const cal of calendars) {
           results.push(await pullOwnEvents(reader, cal.id, cal.syncToken, timeMin));

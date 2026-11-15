@@ -22,6 +22,8 @@ import {
   TIME_ZONE,
   type Kit,
 } from '../../testing/trackerTestKit.js';
+import { bindAuth } from '../../classes/integration/definitions/IntegrationDefinition.js';
+import { JIRA } from '../../classes/integration/definitions/jira.js';
 
 const BASE = 'https://example.invalid/jira';
 const ME = 'FAKE-jira-account-001';
@@ -316,10 +318,13 @@ function contextFor(
   transport: Transport,
   secret: Record<string, string> = {},
 ): AdapterContext {
+  const client = jiraAdapter.createClient(transport);
   return {
     integration,
     secret,
-    client: jiraAdapter.createClient(transport),
+    client,
+    // The headers come from the integration's auth strategy, as in a run.
+    auth: bindAuth(JIRA.auth, integration.authMethod, { secret, client, now: FIXTURE_NOW }),
     now: FIXTURE_NOW,
     timeZone: TIME_ZONE,
     fullSyncDue: false,

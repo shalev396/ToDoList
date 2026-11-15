@@ -4,7 +4,8 @@
  * load integrations return the provider's subclass.
  *
  * Credential is not exported: only Integration.ts opens a credential (vaultImports.test.ts), and
- * only the classes here reach a writer (writePaths.test.ts).
+ * only the classes here reach a writer (writePaths.test.ts). Each provider class declares what it
+ * is as one `static definition` (definitions/*); OAuthFlow is the one OAuth sign-in.
  */
 export {
   CREDENTIAL_MISSING,
@@ -18,10 +19,28 @@ export {
   type WriteSession,
 } from './Integration.js';
 export { Mode } from './Mode.js';
-export { IntegrationRegistry, type IntegrationFactory } from './IntegrationRegistry.js';
+export {
+  IntegrationRegistry,
+  type IntegrationFactory,
+  type ProviderClass,
+} from './IntegrationRegistry.js';
+export {
+  OAuthFlow,
+  type OAuthCallback,
+  type OAuthIntegrationClass,
+  type OAuthStart,
+  type OAuthStartInput,
+} from './OAuthFlow.js';
+export {
+  DEFINITIONS,
+  definitionOf,
+  IntegrationDefinition,
+  type PickerKind,
+} from './definitions/index.js';
 export {
   isCalendarProvider,
   isCreateFunnel,
+  isResourcePicker,
   isRevocable,
   isTaskProvider,
   supportsApiKey,
@@ -37,13 +56,15 @@ export {
   type CreateFunnel,
   type CreateTaskRequest,
   type GoogleCalendarEntry,
+  type PickerResource,
+  type ResourcePicker,
   type Revocable,
   type SupportsApiKey,
   type SupportsOAuth,
   type TaskProvider,
 } from './capabilities.js';
 export { AuthStrategy, type AuthKind, type SecretJson } from './auth/AuthStrategy.js';
-export { OAuthAuth, type RefreshPolicy } from './auth/OAuthAuth.js';
+export { OAuthAuth, type ProviderIdentity, type RefreshPolicy } from './auth/OAuthAuth.js';
 export { ApiKeyAuth } from './auth/ApiKeyAuth.js';
 export { ServiceAccountAuth } from './auth/ServiceAccountAuth.js';
 export { TrackerIntegration } from './TrackerIntegration.js';
