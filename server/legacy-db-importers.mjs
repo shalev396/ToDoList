@@ -57,7 +57,4 @@ export const AUDIT_LOG_WRITER = 'src/classes/AuditLog.ts';
  * Modules that still reach the database directly, until their phase moves them behind a class.
  * The list only shrinks: the boundary test fails on an entry that no longer needs to be here.
  */
-export const LEGACY_DB_IMPORTERS = [
-  'src/mcp/tools/workspace/auditLogQuery.ts',
-  'src/services/connectLinks.ts',
-];
+export const LEGACY_DB_IMPORTERS = ['src/mcp/tools/workspace/auditLogQuery.ts'];
