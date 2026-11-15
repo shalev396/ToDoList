@@ -928,7 +928,7 @@ priority` (issues; all four); GitHub `title, status` (issues; open, done, cancel
 - **`CalendarProvider`**: `updateEvent(caller, item, patch, notice?)` and `deleteEvent(caller,
 item, notice?)` by this integration's event item on a calendar it reads (never a raw id; an
   event with other guests needs `notifyGuests`, sent as `sendUpdates`); `deleteLinkedEvent(caller,
-link)` by its CalendarLink on the push target (tombstoned after); `createCalendar`
+link)` by its own live CalendarLink, on whichever calendar it was pushed to (tombstoned after; the calendar phase dropped the push-target check); `createCalendar`
   (`calendars.insert`; `scope_missing` without `calendar.app.created`); `insertEvent(…,
 recurrence)` with one RRULE line parsed by `RecurrenceRule`.
 - **Capabilities**: `ProviderCapabilities` gains `canUpdate`, `writableFields`, `writableKinds`
@@ -1674,6 +1674,31 @@ The rulings are in `.superpowers/sdd/2026-11-14-oop-redesign/progress.md` (the c
   a write with no answer is audited with `outcome: 'unknown'` (`ProviderNoAnswerError` for
   trackers); a partial write whose last step got no answer reads "may or may not have taken"
   (`uncertain`).
+
+### Calendar phase, fix round 1
+
+- **`CalendarLink`** (`classes/calendar/CalendarLink.ts`): the one rule every delete path shares
+  (`isOwnLive`: live, `to_google`, the event id TodoList gives the item). The push's deletes and
+  moves (`gcal/plan.ts`), `deleteLinkedEvent`, the clean-ups and an item's delete all use it.
+- **`CalendarLinks.in(workspaceId).onItemDeleted(itemId)`** (`classes/calendar/CalendarLinks.ts`):
+  replaces `GoogleCalendarIntegration.deleteEventsOfDeletedItem`; it goes through each
+  integration's public `deleteLinkedEvent` as its owner and never fails the delete.
+- **`AppCreatedCalendars`** (value object): the record of the calendars TodoList created (only
+  `createCalendar` adds, `without` forgets a deleted one, `keptIn` is the settings-change rule, `ids`
+  is the writer's `deletableCalendars`).
+- **`TimeBudget`** (value object, `WRITE_BUDGET_MS` = 20 s) and **`CalendarCleanup`** (template
+  method): `PushedEventsRemoval` ("Remove", `POST …/integrations/:iid/remove-pushed`) and
+  `AddedContentRemoval` (disconnect with removeAdded), over a `CleanupSubject` of the integration's
+  own writes. At least one step per call; out of time, `CleanupIncompleteError` (409
+  `cleanup_incomplete`, `{progress}`), and the disconnect does not go on.
+- **A calendar TodoList created is deleted** only when every live event in it is this
+  integration's own push (`todolistWs` of this workspace, TodoList's event id, an item it has a
+  link for); another workspace's push keeps it.
+- **The pull after a push** turns a move made in Google into the item's `overlay.plannedAt` (never
+  a due or start date), and changes only the integration owner's own items (I6).
+- **The push plan** reads one MongoDB filter (the owner's access, dated within the window, not
+  Google's own, not turned off): every live link's item, then the rest page by page within
+  `PLAN_BUDGET_MS`; deletes and moves never depend on a cut-off.
 
 ## Where the calendar phase left the old modules
 
