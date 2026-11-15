@@ -33,6 +33,7 @@ const { setCreateTransportForTests } = await import('../classes/integration/Trac
 const { setGoogleBaseUrlForTests } = await import('../sync/providers/googleEndpoints.js');
 const { setOAuthBaseUrlForTests } = await import('../sync/providers/oauthEndpoints.js');
 const { setVaultLoaderForTests } = await import('../sync/secrets.js');
+const { McpClient } = await import('../classes/mcp/McpClient.js');
 
 const SEAMS: Record<string, () => void> = {
   forceSyncModeForTests: () => {
@@ -86,6 +87,9 @@ const SEAMS: Record<string, () => void> = {
   setVaultLoaderForTests: () => {
     setVaultLoaderForTests(null);
   },
+  setMetadataFetchForTests: () => {
+    McpClient.setMetadataFetchForTests(null);
+  },
 };
 
 const SRC = fileURLToPath(new URL('../', import.meta.url));
@@ -136,7 +140,7 @@ describe("test seams are out of a server's reach", () => {
     for (const [file, text] of server) {
       for (const match of text.matchAll(SETTER_CALL)) {
         const before = text.slice(Math.max(0, match.index - 16), match.index);
-        if (!/function\s+$/.test(before)) found.push(`${file}: ${match[0]}`);
+        if (!/(?:function|static)\s+$/.test(before)) found.push(`${file}: ${match[0]}`);
       }
     }
     assert.deepEqual(found, []);
