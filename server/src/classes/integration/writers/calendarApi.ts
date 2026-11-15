@@ -18,15 +18,17 @@
  * Anything else (another calendar's delete, a clear, an ACL, a GET) is refused before it is
  * sent. The base is
  * Google's (googleEndpoints), or a test's stand-in. No redirect is followed, a call gives up after
- * 15 s, and a failure is a CalendarApiError with the HTTP status only: never a token, a body or a
+ * 8 s (STEP_CEILING_MS), and a failure is a CalendarApiError with the HTTP status only: never a token, a body or a
  * URL.
  */
 import { loopbackAllowedForTests } from '../../../config/testSwitches.js';
 import { assertPublicHttpsUrl } from '../../../services/netGuard.js';
 import { googleEndpoints } from '../../../sync/providers/googleEndpoints.js';
 import type { EventBody } from '../../../gcal/diff.js';
+import { STEP_CEILING_MS } from '../calendar/TimeBudget.js';
 
-const TIMEOUT_MS = 15_000;
+/** One call's longest wait: a request's TimeBudget starts a call only with this much left. */
+const TIMEOUT_MS = STEP_CEILING_MS;
 const MAX_BODY_CHARS = 1_000_000;
 
 export class CalendarApiError extends Error {

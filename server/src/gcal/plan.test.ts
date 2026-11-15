@@ -93,8 +93,29 @@ describe('the push plan with more than 200 candidates', () => {
       false,
     );
     assert.ok(plan.entries.some((entry) => entry.type === 'delete' && entry.itemId === removed));
-    // Removes go first.
-    assert.deepEqual([...new Set(plan.ops.map((op) => op.type))], ['delete']);
+    // A move's create goes right after its delete (moves first), so nothing is on neither
+    // calendar for long.
+    assert.deepEqual(
+      plan.ops.slice(0, 4).map((op) => [op.type, op.calendarId]),
+      [
+        ['delete', 'old@example.test'],
+        ['create', 'primary'],
+        ['delete', 'old@example.test'],
+        ['create', 'primary'],
+      ],
+    );
+    assert.equal(plan.ops[0]?.eventId, plan.ops[1]?.eventId);
+  });
+
+  it('a narrowed dry run keeps a filter on a computed field (Importance), never the whole set', async () => {
+    const none = await loadPlan(await integration(), NOW, {
+      where: { combinator: 'and', rules: [{ field: 'importance', operator: '>', value: 1000 }] },
+    });
+    assert.equal(none.counts.create, 0);
+    const all = await loadPlan(await integration(), NOW, {
+      where: { combinator: 'and', rules: [{ field: 'importance', operator: '>=', value: 0 }] },
+    });
+    assert.ok(all.counts.create > 0);
   });
 
   it('a narrowed dry run reads its range by planned dates too, and deletes nothing', async () => {

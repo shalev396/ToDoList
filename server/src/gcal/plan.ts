@@ -11,8 +11,9 @@
  * false`. It is read in two parts, so no cap ever hides an item:
  * - the items of the live links, all of them (in chunks): what to update or move, and, by their
  *   absence, which events to delete;
- * - the other items, page by page within PLAN_BUDGET_MS: what to create. One cut short by the
- *   budget only defers creates; the next run reads them first, since what was created is linked.
+ * - the other items, page by page while the request's budget keeps WRITE_RESERVE_MS for the
+ *   writes (a push plans and writes within one TimeBudget): what to create. One cut short only
+ *   defers creates; the next run reads them first, since what was created is linked.
  * Then the recently tombstoned links, and what is left of the daily creation cap.
  */
 import { AppError } from '../errors/AppError.js';
@@ -28,6 +29,7 @@ import { compileQuery, parseQuery } from '../builder/compile.js';
 import { Actor } from '../classes/base/Actor.js';
 import { Caller } from '../classes/base/Caller.js';
 import { CalendarLink } from '../classes/calendar/CalendarLink.js';
+import { TimeBudget, WRITE_BUDGET_MS } from '../classes/integration/calendar/TimeBudget.js';
 import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
 import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
 import { WorkspaceSettings } from '../classes/workspace/WorkspaceSettings.js';
@@ -48,8 +50,8 @@ import {
 export const DAILY_CREATE_CAP = 4000;
 export const DEFAULT_HORIZON_DAYS = 90;
 export const DEFAULT_MAX_OPS = 50;
-/** How long reading the items to create may take; the rest waits for the next run. */
-export const PLAN_BUDGET_MS = 5_000;
+/** What the plan leaves of the request's budget for the writes and the pull that follow. */
+export const WRITE_RESERVE_MS = 12_000;
 /** Items read per page (and link items per chunk). */
 const PAGE_SIZE = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -147,18 +149,25 @@ function localMidnight(day: string, timeZone: string): Date {
   );
 }
 
+/** A dry run's narrowing: filters on the stored fields, and the stages its rules compile to. */
+interface Narrowed {
+  filters: Filter[];
+  stages: Record<string, unknown>[];
+}
+
 /**
- * An MCP dry run's narrowing as filters: its rules (compiled by the Logic Bridge, like any query)
- * and its date range (planned dates included).
+ * An MCP dry run's narrowing: its rules, compiled by the Logic Bridge like any query (every stage
+ * between the base filter and the `$facet`, so a computed field such as Importance is added
+ * before the filter that reads it), and its date range (planned dates included).
  */
-function narrowingFilters(
+function narrowingOf(
   narrowing: PlanNarrowing | undefined,
   caller: Caller,
   policy: ItemPolicy,
   now: Date,
-): Filter[] {
-  if (narrowing === undefined) return [];
-  const filters: Filter[] = [];
+): Narrowed {
+  const narrowed: Narrowed = { filters: [], stages: [] };
+  if (narrowing === undefined) return narrowed;
   const timeZone = caller.settings.timezone;
   if (narrowing.where !== undefined) {
     const compiled = compileQuery(parseQuery({ source: 'items', where: narrowing.where }), {
@@ -172,9 +181,10 @@ function narrowingFilters(
       preview: false,
       attributes: AttributeDefinitions.of(caller.settings).toJSON(),
     });
-    // The pipeline is the base filter, then the query's own filters (when it has any).
-    const match = compiled.pipeline[1]?.['$match'];
-    if (typeof match === 'object' && match !== null) filters.push(match as Filter);
+    // The base filter's match first (already in `scope`), the `$facet` last: what is between is
+    // the query's own work (computed fields, then its filters).
+    const facet = compiled.pipeline.findIndex((stage) => '$facet' in stage);
+    narrowed.stages = compiled.pipeline.slice(1, facet === -1 ? undefined : facet);
   }
   const range = narrowing.range;
   if (range?.from !== undefined || range?.to !== undefined) {
@@ -183,9 +193,9 @@ function narrowingFilters(
       range.to === undefined
         ? new Date('2100-01-01T00:00:00Z')
         : new Date(localMidnight(range.to, timeZone).getTime() + DAY_MS - 1);
-    filters.push(datedWithin(spanOf(from, to, timeZone)));
+    narrowed.filters.push(datedWithin(spanOf(from, to, timeZone)));
   }
-  return filters;
+  return narrowed;
 }
 
 /** The fields the diff reads of an item. */
@@ -239,18 +249,21 @@ function toPushItem(doc: PushDoc): PushItem {
 
 /**
  * The push set's items, read in two parts (see the header): every item of `linked` still in it,
- * then, page by page within `budgetMs`, the others (one page at least).
+ * then, page by page while `budget` keeps the writes' reserve, the others (one page at least).
+ * `narrowed` are a dry run's own stages (its compiled filter), after the first match.
  */
 async function pushItems(
   workspaceId: string,
   scope: readonly Filter[],
+  narrowed: readonly Record<string, unknown>[],
   linked: readonly string[],
-  budgetMs: number,
+  budget: TimeBudget,
 ): Promise<PushItem[]> {
   const items = await getItemRepository();
   const read = (match: Filter[], extra: Record<string, unknown>[] = []): Promise<PushDoc[]> =>
     items.aggregate<PushDoc>(workspaceId, [
       { $match: { $and: match } },
+      ...narrowed,
       ...extra,
       { $project: PUSH_FIELDS },
     ]);
@@ -258,7 +271,6 @@ async function pushItems(
   for (let at = 0; at < linked.length; at += PAGE_SIZE) {
     found.push(...(await read([...scope, { _id: { $in: linked.slice(at, at + PAGE_SIZE) } }])));
   }
-  const deadline = Date.now() + budgetMs;
   let after: string | null = null;
   do {
     const unlinked: Filter =
@@ -266,7 +278,7 @@ async function pushItems(
     const page = await read([...scope, unlinked], [{ $sort: { _id: 1 } }, { $limit: PAGE_SIZE }]);
     found.push(...page);
     after = page.length < PAGE_SIZE ? null : (page.at(-1)?._id ?? null);
-  } while (after !== null && Date.now() < deadline);
+  } while (after !== null && budget.canStart(WRITE_RESERVE_MS));
   return found.map(toPushItem);
 }
 
@@ -294,6 +306,7 @@ export async function loadPlan(
   integration: IntegrationData,
   now: Date,
   narrowing?: PlanNarrowing,
+  budget: TimeBudget = TimeBudget.start(WRITE_BUDGET_MS),
 ): Promise<LoadedPlan> {
   const { workspaceId } = integration;
   const config = readGcalConfig(integration);
@@ -307,17 +320,19 @@ export async function loadPlan(
   const timeZone = caller.settings.timezone;
 
   const linkRepo = await getCalendarLinkRepository();
-  const [allLive, stones] = await Promise.all([
+  const [allLive, stones, kept] = await Promise.all([
     linkRepo.listLive(workspaceId, integration.id),
     linkRepo.listTombstonedSince(
       workspaceId,
       integration.id,
       new Date(now.getTime() - TOMBSTONE_MS),
     ),
+    linkRepo.listKeptStops(workspaceId, integration.id),
   ]);
   // Only links to events TodoList made are ever updated, moved or deleted (CalendarLink).
   const live = allLive.filter((link) => CalendarLink.isOwnLive(link));
-  const links: PushLink[] = [...live, ...stones];
+  const recent = new Set(stones.map((link) => link.id));
+  const links: PushLink[] = [...live, ...stones, ...kept.filter((link) => !recent.has(link.id))];
 
   // Everything its owner may see (their own, the shared integrations, the to-dos they may see).
   const policy = await ItemPolicy.for(caller);
@@ -326,16 +341,18 @@ export async function loadPlan(
     new Date(now.getTime() + config.horizonDays * DAY_MS),
     timeZone,
   );
+  const narrowed = narrowingOf(narrowing, caller, policy, now);
   const scope: Filter[] = [
     policy.itemFilter(caller.context),
     ...pushRule(window),
-    ...narrowingFilters(narrowing, caller, policy, now),
+    ...narrowed.filters,
   ];
   const items = await pushItems(
     workspaceId,
     scope,
+    narrowed.stages,
     live.map((link) => link.itemId),
-    PLAN_BUDGET_MS,
+    budget,
   );
 
   const cfg: PushConfig & { calendarId: string } = {

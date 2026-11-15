@@ -294,6 +294,10 @@ router.post(
 export interface RemovePushedResponseData {
   events: number;
   remaining: 0;
+  /** Events on the current workspace calendar, left in place. */
+  skipped: number;
+  /** Events Google refused to remove (no permission): no longer tracked. */
+  failed: number;
 }
 
 router.post(

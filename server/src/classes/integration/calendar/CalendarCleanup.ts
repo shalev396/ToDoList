@@ -1,6 +1,6 @@
 /**
  * Taking back what TodoList added at a Google calendar, always on its owner's explicit request
- * (never on its own), as a template method within a time budget:
+ * (never on its own), as a template method within the request's time budget:
  *
  * - `PushedEventsRemoval` ("Remove" on an earlier workspace calendar's leftovers, and the Change
  *   and Stop dialogs' checkbox): the integration's own live pushed events;
@@ -8,10 +8,17 @@
  *   events, then each calendar TodoList created on the integration that holds nothing else, then
  *   every link.
  *
+ * Rules every clean-up keeps:
+ * - the CURRENT workspace calendar is never touched (`isProtected`): its events are skipped and
+ *   it is never deleted, unless the clean-up is the disconnect of the very integration it is on;
+ * - a step Google refuses for good (no permission) is recorded and dropped from tracking, so the
+ *   next call moves on (`failed`); a busy or silent Google stops the call (the next one retries);
+ * - a step starts only while the budget leaves a call's longest time (TimeBudget#canStart), and
+ *   at least one step runs per call, so every call makes progress; when time runs out first,
+ *   CleanupIncompleteError (409 `cleanup_incomplete`) carries how far it got.
+ *
  * Each step's Google call is the integration's own (CleanupSubject: its write session, its audit,
- * its allow-list); this class only orders them and keeps the budget. At least one step runs per
- * call, so every call makes progress; when the budget runs out first, CleanupIncompleteError
- * (409 `cleanup_incomplete`) carries how far it got, and the next call goes on from there.
+ * its allow-list); this class only orders the steps and keeps the budget.
  */
 import {
   CleanupIncompleteError,
@@ -25,19 +32,24 @@ export type { CleanupProgress };
 /** Whether a calendar TodoList created holds anything it did not add: `gone` when Google no longer has it. */
 export type CalendarContents = 'others' | 'only_ours' | 'gone';
 
+/** How one step at Google ended: done, or refused for good (recorded, no longer tracked). */
+export type StepOutcome = 'done' | 'refused';
+
 /** What a clean-up asks of its integration: each a provider write or read of its own. */
 export interface CleanupSubject {
   /** Its own live links to events TodoList pushed (CalendarLink.isOwnLive). */
   ownLiveLinks(): Promise<CalendarLinkData[]>;
-  /** One pushed event deleted (write session, audited), then its link tombstoned. */
-  deleteLink(link: CalendarLinkData): Promise<void>;
+  /** Whether a calendar is the current workspace calendar, which this clean-up never touches. */
+  isProtected(calendarId: string): boolean;
+  /** One pushed event deleted (audited), then its link tombstoned. */
+  deleteLink(link: CalendarLinkData): Promise<StepOutcome>;
   /** The calendars TodoList created on it. */
   createdCalendars(): readonly string[];
   /** A read: what a calendar TodoList created holds. */
   contentsOf(calendarId: string): Promise<CalendarContents>;
-  /** A calendar TodoList created, deleted (write session, audited). */
-  deleteCalendar(calendarId: string): Promise<void>;
-  /** A calendar deleted (or gone) is no longer read or recorded as TodoList's. */
+  /** A calendar TodoList created, deleted (audited). */
+  deleteCalendar(calendarId: string): Promise<StepOutcome>;
+  /** A calendar deleted, gone or refused is no longer read or recorded as TodoList's. */
   forgetCalendar(calendarId: string): Promise<void>;
   /** Every link of the integration removed. */
   removeLinks(): Promise<void>;
@@ -53,6 +65,11 @@ export function setCleanupBudgetForTests(ms: number | null): void {
   budgetMs = ms ?? WRITE_BUDGET_MS;
 }
 
+/** A clean-up's budget, from now (the request's: WRITE_BUDGET_MS, or a test's). */
+export function cleanupBudget(): TimeBudget {
+  return TimeBudget.start(budgetMs);
+}
+
 export abstract class CalendarCleanup {
   protected readonly subject: CleanupSubject;
   readonly #budget: TimeBudget;
@@ -62,20 +79,24 @@ export abstract class CalendarCleanup {
     calendars: 0,
     calendarsKept: 0,
     remaining: 0,
+    skipped: 0,
+    failed: 0,
   };
 
-  constructor(subject: CleanupSubject, budget: TimeBudget = TimeBudget.start(budgetMs)) {
+  constructor(subject: CleanupSubject, budget: TimeBudget = cleanupBudget()) {
     this.subject = subject;
     this.#budget = budget;
   }
 
-  /** The template: the pushed events first, then the steps of the kind of clean-up. */
+  /** The template: the pushed events first (never the current calendar's), then the kind's steps. */
   async run(): Promise<CleanupProgress> {
     const links = await this.subject.ownLiveLinks();
-    for (const [index, link] of links.entries()) {
-      this.#stopIfOutOfTime(links.length - index + this.pendingAfterEvents());
-      await this.subject.deleteLink(link);
-      this.progress.events += 1;
+    const todo = links.filter((link) => !this.subject.isProtected(link.calendarId));
+    this.progress.skipped = links.length - todo.length;
+    for (const [index, link] of todo.entries()) {
+      this.stopIfOutOfTime(todo.length - index + this.pendingAfterEvents());
+      if ((await this.subject.deleteLink(link)) === 'done') this.progress.events += 1;
+      else this.progress.failed += 1;
     }
     await this.afterEvents();
     return { ...this.progress };
@@ -87,13 +108,9 @@ export abstract class CalendarCleanup {
   /** The steps after the events (none for a removal of pushed events alone). */
   protected abstract afterEvents(): Promise<void>;
 
-  /** One more step, unless the budget is spent after at least one step ran this call. */
+  /** One more step, unless a call can no longer end in time after at least one step ran. */
   protected stopIfOutOfTime(remaining: number): void {
-    this.#stopIfOutOfTime(remaining);
-  }
-
-  #stopIfOutOfTime(remaining: number): void {
-    if (this.#steps > 0 && this.#budget.exhausted) {
+    if (this.#steps > 0 && !this.#budget.canStart()) {
       throw new CleanupIncompleteError({ ...this.progress, remaining });
     }
     this.#steps += 1;
@@ -113,7 +130,7 @@ export class PushedEventsRemoval extends CalendarCleanup {
 
 /**
  * Everything TodoList added: the pushed events, then each calendar TodoList created that holds
- * nothing else (one that does is kept: its events are someone else's), then every link.
+ * nothing else (one that does, or the current workspace calendar, is kept), then every link.
  */
 export class AddedContentRemoval extends CalendarCleanup {
   protected pendingAfterEvents(): number {
@@ -123,6 +140,10 @@ export class AddedContentRemoval extends CalendarCleanup {
   protected async afterEvents(): Promise<void> {
     const calendars = this.subject.createdCalendars();
     for (const [index, calendarId] of calendars.entries()) {
+      if (this.subject.isProtected(calendarId)) {
+        this.progress.calendarsKept += 1;
+        continue;
+      }
       this.stopIfOutOfTime(calendars.length - index);
       const contents = await this.subject.contentsOf(calendarId);
       if (contents === 'others') {
@@ -130,8 +151,9 @@ export class AddedContentRemoval extends CalendarCleanup {
         continue;
       }
       if (contents === 'only_ours') {
-        await this.subject.deleteCalendar(calendarId);
-        this.progress.calendars += 1;
+        if ((await this.subject.deleteCalendar(calendarId)) === 'done')
+          this.progress.calendars += 1;
+        else this.progress.failed += 1;
       }
       await this.subject.forgetCalendar(calendarId);
     }

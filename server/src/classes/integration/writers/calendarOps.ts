@@ -49,16 +49,21 @@ async function applyOp(writer: CalendarWriter, op: WireOp): Promise<OpResult> {
   };
 }
 
-/** Every op, in order, until `deadline` (epoch ms); what is left is deferred. Never throws. */
+/**
+ * Every op, in order, while one more call (taking up to `ceilingMs`) still ends by `deadline`
+ * (epoch ms); what is left is deferred. Never throws.
+ */
 export async function applyOps(
   writer: CalendarWriter,
   ops: readonly WireOp[],
   deadline: number,
   now: () => number = Date.now,
+  ceilingMs = 0,
 ): Promise<OpResult[]> {
   const results: OpResult[] = [];
   for (const op of ops) {
-    if (now() > deadline) {
+    const left = deadline - now();
+    if (left < Math.max(0, ceilingMs)) {
       results.push({ opId: op.opId, ok: false, code: 'deferred' });
       continue;
     }

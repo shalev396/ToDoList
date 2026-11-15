@@ -162,13 +162,15 @@ describe('"Remove" the events of an earlier workspace calendar', () => {
       calendars: 0,
       calendarsKept: 0,
       remaining: 2,
+      skipped: 0,
+      failed: 0,
     });
     assert.equal(mock.events(ALICE.email).length, 2);
     assert.equal(await pushedEvents(), 2);
     setBudget(null);
     const done = await call('POST', `/integrations/${iid}/remove-pushed`);
     assert.equal(done.status, 200, done.text);
-    assert.deepEqual(data(done.body), { events: 2, remaining: 0 });
+    assert.deepEqual(data(done.body), { events: 2, remaining: 0, skipped: 0, failed: 0 });
     assert.equal(mock.events(ALICE.email).length, 0);
     assert.equal(await pushedEvents(), 0);
     const cleanups = await (
@@ -177,8 +179,8 @@ describe('"Remove" the events of an earlier workspace calendar', () => {
     assert.deepEqual(
       cleanups.map((entry) => entry.meta),
       [
-        { events: 2, calendars: 0, calendarsKept: 0, remaining: 0 },
-        { events: 1, calendars: 0, calendarsKept: 0, remaining: 2 },
+        { events: 2, calendars: 0, calendarsKept: 0, remaining: 0, skipped: 0, failed: 0 },
+        { events: 1, calendars: 0, calendarsKept: 0, remaining: 2, skipped: 0, failed: 0 },
       ],
     );
   });
@@ -225,17 +227,39 @@ describe('a disconnect whose clean-up runs out of time', () => {
       calendars: 0,
       calendarsKept: 0,
       remaining: 3,
+      skipped: 0,
+      failed: 0,
     });
     const still = await (await models.getIntegrationRepository()).findById(wid, iid);
     assert.equal(still?.deletedAt, null, 'still connected');
 
+    // Google refuses the next delete for good (no permission): it is counted, no longer tracked,
+    // and the call goes on to the next one instead of stopping there for ever.
+    mock.failNextWrite(403);
+    const refused = await call('DELETE', `/integrations/${iid}?removeAdded=true`);
+    assert.equal(refused.status, 409, refused.text);
+    assert.deepEqual(refused.body?.['progress'], {
+      events: 0,
+      calendars: 0,
+      calendarsKept: 0,
+      remaining: 2,
+      skipped: 0,
+      failed: 1,
+    });
+    const writes = await (
+      await models.getAuditLogRepository()
+    ).list(wid, { action: 'integration.write' }, 5);
+    assert.equal(writes[0]?.meta['outcome'], 'refused');
+
     setBudget(null);
     const done = await call('DELETE', `/integrations/${iid}?removeAdded=true`);
     assert.equal(done.status, 204, done.text);
+    // The refused event is still in Google, but it is this integration's own push (its link row
+    // stays until the links are removed), so the calendar TodoList made holds nothing else.
     assert.deepEqual(
       mock.createdCalendars().map((calendar) => calendar.id),
       [],
-      'the calendar TodoList made (empty of anything else) is gone',
+      'the calendar TodoList made (holding only its own pushes) is gone',
     );
     const gone = await (await models.getIntegrationRepository()).findIncludingDeleted(wid, iid);
     assert.ok(gone?.deletedAt instanceof Date);

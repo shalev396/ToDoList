@@ -45,6 +45,7 @@ import {
   getItemRepository,
   getSyncRunRepository,
   getSyncStateRepository,
+  getWorkspaceRepository,
 } from '../../../models/index.js';
 import { logger } from '../../../services/logger.js';
 import { checkedId } from '../../../services/providerCreate/ids.js';
@@ -89,13 +90,16 @@ import { CalendarLink } from '../../calendar/CalendarLink.js';
 import { AppCreatedCalendars } from '../calendar/AppCreatedCalendars.js';
 import {
   AddedContentRemoval,
+  cleanupBudget,
   PushedEventsRemoval,
-  type CalendarCleanup,
   type CalendarContents,
   type CleanupProgress,
   type CleanupSubject,
+  type StepOutcome,
 } from '../calendar/CalendarCleanup.js';
-import { WRITE_BUDGET_MS } from '../calendar/TimeBudget.js';
+import { STEP_CEILING_MS, TimeBudget, WRITE_BUDGET_MS } from '../calendar/TimeBudget.js';
+import type { PrimaryCalendar } from '../../workspace/PrimaryCalendar.js';
+import { WorkspaceSettings } from '../../workspace/WorkspaceSettings.js';
 import { EventEdit } from '../EventEdit.js';
 import { Integration } from '../Integration.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
@@ -166,6 +170,15 @@ function outcomeUnknown(error: unknown): boolean {
   return error.status === null || error.status >= 500;
 }
 
+/**
+ * A Google answer that refuses a clean-up step for good (no permission, a precondition, a rejected
+ * request): the step is recorded and dropped, not retried.
+ */
+function refusedForGood(error: unknown): boolean {
+  if (!(error instanceof CalendarApiError) || error.status === null) return false;
+  return [400, 403, 412, 422].includes(error.status);
+}
+
 /** Events.list from the start of time: every event of a calendar (deleted ones marked so). */
 const ALL_EVENTS_FROM = '1970-01-01T00:00:00.000Z';
 /** Pages read to decide whether a calendar TodoList created holds anything else. */
@@ -229,6 +242,7 @@ async function pullOwnEvents(
   calendarId: string,
   syncToken: string | null,
   timeMin: string,
+  budget: TimeBudget,
 ): Promise<PulledCalendar> {
   const out: PulledCalendar = {
     id: calendarId,
@@ -241,6 +255,7 @@ async function pullOwnEvents(
   const query = syncToken === null ? { timeMin } : { syncToken };
   let pageToken: string | null = null;
   for (let page = 0; page < MAX_PULL_PAGES; page += 1) {
+    if (page > 0 && !budget.canStart()) break;
     let result;
     try {
       result = await reader.list(calendarId, query, pageToken);
@@ -543,24 +558,22 @@ export class GoogleCalendarIntegration
   }
 
   /**
-   * "Also remove everything TodoList added" (before its owner disconnects it), within the write
-   * budget (AddedContentRemoval): only while it is read & write (409 `integration_read_only`,
-   * before anything is read or sent).
-   * 1. every live event TodoList pushed with it (deleteLinkedEvent's checks and write);
-   * 2. each calendar TodoList created on it (AppCreatedCalendars, nothing else ever), when it
-   *    holds nothing but this integration's own pushed events (contentsOf): one that holds the
-   *    user's events, or another workspace's, is kept;
+   * "Also remove everything TodoList added" (before its owner disconnects it), within the request's
+   * budget (AddedContentRemoval), in one write session: only while it is read & write (409
+   * `integration_read_only`, before anything is read or sent).
+   * 1. every live event TodoList pushed with it, except on the current workspace calendar unless
+   *    that calendar is this integration's own (a disconnect of the primary integration cleans it);
+   * 2. each calendar TodoList created on it (AppCreatedCalendars, nothing else ever) that holds
+   *    nothing but this integration's own pushes (contentsOf) and is not the current workspace
+   *    calendar of another integration: the user's events or another's push keep it;
    * 3. its links, every one.
-   * Out of time: CleanupIncompleteError with the progress (what was deleted stays deleted, so the
-   * next call goes on). Each Google write is audited as `integration.write`; each call as
-   * `integration.cleanup` with counts only.
+   * A step Google refuses for good is recorded and no longer tracked (`failed`). Out of time:
+   * CleanupIncompleteError with the progress (what was done stays done, so the next call goes
+   * on). Each Google write is audited as `integration.write`; each call as `integration.cleanup`.
    */
-  async removeAdded(caller: Caller): Promise<AddedRemoval> {
+  async removeAdded(caller: Caller, budget: TimeBudget = cleanupBudget()): Promise<AddedRemoval> {
     this.assertWritable(caller);
-    const removed = await this.#cleanUp(
-      caller,
-      new AddedContentRemoval(this.#cleanupSubject(caller)),
-    );
+    const removed = await this.#cleanUp(caller, 'added', budget);
     return {
       events: removed.events,
       calendars: removed.calendars,
@@ -570,23 +583,32 @@ export class GoogleCalendarIntegration
 
   /**
    * "Remove" the events TodoList pushed with it (an earlier workspace calendar's, or the old one's
-   * on Change and Stop), within the write budget (PushedEventsRemoval): its owner, read & write
-   * only. Each event goes through deleteLinkedEvent's checks and write, and its link is
-   * tombstoned. Out of time: CleanupIncompleteError with the progress.
+   * on Change and Stop), within the request's budget (PushedEventsRemoval): its owner, read &
+   * write only. The current workspace calendar's events are never touched (`skipped`), whichever
+   * integration it is on. Out of time: CleanupIncompleteError with the progress.
    */
-  async removePushed(caller: Caller): Promise<{ events: number; remaining: 0 }> {
+  async removePushed(
+    caller: Caller,
+    budget: TimeBudget = cleanupBudget(),
+  ): Promise<{ events: number; remaining: 0; skipped: number; failed: number }> {
     this.assertWritable(caller);
-    const removed = await this.#cleanUp(
-      caller,
-      new PushedEventsRemoval(this.#cleanupSubject(caller)),
-    );
-    return { events: removed.events, remaining: 0 };
+    const removed = await this.#cleanUp(caller, 'pushed', budget);
+    return {
+      events: removed.events,
+      remaining: 0,
+      skipped: removed.skipped,
+      failed: removed.failed,
+    };
   }
 
-  /** Its owner: how many events TodoList pushed with it are still live (a read of the links). */
+  /**
+   * Its owner: how many events TodoList pushed with it are still live outside the current
+   * workspace calendar (a read of the links): what "Remove" would take.
+   */
   async pushedEventCount(caller: Caller): Promise<number> {
     this.assertOwner(caller);
-    return (await this.#ownLiveLinks()).length;
+    const current = await this.#currentPrimaryCalendarId();
+    return (await this.#ownLiveLinks()).filter((link) => link.calendarId !== current).length;
   }
 
   /** Its owner: what a push would create, update and remove now. Nothing is written. */
@@ -605,12 +627,15 @@ export class GoogleCalendarIntegration
    * Calendar API inside the write session, the pull that follows, then the commit (gcal/commit.ts:
    * links, audit, the run's counts). A read-only integration is refused first (assertWritable),
    * before any run is recorded; the mode is the one this integration was loaded with, so a switch
-   * made while the push runs is seen by the next one. Ops left when PUSH_BUDGET_MS runs out wait
-   * for the next run; the pull reads back `calendarId`, the workspace's primary calendar the plan
-   * pushed to. Returns the run's id. 409 to reconnect, 502 when Google is silent (or the
+   * made while the push runs is seen by the next one. The request's budget (`budget`, which its
+   * plan already spent part of; PUSH_BUDGET_MS when absent) starts an op only while a call can
+   * still end in it: what is left waits for the next run. The pull reads back `calendarId`, the
+   * workspace's primary calendar the plan pushed to, within the same budget. Returns the run's id. 409 to reconnect, 502 when Google is silent (or the
    * credential can't be opened).
    */
-  async push(caller: Caller, { ops, now, calendarId }: CalendarPushRequest): Promise<string> {
+  async push(caller: Caller, request: CalendarPushRequest): Promise<string> {
+    const { ops, now, calendarId } = request;
+    const budget = request.budget ?? TimeBudget.start(PUSH_BUDGET_MS);
     this.assertWritable(caller);
     const { workspaceId } = this;
     const runs = await getSyncRunRepository();
@@ -622,9 +647,8 @@ export class GoogleCalendarIntegration
     });
     let opResults: OpResult[];
     try {
-      const deadline = Date.now() + PUSH_BUDGET_MS;
       opResults = await this.withWriteSession(caller, ({ writer }) =>
-        applyOps(writer, ops, deadline),
+        applyOps(writer, ops, budget.deadline, Date.now, STEP_CEILING_MS),
       );
     } catch (error) {
       const authFailed = error instanceof ProviderHttpError && error.code === 'auth_failed';
@@ -654,7 +678,7 @@ export class GoogleCalendarIntegration
     // The pull that follows the writes (their etags are the links' by then, so our echoes are
     // skipped): Google-side edits and deletes of what we pushed. A failed pull never fails the
     // push; the token is kept and the next run lists again.
-    const calendars = await this.#pullAfterPush(calendarId, now);
+    const calendars = await this.#pullAfterPush(calendarId, now, budget);
     await applyCommit(
       this.toJSON(),
       { runId: run.id, opResults, calendars },
@@ -748,37 +772,119 @@ export class GoogleCalendarIntegration
     await (await getCalendarLinkRepository()).tombstone(this.workspaceId, link.id, 'dashboard');
   }
 
-  /** A clean-up run for `caller`, audited as `integration.cleanup` (counts), complete or not. */
-  async #cleanUp(caller: Caller, cleanup: CalendarCleanup): Promise<CleanupProgress> {
+  /**
+   * One clean-up run for `caller`, in one write session (one grant exchange), audited as
+   * `integration.cleanup` (counts), complete or not. The current workspace calendar is protected,
+   * except for this integration's own disconnect when that calendar is this integration's.
+   */
+  async #cleanUp(
+    caller: Caller,
+    kind: 'added' | 'pushed',
+    budget: TimeBudget,
+  ): Promise<CleanupProgress> {
+    const primary = await this.#currentPrimary();
+    const exempt = kind === 'added' && primary?.isOn(this.id) === true;
+    const protectedId = exempt ? null : (primary?.calendarId ?? null);
+    let ownItems: Promise<ReadonlySet<string>> | null = null;
     try {
-      const done = await cleanup.run();
+      const done = await this.withWriteSession(caller, ({ writer }) => {
+        const subject: CleanupSubject = {
+          ownLiveLinks: () => this.#ownLiveLinks(),
+          isProtected: (calendarId) => calendarId === protectedId,
+          deleteLink: (link) =>
+            this.#refusable(
+              caller,
+              { operation: 'event.delete', itemId: link.itemId },
+              async () => {
+                await writer.remove(
+                  checkedId('calendarId', link.calendarId, 'link'),
+                  checkedId('eventId', link.googleEventId, 'link'),
+                );
+                return async () => {
+                  await (
+                    await getCalendarLinkRepository()
+                  ).tombstone(this.workspaceId, link.id, 'dashboard');
+                };
+              },
+            ),
+          createdCalendars: () => this.#createdCalendars.ids,
+          contentsOf: (calendarId): Promise<CalendarContents> => {
+            if (calendarId === protectedId) return Promise.resolve('others');
+            ownItems ??= this.#linkedItemIds();
+            return this.#contentsOf(calendarId, ownItems);
+          },
+          deleteCalendar: (calendarId) =>
+            this.#refusable(caller, { operation: 'calendar.delete' }, async () => {
+              await writer.removeCalendar(calendarId);
+              return () => Promise.resolve();
+            }),
+          forgetCalendar: (calendarId) => this.#forgetCalendar(calendarId),
+          removeLinks: async (): Promise<void> => {
+            await (
+              await getCalendarLinkRepository()
+            ).removeForIntegration(this.workspaceId, this.id);
+          },
+        };
+        const cleanup =
+          kind === 'added'
+            ? new AddedContentRemoval(subject, budget)
+            : new PushedEventsRemoval(subject, budget);
+        return cleanup.run();
+      });
       await AuditLog.record(caller, Integration.Audit.cleanup, this, { ...done });
       return done;
     } catch (error) {
       if (error instanceof CleanupIncompleteError) {
         await AuditLog.record(caller, Integration.Audit.cleanup, this, { ...error.progress });
+        throw error;
       }
-      throw error;
+      throw calendarFailure(error);
     }
   }
 
-  /** What a clean-up asks of this integration: its own writes, reads and records. */
-  #cleanupSubject(caller: Caller): CleanupSubject {
-    let ownItems: Promise<ReadonlySet<string>> | null = null;
-    return {
-      ownLiveLinks: () => this.#ownLiveLinks(),
-      deleteLink: (link) => this.#deleteLink(caller, link),
-      createdCalendars: () => this.#createdCalendars.ids,
-      contentsOf: (calendarId): Promise<CalendarContents> => {
-        ownItems ??= this.#linkedItemIds();
-        return this.#contentsOf(calendarId, ownItems);
-      },
-      deleteCalendar: (calendarId) => this.#removeCreatedCalendar(caller, calendarId),
-      forgetCalendar: (calendarId) => this.#forgetCalendar(calendarId),
-      removeLinks: async (): Promise<void> => {
-        await (await getCalendarLinkRepository()).removeForIntegration(this.workspaceId, this.id);
-      },
-    };
+  /**
+   * One clean-up step at Google, audited as `integration.write` with `meta`: done (then `after`,
+   * the step's own bookkeeping), or refused for good (Google said no: a 400, 403, 412 or 422),
+   * which is recorded (`outcome: 'refused'`) and dropped from tracking all the same, so the next
+   * call moves on. An outcome Google left unknown (no answer, a 5xx) is recorded as such and stops
+   * the call, as do a 401 (reconnect) and a 429 (busy): the next call retries.
+   */
+  async #refusable(
+    caller: Caller,
+    meta: Record<string, unknown>,
+    step: () => Promise<() => Promise<void>>,
+  ): Promise<StepOutcome> {
+    let after: () => Promise<void>;
+    try {
+      after = await step();
+    } catch (error) {
+      if (outcomeUnknown(error)) {
+        await this.recordWrite(caller, { ...meta, outcome: 'unknown' });
+        throw error;
+      }
+      if (!refusedForGood(error)) throw error;
+      await this.recordWrite(caller, { ...meta, outcome: 'refused' });
+      if (typeof meta['itemId'] === 'string') {
+        const links = await getCalendarLinkRepository();
+        const found = await links.findByItem(this.workspaceId, this.id, meta['itemId']);
+        if (found !== null) await links.tombstone(this.workspaceId, found.id, 'dashboard');
+      }
+      return 'refused';
+    }
+    await this.recordWrite(caller, meta);
+    await after();
+    return 'done';
+  }
+
+  /** The workspace's primary calendar as stored now (null: none). */
+  async #currentPrimary(): Promise<PrimaryCalendar | null> {
+    const workspace = await (await getWorkspaceRepository()).findById(this.workspaceId);
+    return workspace === null ? null : WorkspaceSettings.from(workspace.settings).primaryCalendar;
+  }
+
+  /** The current workspace calendar's id (null: none). */
+  async #currentPrimaryCalendarId(): Promise<string | null> {
+    return (await this.#currentPrimary())?.calendarId ?? null;
   }
 
   /** The items this integration has a link for, live or tombstoned: what it pushed. */
@@ -789,21 +895,6 @@ export class GoogleCalendarIntegration
       links.listTombstonedSince(this.workspaceId, this.id, new Date(0)),
     ]);
     return new Set([...live, ...stones].map((link) => link.itemId));
-  }
-
-  /**
-   * A calendar TodoList created on this integration, deleted (the write session's writer refuses
-   * any other calendar). Audited as `integration.write` (`calendar.delete`).
-   */
-  async #removeCreatedCalendar(caller: Caller, calendarId: string): Promise<void> {
-    const meta = { operation: 'calendar.delete' };
-    try {
-      await this.withWriteSession(caller, ({ writer }) => writer.removeCalendar(calendarId));
-    } catch (error) {
-      if (outcomeUnknown(error)) await this.recordWrite(caller, { ...meta, outcome: 'unknown' });
-      throw calendarFailure(error);
-    }
-    await this.recordWrite(caller, meta);
   }
 
   /**
@@ -994,8 +1085,13 @@ export class GoogleCalendarIntegration
     });
   }
 
-  /** The pull for the primary calendar the push went to, with its own grant; nothing when it fails. */
-  async #pullAfterPush(target: string, now: Date): Promise<PulledCalendar[]> {
+  /**
+   * The pull for the primary calendar the push went to, with its own grant, within the request's
+   * budget (a page only while a call can still end in it; a cut listing is partial, so its token
+   * is not saved); nothing when it fails or no time is left.
+   */
+  async #pullAfterPush(target: string, now: Date, budget: TimeBudget): Promise<PulledCalendar[]> {
+    if (!budget.canStart()) return [];
     try {
       const state = await (
         await getSyncStateRepository()
@@ -1008,7 +1104,7 @@ export class GoogleCalendarIntegration
         const reader = calendarReader(auth);
         const results: PulledCalendar[] = [];
         for (const cal of calendars) {
-          results.push(await pullOwnEvents(reader, cal.id, cal.syncToken, timeMin));
+          results.push(await pullOwnEvents(reader, cal.id, cal.syncToken, timeMin, budget));
         }
         return results;
       });

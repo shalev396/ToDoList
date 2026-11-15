@@ -474,7 +474,7 @@ describe('disconnect with "Also remove everything TodoList added to this calenda
       null,
     );
     assert.deepEqual(await audits('integration.cleanup'), [
-      { events: 2, calendars: 1, calendarsKept: 2, remaining: 0 },
+      { events: 2, calendars: 1, calendarsKept: 2, remaining: 0, skipped: 0, failed: 0 },
     ]);
     const stored = await (await models.getIntegrationRepository()).findIncludingDeleted(wid, iid);
     assert.ok(stored?.deletedAt instanceof Date);

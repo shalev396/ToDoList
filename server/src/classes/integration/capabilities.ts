@@ -9,6 +9,7 @@
  * (Integration#withWriteSession), the one place that refuses demo data and read-only
  * integrations.
  */
+import type { TimeBudget } from './calendar/TimeBudget.js';
 import type { Caller } from '../base/Caller.js';
 import type { Revocable } from '../base/contracts.js';
 import type { PlanEntry, SkippedItem, WireOp } from '../../gcal/diff.js';
@@ -138,6 +139,8 @@ export interface CalendarPushRequest {
   ops: readonly WireOp[];
   now: Date;
   calendarId: string;
+  /** The request's time budget (its plan already spent part of it); a fresh one when absent. */
+  budget?: TimeBudget;
 }
 
 /** What "Also remove everything TodoList added" removed (counts only). */
@@ -160,7 +163,9 @@ export interface AddedContentRemover {
   /** "Also remove everything TodoList added", before a disconnect. */
   removeAdded(caller: Caller): Promise<AddedRemoval>;
   /** "Remove" the events it pushed (an earlier workspace calendar's leftovers). */
-  removePushed(caller: Caller): Promise<{ events: number; remaining: 0 }>;
+  removePushed(
+    caller: Caller,
+  ): Promise<{ events: number; remaining: 0; skipped: number; failed: number }>;
   /** How many events it pushed are still live. */
   pushedEventCount(caller: Caller): Promise<number>;
 }

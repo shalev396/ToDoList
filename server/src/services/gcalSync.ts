@@ -23,6 +23,7 @@ import {
 } from '../classes/integration/index.js';
 import { AppError } from '../errors/AppError.js';
 import { loadPlan, type PlanNarrowing } from '../gcal/plan.js';
+import { TimeBudget, WRITE_BUDGET_MS } from '../classes/integration/calendar/TimeBudget.js';
 import type { WorkspaceContext } from './accessFilter.js';
 
 export const GcalSyncBody = z.strictObject({
@@ -71,7 +72,9 @@ export async function gcalSync(
   }
   if (!confirm) return integration.dryRun(caller, input.narrowing, now);
   integration.assertWritable(caller);
-  const plan = await loadPlan(integration.toJSON(), now);
+  // One budget for the whole request: the plan, the writes and the pull share it.
+  const budget = TimeBudget.start(WRITE_BUDGET_MS);
+  const plan = await loadPlan(integration.toJSON(), now, undefined, budget);
   if (plan.cfg.maxCreates === 0 && plan.skipped.some((entry) => entry.reason === 'daily_cap')) {
     throw new AppError(
       429,
@@ -80,6 +83,11 @@ export async function gcalSync(
   }
   return {
     dryRun: false,
-    runId: await integration.push(caller, { ops: plan.ops, now, calendarId: plan.cfg.calendarId }),
+    runId: await integration.push(caller, {
+      ops: plan.ops,
+      now,
+      calendarId: plan.cfg.calendarId,
+      budget,
+    }),
   };
 }

@@ -16,6 +16,7 @@ import { Workspace } from '../classes/workspace/index.js';
 import { AppError } from '../errors/AppError.js';
 import type { IntegrationData } from '../models/definitions/Integration.js';
 import { logger } from '../services/logger.js';
+import { TimeBudget, WRITE_BUDGET_MS } from '../classes/integration/calendar/TimeBudget.js';
 import { loadPlan } from './plan.js';
 
 /**
@@ -74,7 +75,8 @@ export async function runScheduledGcalSync(
   try {
     // The ops are capped by maxOpsPerRun and the day's remaining creates (loadPlan); with the cap
     // used up only updates and removals go out, and the pull still runs.
-    const plan = await loadPlan(integration.toJSON(), now);
+    const budget = TimeBudget.start(WRITE_BUDGET_MS);
+    const plan = await loadPlan(integration.toJSON(), now, undefined, budget);
     // The push is its owner's, on schedule: it runs as them, under the same write gate.
     const caller = await Caller.enter(integration.workspaceId, Actor.user(integration.ownerUserId));
     if (caller === null) {
@@ -86,6 +88,7 @@ export async function runScheduledGcalSync(
         ops: plan.ops,
         now,
         calendarId: plan.cfg.calendarId,
+        budget,
       }),
     };
   } catch (error) {

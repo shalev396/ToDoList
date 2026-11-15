@@ -46,4 +46,8 @@ export interface CleanupProgress {
   calendarsKept: number;
   /** What is left: events and calendars not reached yet. */
   remaining: number;
+  /** Events left in place because they are on the current workspace calendar (never touched). */
+  skipped: number;
+  /** Events or calendars Google refused to remove (no permission): no longer tracked. */
+  failed: number;
 }
