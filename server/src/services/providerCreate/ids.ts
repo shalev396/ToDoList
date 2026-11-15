@@ -20,7 +20,7 @@ const PATTERNS = {
   clickupTask: /^[A-Za-z0-9]{1,32}$/,
   /** A GitHub issue number. */
   githubNumber: /^[1-9]\d{0,9}$/,
-  /** A Google Calendar event id (base32hex, or an occurrence's `<id>_<start>`). */
+  /** A Google Calendar event id (base32hex, or an occurrence's `<id>_<start>`): never a dot. */
   eventId: /^[A-Za-z0-9_-]{1,1024}$/,
   /** Linear ids (UUIDs). */
   linearId: /^[0-9a-fA-F-]{36}$/,
@@ -30,8 +30,8 @@ const PATTERNS = {
   githubRepo: /^[A-Za-z0-9._-]{1,100}$/,
   /** A request id: client-generated, 8 to 64 URL-safe characters. */
   requestId: /^[A-Za-z0-9_-]{8,64}$/,
-  /** A Google Calendar id: an address or an opaque id, no whitespace or control characters. */
-  calendarId: /^[^\s/\\#?%]{1,255}$/,
+  /** A Google Calendar id: an address or an opaque id, no whitespace or control characters; never `.` or `..`. */
+  calendarId: /^(?!\.{1,2}$)[^\s/\\#?%]{1,255}$/,
 } as const;
 
 export type IdKind = keyof typeof PATTERNS;

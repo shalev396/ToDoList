@@ -7,7 +7,11 @@
  *   POST   /calendars/{id}/events             events.insert
  *   PATCH  /calendars/{id}/events/{eventId}   events.patch (the push's with `If-Match`)
  *   DELETE /calendars/{id}/events/{eventId}   events.delete
- * Anything else (a calendar's delete, its ACL, a GET) is refused before it is sent. The base is
+ * The last two may carry exactly one query, `sendUpdates=all` or `sendUpdates=none` (whether
+ * Google tells the event's guests). The URL must be exactly as sent: one that the URL parser
+ * would normalize (a `.` or `..` segment, encoded or not, an empty segment) is refused, so an
+ * allowed event call can never land on a calendar's own endpoint. Anything else (a calendar's
+ * delete, its ACL, a GET) is refused before it is sent. The base is
  * Google's (googleEndpoints), or a test's stand-in. No redirect is followed, a call gives up after
  * 15 s, and a failure is a CalendarApiError with the HTTP status only: never a token, a body or a
  * URL.
@@ -76,6 +80,9 @@ export interface EventChanges {
   end?: EventTimeChange;
 }
 
+/** Whether Google tells an event's guests about a change: `all` or `none` (`sendUpdates`). */
+export type GuestUpdates = 'all' | 'none';
+
 export interface CalendarWriter {
   insert(calendarId: string, event: EventBody | RecurringEventBody): Promise<WrittenEvent>;
   patch(
@@ -85,9 +92,14 @@ export interface CalendarWriter {
     etag?: string,
   ): Promise<WrittenEvent>;
   /** An event's edit (CalendarProvider#updateEvent): the event as Google now has it. */
-  update(calendarId: string, eventId: string, changes: EventChanges): Promise<UpdatedEvent>;
+  update(
+    calendarId: string,
+    eventId: string,
+    changes: EventChanges,
+    sendUpdates?: GuestUpdates,
+  ): Promise<UpdatedEvent>;
   /** 404 and 410 (already gone) are done. */
-  remove(calendarId: string, eventId: string): Promise<void>;
+  remove(calendarId: string, eventId: string, sendUpdates?: GuestUpdates): Promise<void>;
   /** A secondary calendar, owned by the account (calendars.insert). */
   insertCalendar(summary: string, timeZone: string): Promise<CreatedCalendar>;
 }
@@ -95,24 +107,51 @@ export interface CalendarWriter {
 /** `/calendars/<id>/events` and `/calendars/<id>/events/<eventId>`, ids percent-encoded. */
 const EVENTS = /^\/calendars\/[^/?#]{1,1024}\/events$/;
 const EVENT = /^\/calendars\/[^/?#]{1,1024}\/events\/[^/?#]{1,1100}$/;
+const GUEST_UPDATES = new Set(['', '?sendUpdates=all', '?sendUpdates=none']);
+
+/** A path segment that is empty, or `.` or `..` once decoded (or that doesn't decode). */
+function isDotOrEmpty(segment: string): boolean {
+  try {
+    const decoded = decodeURIComponent(segment);
+    return decoded === '' || decoded === '.' || decoded === '..';
+  } catch {
+    return true;
+  }
+}
 
 /**
- * Whether a write is exactly one this client may send (the header's list): its method, and its
- * path under the calendar base, with no query or fragment.
+ * Whether a write is exactly one this client may send (the header's list): its method, its path
+ * under the calendar base, and no query but an event patch's or delete's `sendUpdates`. The URL
+ * must be exactly what the parser makes of it, with no dot or empty segment.
  */
 export function isAllowedCalendarWrite(method: string, url: string): boolean {
-  const base = googleEndpoints().calendar;
-  if (!url.startsWith(`${base}/`) || url.includes('?') || url.includes('#')) return false;
-  const path = url.slice(base.length);
+  let parsed: URL;
+  let base: URL;
+  try {
+    parsed = new URL(url);
+    base = new URL(googleEndpoints().calendar);
+  } catch {
+    return false;
+  }
+  if (parsed.href !== url || parsed.hash !== '' || parsed.origin !== base.origin) return false;
+  if (!parsed.pathname.startsWith(`${base.pathname}/`)) return false;
+  const path = parsed.pathname.slice(base.pathname.length);
+  if (path.split('/').slice(1).some(isDotOrEmpty)) return false;
   switch (method) {
     case 'POST':
-      return path === '/calendars' || EVENTS.test(path);
+      return parsed.search === '' && (path === '/calendars' || EVENTS.test(path));
     case 'PATCH':
     case 'DELETE':
-      return EVENT.test(path);
+      return GUEST_UPDATES.has(parsed.search) && EVENT.test(path);
     default:
       return false;
   }
+}
+
+/** An event's URL, with `sendUpdates` when given. */
+function eventUrl(calendarId: string, eventId: string, sendUpdates?: GuestUpdates): string {
+  const url = eventsUrl(calendarId, eventId);
+  return sendUpdates === undefined ? url : `${url}?sendUpdates=${sendUpdates}`;
 }
 
 function eventsUrl(calendarId: string, eventId?: string): string {
@@ -233,8 +272,8 @@ export function calendarWriter(auth: Readonly<Record<string, string>>): Calendar
       const ifMatch: Record<string, string> = etag === undefined ? {} : { 'if-match': etag };
       return writtenEvent(await call('PATCH', eventsUrl(calendarId, eventId), body, ifMatch));
     },
-    async update(calendarId, eventId, changes): Promise<UpdatedEvent> {
-      const data = await call('PATCH', eventsUrl(calendarId, eventId), changes);
+    async update(calendarId, eventId, changes, sendUpdates): Promise<UpdatedEvent> {
+      const data = await call('PATCH', eventUrl(calendarId, eventId, sendUpdates), changes);
       const record =
         typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
       return { ...writtenEvent(data), record };
@@ -248,9 +287,9 @@ export function calendarWriter(auth: Readonly<Record<string, string>>): Calendar
       if (typeof id !== 'string' || !/^\S{1,255}$/.test(id)) throw new CalendarApiError(null);
       return { id, summary: typeof named === 'string' ? named : null };
     },
-    async remove(calendarId, eventId): Promise<void> {
+    async remove(calendarId, eventId, sendUpdates): Promise<void> {
       try {
-        await call('DELETE', eventsUrl(calendarId, eventId));
+        await call('DELETE', eventUrl(calendarId, eventId, sendUpdates));
       } catch (error) {
         if (error instanceof CalendarApiError && (error.status === 404 || error.status === 410)) {
           return;
