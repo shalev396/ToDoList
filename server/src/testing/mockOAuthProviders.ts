@@ -91,7 +91,15 @@ export interface MockOAuth {
   failNextCreate(provider: MockOAuthProvider, how: number | 'drop'): void;
   /** What the provider holds for creates: how many items were created, and the last one's input. */
   created(provider: MockOAuthProvider): { count: number; last: Record<string, unknown> | null };
+  /** Every request the stand-in received, in order: its method and path (no query, no body). */
+  requests(): readonly MockRequest[];
   close(): Promise<void>;
+}
+
+/** One request a stand-in received. */
+export interface MockRequest {
+  method: string;
+  path: string;
 }
 
 const random = (): string => randomBytes(18).toString('base64url');
@@ -612,10 +620,12 @@ export async function startMockOAuth(options: MockOAuthOptions = {}): Promise<Mo
     }
   }
 
+  const received: MockRequest[] = [];
   const server: Server = createServer((req, res) => {
     void (async (): Promise<void> => {
       try {
         const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+        received.push({ method: req.method ?? 'GET', path: url.pathname });
         if (req.method === 'POST' && url.pathname === '/__reset') {
           codes.clear();
           grants.length = 0;
@@ -654,6 +664,7 @@ export async function startMockOAuth(options: MockOAuthOptions = {}): Promise<Mo
 
   return {
     url: `http://127.0.0.1:${String(port)}`,
+    requests: (): readonly MockRequest[] => [...received],
     nextAuthorize: (): void => {
       deny = true;
     },
