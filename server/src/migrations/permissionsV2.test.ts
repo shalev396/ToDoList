@@ -61,7 +61,7 @@ function integration(
 const where = (...rules: unknown[]): unknown => ({ combinator: 'and', rules });
 
 describe('in the migrations list', () => {
-  it('owners, then former members’ integrations, then block connectors, after importance; the Drive clean-up last', async () => {
+  it('owners, then former members’ integrations, then block connectors, after importance; the Drive clean-up, then the primary calendar', async () => {
     const { MIGRATIONS } = await import('./index.js');
     assert.deepEqual(
       MIGRATIONS.map(({ id }) => id),
@@ -73,6 +73,8 @@ describe('in the migrations list', () => {
         '2026-11-14-orphaned-integrations',
         '2026-11-14-block-connectors',
         '2026-11-15-remove-google-drive',
+        // After the owners migration: the primary calendar's owner rules read ownerUserId.
+        '2026-11-15-primary-calendar',
       ],
     );
   });

@@ -12,6 +12,7 @@ import { dropAreaScope } from './dropAreaScope.js';
 import { integrationOwners } from './integrationOwners.js';
 import { introduceTopics } from './introduceTopics.js';
 import { orphanedIntegrations } from './orphanedIntegrations.js';
+import { primaryCalendar } from './primaryCalendar.js';
 import { removeGoogleDrive } from './removeGoogleDrive.js';
 import type { Db, Migration } from './types.js';
 
@@ -28,6 +29,7 @@ export const MIGRATIONS: readonly Migration[] = [
   orphanedIntegrations,
   blockConnectors,
   removeGoogleDrive,
+  primaryCalendar,
 ];
 
 interface MigrationRecord {
