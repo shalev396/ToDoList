@@ -1,7 +1,9 @@
 /**
  * The integration classes without a database: the Mode value object, the polymorphic factory
  * (IntegrationRegistry), the capability contracts each provider class implements, the auth
- * strategies' headers, and the write gate's order (demo data, then read-only) and ownership.
+ * strategies' headers, and the write gate's order (demo data, then read-only) and ownership: every
+ * write a class can make, write-back included, is refused while read-only before anything is
+ * read or sent.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -362,6 +364,11 @@ describe('every provider class, read-only: refused before anything is sent', () 
           readOnly,
         );
         assert.deepEqual(settled, []);
+        // A write-back of a field the provider holds: refused before the item is even read.
+        await assert.rejects(
+          integration.updateTask(caller(), { id: 'it-1' }, { title: 'Renamed', note: 'mine' }),
+          readOnly,
+        );
       } else if (isCalendarProvider(integration)) {
         await assert.rejects(integration.createOptions(caller(), { step: 'calendar' }), readOnly);
         await assert.rejects(
@@ -376,6 +383,28 @@ describe('every provider class, read-only: refused before anything is sent', () 
           readOnly,
         );
         await assert.rejects(integration.push(caller(), { ops: [], now: NOW }), readOnly);
+        await assert.rejects(
+          integration.insertEvent(
+            caller(),
+            'primary',
+            {
+              id: 'h5abd',
+              summary: 'Gym',
+              description: '',
+              start: { date: '2026-11-20' },
+              end: { date: '2026-11-21' },
+              status: 'confirmed',
+            },
+            ['RRULE:FREQ=WEEKLY;BYDAY=MO'],
+          ),
+          readOnly,
+        );
+        await assert.rejects(
+          integration.updateEvent(caller(), 'primary', 'h5abc', { title: 'Dentist at 9' }),
+          readOnly,
+        );
+        await assert.rejects(integration.deleteEvent(caller(), 'primary', 'h5abc'), readOnly);
+        await assert.rejects(integration.createCalendar(caller(), 'TodoList'), readOnly);
       } else {
         // Nothing it could write: no to-do or calendar capability at all.
         assert.equal(tracker, undefined);

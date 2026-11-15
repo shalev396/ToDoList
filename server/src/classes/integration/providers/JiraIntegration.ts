@@ -1,9 +1,24 @@
 import { AppError } from '../../../errors/AppError.js';
+import { StatusNotAvailableError } from '../../../errors/StatusNotAvailableError.js';
+import { ValidationError } from '../../../errors/ValidationError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
+import type { ItemData, MirroredItemPatch } from '../../../models/definitions/Item.js';
 import { readBackJira } from '../../../services/providerCreate/created.js';
 import { readJiraTeamField } from '../../../services/providerCreate/funnel.js';
 import { checkedId } from '../../../services/providerCreate/ids.js';
-import { jiraSitesOf, pickJiraSite } from '../../../services/providerCreate/jiraSites.js';
+import {
+  jiraSitesOf,
+  pickJiraSite,
+  type JiraSiteChoice,
+} from '../../../services/providerCreate/jiraSites.js';
+import { jiraStatus } from '../../../sync/providers/jira.js';
+import {
+  asObject,
+  asString,
+  dateOnlyDueAt,
+  localDateString,
+} from '../../../sync/providers/trackerCommon.js';
+import type { ItemStatus } from '../../../types/domain.js';
 import type { JiraConfig, OAuthResource } from '../../../types/integrations.js';
 import type { CreateTarget } from '../../../types/providerCreate.js';
 import type { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
@@ -18,11 +33,49 @@ import { IntegrationRegistry } from '../IntegrationRegistry.js';
 import {
   TrackerIntegration,
   type PreparedCreate,
+  type ProviderPatch,
   type TrackerWriteSession,
 } from '../TrackerIntegration.js';
-import { jiraIssueBody, type CreateFields } from '../writers/trackerWriter.js';
+import {
+  jiraIssueBody,
+  jiraTransitionBody,
+  jiraUpdateBody,
+  type CreateFields,
+} from '../writers/trackerWriter.js';
 
 export type { JiraSecret };
+
+/** The status category a write-back moves a Jira issue into; Jira has no "cancelled" one. */
+const CATEGORY_OF: Readonly<Partial<Record<ItemStatus, string>>> = {
+  open: 'new',
+  in_progress: 'indeterminate',
+  done: 'done',
+};
+
+/** One transition Jira lists for an issue, as a write-back reads it. */
+interface JiraTransition {
+  id: string;
+  /** The status it leads to, by its name, and that status's category. */
+  to: string | null;
+  category: string | null;
+  hasScreen: boolean;
+}
+
+function transitionOf(raw: unknown): JiraTransition[] {
+  const transition = asObject(raw);
+  const id = asString(transition?.['id']);
+  if (transition === null || id === null || !/^\d{1,20}$/.test(id)) return [];
+  if (transition['isAvailable'] === false) return [];
+  const to = asObject(transition['to']);
+  return [
+    {
+      id,
+      to: asString(to?.['name']),
+      category: asString(asObject(to?.['statusCategory'])?.['key']),
+      hasScreen: transition['hasScreen'] === true,
+    },
+  ];
+}
 
 /**
  * Jira: issues read from one or more sites (an OAuth grant's chosen sites through Atlassian's
@@ -116,6 +169,96 @@ export class JiraIntegration
   /** The write client creates only at this integration's own sites. */
   protected override writeBases(): string[] {
     return jiraSitesOf(this.data).map((site) => site.base);
+  }
+
+  /**
+   * A Jira issue's write-back: the transition into the asked status's category is looked up first
+   * (GET …/transitions; none: StatusNotAvailableError), then the summary, due date and priority
+   * are PUT, then the transition is POSTed. Jira answers 204: what was sent is what it holds, read
+   * as the sync reads it (a due date is that day, all day).
+   */
+  protected async applyUpdate(
+    session: TrackerWriteSession,
+    item: ItemData,
+    patch: ProviderPatch,
+  ): Promise<MirroredItemPatch> {
+    const { site, issueId } = this.#issueOf(item);
+    if (patch.priority === null) throw new ValidationError('priority: a Jira issue always has one');
+    // The lookup comes first: nothing is written when the status can't be reached.
+    const transition =
+      patch.status === undefined
+        ? null
+        : await this.#transitionInto(session, site, issueId, patch.status);
+    const confirmed: MirroredItemPatch = {};
+    const body = jiraUpdateBody(patch);
+    if (body !== null) {
+      this.answerOf(await session.write.updateJiraIssue(site, issueId, session.headers, body));
+      if (patch.title !== undefined) confirmed.title = patch.title;
+      if (patch.due !== undefined) {
+        const due =
+          patch.due === null
+            ? null
+            : dateOnlyDueAt(localDateString(patch.due.at, patch.timeZone), patch.timeZone);
+        confirmed.dueAt = due;
+        confirmed.allDay = due !== null;
+      }
+      if (patch.priority !== undefined) confirmed.priority = patch.priority;
+    }
+    if (transition !== null) {
+      this.answerOf(
+        await session.write.transitionJiraIssue(
+          site,
+          issueId,
+          session.headers,
+          jiraTransitionBody(transition.id),
+        ),
+      );
+      const status = jiraStatus(transition.category) ?? patch.status ?? 'open';
+      Object.assign(confirmed, this.confirmedStatus(status, transition.to));
+    }
+    return confirmed;
+  }
+
+  /**
+   * The site and issue id of an item of this integration: an OAuth grant's items carry their
+   * site's cloud id (`<cloudId>:<issueId>`); a token connection reads its one site.
+   */
+  #issueOf(item: ItemData): { site: JiraSiteChoice; issueId: string } {
+    const external = item.source.externalId;
+    const at = external.lastIndexOf(':');
+    const sites = jiraSitesOf(this.data);
+    const site =
+      this.authKind === 'oauth'
+        ? sites.find((choice) => at > 0 && choice.id === external.slice(0, at))
+        : sites[0];
+    if (site === undefined) {
+      throw new AppError(409, 'This issue’s Jira site is no longer read by this connection');
+    }
+    return { site, issueId: checkedId('jiraId', external.slice(at + 1), 'item') };
+  }
+
+  /**
+   * The transition that moves the issue into `status`'s category: those Jira lists as available,
+   * one without a screen (no fields to fill in) first, in Jira's order. StatusNotAvailableError
+   * when there is none (or Jira has no such category: "cancelled").
+   */
+  async #transitionInto(
+    session: TrackerWriteSession,
+    site: JiraSiteChoice,
+    issueId: string,
+    status: ItemStatus,
+  ): Promise<JiraTransition> {
+    const category = CATEGORY_OF[status];
+    if (category === undefined) throw new StatusNotAvailableError('jira', status);
+    const { data } = await session.read.getJson<{ transitions?: unknown }>(
+      `${site.base}/rest/api/3/issue/${issueId}/transitions`,
+      session.headers,
+    );
+    const listed = Array.isArray(data.transitions) ? (data.transitions as unknown[]) : [];
+    const into = listed.flatMap(transitionOf).filter((entry) => entry.category === category);
+    const chosen = into.find((entry) => !entry.hasScreen) ?? into[0];
+    if (chosen === undefined) throw new StatusNotAvailableError('jira', status);
+    return chosen;
   }
 
   protected async prepare(

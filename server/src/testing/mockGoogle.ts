@@ -1,12 +1,17 @@
 /**
  * A local stand-in for Google: OAuth 2.0 (authorize, token, revoke, userinfo) and the parts of the
- * Calendar API that TodoList calls (calendarList, events list/insert/patch/delete). It serves
+ * Calendar API that TodoList calls (calendarList, calendars.insert, events
+ * list/insert/patch/delete). It serves
  * tests (in process, on any port; the app points at it with setGoogleBaseUrlForTests). Loopback
  * only; everything in memory; every token FAKE.
  *
  * - authorize auto-approves as the current test account (setAccount, or POST /__account) and
  *   redirects to the loopback `redirect_uri` with a code; `nextAuthorize('deny')` answers
- *   `error=access_denied` once, `nextAuthorize('no_calendar')` grants only `openid email` once.
+ *   `error=access_denied` once, `nextAuthorize('no_calendar')` grants only `openid email` once,
+ *   `nextAuthorize('no_app_calendars')` grants all but `calendar.app.created` once (a grant from
+ *   before TodoList asked for it).
+ * - calendars.insert needs `calendar.app.created` (or the full `calendar` scope): 403 otherwise.
+ *   A created calendar belongs to the account, owned, and takes events.
  * - token: the code grant (client secret, redirect URI and PKCE S256 checked; a code works once,
  *   for 10 minutes) and the refresh grant (a revoked grant is `invalid_grant`).
  * - revoke: a refresh or access token ends its whole grant, as Google does.
@@ -29,6 +34,8 @@ const CALENDAR_SCOPES = [
   'https://www.googleapis.com/auth/calendar.events',
   'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
 ];
+const APP_CREATED_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
+const FULL_CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar';
 export const MOCK_HOLIDAYS_CALENDAR = 'en.usa#holiday@group.v.calendar.google.com';
 
 export interface MockGoogleAccount {
@@ -57,11 +64,12 @@ export interface MockCalendarEvent {
   end?: Record<string, unknown>;
   source?: Record<string, unknown>;
   extendedProperties?: { private?: Record<string, unknown> };
+  recurrence?: string[];
   /** The change counter when it last changed (sync tokens). Not sent. */
   seq: number;
 }
 
-export type NextAuthorize = 'deny' | 'no_calendar';
+export type NextAuthorize = 'deny' | 'no_calendar' | 'no_app_calendars';
 
 export interface MockGoogle {
   /** e.g. http://127.0.0.1:3998: what setGoogleBaseUrlForTests takes. */
@@ -70,6 +78,8 @@ export interface MockGoogle {
   nextAuthorize(mode: NextAuthorize): void;
   /** A calendar's events that are not deleted. */
   events(calendarId: string): MockCalendarEvent[];
+  /** The calendars made through calendars.insert: each account's, oldest first. */
+  createdCalendars(): readonly { id: string; summary: string; timeZone: string | null }[];
   /** An event made "in Google" (not by TodoList). */
   addEvent(
     calendarId: string,
@@ -159,12 +169,15 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
   let refreshTokens = new Map<string, Grant>();
   let accessTokens = new Map<string, { grant: Grant; expiresAt: number }>();
   let calendars = new Map<string, Map<string, MockCalendarEvent>>();
+  /** Calendars made through calendars.insert, by account (`sub`). */
+  let created = new Map<string, (CalendarEntry & { timeZone: string | null })[]>();
   let epoch = randomBytes(4).toString('hex');
   let seq = 0;
 
   const calendarsOf = (who: MockGoogleAccount): CalendarEntry[] => [
     { id: who.email, summary: who.email, primary: true, accessRole: 'owner' },
     { id: MOCK_HOLIDAYS_CALENDAR, summary: 'Holidays', primary: false, accessRole: 'reader' },
+    ...(created.get(who.sub) ?? []),
   ];
   const eventsOf = (calendarId: string): Map<string, MockCalendarEvent> => {
     let events = calendars.get(calendarId);
@@ -187,15 +200,55 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     return copy;
   };
 
-  /** The account behind a valid bearer token, or null (401 sent). */
-  function bearer(req: IncomingMessage, res: ServerResponse): MockGoogleAccount | null {
+  /** The grant behind a valid bearer token, or null (401 sent). */
+  function grantOf(req: IncomingMessage, res: ServerResponse): Grant | null {
     const header = req.headers.authorization ?? '';
     const access = accessTokens.get(header.replace(/^Bearer\s+/i, ''));
     if (access === undefined || access.grant.revoked || access.expiresAt < Date.now()) {
       apiError(res, 401, 'Invalid Credentials');
       return null;
     }
-    return access.grant.account;
+    return access.grant;
+  }
+
+  /** The account behind a valid bearer token, or null (401 sent). */
+  function bearer(req: IncomingMessage, res: ServerResponse): MockGoogleAccount | null {
+    return grantOf(req, res)?.account ?? null;
+  }
+
+  /** calendars.insert: a secondary calendar, owned by the grant's account. */
+  async function insertCalendar(
+    req: IncomingMessage,
+    res: ServerResponse,
+    grant: Grant,
+  ): Promise<void> {
+    const scopes = grant.scope.split(' ');
+    if (!scopes.includes(APP_CREATED_SCOPE) && !scopes.includes(FULL_CALENDAR_SCOPE)) {
+      apiError(res, 403, 'Request had insufficient authentication scopes.');
+      return;
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = JSON.parse(await readBody(req)) as Record<string, unknown>;
+    } catch {
+      apiError(res, 400, 'Parse Error');
+      return;
+    }
+    const summary = body['summary'];
+    if (typeof summary !== 'string' || summary.trim() === '') {
+      apiError(res, 400, 'Missing title.');
+      return;
+    }
+    const timeZone = typeof body['timeZone'] === 'string' ? body['timeZone'] : null;
+    const entry = {
+      id: `${randomBytes(12).toString('hex')}@group.calendar.google.com`,
+      summary,
+      primary: false,
+      accessRole: 'owner' as const,
+      timeZone,
+    };
+    created.set(grant.account.sub, [...(created.get(grant.account.sub) ?? []), entry]);
+    send(res, 200, { kind: 'calendar#calendar', id: entry.id, summary, timeZone });
   }
 
   function authorize(url: URL, res: ServerResponse): void {
@@ -219,13 +272,16 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     if (!valid || mode === 'deny') {
       back.searchParams.set('error', valid ? 'access_denied' : 'invalid_request');
     } else {
-      const granted =
+      const withheld =
         mode === 'no_calendar'
-          ? scope
-              .split(' ')
-              .filter((entry) => !CALENDAR_SCOPES.includes(entry))
-              .join(' ')
-          : scope;
+          ? CALENDAR_SCOPES
+          : mode === 'no_app_calendars'
+            ? [APP_CREATED_SCOPE]
+            : [];
+      const granted = scope
+        .split(' ')
+        .filter((entry) => !withheld.includes(entry))
+        .join(' ');
       const code = token('4/mock-code-');
       codes.set(code, {
         account,
@@ -372,6 +428,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
         'end',
         'source',
         'extendedProperties',
+        'recurrence',
       ]) {
         if (body[key] !== undefined)
           (target as unknown as Record<string, unknown>)[key] = body[key];
@@ -425,8 +482,14 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     req: IncomingMessage,
     res: ServerResponse,
   ): Promise<void> {
-    const who = bearer(req, res);
-    if (who === null) return;
+    const grant = grantOf(req, res);
+    if (grant === null) return;
+    const who = grant.account;
+    if (path === '/calendars') {
+      if (req.method === 'POST') await insertCalendar(req, res, grant);
+      else apiError(res, 405, 'Method Not Allowed');
+      return;
+    }
     const own = calendarsOf(who);
     const list = /^\/users\/me\/calendarList(?:\/([^/]+))?$/.exec(path);
     if (list !== null && req.method === 'GET') {
@@ -474,6 +537,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     refreshTokens = new Map();
     accessTokens = new Map();
     calendars = new Map();
+    created = new Map();
     epoch = randomBytes(4).toString('hex');
     seq = 0;
     next = null;
@@ -563,6 +627,8 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     events(calendarId): MockCalendarEvent[] {
       return [...eventsOf(calendarId).values()].filter((event) => event.status !== 'cancelled');
     },
+    createdCalendars: () =>
+      [...created.values()].flat().map(({ id, summary, timeZone }) => ({ id, summary, timeZone })),
     editEvent(calendarId, eventId, change): boolean {
       const event = eventsOf(calendarId).get(eventId);
       if (event === undefined || event.status === 'cancelled') return false;

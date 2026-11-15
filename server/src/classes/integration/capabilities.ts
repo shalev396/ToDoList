@@ -13,6 +13,7 @@ import type { Caller } from '../base/Caller.js';
 import type { Revocable } from '../base/contracts.js';
 import type { PlanEntry, SkippedItem, WireOp } from '../../gcal/diff.js';
 import type { PlanNarrowing } from '../../gcal/plan.js';
+import type { ItemData } from '../../models/definitions/Item.js';
 import type { MappedItem } from '../../sync/types.js';
 import type { OAuthResource } from '../../types/integrations.js';
 import type {
@@ -25,10 +26,24 @@ import type { ApiKeyAuth } from './auth/ApiKeyAuth.js';
 import type { OAuthAuth } from './auth/OAuthAuth.js';
 import type { PickerKind } from './definitions/IntegrationDefinition.js';
 import type { Integration } from './Integration.js';
-import type { PlainEventBody } from './writers/calendarApi.js';
+import type { TaskPatch } from './TaskEdit.js';
+import type { PlainEventBody, WrittenEvent } from './writers/calendarApi.js';
 import type { CreatedRecord, CreateFields, WriteResult } from './writers/trackerWriter.js';
 
-export type { CreatedRecord, CreateFields, PlainEventBody, Revocable, WriteResult };
+export type {
+  CreatedRecord,
+  CreateFields,
+  PlainEventBody,
+  Revocable,
+  TaskPatch,
+  WriteResult,
+  WrittenEvent,
+};
+
+/** A stored item an operation is about: its id (the integration reads the item itself). */
+export interface ItemRef {
+  readonly id: string;
+}
 
 /** The create funnel: one step's choices (sites, projects, lists, repos, calendars). */
 export interface CreateFunnel {
@@ -53,11 +68,20 @@ export interface CreatedTask {
 }
 
 /**
- * A to-do integration (Jira, ClickUp, Linear, GitHub): it reads tasks (the sync) and creates one
- * from a to-do. Reading is the base; every to-do operation that changes the provider is here.
+ * A to-do integration (Jira, ClickUp, Linear, GitHub): it reads tasks (the sync), creates one from
+ * a to-do, and writes a mirrored item's edits back. Reading is the base; every to-do operation
+ * that changes the provider is here.
  */
 export interface TaskProvider extends CreateFunnel {
   createTask(caller: Caller, request: CreateTaskRequest): Promise<CreatedTask>;
+  /**
+   * One edit of a mirrored item of this integration (plan Addendum A1), its owner's: the fields
+   * its provider holds (its definition's `writableFields`, for the item's kind) are written there
+   * through the write session and saved here as the provider confirmed them; TodoList's own fields
+   * and the fields the provider lacks are saved here only. An edit with nothing for the provider
+   * never opens a write session (and works while read-only). The item as now stored.
+   */
+  updateTask(caller: Caller, item: ItemRef, patch: TaskPatch): Promise<ItemData>;
 }
 
 /** One calendar of the account, for the picker. */
@@ -77,17 +101,59 @@ export interface CalendarDryRun {
   skipped: SkippedItem[];
 }
 
+/**
+ * An edit of one event (a pulled one, or one TodoList made): what changes, each optional, at least
+ * one. Its time is given whole: `start` and `end` together, with `allDay` (default: a timed
+ * event). An all-day event runs from the day `start` falls on in the workspace's zone up to the
+ * day `end` falls on, that day excluded (as Google and a pulled event's item keep it); an `end` on
+ * the start's day is that one day.
+ */
+export interface EventPatch {
+  title?: string;
+  /** Plain text; null clears it. */
+  description?: string | null;
+  start?: Date;
+  end?: Date;
+  allDay?: boolean;
+}
+
 /** A push: the plan's ops, as of `now`. */
 export interface CalendarPushRequest {
   ops: readonly WireOp[];
   now: Date;
 }
 
-/** A calendar integration (Google Calendar): events in, and the two-way push out. */
+/**
+ * A calendar integration (Google Calendar): events in, and the two-way push out; an event created,
+ * changed or deleted, and a calendar of TodoList's own created. Every write is its owner's,
+ * through the write session.
+ */
 export interface CalendarProvider extends CreateFunnel {
   listCalendars(caller: Caller): Promise<GoogleCalendarEntry[]>;
-  /** One event created from a to-do, in the calendar the user picked. */
-  insertEvent(caller: Caller, calendarId: string, event: PlainEventBody): Promise<WriteResult>;
+  /**
+   * One event created from a to-do, in the calendar the user picked; with `recurrence` (one
+   * `RRULE:` line, checked by a strict parser: 400 otherwise), a recurring one (plan Addendum A3).
+   */
+  insertEvent(
+    caller: Caller,
+    calendarId: string,
+    event: PlainEventBody,
+    recurrence?: readonly string[],
+  ): Promise<WriteResult>;
+  /** One event's title, time or description changed (its mirrored item follows). */
+  updateEvent(
+    caller: Caller,
+    calendarId: string,
+    eventId: string,
+    patch: EventPatch,
+  ): Promise<WrittenEvent>;
+  /** One event deleted (already gone is done; its mirrored item goes too). */
+  deleteEvent(caller: Caller, calendarId: string, eventId: string): Promise<void>;
+  /**
+   * A calendar of TodoList's own, named `name` (Google's `calendars.insert`, which needs the
+   * `calendar.app.created` scope: a grant without it is 409 `scope_missing`).
+   */
+  createCalendar(caller: Caller, name: string): Promise<GoogleCalendarEntry>;
   /** What a push would do now (allowed in read-only mode: it writes nothing). */
   dryRun(caller: Caller, narrowing?: PlanNarrowing, now?: Date): Promise<CalendarDryRun>;
   /** The push, start to commit: the run's id. */
@@ -137,13 +203,17 @@ const hasMethod = (value: object, name: string): boolean =>
 export function isTaskProvider(
   integration: Integration,
 ): integration is Integration & TaskProvider {
-  return hasMethod(integration, 'createTask') && hasMethod(integration, 'createOptions');
+  return ['createTask', 'createOptions', 'updateTask'].every((name) =>
+    hasMethod(integration, name),
+  );
 }
 
 export function isCalendarProvider(
   integration: Integration,
 ): integration is Integration & CalendarProvider {
-  return hasMethod(integration, 'insertEvent') && hasMethod(integration, 'push');
+  return ['insertEvent', 'push', 'updateEvent', 'deleteEvent', 'createCalendar'].every((name) =>
+    hasMethod(integration, name),
+  );
 }
 
 /** Can create one item from a to-do: a task or a calendar event. */

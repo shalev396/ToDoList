@@ -4,27 +4,40 @@
  * service account (the demo's fixtures).
  *
  * - the calendar picker: calendarList, as `{id, summary, primary, accessRole}`;
- * - an event created from a to-do (insertEvent), and the push: the diff's ops applied through the
- *   Calendar API (writers/calendarOps.ts), both only inside the write session, so a read-only
- *   integration never writes; a dry run writes nothing and is always allowed;
+ * - an event created from a to-do (insertEvent, a recurring one with one strictly parsed RRULE
+ *   line), an event's edit (updateEvent) or delete (deleteEvent), a calendar of TodoList's own
+ *   (createCalendar, which needs the `calendar.app.created` scope), and the push: the diff's ops
+ *   applied through the Calendar API (writers/calendarOps.ts); all only inside the write session,
+ *   so a read-only integration never writes; a dry run writes nothing and is always allowed;
  * - the pull after a push: Google-side edits and deletes of what was pushed;
  * - disconnect: the grant is revoked at Google, unless another live integration (in any
  *   workspace) uses the same Google account, since revoking ends the grant for all of them.
  */
+import { z } from 'zod';
+
 import type { Caller } from '../../base/Caller.js';
 import { AppError } from '../../../errors/AppError.js';
+import { ScopeMissingError } from '../../../errors/ScopeMissingError.js';
+import { ValidationError } from '../../../errors/ValidationError.js';
 import { applyCommit } from '../../../gcal/commit.js';
 import { ORIGIN, PAST_WINDOW_DAYS } from '../../../gcal/diff.js';
 import { loadPlan, readGcalConfig, type PlanNarrowing } from '../../../gcal/plan.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
 import {
   getIntegrationRepository,
+  getItemRepository,
   getSyncRunRepository,
   getSyncStateRepository,
 } from '../../../models/index.js';
 import { logger } from '../../../services/logger.js';
+import { checkedId } from '../../../services/providerCreate/ids.js';
 import { ProviderHttpError, type ReadOnlyClient } from '../../../sync/http.js';
+import {
+  calendarEventExternalId,
+  mapCalendarEvent,
+} from '../../../sync/providers/google_calendar.js';
 import { googleEndpoints } from '../../../sync/providers/googleEndpoints.js';
+import { parseOr400 } from '../../../utils/validation.js';
 import type { AdapterContext } from '../../../sync/types.js';
 import type { GoogleCalendarConfig } from '../../../types/integrations.js';
 import type {
@@ -37,15 +50,22 @@ import type {
   CalendarDryRun,
   CalendarProvider,
   CalendarPushRequest,
+  EventPatch,
   GoogleCalendarEntry,
   ResourcePicker,
   Revocable,
   SupportsOAuth,
 } from '../capabilities.js';
 import type { TestableAdapter } from '../connectionTest.js';
-import { GOOGLE_CALENDAR, type GoogleCalendarSecret } from '../definitions/googleCalendar.js';
+import {
+  CALENDAR_APP_CREATED_SCOPE,
+  GOOGLE_CALENDAR,
+  type GoogleCalendarSecret,
+} from '../definitions/googleCalendar.js';
+import { EventEdit } from '../EventEdit.js';
 import { Integration } from '../Integration.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
+import { RecurrenceRule } from '../RecurrenceRule.js';
 import {
   CalendarApiError,
   calendarReader,
@@ -53,6 +73,8 @@ import {
   type CalendarReader,
   type CalendarWriter,
   type PlainEventBody,
+  type RecurringEventBody,
+  type WrittenEvent,
 } from '../writers/calendarApi.js';
 import { applyOps, type OpResult } from '../writers/calendarOps.js';
 import type { WriteResult } from '../writers/trackerWriter.js';
@@ -78,6 +100,42 @@ interface PulledCalendar {
 
 const statusOf = (error: unknown): number | null =>
   error instanceof CalendarApiError ? error.status : null;
+
+const RECONNECT = 'Google refused the connection: reconnect Google Calendar';
+
+/** A calendar's name as TodoList creates it: one line of text. */
+const CalendarName = z
+  .string()
+  .trim()
+  .min(1)
+  .max(255)
+  .refine((name) => !Array.from(name).some((char) => (char.codePointAt(0) ?? 0) < 32), {
+    message: 'Must be one line of text',
+  });
+
+/**
+ * A write that failed, as the caller answers it: Google's status (never its text), or a grant
+ * Google refused to refresh (reconnect).
+ */
+function calendarFailure(error: unknown): Error {
+  if (error instanceof ProviderHttpError && error.code === 'auth_failed') {
+    return new AppError(409, RECONNECT);
+  }
+  if (!(error instanceof CalendarApiError)) {
+    return error instanceof Error ? error : new Error('A Google Calendar write failed');
+  }
+  const { status } = error;
+  if (status === null || status >= 500) {
+    return new AppError(502, 'Google Calendar did not answer. Try again in a moment.');
+  }
+  if (status === 401) return new AppError(409, RECONNECT);
+  if (status === 403) return new AppError(409, 'Google refused this change for this account');
+  if (status === 404 || status === 410) {
+    return new AppError(404, 'That event or calendar no longer exists in Google Calendar');
+  }
+  if (status === 429) return new AppError(429, 'Google Calendar is busy. Try again in a moment.');
+  return new AppError(422, 'Google Calendar rejected this change');
+}
 
 function calendarEntry(raw: unknown): GoogleCalendarEntry | null {
   if (typeof raw !== 'object' || raw === null) return null;
@@ -258,16 +316,23 @@ export class GoogleCalendarIntegration
    * session. The event id is fixed by the caller (derived from the request id), so a repeat
    * answers 409 and is the same event. Only an answer from Google is about the event; a grant or
    * refresh that fails before anything is sent is not, so it propagates.
+   *
+   * With `recurrence` (plan Addendum A3) the event repeats: exactly one RRULE line, parsed by
+   * RecurrenceRule (only the parts the Repeat control makes) and checked against the event (an
+   * all-day event's UNTIL is a date, a timed one's a UTC time); anything else is a 400 before the
+   * write session opens.
    */
   async insertEvent(
     caller: Caller,
     calendarId: string,
     event: PlainEventBody,
+    recurrence?: readonly string[],
   ): Promise<WriteResult> {
+    const body = GoogleCalendarIntegration.#withRecurrence(event, recurrence);
     try {
       const written = await this.withWriteSession(caller, async ({ writer }) => {
         try {
-          return await writer.insert(calendarId, event);
+          return await writer.insert(calendarId, body);
         } catch (error) {
           if (statusOf(error) !== 409) throw error;
           return { id: event.id, etag: undefined, updated: undefined };
@@ -291,6 +356,77 @@ export class GoogleCalendarIntegration
       if (status === 429) return { kind: 'refused', reason: 'rate_limited' };
       return { kind: 'refused', reason: 'rejected' };
     }
+  }
+
+  /**
+   * Its owner changes one event (a pulled one, or one TodoList made): its title, its time (given
+   * whole) or its description (EventEdit: 400 naming the field), through the write session. The
+   * event's item here, when it has one, takes what Google answered (and the next sync rewrites
+   * it). Audited as `integration.write` (`event.update`, the field names).
+   */
+  async updateEvent(
+    caller: Caller,
+    calendarId: string,
+    eventId: string,
+    patch: EventPatch,
+  ): Promise<WrittenEvent> {
+    this.assertOwner(caller);
+    const calendar = checkedId('calendarId', calendarId, 'calendarId');
+    const event = checkedId('eventId', eventId, 'eventId');
+    const timeZone = caller.settings.timezone;
+    const edit = EventEdit.parse(patch, timeZone);
+    const updated = await this.#calendarWrite(caller, (writer) =>
+      writer.update(calendar, event, edit.changes),
+    );
+    await this.#refreshItem(calendar, event, updated.record, timeZone);
+    await this.recordWrite(caller, { operation: 'event.update', fields: [...edit.fields] });
+    return { id: updated.id, etag: updated.etag, updated: updated.updated };
+  }
+
+  /**
+   * Its owner deletes one event, through the write session (one already gone is done); the
+   * event's item here goes too. Audited as `integration.write` (`event.delete`).
+   */
+  async deleteEvent(caller: Caller, calendarId: string, eventId: string): Promise<void> {
+    this.assertOwner(caller);
+    const calendar = checkedId('calendarId', calendarId, 'calendarId');
+    const event = checkedId('eventId', eventId, 'eventId');
+    await this.#calendarWrite(caller, (writer) => writer.remove(calendar, event));
+    await (
+      await getItemRepository()
+    ).softDeleteBySource(this.workspaceId, this.#account, [
+      calendarEventExternalId(calendar, event),
+    ]);
+    await this.recordWrite(caller, { operation: 'event.delete' });
+  }
+
+  /**
+   * Its owner creates a calendar of TodoList's own, named `name` (one line, 1–255 characters), in
+   * the workspace's zone (Google's `calendars.insert`). The grant must carry
+   * `calendar.app.created`: one from before TodoList asked for it is 409 `scope_missing` (its
+   * owner connects again), checked before anything is opened or sent. The new calendar is not
+   * read until its owner picks it. Audited as `integration.write` (`calendar.create`).
+   */
+  async createCalendar(caller: Caller, name: string): Promise<GoogleCalendarEntry> {
+    this.assertWritable(caller);
+    const summary = parseOr400(CalendarName, name);
+    if (await this.lacksScopes([CALENDAR_APP_CREATED_SCOPE])) {
+      throw new ScopeMissingError(
+        this.id,
+        CALENDAR_APP_CREATED_SCOPE,
+        'Google Calendar needs a new permission to create calendars: connect it again to grant it',
+      );
+    }
+    const created = await this.#calendarWrite(caller, (writer) =>
+      writer.insertCalendar(summary, caller.settings.timezone),
+    );
+    await this.recordWrite(caller, { operation: 'calendar.create' });
+    return {
+      id: created.id,
+      summary: created.summary ?? summary,
+      primary: false,
+      accessRole: 'owner',
+    };
   }
 
   /** Its owner: what a push would create, update and remove now. Nothing is written. */
@@ -384,6 +520,77 @@ export class GoogleCalendarIntegration
 
   protected probe(adapter: TestableAdapter, context: AdapterContext): Promise<unknown> {
     return adapter.test(context);
+  }
+
+  /** This integration's items' source account (the natural key's first half). */
+  get #account(): { provider: 'google_calendar'; accountId: string; integrationId: string } {
+    return { provider: 'google_calendar', accountId: this.accountId, integrationId: this.id };
+  }
+
+  /** `fn` with the writer, inside the write session; a failure as the caller answers it. */
+  async #calendarWrite<T>(caller: Caller, fn: (writer: CalendarWriter) => Promise<T>): Promise<T> {
+    try {
+      return await this.withWriteSession(caller, ({ writer }) => fn(writer));
+    } catch (error) {
+      throw calendarFailure(error);
+    }
+  }
+
+  /**
+   * The event's item here (this integration's, when it has one) takes the event as Google
+   * answered it; its source hash is cleared, so the next sync rewrites it whatever it holds.
+   */
+  async #refreshItem(
+    calendarId: string,
+    eventId: string,
+    record: Record<string, unknown>,
+    timeZone: string,
+  ): Promise<void> {
+    const items = await getItemRepository();
+    const stored = await items.findBySource(
+      this.workspaceId,
+      this.#account,
+      calendarEventExternalId(calendarId, eventId),
+    );
+    if (stored === null) return;
+    let mapped: ReturnType<typeof mapCalendarEvent> | null;
+    try {
+      mapped = mapCalendarEvent(record, {
+        calendarId,
+        accountId: this.accountId,
+        timeZone,
+      });
+    } catch {
+      mapped = null;
+    }
+    const fields =
+      mapped === null || 'deleted' in mapped
+        ? {}
+        : {
+            title: mapped.title,
+            status: mapped.status,
+            statusRaw: mapped.statusRaw ?? null,
+            startAt: mapped.startAt ?? null,
+            endAt: mapped.endAt ?? null,
+            allDay: mapped.allDay ?? false,
+            closedAt: mapped.closedAt ?? null,
+          };
+    await items.updateMirrored(this.workspaceId, this.id, stored.id, fields, { resync: true });
+  }
+
+  /** The event with its one recurrence line (400 for anything RecurrenceRule doesn't take). */
+  static #withRecurrence(
+    event: PlainEventBody,
+    recurrence: readonly string[] | undefined,
+  ): RecurringEventBody {
+    if (recurrence === undefined) return event;
+    const rule = RecurrenceRule.fromLines(recurrence);
+    if (!rule.fits(event.start.date !== undefined)) {
+      throw new ValidationError(
+        'recurrence: UNTIL must be a date for an all-day event, a UTC time for a timed one',
+      );
+    }
+    return { ...event, recurrence: [rule.toString()] };
   }
 
   /**

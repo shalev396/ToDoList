@@ -1,8 +1,12 @@
 import { AppError } from '../../../errors/AppError.js';
+import { StatusNotAvailableError } from '../../../errors/StatusNotAvailableError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
+import type { ItemData, MirroredItemPatch } from '../../../models/definitions/Item.js';
 import { getWorkspaceRepository } from '../../../models/index.js';
 import { readBackGithub } from '../../../services/providerCreate/created.js';
-import { splitRepo } from '../../../services/providerCreate/ids.js';
+import { checkedId, splitRepo } from '../../../services/providerCreate/ids.js';
+import { asDate, asObject, asString } from '../../../sync/providers/trackerCommon.js';
+import type { ItemStatus } from '../../../types/domain.js';
 import { topicIdBySlug } from '../../../services/topics.js';
 import { TOPIC_RULES_MAX } from '../../../services/workspaces.js';
 import type { GitHubConfig } from '../../../types/integrations.js';
@@ -15,13 +19,35 @@ import { IntegrationRegistry } from '../IntegrationRegistry.js';
 import {
   TrackerIntegration,
   type PreparedCreate,
+  type ProviderPatch,
   type TrackerWriteSession,
 } from '../TrackerIntegration.js';
-import { githubIssueBody, type CreateFields } from '../writers/trackerWriter.js';
+import {
+  githubIssueBody,
+  githubUpdateBody,
+  type CreateFields,
+  type GithubIssueState,
+} from '../writers/trackerWriter.js';
 
 export type { GitHubSecret };
 
 const GITHUB_API_VERSION = '2022-11-28';
+
+/** An issue's state for each status; "in progress" is a board column, not the issue's own. */
+const STATE_OF: Readonly<Partial<Record<ItemStatus, GithubIssueState>>> = {
+  open: { state: 'open' },
+  done: { state: 'closed', stateReason: 'completed' },
+  cancelled: { state: 'closed', stateReason: 'not_planned' },
+};
+
+/** An issue's state as the sync reads it (gh mapping): closed as not planned is cancelled. */
+function statusOfIssue(record: Record<string, unknown>): ItemStatus | null {
+  const state = asString(record['state']);
+  if (state === 'open') return 'open';
+  if (state !== 'closed') return null;
+  const reason = asString(record['state_reason']);
+  return reason === 'not_planned' || reason === 'duplicate' ? 'cancelled' : 'done';
+}
 
 /**
  * GitHub: issues and pull requests of the account's repositories (and Projects boards), and an
@@ -79,6 +105,44 @@ export class GitHubIntegration
    * doesn't fail every sync on its boards (and a new one turns them back on).
    */
   protected override readonly learnedCapabilities = { boards: 'boardsEnabled' } as const;
+
+  /**
+   * A GitHub issue's write-back: one PATCH of its title and state (open; closed as completed or
+   * not planned). "In progress" is a board column: StatusNotAvailableError. GitHub answers with
+   * the issue: its title, state and when it closed are what it confirms.
+   */
+  protected async applyUpdate(
+    session: TrackerWriteSession,
+    item: ItemData,
+    patch: ProviderPatch,
+  ): Promise<MirroredItemPatch> {
+    const github = asObject(item.props['github']);
+    const { owner, name } = splitRepo(github?.['repo'], 'item');
+    const number = checkedId('githubNumber', String(github?.['number']), 'item');
+    let state: GithubIssueState | undefined;
+    if (patch.status !== undefined) {
+      state = STATE_OF[patch.status];
+      if (state === undefined) throw new StatusNotAvailableError('github', patch.status);
+    }
+    const record = this.answerOf(
+      await session.write.updateGithubIssue(
+        `${owner}/${name}`,
+        number,
+        session.headers,
+        githubUpdateBody(patch, state),
+      ),
+    );
+    const confirmed: MirroredItemPatch = {};
+    if (patch.title !== undefined) confirmed.title = asString(record?.['title']) ?? patch.title;
+    if (patch.status !== undefined && state !== undefined) {
+      const status = (record === null ? null : statusOfIssue(record)) ?? patch.status;
+      const closed = status === 'done' || status === 'cancelled';
+      Object.assign(confirmed, this.confirmedStatus(status, closed ? 'closed' : 'open'));
+      const closedAt = asDate(record?.['closed_at']);
+      if (closed && closedAt !== null) confirmed.closedAt = closedAt;
+    }
+    return confirmed;
+  }
 
   protected async prepare(
     session: TrackerWriteSession,
