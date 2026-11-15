@@ -53,6 +53,16 @@ describe('PlannedAt', () => {
     assert.ok(PlannedAt.from('2028-02-29'));
   });
 
+  it('reads where a calendar event now starts', () => {
+    assert.equal(PlannedAt.fromEventStart({ date: '2026-11-21' }, 'UTC')?.toString(), '2026-11-21');
+    assert.equal(
+      PlannedAt.fromEventStart({ dateTime: '2026-11-21T07:30:00Z' }, 'Asia/Jerusalem')?.toString(),
+      '2026-11-21T09:30',
+    );
+    assert.equal(PlannedAt.fromEventStart({ dateTime: 'soon' }, 'UTC'), null);
+    assert.equal(PlannedAt.fromEventStart(undefined, 'UTC'), null);
+  });
+
   it('compares by value', () => {
     assert.ok(PlannedAt.parse('2026-11-21').equals(PlannedAt.from('2026-11-21')));
     assert.equal(PlannedAt.parse('2026-11-21').equals(PlannedAt.from('2026-11-21T08:00')), false);

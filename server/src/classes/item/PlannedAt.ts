@@ -66,6 +66,34 @@ export class PlannedAt {
     return parts === null ? null : new PlannedAt(stored, parts);
   }
 
+  /**
+   * Where a calendar event now starts, as a plan: its day (`date`, an all-day event), or its local
+   * day and time in `timeZone` (`dateTime`). Null when it carries neither (or the year is outside
+   * a plan's).
+   */
+  static fromEventStart(
+    start: { date?: unknown; dateTime?: unknown } | undefined,
+    timeZone: string,
+  ): PlannedAt | null {
+    if (typeof start?.date === 'string') return PlannedAt.from(start.date);
+    if (typeof start?.dateTime !== 'string') return null;
+    const at = new Date(start.dateTime);
+    if (Number.isNaN(at.getTime())) return null;
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(at);
+    const part = (type: string): string => parts.find((entry) => entry.type === type)?.value ?? '';
+    return PlannedAt.from(
+      `${part('year')}-${part('month')}-${part('day')}T${part('hour')}:${part('minute')}`,
+    );
+  }
+
   /** The local date, `YYYY-MM-DD`. */
   get date(): string {
     return this.#value.slice(0, 10);

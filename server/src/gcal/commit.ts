@@ -8,10 +8,16 @@
  *   (`gcal.write`); a 412 is a conflict, settled by the next pull;
  * - echoes (`etag == link.lastEtag`) are our own writes and are skipped;
  * - a changed event of a linked item: last write wins between Google's `updated` and the user's
- *   edit time (a tie goes to Google); the loser's values go to `AuditLogs.meta`, redacted;
- *   a provider item is never written back, so a Google edit of it is re-pushed over;
- * - a Google-side delete soft-deletes a local item, or sets `overlay.calendarSync=false` on a
- *   provider item, and tombstones the link; the provider is never touched;
+ *   edit time (a tie goes to Google); the loser's values go to `AuditLogs.meta`, redacted. When
+ *   Google wins, its new time becomes the item's plan (`overlay.plannedAt`): the calendar never
+ *   writes a due or start date, and a provider is never written to; a to-do takes Google's title;
+ *   a mirrored item's title is pushed back over Google's;
+ * - only the integration owner's own items change from Google's side (their to-dos, and their own
+ *   integrations' items): another member's shared item is never edited or deleted there; its
+ *   edits lose (re-pushed), and its delete only tombstones the link (not made again unless edited);
+ * - a Google-side delete of an owner's item soft-deletes a local one, or sets
+ *   `overlay.calendarSync=false` on a mirrored one, and tombstones the link; the provider is never
+ *   touched;
  * - events with no link are ignored here (the sync engine's pull maps Google-native ones); the
  *   pull keeps a sync token apart from the engine's (`gcal:<id>`, not `calendar:<id>`);
  * - `nextSyncToken` is saved only when the calendar's listing was complete; `reset` clears it.
@@ -24,7 +30,7 @@ import { AuditLog } from '../classes/AuditLog.js';
 import { AppError } from '../errors/AppError.js';
 import type { CalendarLinkData } from '../models/definitions/CalendarLink.js';
 import type { IntegrationData } from '../models/definitions/Integration.js';
-import type { ItemData, LocalItemPatch } from '../models/definitions/Item.js';
+import type { ItemData } from '../models/definitions/Item.js';
 import {
   getCalendarLinkRepository,
   getIntegrationRepository,
@@ -34,9 +40,8 @@ import {
   getWorkspaceRepository,
 } from '../models/index.js';
 import { redactString } from '../services/secretPatterns.js';
-import { mapCalendarEvent } from '../sync/providers/google_calendar.js';
-import type { GoogleCalendarEvent } from '../sync/providers/google_calendar.js';
-import { PrimaryCalendar } from '../classes/workspace/PrimaryCalendar.js';
+import { PlannedAt } from '../classes/item/PlannedAt.js';
+import { WorkspaceSettings } from '../classes/workspace/WorkspaceSettings.js';
 import { eventIdFor, hashEvent, parseOpId, projectEvent, type PushItem } from './diff.js';
 
 const OpResult = z.object({
@@ -110,8 +115,10 @@ interface Run {
   workspaceId: string;
   runId: string;
   timeZone: string;
-  /** Where this run's creates went: the workspace's primary calendar, when it is on this integration. */
+  /** Where this run's creates went: the primary calendar the push wrote to. */
   primaryCalendarId: string | null;
+  /** The integration owner's own integrations: their items may change from Google's side. */
+  ownIntegrations: ReadonlySet<string>;
   counts: CommitCounts;
   failures: number;
 }
@@ -193,17 +200,31 @@ async function applyOpResult(run: Run, result: z.infer<typeof OpResult>): Promis
 
 // ─── pulled events ──────────────────────────────────────────────────────────
 
-/** What a pulled event changes on a local item: its title and times. */
-function patchFrom(
-  item: ItemData,
-  mapped: ReturnType<typeof mapCalendarEvent>,
-): LocalItemPatch | null {
-  if ('deleted' in mapped) return null;
-  const dated =
-    item.startAt !== null
-      ? { startAt: mapped.startAt ?? null, endAt: mapped.endAt ?? null }
-      : { dueAt: mapped.allDay === true ? (mapped.startAt ?? null) : (mapped.endAt ?? null) };
-  return { title: mapped.title, allDay: mapped.allDay ?? false, ...dated };
+/** An event time as Google sends it: a day, or an instant. */
+interface EventTimeLike {
+  date?: unknown;
+  dateTime?: unknown;
+}
+
+const timeOf = (value: unknown): EventTimeLike | undefined =>
+  typeof value === 'object' && value !== null ? value : undefined;
+
+/** Whether two event starts are the same day, or the same instant. */
+function sameStart(a: EventTimeLike | undefined, b: EventTimeLike | undefined): boolean {
+  if (typeof a?.date === 'string' || typeof b?.date === 'string') return a?.date === b?.date;
+  if (typeof a?.dateTime !== 'string' || typeof b?.dateTime !== 'string') return false;
+  return Date.parse(a.dateTime) === Date.parse(b.dateTime);
+}
+
+/**
+ * Whether the run's integration owner owns the item: their own local to-do, or an item of one of
+ * their own integrations. Only such an item may change from Google's side (I6): another member's
+ * shared item is theirs, whoever can edit the owner's calendar.
+ */
+function ownedByOwner(run: Run, item: ItemData): boolean {
+  return isLocal(item)
+    ? item.ownerUserId === run.integration.ownerUserId
+    : item.integrationId !== null && run.ownIntegrations.has(item.integrationId);
 }
 
 async function applyLinkedEvent(
@@ -218,18 +239,23 @@ async function applyLinkedEvent(
   const items = await getItemRepository();
   const item = await items.findById(workspaceId, link.itemId);
   if (item?.deletedAt !== null) return;
+  const owned = ownedByOwner(run, item);
 
   if (ev.status === 'cancelled') {
-    // Deleted in Google: the item goes, or stops projecting; the provider is never touched.
-    if (isLocal(item)) await items.softDelete(workspaceId, item.id);
-    else await items.setOverlay(workspaceId, item.id, { calendarSync: false });
+    // Deleted in Google. The owner's own item goes (a to-do) or stops projecting (a mirrored item;
+    // the provider is never touched); another member's item is left as it is: only this link
+    // goes, so the event is not made again (unless the item is edited later).
+    if (owned) {
+      if (isLocal(item)) await items.softDelete(workspaceId, item.id);
+      else await items.setOverlay(workspaceId, item.id, { calendarSync: false });
+    }
     await links.tombstone(workspaceId, link.id, 'google');
     run.counts.deleted += 1;
     await AuditLog.record(
       systemIn(run),
       'gcal.delete',
       AuditTarget.of('item', item.id),
-      runMeta(run, { source: 'google', eventId: ev.id }),
+      runMeta(run, { source: 'google', eventId: ev.id, ...(owned ? {} : { itemKept: true }) }),
     );
     return;
   }
@@ -264,26 +290,43 @@ async function applyLinkedEvent(
     );
   }
 
-  if (!googleWins || !isLocal(item)) {
+  if (!googleWins || !owned) {
     // Our version stays: it is pushed over Google's on the next run (with Google's new etag).
     await links.upsert(workspaceId, run.integration.id, key, { ...base, pushedHash: null });
     return;
   }
-  const mapped = mapCalendarEvent(ev as GoogleCalendarEvent, {
-    calendarId,
-    accountId: run.integration.accountId,
-    timeZone: run.timeZone,
-  });
-  const patch = patchFrom(item, mapped);
-  const updated = patch === null ? null : await items.updateLocal(workspaceId, item.id, patch);
+  // Google wins, on the owner's own item. Its time becomes the item's plan (`overlay.plannedAt`;
+  // a due or start date is the provider's or the item's own, never the calendar's); a to-do takes
+  // Google's title too. Nothing is ever written to a provider.
+  const before = projectEvent(toPushItem(item), workspaceId, run.timeZone);
+  const start = timeOf(ev['start']);
+  const moved = !sameStart(before?.start, start);
+  const plan = moved ? PlannedAt.fromEventStart(start, run.timeZone) : null;
+  const title = typeof ev['summary'] === 'string' ? ev['summary'] : null;
+  let changed = false;
+  if (plan !== null) {
+    await items.setOverlay(workspaceId, item.id, { plannedAt: plan.toString() });
+    changed = true;
+  }
+  if (isLocal(item) && title !== null && title.trim() !== '' && title !== item.title) {
+    await items.updateLocal(workspaceId, item.id, { title });
+    changed = true;
+  }
+  const updated = changed ? await items.findById(workspaceId, item.id) : item;
   if (updated === null) return;
   const projection = projectEvent(toPushItem(updated), workspaceId, run.timeZone);
+  // Idle next run when the new projection is what Google shows (its time, and its title for a
+  // to-do); a mirrored item's title, or a time no plan can hold, is pushed back over Google's.
+  const settled =
+    projection !== null &&
+    (plan !== null || !moved) &&
+    (isLocal(item) || title === null || title === projection.summary);
   await links.upsert(workspaceId, run.integration.id, key, {
     ...base,
-    lastItemUpdatedAt: updated.updatedAt,
-    pushedHash: projection === null ? null : hashEvent(projection),
+    lastItemUpdatedAt: toPushItem(updated).editedAt ?? updated.updatedAt,
+    pushedHash: settled ? hashEvent(projection) : null,
   });
-  run.counts.updated += 1;
+  if (changed) run.counts.updated += 1;
 }
 
 async function applyCalendar(
@@ -321,17 +364,16 @@ async function applyCalendar(
 
 // ─── the commit ─────────────────────────────────────────────────────────────
 
-/** The primary calendar's id when it is on this integration; null otherwise. */
-function primaryCalendarFor(stored: unknown, integrationId: string): string | null {
-  const primary = PrimaryCalendar.from(stored);
-  return primary?.isOn(integrationId) === true ? primary.calendarId : null;
-}
-
-/** Applies one commit and closes its run. Throws AppError(409) for a run that is not open. */
+/**
+ * Applies one commit and closes its run. Throws AppError(409) for a run that is not open.
+ * `pushedTo` is the primary calendar the push wrote to (its creates' calendar); without it, the
+ * workspace's primary calendar as it is now, when it is on this integration.
+ */
 export async function applyCommit(
   integration: IntegrationData,
   input: unknown,
   now: Date = new Date(),
+  pushedTo?: string,
 ): Promise<CommitCounts> {
   const parsed = CommitBody.safeParse(input);
   if (!parsed.success) throw new AppError(400, 'Invalid commit');
@@ -344,12 +386,18 @@ export async function applyCommit(
   }
   const workspace = await (await getWorkspaceRepository()).findById(workspaceId);
   if (workspace === null) throw new AppError(404, 'Workspace not found');
+  const primary = WorkspaceSettings.from(workspace.settings).primaryCalendar;
+  const own = await (
+    await getIntegrationRepository()
+  ).listForOwner(workspaceId, integration.ownerUserId);
   const run: Run = {
     integration,
     workspaceId,
     runId: body.runId,
     timeZone: workspace.settings.timezone,
-    primaryCalendarId: primaryCalendarFor(workspace.settings.primaryCalendar, integration.id),
+    primaryCalendarId:
+      pushedTo ?? (primary?.isOn(integration.id) === true ? primary.calendarId : null),
+    ownIntegrations: new Set(own.map((entry) => entry.id)),
     counts: { pulled: 0, created: 0, updated: 0, deleted: 0, echoesSkipped: 0, conflicts: 0 },
     failures: 0,
   };

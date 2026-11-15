@@ -218,6 +218,167 @@ describe('commit: pulled events of linked items', () => {
   });
 });
 
+describe('commit: a move in Google becomes the plan, never a due or start date (I2)', () => {
+  const item = (id: string): Promise<ItemData | null> =>
+    fx.models.getItemRepository().then((items) => items.findById(fx.workspaceId, id));
+
+  it('a planned-only to-do moved in Google keeps no due date and gets the new plannedAt', async () => {
+    const created = await fx.item('Planned only', 0, { dueAt: null });
+    const items = await fx.models.getItemRepository();
+    await items.setOverlay(fx.workspaceId, created.id, { plannedAt: '2026-11-18' });
+    const planned = await item(created.id);
+    assert.ok(planned);
+    await (
+      await fx.models.getCalendarLinkRepository()
+    ).upsert(
+      fx.workspaceId,
+      fx.integrationId,
+      { calendarId: 'primary', googleEventId: eventIdFor(created.id) },
+      {
+        itemId: created.id,
+        direction: 'to_google',
+        lastEtag: '"g1"',
+        lastItemUpdatedAt: planned.updatedAt,
+        pushedHash: 'x',
+      },
+    );
+    await commit({
+      calendars: [
+        {
+          id: 'primary',
+          events: [
+            slim(created.id, {
+              summary: 'Planned only',
+              start: { date: '2026-11-20' },
+              end: { date: '2026-11-21' },
+            }),
+          ],
+        },
+      ],
+    });
+    const after = await item(created.id);
+    assert.equal(after?.dueAt, null);
+    assert.equal(after.startAt, null);
+    assert.equal(after.overlay.plannedAt, '2026-11-20');
+    // What Google shows is what we would push now: idle on the next run, no ping-pong.
+    const { hashEvent, projectEvent } = await import('./diff.js');
+    const { toPushItem } = await import('./commit.js');
+    const projection = projectEvent(toPushItem(after), fx.workspaceId, 'Asia/Jerusalem');
+    assert.ok(projection);
+    assert.equal((await linkOf(created.id)).pushedHash, hashEvent(projection));
+  });
+
+  it('a mirrored item moved in Google keeps its provider due date and gets plannedAt (a timed move)', async () => {
+    const items = await fx.models.getItemRepository();
+    const due = new Date(T0 + 3 * 86_400_000);
+    await items.bulkUpsert(fx.workspaceId, [
+      {
+        integrationId: fx.integrationId,
+        kind: 'issue',
+        topicId: 'personal',
+        title: 'Jira issue',
+        status: 'open',
+        dueAt: due,
+        source: {
+          provider: 'jira',
+          accountId: 'acct',
+          externalId: 'JIRA-7',
+          key: 'J-7',
+          url: 'https://example.atlassian.net/browse/J-7',
+          updatedAtSource: null,
+          etag: null,
+          hash: 'h7',
+        },
+      },
+    ]);
+    const [doc] = await items.aggregate<{ _id: string }>(fx.workspaceId, [
+      { $match: { 'source.externalId': 'JIRA-7' } },
+    ]);
+    assert.ok(doc);
+    const stored = await item(doc._id);
+    assert.ok(stored);
+    await (
+      await fx.models.getCalendarLinkRepository()
+    ).upsert(
+      fx.workspaceId,
+      fx.integrationId,
+      { calendarId: 'primary', googleEventId: eventIdFor(doc._id) },
+      {
+        itemId: doc._id,
+        direction: 'to_google',
+        lastEtag: '"g1"',
+        lastItemUpdatedAt: stored.updatedAt,
+        pushedHash: 'x',
+      },
+    );
+    await commit({
+      calendars: [
+        {
+          id: 'primary',
+          events: [
+            slim(doc._id, {
+              summary: 'Jira issue (renamed in Google)',
+              start: { dateTime: '2026-11-25T08:30:00Z' },
+              end: { dateTime: '2026-11-25T09:00:00Z' },
+            }),
+          ],
+        },
+      ],
+    });
+    const after = await item(doc._id);
+    assert.equal(after?.dueAt?.getTime(), due.getTime(), 'Jira’s due date stays');
+    assert.equal(after.title, 'Jira issue', 'a provider’s title is never taken from Google');
+    // 08:30Z is 10:30 in Jerusalem.
+    assert.equal(after.overlay.plannedAt, '2026-11-25T10:30');
+    // Its title differs from Google's: pushed back over it next run.
+    assert.equal((await linkOf(doc._id)).pushedHash, null);
+  });
+});
+
+describe('commit: another member’s shared item never changes from Google (I6)', () => {
+  async function theirs(title: string): Promise<ItemData> {
+    const created = await fx.item(title, 3, { ownerUserId: 'u-another-member' });
+    await (
+      await fx.models.getCalendarLinkRepository()
+    ).upsert(
+      fx.workspaceId,
+      fx.integrationId,
+      { calendarId: 'primary', googleEventId: eventIdFor(created.id) },
+      {
+        itemId: created.id,
+        direction: 'to_google',
+        lastEtag: '"g1"',
+        lastItemUpdatedAt: created.updatedAt,
+        pushedHash: '0123456789abcdef',
+      },
+    );
+    return created;
+  }
+
+  it('a move or rename in Google loses: the item stays, its event is pushed back', async () => {
+    const created = await theirs('Their to-do');
+    await commit({ calendars: [{ id: 'primary', events: [slim(created.id)] }] });
+    const after = await (await fx.models.getItemRepository()).findById(fx.workspaceId, created.id);
+    assert.equal(after?.title, 'Their to-do');
+    assert.equal(after.dueAt?.getTime(), created.dueAt?.getTime());
+    assert.equal(after.overlay.plannedAt, null);
+    assert.equal((await linkOf(created.id)).pushedHash, null);
+  });
+
+  it('a delete in Google only takes our link: never their item, never calendarSync', async () => {
+    const created = await theirs('Their other to-do');
+    await commit({
+      calendars: [{ id: 'primary', events: [slim(created.id, { status: 'cancelled' })] }],
+    });
+    const after = await (await fx.models.getItemRepository()).findById(fx.workspaceId, created.id);
+    assert.equal(after?.deletedAt, null);
+    assert.equal(after.overlay.calendarSync, null);
+    const link = await linkOf(created.id);
+    assert.equal(link.deletedBy, 'google');
+    assert.notEqual(link.tombstonedAt, null);
+  });
+});
+
 describe('commit: sync tokens and runs', () => {
   const stateOf = async (): Promise<string | null | undefined> =>
     (
