@@ -1943,10 +1943,14 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 - **Carried fixes:** a clean-up racing another integration's push (fix rounds 1 and 2: every
   TodoList delete of a pushed event claims its own link first, `EventClaim`, so its tombstone exists
   while the DELETE is in flight, and settles the claim with the time Google answered,
-  `deleteAnsweredAt`; a DELETE with no answer is read once within the request's budget, settled
-  when gone and kept otherwise (a live reading may precede a slow delete), and a claim unanswered
-  for 10 minutes is reconciled by the integration's next push, clean-up or look at its pushed
-  events, primary or not; a missing field, a claim stored before it existed, reads as answered at
+  `deleteAnsweredAt`; a DELETE with no answer is read once (a push's and a clean-up's reads within the request's
+  budget; a to-do's delete is one op with no budget), settled when gone and kept otherwise (a live
+  reading may precede a slow delete), and a claim still standing and unanswered for 10 minutes is
+  reconciled by the integration's next push (its workspace calendar's integration only), clean-up
+  or look at its pushed events (a small sweep: 3 claims, reads starting within about 2 s), the
+  last two primary or not, least recently swept first (`lastSweptAt`); a move's claim is erased by
+  its own commit, so a move whose DELETE half got no answer or a 429 leaves the old event in
+  Google, untracked (PERMISSIONS-V2 ruling 12); a missing field, a claim stored before it existed, reads as answered at
   its tombstone, and the `2026-11-15-calendar-link-delete-answered` migration stores that; "Also
   remove" keeps the claims of the last 10 minutes; a push whose write is committed while another
   integration's claim stands for its run, answered after the run was created or unanswered and
