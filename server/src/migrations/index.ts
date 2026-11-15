@@ -8,6 +8,7 @@
  */
 import { addImportanceAttribute } from './addImportanceAttribute.js';
 import { blockConnectors } from './blockConnectors.js';
+import { calendarLinkDeleteAnswered } from './calendarLinkDeleteAnswered.js';
 import { dropAreaScope } from './dropAreaScope.js';
 import { integrationOwners } from './integrationOwners.js';
 import { introduceTopics } from './introduceTopics.js';
@@ -32,6 +33,7 @@ export const MIGRATIONS: readonly Migration[] = [
   removeGoogleDrive,
   primaryCalendar,
   primaryCalendarRead,
+  calendarLinkDeleteAnswered,
 ];
 
 interface MigrationRecord {

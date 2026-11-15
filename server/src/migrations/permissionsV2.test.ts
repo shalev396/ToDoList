@@ -61,7 +61,7 @@ function integration(
 const where = (...rules: unknown[]): unknown => ({ combinator: 'and', rules });
 
 describe('in the migrations list', () => {
-  it('owners, then former members’ integrations, then block connectors, after importance; the Drive clean-up, then the primary calendar, then its read calendar', async () => {
+  it('owners, then former members’ integrations, then block connectors, after importance; the Drive clean-up, then the primary calendar, then its read calendar; the old calendar claims answered', async () => {
     const { MIGRATIONS } = await import('./index.js');
     assert.deepEqual(
       MIGRATIONS.map(({ id }) => id),
@@ -77,6 +77,8 @@ describe('in the migrations list', () => {
         '2026-11-15-primary-calendar',
         // After it: the primary is always a read calendar of its integration.
         '2026-11-15-primary-calendar-read',
+        // The push's claims: an old `dashboard` tombstone was answered at its tombstone.
+        '2026-11-15-calendar-link-delete-answered',
       ],
     );
   });
