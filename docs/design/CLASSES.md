@@ -2125,7 +2125,7 @@ Auditable, Viewable<SavedView>`, composing a **`Query`** value object (parsed an
 - **`NewDashboard`** (M5) makes a dashboard (planning, dry run, the version-1 write, template
   shares); `Dashboard.create` and its siblings delegate and answer the same views.
   **`DashboardDryRun`** is a whole-state dry run's answer; `dashboardRules.ts` the shared audit
-  names, operations and publish/lint rules. `Dashboard`'s class is about 775 lines (was 930).
+  names, operations and publish/lint rules. `Dashboard`'s class is about 820 lines (was 930), its sweep and strip guard included.
 - **`DocCheck`** (M6) owns the write policy too (`validated`: the first issue is the 400;
   `restorable`: 409, or an agent's lint 400; `validation`: builder_validate's answer) and documents
   which checks are document level and which per block; `docCheck.golden.test.ts` pins its output.
