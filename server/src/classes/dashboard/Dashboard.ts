@@ -658,6 +658,8 @@ export class Dashboard
         ? await connectors.bindable(input.shareIntegrations !== false)
         : [];
       result = applyOps(this.#draft(), ops, {
+        // The result is checked like every other write: by DocCheck.
+        check: (draft) => DocCheck.instance.check(draft),
         newBlockId,
         // apply_template binds the actor's own integrations, as instantiating does (ruling 16).
         templates: (key) => {

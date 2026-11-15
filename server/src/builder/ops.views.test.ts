@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { DocCheck } from '../classes/dashboard/DocCheck.js';
 import { CAPS, type Block, type DashboardDraft, type Layouts, type Op } from '../types/builder.js';
 import { BLOCK_CATALOG } from './catalog.js';
 import { OpValidationError } from './errors.js';
@@ -55,6 +56,7 @@ const viewTemplate: ViewTemplateDraft = {
 };
 
 const ctx = (): ApplyOpsContext => ({
+  check: (draft) => DocCheck.instance.check(draft),
   newBlockId: ids('blk_t'),
   newViewId: ids('vw_t'),
   templates: () => null,

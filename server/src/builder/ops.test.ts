@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { applyPatch } from 'rfc6902';
 
+import { DocCheck } from '../classes/dashboard/DocCheck.js';
 import {
   BLOCK_TYPES,
   type Block,
@@ -83,7 +84,7 @@ const TEMPLATE: DashboardDraft = {
 const templates: TemplateLookup = (key) => (key === 'tpl@1' ? structuredClone(TEMPLATE) : null);
 
 function ctx(): ApplyOpsContext {
-  return { newBlockId: counter(), templates };
+  return { check: (draft) => DocCheck.instance.check(draft), newBlockId: counter(), templates };
 }
 
 function add(type: BlockType, extra: Record<string, unknown> = {}): Op {
@@ -261,7 +262,7 @@ describe('add_block', () => {
     const draft = run(emptyDraft(), add('note'));
     let calls = 0;
     const result = applyOps(draft, [add('note')], {
-      templates,
+      ...ctx(),
       newBlockId: () => {
         calls += 1;
         return calls === 1 ? 'blk_t000000001' : 'blk_fresh0001';

@@ -1,9 +1,16 @@
 /**
- * The one place a dashboard document is checked and linted (BUILDER.md §6–§8). Every write, dry
- * run, restore and validation of a dashboard goes through `DocCheck.instance`, and nothing else
- * calls the builder's checkDraft or lintDashboard for a dashboard. It also owns the policy of what
- * a finding means: the first error of a write is its 400, and a restore that no longer passes is a
- * 409.
+ * The one place a dashboard document is checked and linted (BUILDER.md §6–§8). It also owns the
+ * policy of what a finding means: the first error of a write is its 400, and a restore that no
+ * longer passes is a 409. Who comes here:
+ * - writes: `save` and `applyPatch` (`validated`), builder ops, REST and MCP, the persona's views
+ *   and the seed's blocks included (Dashboard#applyOps hands `check` to the builder's applyOps as
+ *   `ApplyOpsContext.check`, so the ops path has no check of its own), creating and instantiating
+ *   (NewDashboard: `validated`);
+ * - dry runs: of ops (the same `check`), of a patch, undo and revert (DashboardDryRun);
+ * - restores: undo, redo, revert (`restorable`);
+ * - `validation` (`POST …/builder/validate`, builder_validate).
+ * The one write that is not checked again is "Stop sharing" (Dashboard#stripConnector): it only
+ * takes one connector off a stored draft, which passed this check when it was written.
  *
  * What is checked, and at which level (docCheck.golden.test.ts pins the output: order, pointers,
  * messages):

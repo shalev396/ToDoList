@@ -1,10 +1,12 @@
 /**
  * Builder ops (BUILDER.md §6 and §9, MCP.md §8): the named edits the UI editor and AI agents make
- * to a dashboard draft. Pure: no I/O and no clock; block ids and templates come from the caller.
+ * to a dashboard draft. Pure: no I/O and no clock; block ids, templates and the document check come
+ * from the caller.
  *
- * applyOps() applies the ops in order to a copy of the draft, validates the result as a whole
- * (validate.ts: schema, caps, catalog, compiler, safety) and returns it with the RFC 6902 patch from
- * the input to the result and the inverse patch. The input is never modified, even when an op fails.
+ * applyOps() applies the ops in order to a copy of the draft, validates the result as a whole with
+ * the caller's check (`ctx.check`: DocCheck, the one check of a dashboard document: schema, caps,
+ * catalog, compiler, safety) and returns it with the RFC 6902 patch from the input to the result
+ * and the inverse patch. The input is never modified, even when an op fails.
  */
 import { randomInt } from 'node:crypto';
 import { createPatch, type Operation } from 'rfc6902';
@@ -34,7 +36,7 @@ import {
 import { BLOCK_CATALOG, lookupField, type FieldSpec, type GridSize } from './catalog.js';
 import { assertSafeInput } from './compile.js';
 import { OpValidationError, QueryValidationError, fromZodError } from './errors.js';
-import { checkDraft } from './validate.js';
+import type { DraftCheck } from './validate.js';
 
 /** One RFC 6902 operation, as stored in DashboardVersions. */
 export type PatchOperation = Operation;
@@ -62,6 +64,11 @@ export interface ViewTemplateDraft {
 export type ViewTemplateLookup = (key: string) => ViewTemplateDraft | null;
 
 export interface ApplyOpsContext {
+  /**
+   * The check of the whole result (DocCheck#check: the parsed draft and its issues, in order). The
+   * first issue is the refusal; ops never validate a document any other way.
+   */
+  check: (draft: unknown) => DraftCheck;
   /** A fresh block id (`newBlockId`); ids already on the dashboard are skipped. */
   newBlockId: () => string;
   templates: TemplateLookup;
@@ -770,8 +777,9 @@ export function parseOps(raw: readonly unknown[]): Op[] {
 }
 
 /**
- * Applies `ops` in order to a copy of `draft` and validates the result. Throws OpValidationError
- * (`/ops/<i>/…` for an op, `/blocks/<i>/…` and so on for the result) and leaves `draft` untouched.
+ * Applies `ops` in order to a copy of `draft` and validates the result with `ctx.check`. Throws
+ * OpValidationError (`/ops/<i>/…` for an op, the check's first issue, `/blocks/<i>/…` and so on,
+ * for the result) and leaves `draft` untouched.
  */
 export function applyOps(
   draft: DashboardDraft,
@@ -784,7 +792,7 @@ export function applyOps(
     const pointer = `/ops/${String(index)}`;
     editor.apply(parseOp(raw, pointer), pointer);
   });
-  const check = checkDraft(editor.state);
+  const check = ctx.check(editor.state);
   const [first] = check.issues;
   if (check.draft === null || first !== undefined) {
     throw new OpValidationError(first?.pointer ?? '', first?.message ?? 'invalid dashboard');

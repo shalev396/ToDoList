@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { DocCheck } from '../classes/dashboard/DocCheck.js';
 import type { DashboardDraft, Op } from '../types/builder.js';
 import {
   guardPatch,
@@ -31,7 +32,11 @@ function nextId(): string {
 }
 
 function apply(draft: DashboardDraft, ...ops: Op[]): ReturnType<typeof applyOps> {
-  return applyOps(draft, ops, { newBlockId: nextId, templates: () => null });
+  return applyOps(draft, ops, {
+    check: (state) => DocCheck.instance.check(state),
+    newBlockId: nextId,
+    templates: () => null,
+  });
 }
 
 function add(type: 'note' | 'list' | 'chart'): Op {

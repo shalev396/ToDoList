@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { DocCheck } from '../classes/dashboard/DocCheck.js';
 import type { DashboardDraft } from '../types/builder.js';
 import { getPersona, listPersonas, personaTemplateKeys, resolvePersonaKey } from './personas.js';
 import { lintDashboard } from './lint.js';
@@ -51,6 +52,7 @@ describe('view templates', () => {
     for (const language of ['en', 'he'] as const) {
       for (const { key } of listViewTemplates()) {
         const result = applyOps(page(), [{ op: 'add_view', templateKey: key }], {
+          check: (draft) => DocCheck.instance.check(draft),
           newBlockId,
           templates: () => null,
           viewTemplates: (templateKey) => localizeViewTemplate(templateKey, language),

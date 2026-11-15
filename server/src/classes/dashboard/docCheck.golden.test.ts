@@ -311,6 +311,8 @@ const OPS_PAGE = documentOf([blockOf('note', 1), blockOf('filter', 2)]);
 function opsContext(): ApplyOpsContext {
   let next = 0;
   return {
+    // The ops write path checks its result through DocCheck, as Dashboard#applyOps wires it (R1).
+    check: (draft) => DocCheck.instance.check(draft),
     newBlockId: (): string => {
       next += 1;
       return `blk_golden_${String(next)}`;
