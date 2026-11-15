@@ -376,6 +376,8 @@ describe('DocCheck: the output phase 6b must keep', () => {
     }
     const golden = JSON.parse(readFileSync(GOLDEN, 'utf8')) as unknown;
     assert.deepEqual(actual, golden);
+    // Byte for byte as a response serializes it: the keys of every issue in the same order too.
+    assert.equal(JSON.stringify(actual), JSON.stringify(golden));
   });
 
   it('exercises every step and lint rule (the golden is not vacuous)', () => {
