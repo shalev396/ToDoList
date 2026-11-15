@@ -186,6 +186,14 @@ classDiagram
     +blockScope(connectors) BlockScope
     +refusal(caller, action, item) AppError
   }
+  class ItemAccessFilter {
+    <<value object>>
+    +copyAbsorption(userId)$ Filter
+    +items(ws, userFilter?) Filter
+    +itemsUnabsorbed(ws) Filter
+    +containers(ws) Filter
+  }
+  ItemPolicy *-- ItemAccessFilter
   Policy <|.. BasePolicy
   BasePolicy <|-- WorkspacePolicy
   BasePolicy <|-- IntegrationPolicy
@@ -243,6 +251,7 @@ classDiagram
   class IntegrationPolicy:::built
   class DashboardPolicy:::built
   class ItemPolicy:::built
+  class ItemAccessFilter:::built
   class AuditLog:::built
   class User:::built
   class Media:::built
@@ -528,10 +537,10 @@ classDiagram
   }
   CreateFunnel <|-- TaskProvider
   CreateFunnel <|-- CalendarProvider
-  class ResourcePicker~R~ {
+  class ResourcePicker~K~ {
     <<interface>>
-    +pickerKind: sites | workspaces | calendars | null
-    +pickerResources(caller) R[]
+    +pickerKind: K | null
+    +pickerResources(caller) PickerResources[K][]
     +choose(caller, ids)
   }
   class Revocable {
@@ -696,8 +705,22 @@ What the tests hold:
   (`OAUTH_TOKEN_ENDPOINTS`, written out there on purpose: no definition can widen it) and its
   callback path is the one registered at the provider; the scopes and the key methods are as
   before; the strategies build the headers (a second token for GitHub boards, Moodle's query
-  token, one Google token exchange per session, one per call for the service account); and
+  token, one Google token exchange per session, one per call for the service account); the
+  four authorize URLs are pinned byte for byte (Google's parameters, in any order); and
   `Integration.capabilitiesOf()` agrees with the contracts each class implements.
+- `definitions/purity.test.ts`: nothing under `classes/integration/definitions/` reaches, at run
+  time, the models' barrel, a model, the connection or `config/environment.ts` (the plain types
+  under `models/definitions/` are fine). The builder's compiler, which validates Google's push
+  filter, starts every read from `ItemAccessFilter` (pure), not from `ItemPolicy` (which resolves
+  the access from the data). `config/environment.ts` reads `process.env` when a value is asked
+  for, so no import order can fix a value early (`definitions/importOrder.test.ts` loads the
+  definitions before its database starts).
+- `sync/providers/adapterSecrets.test.ts`: the adapters never reach the secret. `AdapterContext`
+  has no `secret`; nothing under `sync/providers/` names `.secret` or indexes `secret[…]`, or loads
+  the credential or the sync's secret door. Google's service-account signer is the strategy's
+  (`auth/googleServiceAccount.ts`), and the account it names reaches a connection test as
+  `ctx.auth.account()`.
+- `sync/http.test.ts` pins `OAUTH_TOKEN_ENDPOINTS` exactly, and the URLs a client takes.
 
 **What phase 2a built:**
 
@@ -1284,6 +1307,7 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 | `services/integrationConfig.ts`    | the request bodies, and views of the definitions                                                                                                   |
 | `seed/fakeCredentials.ts`          | a view of the strategies' FAKE credentials (the pieces: `definitions/fake.ts`)                                                                     |
 | `sync/providers/oauthEndpoints.ts` | the test stand-in switch only; the endpoints are the definitions'                                                                                  |
+| `sync/providers/googleAuth.ts`     | moved to `classes/integration/auth/googleServiceAccount.ts`: `ServiceAccountAuth`'s signer, which reads the session's secret (adapters never do)   |
 
 ## Where phase 1 left the old modules
 
