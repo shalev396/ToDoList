@@ -60,8 +60,20 @@ after(async () => {
 describe('agent keys', () => {
   it('role matrix', async () => {
     const body = { name: 'k', scopes: ['read'] };
-    assert.equal((await call('viewer', 'POST', '/agent-keys', body)).status, 403);
-    assert.equal((await call('editor', 'POST', '/agent-keys', body)).status, 403);
+    assert.equal(
+      (await call('viewer', 'POST', '/agent-keys', { name: 'v', scopes: ['read'] })).status,
+      201,
+    );
+    assert.equal(
+      (await call('editor', 'POST', '/agent-keys', { name: 'e', scopes: ['items:write'] })).status,
+      201,
+    );
+    const tooMuch = await call('viewer', 'POST', '/agent-keys', {
+      name: 'v2',
+      scopes: ['items:write'],
+    });
+    assert.equal(tooMuch.status, 400);
+    assert.equal(tooMuch.body?.['code'], 'scope_not_allowed');
     assert.equal((await call('stranger', 'POST', '/agent-keys', body)).status, 404);
     assert.equal((await call('stranger', 'GET', '/agent-keys')).status, 404);
     assert.equal((await call('stranger', 'DELETE', '/agent-keys/x')).status, 404);
@@ -142,13 +154,31 @@ describe('agent keys', () => {
       scopes: ['read'],
     });
     const editorView = keys(await call('editor', 'GET', '/agent-keys'));
-    assert.deepEqual(
-      editorView.map((k) => k.id),
-      [own.id],
+    assert.ok(editorView.some((k) => k.id === own.id));
+    assert.ok(editorView.every((k) => k.userId === undefined));
+    assert.equal(
+      editorView.some((k) => k.name === 'k'),
+      false,
     );
-    assert.equal(editorView[0]?.userId, undefined);
     assert.ok(keys(await call('owner', 'GET', '/agent-keys')).length > 1);
     assert.equal((await call('editor', 'DELETE', `/agent-keys/${own.id}`)).status, 204);
+  });
+
+  it("a member's new key appears only in their own list and in the owner's", async () => {
+    const made = await call('editor', 'POST', '/agent-keys', { name: 'mine', scopes: ['read'] });
+    assert.equal(made.status, 201, made.text);
+    const id = (made.body?.['data'] as KeyView).id;
+    const own = keys(await call('editor', 'GET', '/agent-keys')).find((k) => k.id === id);
+    assert.ok(own);
+    assert.equal(own.userId, undefined);
+    assert.equal(
+      keys(await call('viewer', 'GET', '/agent-keys')).some((k) => k.id === id),
+      false,
+    );
+    const users = await (await import('../../models/index.js')).getUserRepository();
+    const editor = await users.findByEmail('keys-http-editor@example.test');
+    const seen = keys(await call('owner', 'GET', '/agent-keys')).find((k) => k.id === id);
+    assert.equal(seen?.userId, editor?.id);
   });
 
   it('a key of another workspace is 404 and stays active', async () => {
@@ -170,8 +200,10 @@ describe('agent keys', () => {
 
   it('caps the keys a user may hold', async () => {
     const { LIMITS } = await import('../../config/limits.js');
+    const users = await (await import('../../models/index.js')).getUserRepository();
+    const owner = await users.findByEmail('keys-http-owner@example.test');
     const mine = keys(await call('owner', 'GET', '/agent-keys')).filter(
-      (k) => k.revokedAt === null,
+      (k) => k.revokedAt === null && k.userId === owner?.id,
     );
     for (let i = mine.length; i < LIMITS.agentKeysPerUser; i += 1) {
       const ok = await call('owner', 'POST', '/agent-keys', {

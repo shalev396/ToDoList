@@ -61,20 +61,19 @@ describe('bearerKey', () => {
 describe('keys from the agent-key service', () => {
   it('authenticates a key made by createAgentKey (one hash for both)', async () => {
     const team = await newTeam('auth-service-key');
-    const { createAgentKey } = await import('../../services/agentKeys.js');
-    const { contextFor } = await import('../../testing/workspaceFixtures.js');
-    const created = await createAgentKey(
-      await contextFor(team.workspace.id, team.owner.id),
-      team.owner.id,
-      { name: 'From the UI', scopes: ['workspace:read'] },
-    );
-    const agent = await auth.authenticateAgentKey(created.key);
-    assert.equal(agent?.principal.agentId, created.id);
+    const { AgentKey } = await import('../../classes/AgentKey.js');
+    const { callerFor } = await import('../../testing/workspaceFixtures.js');
+    const created = await AgentKey.create(await callerFor(team.workspace.id, team.owner.id), {
+      name: 'From the UI',
+      scopes: ['workspace:read'],
+    });
+    const agent = await auth.authenticateAgentKey(created.raw);
+    assert.equal(agent?.principal.agentId, created.key.id);
     assert.deepEqual(agent.principal.scopes, ['workspace:read']);
   });
 
   it('stores the hex SHA-256 of the whole key, which the test helper reproduces', async () => {
-    const { hashAgentKey } = await import('../../services/agentKeys.js');
+    const { hashAgentKey } = await import('../../classes/AgentKey.js');
     const key = newRawKey();
     assert.equal(hashAgentKey(key), createHash('sha256').update(key).digest('hex'));
   });

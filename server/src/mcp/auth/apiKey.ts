@@ -7,17 +7,13 @@
  */
 import type { Request, RequestHandler, Response } from 'express';
 
+import { AgentKey } from '../../classes/AgentKey.js';
 import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
-import { getAgentKeyRepository, type AgentKeyData } from '../../models/index.js';
-import { hashAgentKey } from '../../services/agentKeys.js';
 import { jsonRpcError, JSON_RPC, requestIdOf } from '../jsonRpc.js';
-import { resolvePrincipal, setRequestAgent, type AuthenticatedAgent } from './principal.js';
+import { setRequestAgent, type AuthenticatedAgent } from './principal.js';
 
 /** `elk_` + 32 random bytes in base64url: the only shape of a key. */
 const AGENT_KEY_PATTERN = /^elk_[A-Za-z0-9_-]{43}$/;
-
-/** A use is written to `lastUsedAt` at most once a minute per key, not on every call. */
-const TOUCH_INTERVAL_MS = 60_000;
 
 const REALM = 'todolist-mcp';
 
@@ -39,32 +35,13 @@ export function bearerKey(authorization: string | undefined): {
   };
 }
 
-function isUsable(key: AgentKeyData, now: Date): boolean {
-  if (key.revokedAt !== null) return false;
-  return key.expiresAt === null || key.expiresAt.getTime() > now.getTime();
-}
-
-/**
- * The agent behind a raw key, or null when the key is malformed, unknown, revoked or expired, or
- * its user is no longer an active member of the key's workspace. Records the use (`lastUsedAt`).
- * `origin`: the request's address and user agent, for the audit log.
- */
-export async function authenticateAgentKey(
+/** The agent behind a raw key, or null (AgentKey.authenticate): the key's own rules live there. */
+export function authenticateAgentKey(
   rawKey: string,
   now: Date = new Date(),
   origin: ActorOrigin = {},
 ): Promise<AuthenticatedAgent | null> {
-  if (!AGENT_KEY_PATTERN.test(rawKey)) return null;
-  const keys = await getAgentKeyRepository();
-  const key = await keys.findByHash(hashAgentKey(rawKey));
-  if (key === null || !isUsable(key, now)) return null;
-  const agent = await resolvePrincipal(key, origin);
-  if (agent === null) return null;
-  const lastUsed = key.lastUsedAt?.getTime() ?? null;
-  if (lastUsed === null || now.getTime() - lastUsed >= TOUCH_INTERVAL_MS) {
-    await keys.touch(key.workspaceId, key.id, now);
-  }
-  return agent;
+  return AgentKey.authenticate(rawKey, now, origin);
 }
 
 /** The one 401 every failed check gets. */

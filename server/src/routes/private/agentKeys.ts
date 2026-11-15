@@ -20,6 +20,9 @@ export interface AgentKeyView {
   expiresAt: Date | null;
   lastUsedAt: Date | null;
   revokedAt: Date | null;
+  kind: 'key' | 'oauth';
+  /** The OAuth client's name; null for a key. */
+  clientName: string | null;
 }
 
 // ─── GET /api/private/workspaces/:wid/agent-keys ────────────────────────────
@@ -32,7 +35,7 @@ router.get('/workspaces/:wid/agent-keys', requireWorkspace('viewer'), AgentKeysC
 // ─── POST /api/private/workspaces/:wid/agent-keys ───────────────────────────
 
 /**
- * Owner. 201 with the raw `key`, which is never retrievable again. `expiresInDays` is 1–365
+ * Any member, with scopes their role permits (400 `scope_not_allowed`). 201 with the raw `key`, which is never retrievable again. `expiresInDays` is 1–365
  * (default 365). 409 at the cap of keys per user (config/limits.ts).
  */
 export interface CreateAgentKeyRequestBody {
@@ -43,7 +46,7 @@ export interface CreateAgentKeyRequestBody {
 
 export type CreateAgentKeyResponseData = AgentKeyView & { key: string };
 
-router.post('/workspaces/:wid/agent-keys', requireWorkspace('owner'), AgentKeysController.create);
+router.post('/workspaces/:wid/agent-keys', requireWorkspace('viewer'), AgentKeysController.create);
 
 // ─── DELETE /api/private/workspaces/:wid/agent-keys/:id ─────────────────────
 

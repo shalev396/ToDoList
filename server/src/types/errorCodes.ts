@@ -87,6 +87,8 @@ export const ERROR_CODES = [
   'oauth_not_editor',
   'oauth_limit',
   'oauth_failed',
+  /** A member asked for an agent-key scope their role does not permit. */
+  'scope_not_allowed',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

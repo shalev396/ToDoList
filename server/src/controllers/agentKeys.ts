@@ -1,38 +1,34 @@
 import { type RequestHandler } from 'express';
 
+import { AgentKey } from '../classes/AgentKey.js';
 import { allowSecretKinds } from '../middlewares/responseFormatter.js';
 import type {
   CreateAgentKeyResponseData,
   ListAgentKeysResponseData,
 } from '../routes/private/agentKeys.js';
 import { CreateAgentKeyBody } from '../services/agentKeySchemas.js';
-import { createAgentKey, listAgentKeys, revokeAgentKey } from '../services/agentKeys.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
 
 const list: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
-  const data: ListAgentKeysResponseData = await listAgentKeys(workspace, user.id);
+  const { caller } = req as WorkspaceRequest;
+  const data: ListAgentKeysResponseData = await AgentKey.list(caller);
   res.success(data);
 };
 
 const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateAgentKeyBody, req.body);
-  const { workspace, user, caller } = req as WorkspaceRequest;
-  const data: CreateAgentKeyResponseData = await createAgentKey(
-    workspace,
-    user.id,
-    body,
-    caller.actor,
-  );
+  const { caller } = req as WorkspaceRequest;
+  const { key, raw } = await AgentKey.create(caller, body);
+  const data: CreateAgentKeyResponseData = { ...key.viewWithUser(), key: raw };
   // The one response that shows the raw key.
   allowSecretKinds(res, 'agent_key');
   res.success(data, 201);
 };
 
 const revoke: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user, caller } = req as WorkspaceRequest;
-  await revokeAgentKey(workspace, user.id, routeParam(req, 'id'), caller.actor);
+  const { caller } = req as WorkspaceRequest;
+  await AgentKey.revoke(caller, routeParam(req, 'id'));
   res.status(204).end();
 };
 
