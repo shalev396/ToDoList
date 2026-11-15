@@ -9,6 +9,10 @@ export interface PlannedParts {
   time: string;
 }
 
+/** The years a plan may name (the server refuses others). */
+export const PLANNED_MIN_YEAR = 1970;
+export const PLANNED_MAX_YEAR = 2999;
+
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -18,6 +22,9 @@ function isRealDate(value: string): boolean {
     return false;
   }
   const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  if (year < PLANNED_MIN_YEAR || year > PLANNED_MAX_YEAR) {
+    return false;
+  }
   const parsed = new Date(Date.UTC(year, month - 1, day));
   return (
     parsed.getUTCFullYear() === year &&

@@ -22,6 +22,14 @@ describe('plannedAt', () => {
     assert.equal(formatPlannedAt({ date: '', time: '' }), null);
     assert.equal(formatPlannedAt({ date: '2026-03-05', time: '25:00' }), '2026-03-05');
   });
+  it('keeps to the years 1970 to 2999', () => {
+    assert.equal(formatPlannedAt({ date: '1970-01-01', time: '' }), '1970-01-01');
+    assert.equal(formatPlannedAt({ date: '2999-12-31', time: '' }), '2999-12-31');
+    assert.equal(formatPlannedAt({ date: '1969-12-31', time: '' }), null);
+    assert.equal(formatPlannedAt({ date: '0002-05-01', time: '' }), null);
+    assert.equal(formatPlannedAt({ date: '3000-01-01', time: '' }), null);
+    assert.deepEqual(parsePlannedAt('0202-05-01'), { date: '', time: '' });
+  });
   it('round-trips', () => {
     for (const value of ['2026-12-31', '2026-12-31T23:59', '2024-02-29T00:00']) {
       assert.equal(formatPlannedAt(parsePlannedAt(value)), value);

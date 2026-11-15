@@ -488,6 +488,25 @@ function OverlayControls({
     time: useId(),
   };
   const planned = parsePlannedAt(item.overlay.plannedAt);
+  // The date and time are typed into drafts and committed on blur or Enter, never per keystroke.
+  const [plannedDraft, setPlannedDraft] = useState(planned);
+  const [plannedSeen, setPlannedSeen] = useState(item.overlay.plannedAt ?? null);
+  if (plannedSeen !== (item.overlay.plannedAt ?? null)) {
+    setPlannedSeen(item.overlay.plannedAt ?? null);
+    setPlannedDraft(planned);
+  }
+
+  /** Saves the drafts when they are a real day (or none); a partial date goes back to the saved one. */
+  const commitPlanned = (draft: { date: string; time: string }) => {
+    const next = formatPlannedAt(draft);
+    if (draft.date !== '' && next === null) {
+      setPlannedDraft(planned);
+      return;
+    }
+    if (next !== (item.overlay.plannedAt ?? null)) {
+      save({ plannedAt: next });
+    }
+  };
 
   const save = (body: Parameters<typeof overlay.mutate>[0]) => {
     overlay.mutate(body, {
@@ -562,12 +581,18 @@ function OverlayControls({
             type="date"
             data-planned-date
             className="w-auto"
-            value={planned.date}
-            disabled={overlay.isPending}
+            min="1970-01-01"
+            max="2999-12-31"
+            value={plannedDraft.date}
             onChange={(event) => {
-              const next = formatPlannedAt({ date: event.target.value, time: planned.time });
-              if (next !== (item.overlay.plannedAt ?? null)) {
-                save({ plannedAt: next });
+              setPlannedDraft({ date: event.target.value, time: plannedDraft.time });
+            }}
+            onBlur={() => {
+              commitPlanned(plannedDraft);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                commitPlanned(plannedDraft);
               }
             }}
           />
@@ -577,12 +602,18 @@ function OverlayControls({
             data-planned-time
             aria-label={t('items.sheet.plannedTime')}
             className="w-auto"
-            value={planned.time}
-            disabled={overlay.isPending || planned.date === ''}
+            value={plannedDraft.time}
+            disabled={planned.date === ''}
             onChange={(event) => {
-              save({
-                plannedAt: formatPlannedAt({ date: planned.date, time: event.target.value }),
-              });
+              setPlannedDraft({ date: planned.date, time: event.target.value });
+            }}
+            onBlur={() => {
+              commitPlanned({ date: planned.date, time: plannedDraft.time });
+            }}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                commitPlanned({ date: planned.date, time: plannedDraft.time });
+              }
             }}
           />
           {planned.date === '' ? null : (
@@ -601,7 +632,12 @@ function OverlayControls({
             </Button>
           )}
         </div>
-        <p className="text-[13px] text-muted-foreground">{t('items.sheet.plannedHint')}</p>
+        {item.source.provider === 'google_calendar' ||
+        item.overlay.calendarSync === false ? null : (
+          <p className="text-[13px] text-muted-foreground" data-planned-hint>
+            {t('items.sheet.plannedHint')}
+          </p>
+        )}
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={ids.note}>{t('items.sheet.note')}</Label>

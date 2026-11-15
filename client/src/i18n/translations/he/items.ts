@@ -152,7 +152,7 @@ export const items = {
     hidden: 'הסתרה מהלוחות שלי',
     topic: 'נושא',
     topicDefault: 'כמו ב-\u2060{{source}}',
-    plannedAt: 'מתוכנן ל',
+    plannedAt: 'תאריך מתוכנן',
     plannedTime: 'שעה מתוכננת',
     plannedClear: 'ניקוי',
     plannedHint: 'מתי בכוונתך לעשות את זה. נשלח ליומן סביבת העבודה.',
