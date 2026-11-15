@@ -20,7 +20,8 @@ It is updated every phase.
 | 2W    | Write-back (phase 2b): `TaskProvider.updateTask` and each definition's `writableFields`, `CalendarProvider` update/delete event, create calendar, recurrence (`RecurrenceRule`); `BoardProvider` stays planned                                                                         | **built** |
 | 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects, the cascade template; `User` calls `Workspace.deleteAccountCascade`                                                                                                                                           | **built** |
 | PC    | The calendar phase: the workspace's `PrimaryCalendar` (value object in `WorkspaceSettings`, `PrimaryCalendarStatus`), the fixed push rule, `PlannedAt`, a pushed event deleted with its to-do, "Also remove everything TodoList added" (`AddedContentRemover`), block connector scopes | **built** |
-| 4     | `Item` hierarchy, `Container`, `ItemQuery`, `CreateQuota`                                                                                                                                                                                                                              | planned   |
+| 4a    | Server: the `Item` hierarchy (`Todo`, `MirroredItem`, `TaskItem`, `PullRequest`, `CalendarEvent`), `Container`, `ItemQuery`, `QueryTarget`, `ProviderFields`, `CreateQuota`, `TodoCopy`; overlay overrides and effective values; the split edit; recurring to-dos                      | **built** |
+| 4b    | Client: the item sheet's editing and hints, the Repeat control, copy fixes                                                                                                                                                                                                             | planned   |
 | 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                                                                                              | planned   |
 | 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                                                                                                    | planned   |
 | 7     | The legacy list emptied, dead services deleted                                                                                                                                                                                                                                         | planned   |
@@ -35,7 +36,7 @@ It is updated every phase.
   `local.ts`, `stageMaintenance.ts`);
 - the test helpers production code never loads (`src/testing/**`, `__tests__/**`);
 - `LEGACY_DB_IMPORTERS`, the modules that still reach the database until their phase moves them
-  (20 after phase 3; 23 after phase 2a; 24 after phase 1; 35 after phase 0, down from 42).
+  (15 after phase 4a; 20 after phase 3; 23 after phase 2a; 24 after phase 1; 35 after phase 0, down from 42).
 
 ESLint (`@typescript-eslint/no-restricted-imports`, type imports allowed) and
 `src/classes/classBoundary.test.ts` (which also resolves paths, sees dynamic imports and names
@@ -961,16 +962,21 @@ classDiagram
   }
   class Item {
     <<abstract>>
-    +title
-    +kind
-    +topic
+    +isLocal: boolean*
+    +title / status / dueAt / startAt / priority (effective)
     +overlay: Overlay
-    +attributes: AttributeValues
-    +editable: boolean*
-    +setOverlay(caller, overlay)
-    +setAttributes(caller, values)
-    +isVisibleTo(caller) boolean
+    +copies: Copies
+    +facts: ItemFacts
     +from(data)$ Item
+    +fromDoc(row)$ Item
+    +find(caller, id)$ Item
+    +unsetTopicIn(workspaceId, topicId)$
+    +edit(caller, edit)* Item
+    +setOverlay(caller, edit) Item
+    +editing(caller)* ItemEditing
+    +isVisibleTo(caller, policy) boolean
+    +toSummary(context) ItemSummary
+    +toView(caller, context) ItemDetail
   }
   WorkspaceEntity <|-- Item
   class Viewable~TView~ {
@@ -986,23 +992,39 @@ classDiagram
   Auditable <|.. Item
   SoftDeletable <|.. Item
   class ItemPolicy
-  Item ..> ItemPolicy : isVisibleTo
+  Item ..> ItemPolicy : isVisibleTo, edit
 
   class Todo {
-    +update(caller, patch)
-    +complete(caller)
-    +reopen(caller)
+    +create(caller, input)$
+    +findOwn(caller, id)$ Todo
+    +update(caller, edit)
+    +complete(caller, done)
     +delete(caller)
-    +copyTo(caller, target)
+    +copyTo(caller, request)
   }
   class MirroredItem {
     <<abstract>>
     +openIn
+    +providerFields
+    +overridableFields
+    +edit(caller, edit) template
+    #changedFields(half)
+    #writeBack(caller, integration, half)*
+    +store(integration, mapped)$
+    +markAsCopyOf(todo)
   }
-  class TaskItem
-  class PullRequest
+  class TaskItem {
+    #writeBack() updateTask
+  }
+  class PullRequest {
+    +merged
+    +reviewDecision
+  }
   class CalendarEvent {
     +timeRange: TimeRange
+    +recurrence
+    #writeBack() updateEvent
+    +createRecurring(caller, input)$
   }
   Item <|-- Todo
   Item <|-- MirroredItem
@@ -1042,17 +1064,71 @@ classDiagram
   HasDueDate <|.. TaskItem
   Schedulable <|.. CalendarEvent
 
-  class Container
+  class TodoCopy {
+    +run() CreateCopyOutcome
+  }
+  class CopyTarget {
+    <<abstract>>
+    +for(integration, target)$
+    +check(todo)*
+    +send(send)*
+  }
+  class TaskCopyTarget
+  class EventCopyTarget
+  CopyTarget <|-- TaskCopyTarget
+  CopyTarget <|-- EventCopyTarget
+  Todo ..> TodoCopy : copyTo
+  TodoCopy ..> CopyTarget
+  TaskCopyTarget ..> TaskProvider : createTask
+  EventCopyTarget ..> CalendarProvider : insertEvent
+  TaskItem ..> TaskProvider : updateTask
+  CalendarEvent ..> CalendarProvider : updateEvent, insertEvent(recurrence)
+  class TaskProvider {
+    <<interface>>
+  }
+  class CalendarProvider {
+    <<interface>>
+  }
+
+  class Container {
+    +assertVisible(caller, policy, id)$
+    +listVisible(caller, policy, ids)$
+    +findByExternalId(...)$
+    +unsetTopicIn(workspaceId, topicId)$
+    +toView() FacetContainer
+  }
   WorkspaceEntity <|-- Container
   class ItemQuery {
     +for(caller)$ ItemQuery
+    +effectiveStage()$
+    +list(query)
+    +get(id)
+    +detail(item)
+    +summaries(ids)
+    +facets(connectors)
+    +aggregates() RunQueryDeps
+    +run(query, ctx)
   }
   ItemQuery ..> ItemPolicy
-  class CreateQuota
+  class QueryTarget {
+    <<value object>>
+    +resolve(caller, request)$
+  }
+  class ProviderFields {
+    +of(ws, userId)$
+    +list(now)
+  }
+  class CreateQuota {
+    +forHour(userId, provider, now)$
+    +reserve()
+    +release()
+  }
   class RateLimiter {
     <<interface>>
   }
   RateLimiter <|.. CreateQuota
+  TodoCopy ..> CreateQuota
+  CalendarEvent ..> CreateQuota
 
   class Calendar {
     +plan()
@@ -1074,21 +1150,44 @@ classDiagram
   class AttributeValues {
     <<value object>>
   }
-  Item *-- AttributeValues
   class Overlay {
     <<value object>>
+    +overrides: Overrides
+    +patch(edit, settings)$
+  }
+  class Overrides {
+    <<value object>>
+    +effective(source)
+    +projection()$
+    +clearing(fields)$
+  }
+  class ItemEdit {
+    <<value object>>
+    +localPatch()
+    +split(writable) EditSplit
+  }
+  class ItemEditing {
+    <<value object>>
+    +local()$
+    +mirrored(input)$
   }
   class TimeRange {
     <<value object>>
-  }
-  class DueDate {
-    <<value object>>
+    +changedBy(change)
   }
   class Copies {
     <<value object>>
   }
+  class PlannedAt {
+    <<value object>>
+  }
   Item *-- Overlay
+  Overlay *-- Overrides
+  Overlay ..> PlannedAt
+  Item *-- Copies
   CalendarEvent *-- TimeRange
+  Item ..> ItemEdit : edit
+  Item ..> ItemEditing : editing
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
   classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
@@ -1097,37 +1196,65 @@ classDiagram
   class Auditable:::built
   class SoftDeletable:::built
   class ItemPolicy:::built
-  class Item:::planned
-  class Todo:::planned
-  class MirroredItem:::planned
-  class TaskItem:::planned
-  class PullRequest:::planned
-  class CalendarEvent:::planned
-  class Editable:::planned
-  class Completable:::planned
-  class Deletable:::planned
-  class HasDueDate:::planned
-  class Copyable:::planned
-  class ProviderLinked:::planned
-  class Schedulable:::planned
-  class Container:::planned
-  class ItemQuery:::planned
-  class CreateQuota:::planned
-  class RateLimiter:::planned
+  class Item:::built
+  class Todo:::built
+  class MirroredItem:::built
+  class TaskItem:::built
+  class PullRequest:::built
+  class CalendarEvent:::built
+  class Editable:::built
+  class Completable:::built
+  class Deletable:::built
+  class HasDueDate:::built
+  class Copyable:::built
+  class ProviderLinked:::built
+  class Schedulable:::built
+  class TodoCopy:::built
+  class CopyTarget:::built
+  class TaskCopyTarget:::built
+  class EventCopyTarget:::built
+  class TaskProvider:::built
+  class CalendarProvider:::built
+  class Container:::built
+  class ItemQuery:::built
+  class QueryTarget:::built
+  class ProviderFields:::built
+  class CreateQuota:::built
+  class RateLimiter:::built
+  class Overlay:::built
+  class Overrides:::built
+  class ItemEdit:::built
+  class ItemEditing:::built
+  class TimeRange:::built
+  class Copies:::built
+  class PlannedAt:::built
+  class CalendarLink:::built
   class Calendar:::planned
-  class CalendarLink:::planned
   class SyncCursor:::planned
   class PushPlan:::planned
-  class Overlay:::planned
-  class TimeRange:::planned
-  class DueDate:::planned
-  class Copies:::planned
   class AttributeValues:::planned
 ```
 
-`Todo.copyTo` is polymorphic: `target.createTask()` for any `TaskProvider`, `target.insertEvent()`
-for a `CalendarProvider`, so it gets the read-only gate for free. Changing a source field of a
-`MirroredItem` throws `MirroredItemError`.
+- **`Item.from(data)`** is the polymorphic factory: a local to-do is a `Todo`; a mirrored item is a
+  `CalendarEvent` (kind `event`), a `PullRequest` (kind `pr`) or a `TaskItem` (the rest). Each
+  subclass registers itself; `classes/item/index.ts` loads them all, so import the item classes
+  from there.
+- **Effective values.** What an item reads as is `override ?? source` (`Overrides`): its getters,
+  its views, MCP's summaries, every `ItemQuery` read (an `$addFields` right after the access
+  filter's `$match`), the builder's compiled pipeline (the same stage, second, before the filters,
+  sorts and groups), the facets and the workspace calendar's push (`gcal/plan.ts` projects it before
+  its date window).
+- **One edit, split** (`Item#edit`, polymorphic): a `Todo` changes its own columns (ItemPolicy:
+  editors who see it); a `MirroredItem` splits the edit (`ItemEdit#split`) against its provider's
+  writable fields for its kind: the provider half goes through its integration (`TaskProvider
+.updateTask`, `CalendarProvider.updateEvent`), its owner's only (`integration_not_owner`) and only
+  while read & write (`integration_read_only`, the write gate); the fields its provider lacks are
+  kept as overrides by any editor who sees it; anything else is the mirrored 409 with `openIn`.
+- **`Todo.copyTo`** is polymorphic over the target (`CopyTarget.for`: a `TaskProvider` creates a
+  task, a `CalendarProvider` inserts an event), through the integration's write gate; `TodoCopy` is
+  the attempt (the hourly `CreateQuota`, the audit, the read-back stored by `MirroredItem.store`).
+- **`CalendarEvent.createRecurring`** makes a recurring to-do: a recurring event in the workspace's
+  primary calendar only, by its integration's owner, stored at once as its event item.
 
 ## 5. Workspace and people (phase 3, built)
 
@@ -1622,6 +1749,48 @@ classDiagram
 
 The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
 SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
+
+## What phase 4a built (server)
+
+- **The item classes** (`classes/item/`): abstract `Item` (`Viewable`, `Auditable`,
+  `SoftDeletable`), `Todo` (`Editable`, `Completable`, `Deletable`, `HasDueDate`, `Copyable`),
+  abstract `MirroredItem` (`ProviderLinked`), `TaskItem` (`HasDueDate`), `PullRequest`,
+  `CalendarEvent` (`Schedulable`); value objects `Overlay`, `Overrides`, `Copies`, `TimeRange`,
+  `ItemEdit`, `ItemEditing`; `Container`; `ItemQuery` (lists, items, summaries, facets, and the
+  builder's injected aggregates behind the caller's access filter); `QueryTarget` (which query a
+  `/query` request runs: a view's, a block's, a draft); `ProviderFields` (the access-scoped,
+  cached sample); `CreateQuota implements RateLimiter`; `TodoCopy` with its `CopyTarget`
+  strategies.
+- **Overlay overrides** (`ItemOverlay.overrides`: title, status, due date with its all-day flag,
+  start, priority): a mirrored item's local stand-ins for fields its provider lacks for its kind.
+  The sync never writes them (`syncedItemFields` leaves the overlay alone); an override equal to the
+  provider's value, or null, clears it; a write-back of a field clears its override.
+- **The split edit** (`PATCH …/items/:id`, MCP `update_todo`) and `ItemDetail.editing` (the
+  provider fields, the overridable ones, the reachable statuses, whether the caller owns the
+  integration, its mode for its owner only, whether they can write now, whether an event needs a
+  guest notice).
+- **Recurring to-dos** (`POST …/items` with `recurrence`, MCP `create_todo` with `recurrence`):
+  `CalendarEvent.createRecurring`.
+- **Provider refusal details** reach REST callers as `details` (`fields`, `openIn`, `written`,
+  `refused`, `uncertain`), next to `message` and `code`.
+- **Codes** `integration_not_owner` (403) and `primary_calendar_unset` (409).
+- **Linear** asks for `write` (not `issues:create`) when its owner turns writes on;
+  `TaskProvider.updateTask` refuses an OAuth grant without its provider's write scope (409
+  `scope_missing`) before anything is opened.
+- **`Topic.delete`** unsets the topic through `Item.unsetTopicIn`, `Container.unsetTopicIn` and
+  `Integration.unsetTopicIn`.
+
+## Where phase 4a left the old modules
+
+| Module                               | Now                                                                                                                                                  |
+| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `services/items.ts`                  | **deleted**: `Item`, `Todo`, `ItemQuery`, `Container` (controllers and MCP tools call them)                                                          |
+| `services/providerCreate/mirror.ts`  | **deleted**: `MirroredItem.store`, `MirroredItem#markAsCopyOf`                                                                                       |
+| `services/providerCreate/service.ts` | no database: the chips and the funnel steps; `createCopy` is `Todo.findOwn` + `Todo#copyTo` (`TodoCopy`)                                             |
+| `services/providerFields.ts`         | pure discovery only; the sample and its cache are `ProviderFields`                                                                                   |
+| `services/workspaceQuery.ts`         | no database: request parsing and the compile context; `QueryTarget` reads views and blocks, `ItemQuery#run` runs the query (the 503 on a time limit) |
+| `gcal/plan.ts`                       | still on the legacy list (phase 5); projects the effective values before its date window                                                             |
+| `testing/itemCalls.ts`               | tests only: the old call shapes, one line each over the classes                                                                                      |
 
 ## What the calendar phase (PC) built
 
