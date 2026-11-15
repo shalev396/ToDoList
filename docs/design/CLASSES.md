@@ -1700,6 +1700,19 @@ The rulings are in `.superpowers/sdd/2026-11-14-oop-redesign/progress.md` (the c
   Google's own, not turned off): every live link's item, then the rest page by page within
   `PLAN_BUDGET_MS`; deletes and moves never depend on a cut-off.
 
+### Calendar phase, fix round 2
+
+- **The current workspace calendar is never cleaned:** `CleanupSubject.isProtected` (the primary
+  calendar read once per run) skips its events (`skipped`) and keeps it, except for the
+  disconnect of the integration it is on; `pushedEventCount` leaves its events out.
+- **A step Google refuses for good** (400, 403, 412, 422) is audited (`outcome: 'refused'`),
+  dropped from tracking and counted (`failed`), so later calls move on; a clean-up runs in one
+  write session.
+- **One `TimeBudget` per request:** a call starts only while `STEP_CEILING_MS` (8 s, the calendar
+  client's timeout) is left; the push's plan (`WRITE_RESERVE_MS`), ops and pull share it.
+- **`google_kept`:** another member's item deleted in Google stays unsent until edited (its
+  tombstone never ages out); a move's create follows its delete in the ops.
+
 ## Where the calendar phase left the old modules
 
 | Module                                        | State after PC                                                                                                                        |
