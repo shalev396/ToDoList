@@ -4,7 +4,7 @@ import type { IntegrationData } from '../../../models/definitions/Integration.js
 import type { ItemData, MirroredItemPatch } from '../../../models/definitions/Item.js';
 import { getWorkspaceRepository } from '../../../models/index.js';
 import { readBackGithub } from '../../../services/providerCreate/created.js';
-import { checkedId, splitRepo } from '../../../services/providerCreate/ids.js';
+import { checkedId, splitRepo } from '../providerIds.js';
 import { asDate, asObject, asString } from '../../../sync/providers/trackerCommon.js';
 import type { ItemStatus } from '../../../types/domain.js';
 import { Topic } from '../../workspace/Topic.js';

@@ -24,7 +24,7 @@ import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
 import type { ItemPolicy } from '../classes/policies/ItemPolicy.js';
 import { ItemQuery, ProviderFields, QueryTarget } from '../classes/item/index.js';
 import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
-import { registryOf } from './providerFields.js';
+import { registryOf } from '../builder/providerFields.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

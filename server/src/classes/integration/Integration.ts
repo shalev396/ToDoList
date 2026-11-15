@@ -536,11 +536,26 @@ export abstract class Integration<
     if (!this.mode.allowsWrites) throw new ReadOnlyIntegrationError(this.id);
   }
 
-  /** Does this OAuth grant lack the scope that creates items (Jira, Linear)? */
+  /**
+   * Does this OAuth grant lack the scopes that write to its provider (Jira `write:jira-work`,
+   * Linear `write`): a write-back needs them all. A key or token: no.
+   */
   async needsWriteConsent(): Promise<boolean> {
     const auth = this.auth;
     if (!(auth instanceof OAuthAuth)) return false;
     return this.lacksScopes(auth.writeScopes);
+  }
+
+  /**
+   * Does this OAuth grant lack what creating an item there needs: the write scopes, or one of the
+   * scopes that create on their own (Linear's older `issues:create`)?
+   */
+  async needsCreateConsent(): Promise<boolean> {
+    const auth = this.auth;
+    if (!(auth instanceof OAuthAuth)) return false;
+    if (!(await this.lacksScopes(auth.writeScopes))) return false;
+    const granted = new Set((await Credential.meta(this.workspaceId, this.id))?.scopes ?? []);
+    return !auth.createScopes.some((scope) => granted.has(scope));
   }
 
   // ─── Its owner's operations ──────────────────────────────────────────────

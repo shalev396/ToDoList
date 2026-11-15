@@ -5,7 +5,7 @@ import { ValidationError } from '../../../errors/ValidationError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
 import type { ItemData, MirroredItemPatch } from '../../../models/definitions/Item.js';
 import { readBackLinear } from '../../../services/providerCreate/created.js';
-import { checkedId } from '../../../services/providerCreate/ids.js';
+import { checkedId } from '../providerIds.js';
 import { createReadOnlyClient, type ReadOnlyClient, type Transport } from '../../../sync/http.js';
 import { LINEAR_DOCUMENTS, LINEAR_ENDPOINT, linearStatus } from '../../../sync/providers/linear.js';
 import {

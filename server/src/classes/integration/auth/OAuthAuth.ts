@@ -83,8 +83,16 @@ export interface OAuthAppOptions {
   callbackPath: string;
   /** Requested on every connection: read-only where the provider has scopes. */
   scopes: readonly string[];
-  /** Asked for later, by re-consent, when the user creates there (H5). Not requested by default. */
+  /**
+   * Asked for later, by re-consent, when the owner turns writes on (H5 creates, write-back). Not
+   * requested by default.
+   */
   writeScopes?: readonly string[];
+  /**
+   * Scopes that let a grant create items on their own, besides `writeScopes` (Linear's older
+   * `issues:create`): a grant with one of them still creates, but writes nothing back.
+   */
+  createScopes?: readonly string[];
   /** Scopes a grant must carry to be kept (Google lets the user untick one). */
   requiredScopes?: readonly string[];
   /** Linear takes its scopes comma separated; the others space separated. */
@@ -152,6 +160,7 @@ export class OAuthAuth<TSecret extends SecretJson = SecretJson> extends AuthStra
   readonly callbackPath: string;
   readonly scopes: readonly string[];
   readonly writeScopes: readonly string[];
+  readonly createScopes: readonly string[];
   readonly consoleUrl: string;
   readonly messages: OAuthMessages;
   readonly #app: OAuthAppOptions;
@@ -165,6 +174,7 @@ export class OAuthAuth<TSecret extends SecretJson = SecretJson> extends AuthStra
     this.callbackPath = app.callbackPath;
     this.scopes = app.scopes;
     this.writeScopes = app.writeScopes ?? [];
+    this.createScopes = app.createScopes ?? [];
     this.consoleUrl = app.consoleUrl;
     this.messages = {
       unavailable: `Signing in with ${app.provider} is not set up on this server`,

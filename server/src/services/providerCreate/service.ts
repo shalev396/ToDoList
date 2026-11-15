@@ -22,7 +22,6 @@ import { isCreatableProvider, Todo } from '../../classes/item/index.js';
 import { ItemPolicy } from '../../classes/policies/ItemPolicy.js';
 import type { WorkspaceContext } from '../accessFilter.js';
 import { logger } from '../logger.js';
-import { checkedId } from './ids.js';
 
 export { failureFor, isCreatableProvider, safeCopyUrl } from '../../classes/item/index.js';
 export type { CreatableProvider };
@@ -54,7 +53,7 @@ export async function listCreateTargets(
       provider,
       label: integration.label,
       authMethod: integration.authMethod,
-      needsConsent: await integration.needsWriteConsent(),
+      needsConsent: await integration.needsCreateConsent(),
       writable: integration.allowsWrites,
       mode: integration.mode.name,
       canSwitchMode: integration.canSwitchMode,
@@ -113,9 +112,5 @@ export async function createCopy(
   body: CreateCopyRequestBody,
   now: Date = new Date(),
 ): Promise<CreateCopyOutcome> {
-  const caller = Caller.fromContext(ctx, actor);
-  caller.require('editor');
-  checkedId('requestId', body.requestId, 'requestId');
-  const todo = await Todo.findOwn(caller, todoId);
-  return todo.copyTo(caller, body, now);
+  return Todo.copyOwn(Caller.fromContext(ctx, actor), todoId, body, now);
 }

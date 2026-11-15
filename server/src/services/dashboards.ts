@@ -26,7 +26,7 @@
 import type { ImportanceConfig } from '../types/importance.js';
 import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
 import { ProviderFields } from '../classes/item/ProviderFields.js';
-import { registryOf } from './providerFields.js';
+import { registryOf } from '../builder/providerFields.js';
 import { createPatch } from 'rfc6902';
 
 import {

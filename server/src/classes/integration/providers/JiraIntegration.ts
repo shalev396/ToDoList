@@ -6,7 +6,7 @@ import type { IntegrationData } from '../../../models/definitions/Integration.js
 import type { ItemData, MirroredItemPatch } from '../../../models/definitions/Item.js';
 import { readBackJira } from '../../../services/providerCreate/created.js';
 import { readJiraTeamField } from '../../../services/providerCreate/funnel.js';
-import { checkedId } from '../../../services/providerCreate/ids.js';
+import { checkedId } from '../providerIds.js';
 import {
   jiraSitesOf,
   pickJiraSite,

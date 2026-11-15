@@ -4,7 +4,7 @@ import { ValidationError } from '../../../errors/ValidationError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
 import type { ItemData, MirroredItemPatch } from '../../../models/definitions/Item.js';
 import { readBackClickup } from '../../../services/providerCreate/created.js';
-import { checkedId } from '../../../services/providerCreate/ids.js';
+import { checkedId } from '../providerIds.js';
 import { clickupStatus } from '../../../sync/providers/clickup.js';
 import {
   asObject,

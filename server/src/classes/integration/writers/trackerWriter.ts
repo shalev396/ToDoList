@@ -39,11 +39,11 @@ import {
   type HttpResponse,
   type Transport,
 } from '../../../sync/http.js';
-import { checkedId, splitRepo } from '../../../services/providerCreate/ids.js';
+import { checkedId, splitRepo } from '../providerIds.js';
 import { localDateString } from '../../../sync/providers/trackerCommon.js';
 import { zonedTime } from '../../../sync/transports/fixtureDates.js';
 import type { UpdateFields } from '../writeBack.js';
-import { cleanTitle, TITLE_MAX } from '../../../services/providerCreate/fields.js';
+import { cleanTitle, TITLE_MAX } from '../createFields.js';
 import type { JiraSiteBase } from '../../../services/providerCreate/jiraSites.js';
 
 export { cleanTitle, TITLE_MAX };
@@ -103,7 +103,13 @@ export type WriteFailure =
   /** Sent, and no usable answer: it may have happened. */
   | { kind: 'unknown' };
 
-export type WriteResult = { kind: 'created'; record: CreatedRecord } | WriteFailure;
+/**
+ * A create's answer. `existed`: the provider already had it (a repeat of the same request, by its
+ * fixed id): nothing new was made.
+ */
+export type WriteResult =
+  | { kind: 'created'; record: CreatedRecord; existed?: boolean }
+  | WriteFailure;
 
 /**
  * An update's answer: done, with the record as the provider now has it when its answer carries

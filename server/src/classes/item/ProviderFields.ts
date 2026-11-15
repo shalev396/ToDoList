@@ -1,6 +1,6 @@
 /**
  * Provider fields (H4) for one caller: the custom fields their visible items' providers synced into
- * `props` (services/providerFields.ts discovers them from the data, purely), read from a recent
+ * `props` (builder/providerFields.ts discovers them from the data, purely), read from a recent
  * sample of what the caller may see (ItemPolicy: their own integrations', the shared ones' and
  * their visible to-dos'; never an unshared integration's) and cached for a minute, keyed by that
  * access too, so Stop sharing (or a new attach) changes the answer from the next request on.
@@ -8,7 +8,7 @@
 import type { WorkspaceContext } from '../base/Caller.js';
 import { ItemPolicy, type ItemAccess } from '../policies/ItemPolicy.js';
 import { getItemRepository } from '../../models/index.js';
-import { discoverFields } from '../../services/providerFields.js';
+import { discoverFields } from '../../builder/providerFields.js';
 import type { ProviderField } from '../../types/builder.js';
 
 const SAMPLE_ITEMS = 400;

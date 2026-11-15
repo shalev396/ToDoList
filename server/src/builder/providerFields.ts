@@ -13,14 +13,10 @@
  *
  * Pure: this module only discovers fields from a sample it is given.
  */
-import { redactString } from './secretPatterns.js';
+import { redactString } from '../services/secretPatterns.js';
 import type { FieldType, ProviderField } from '../types/builder.js';
 import { PROVIDERS } from '../types/domain.js';
-import {
-  PROVIDER_FIELD_PATTERN,
-  PROPS_PATH_PATTERN,
-  isRestrictedName,
-} from '../builder/catalog.js';
+import { PROVIDER_FIELD_PATTERN, PROPS_PATH_PATTERN, isRestrictedName } from './catalog.js';
 
 const MAX_FIELDS = 200;
 const MAX_ENUM_VALUES = 10;

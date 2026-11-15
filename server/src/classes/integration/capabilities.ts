@@ -196,6 +196,11 @@ export interface CalendarProvider extends CreateFunnel {
     patch: EventPatch,
     notice?: GuestNotice,
   ): Promise<WrittenEvent>;
+  /**
+   * Its owner makes sure the integration reads `calendarId` (one TodoList just created an event in,
+   * so its sync keeps that event); whether it was added.
+   */
+  ensureReads(caller: Caller, calendarId: string): Promise<boolean>;
   /** A pulled event deleted, by its item (already gone is done); the item goes too. */
   deleteEvent(caller: Caller, item: ItemRef, notice?: GuestNotice): Promise<void>;
   /**
@@ -282,6 +287,7 @@ export function isCalendarProvider(
     'deleteLinkedEvent',
     'createCalendar',
     'primaryCandidate',
+    'ensureReads',
   ].every((name) => hasMethod(integration, name));
 }
 

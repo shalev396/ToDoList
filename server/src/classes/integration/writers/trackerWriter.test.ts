@@ -26,7 +26,7 @@ import {
   toAdf,
   type CreateFields,
 } from './trackerWriter.js';
-import { splitRepo } from '../../../services/providerCreate/ids.js';
+import { splitRepo } from '../providerIds.js';
 
 const FIELDS: CreateFields = {
   title: '  Buy milk  ',

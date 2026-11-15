@@ -48,7 +48,7 @@ import {
   getWorkspaceRepository,
 } from '../../../models/index.js';
 import { logger } from '../../../services/logger.js';
-import { checkedId } from '../../../services/providerCreate/ids.js';
+import { checkedId } from '../providerIds.js';
 import { ProviderHttpError, type ReadOnlyClient } from '../../../sync/http.js';
 import {
   calendarEventExternalId,
@@ -446,17 +446,20 @@ export class GoogleCalendarIntegration
   ): Promise<WriteResult> {
     const body = GoogleCalendarIntegration.#withRecurrence(event, recurrence);
     try {
+      const state = { existed: false };
       const written = await this.withWriteSession(caller, async ({ writer }) => {
         try {
           return await writer.insert(calendarId, body);
         } catch (error) {
           if (statusOf(error) !== 409) throw error;
+          state.existed = true;
           return { id: event.id, etag: undefined, updated: undefined };
         }
       });
       const eid = Buffer.from(`${written.id} ${calendarId}`).toString('base64url');
       return {
         kind: 'created',
+        ...(state.existed ? { existed: true } : {}),
         record: {
           id: written.id,
           key: null,
@@ -1005,6 +1008,27 @@ export class GoogleCalendarIntegration
       AppCreatedCalendars.of(config).without(calendarId),
       config,
     );
+  }
+
+  /**
+   * Its owner makes sure it reads `calendarId` (the workspace calendar a recurring to-do was just
+   * created in), so its next sync keeps that calendar's events instead of sweeping them as an
+   * unread calendar's. Added in read mode when missing (no Google call); audited as
+   * `integration.update`. Whether it was added.
+   */
+  async ensureReads(caller: Caller, calendarId: string): Promise<boolean> {
+    this.assertOwner(caller);
+    const calendars = this.config.calendars;
+    if (calendars.some((calendar) => calendar.id === calendarId)) return false;
+    await this.#storeCalendars(
+      [...calendars, { id: calendarId, mode: 'read' }],
+      AppCreatedCalendars.of(this.config),
+    );
+    await AuditLog.record(caller, Integration.Audit.update, this, {
+      changed: ['config'],
+      reason: 'workspace_calendar_read',
+    });
+    return true;
   }
 
   /** The read calendars and the record of TodoList's own, written to the stored settings. */

@@ -48,6 +48,8 @@ const linearApp: OAuthAppOptions = {
   // `write` (asked when its owner turns writes on): creating an issue and writing one back
   // (issueUpdate), which `issues:create` alone does not cover.
   writeScopes: ['write'],
+  // A grant from before `write` was asked for still creates (H5); writing back needs `write`.
+  createScopes: ['issues:create'],
   scopeSeparator: ',',
   pkce: true,
   sendResponseType: true,

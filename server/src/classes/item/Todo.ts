@@ -19,8 +19,9 @@ import type { CreateCopyOutcome, CreateCopyRequestBody } from '../../types/provi
 import { Container } from './Container.js';
 import type { Completable, Copyable, Deletable, Editable, HasDueDate } from './contracts.js';
 import { Item } from './Item.js';
-import type { ItemEdit } from './ItemEdit.js';
+import type { ItemEdit, ProviderHalf } from './ItemEdit.js';
 import { ItemEditing } from './ItemEditing.js';
+import { TimeRange } from './TimeRange.js';
 import { TodoCopy } from './TodoCopy.js';
 
 /** A new to-do, as callers give it. */
@@ -104,6 +105,19 @@ export class Todo
     }
   }
 
+  /**
+   * H5: the caller's own to-do `id`, created in one of their providers too (TodoCopy.start: an
+   * editor, a well-formed request id, then the to-do, each checked once).
+   */
+  static copyOwn(
+    caller: Caller,
+    id: string,
+    request: CreateCopyRequestBody,
+    now: Date = new Date(),
+  ): Promise<CreateCopyOutcome> {
+    return TodoCopy.start(caller, request, (who) => Todo.findOwn(who, id), now);
+  }
+
   /** The caller's own live to-do (anyone else's, or a mirrored item: 404). */
   static async findOwn(caller: Caller, id: string): Promise<Todo> {
     const stored = await (await getItemRepository()).findById(caller.workspaceId, id);
@@ -137,11 +151,17 @@ export class Todo
     }
     const topic = edit.get('topicId');
     if (topic !== undefined && topic !== null) await Topic.assertOf(this.workspaceId, topic);
+    this.#assertTimeRange(edit);
     return this.#store(edit.localPatch());
   }
 
   edit(caller: Caller, edit: ItemEdit): Promise<Todo> {
     return this.update(caller, edit);
+  }
+
+  /** A to-do has no provider: nothing of an edit goes anywhere but here. */
+  providerChanges(): Promise<ProviderHalf> {
+    return Promise.resolve({});
   }
 
   /** Done, or open again. */
@@ -170,6 +190,15 @@ export class Todo
     now: Date = new Date(),
   ): Promise<CreateCopyOutcome> {
     return new TodoCopy(caller, this, request, now).run();
+  }
+
+  /** Its start and end, once edited, in order (400 naming `endAt` otherwise; TimeRange's rule). */
+  #assertTimeRange(edit: ItemEdit): void {
+    if (!edit.has('startAt') && !edit.has('endAt') && !edit.has('allDay')) return;
+    const start = edit.has('startAt') ? (edit.get('startAt') ?? null) : this.data.startAt;
+    const end = edit.has('endAt') ? (edit.get('endAt') ?? null) : this.data.endAt;
+    if (start === null || end === null) return;
+    TimeRange.of(start, end, edit.get('allDay') ?? this.data.allDay);
   }
 
   /** The policy, once it let the caller edit this to-do (403, 404, or the mirrored 409). */

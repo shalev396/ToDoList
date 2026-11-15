@@ -18,7 +18,7 @@ import type {
   CreateOptionsQuery,
   CreateOptionsResponseData,
 } from '../../types/providerCreate.js';
-import { checkedId, isValidId, splitRepo } from './ids.js';
+import { checkedId, isValidId, splitRepo } from '../../classes/integration/providerIds.js';
 import type { TrackerReadSession as CreateSession } from '../../classes/integration/TrackerIntegration.js';
 import { jiraSitesOf, pickJiraSite } from './jiraSites.js';
 

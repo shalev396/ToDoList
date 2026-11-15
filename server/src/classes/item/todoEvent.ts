@@ -4,7 +4,7 @@
  * a half hour from its time. Pure.
  */
 import type { PlainEventBody } from '../integration/index.js';
-import { cleanTitle } from '../../services/providerCreate/fields.js';
+import { cleanTitle } from '../integration/createFields.js';
 import { sha256Hex } from '../../services/crypto/hashing.js';
 
 const HALF_HOUR_MS = 30 * 60 * 1000;

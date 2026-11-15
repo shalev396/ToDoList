@@ -16,7 +16,7 @@ import { z } from 'zod';
 
 import { FieldNotWritableError } from '../../errors/FieldNotWritableError.js';
 import type { ItemData } from '../../models/definitions/Item.js';
-import { TITLE_MAX } from '../../services/providerCreate/fields.js';
+import { TITLE_MAX } from './createFields.js';
 import { ITEM_STATUSES, type ItemStatus } from '../../types/domain.js';
 import type { WritableField } from '../../types/integrations.js';
 import { parseOr400 } from '../../utils/validation.js';

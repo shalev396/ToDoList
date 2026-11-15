@@ -12,7 +12,7 @@ import { GITHUB_API } from '../../sync/providers/github.js';
 import { mapWorkItem, readRestIssue, isFailure } from '../../sync/providers/github/mapping.js';
 import type { RestIssue } from '../../sync/providers/github/mapping.js';
 import type { MappedItem } from '../../sync/types.js';
-import { checkedId, splitRepo } from './ids.js';
+import { checkedId, splitRepo } from '../../classes/integration/providerIds.js';
 import { pickJiraSite } from './jiraSites.js';
 import type { TrackerReadSession as CreateSession } from '../../classes/integration/TrackerIntegration.js';
 import type { CreatedRecord } from '../../classes/integration/index.js';

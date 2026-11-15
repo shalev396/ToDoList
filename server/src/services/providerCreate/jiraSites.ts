@@ -6,7 +6,7 @@ import { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { ATLASSIAN_API } from '../../sync/providers/jira.js';
 import { asObject, asString } from '../../sync/providers/trackerCommon.js';
-import { isValidId } from './ids.js';
+import { isValidId } from '../../classes/integration/providerIds.js';
 
 const NAME_MAX = 200;
 

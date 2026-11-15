@@ -34,7 +34,7 @@ import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { ItemCopy } from '../../models/definitions/Item.js';
 import { getItemRepository } from '../../models/index.js';
 import { logger } from '../../services/logger.js';
-import { checkedId } from '../../services/providerCreate/ids.js';
+import { checkedId } from '../integration/providerIds.js';
 import { ProviderHttpError } from '../../sync/http.js';
 import { mapCalendarEvent } from '../../sync/providers/google_calendar.js';
 import type { MappedItem } from '../../sync/types.js';
@@ -179,10 +179,8 @@ class EventCopyTarget extends CopyTarget {
     this.#calendarId = calendarId;
   }
 
+  /** (Whether this connection can create events at all is TodoCopy's check, before this.) */
   check(todo: Todo): void {
-    if (!this.#integration.canCreate) {
-      throw new AppError(409, 'Only Google Calendar connected with Google can create events');
-    }
     if (todo.dueAt === null) {
       throw new AppError(400, 'A calendar event needs a due date', { code: 'needs_due_date' });
     }
@@ -254,17 +252,39 @@ export class TodoCopy {
   }
 
   /**
+   * A copy of the to-do `find` loads (the caller's own), checked in the order the API answers: an
+   * editor (403), a well-formed request id (400), then the to-do (404). Each check runs once.
+   */
+  static async start(
+    caller: Caller,
+    body: CreateCopyRequestBody,
+    find: (caller: Caller) => Promise<Todo>,
+    now: Date = new Date(),
+  ): Promise<CreateCopyOutcome> {
+    const requestId = TodoCopy.#checked(caller, body);
+    return new TodoCopy(caller, await find(caller), body, now).#create(requestId);
+  }
+
+  /** The request's own checks: an editor, a well-formed request id (the id, once checked). */
+  static #checked(caller: Caller, body: CreateCopyRequestBody): string {
+    caller.require('editor');
+    return checkedId('requestId', body.requestId, 'requestId');
+  }
+
+  /**
    * Creates the copy in one provider. 409 `provider_writes_off` when creating is off for it here,
    * 409 `integration_read_only` while it is read-only (nothing is reserved or sent), 429
    * `create_rate_limited` past the hourly limit, 400 for a bad target, `needs_due_date` for a
    * calendar event without a due date. Everything the provider decides comes back as an outcome.
    */
   async run(): Promise<CreateCopyOutcome> {
+    return this.#create(TodoCopy.#checked(this.#caller, this.#body));
+  }
+
+  async #create(requestId: string): Promise<CreateCopyOutcome> {
     const caller = this.#caller;
     const todo = this.#todo;
     const body = this.#body;
-    caller.require('editor');
-    const requestId = checkedId('requestId', body.requestId, 'requestId');
     if (todo.ownerUserId !== caller.userId || todo.workspaceId !== caller.workspaceId) {
       throw new AppError(404, 'Not found');
     }
@@ -392,7 +412,7 @@ export class TodoCopy {
 
     let needsScope: boolean;
     try {
-      needsScope = await integration.needsWriteConsent();
+      needsScope = await integration.needsCreateConsent();
     } catch (error) {
       await quota.release();
       await items.removeCopy(workspaceId, todo.id, requestId).catch(() => undefined);
