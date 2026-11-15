@@ -3,12 +3,17 @@
  * Only the integration the primary calendar is on is planned (409 `calendar_not_primary` for any
  * other), and only into that calendar.
  *
- * The push set is fixed: every item with a date (a planned date `overlay.plannedAt`, a start or a
- * due date) that the integration's owner may see (ItemPolicy as them: their own integrations, the
- * shared ones and the to-dos they may see), as a Logic Bridge query compiled with the base filter
- * like any /query; the items Google Calendar itself mirrors are left out (they are its events
- * already), and so are those with `overlay.calendarSync === false` (diff.ts). Then the live and
- * recently tombstoned links, and what is left of the daily creation cap.
+ * The push set is fixed, and read as one MongoDB filter over what the integration's owner may see
+ * (ItemPolicy as them: their own integrations, the shared ones, and the to-dos they may see,
+ * never another member's private one): every item dated within the push window (a planned date
+ * `overlay.plannedAt`, a due date, or a start whose span reaches into it), except the items Google
+ * Calendar itself mirrors (they are its events already) and those with `overlay.calendarSync ===
+ * false`. It is read in two parts, so no cap ever hides an item:
+ * - the items of the live links, all of them (in chunks): what to update or move, and, by their
+ *   absence, which events to delete;
+ * - the other items, page by page within PLAN_BUDGET_MS: what to create. One cut short by the
+ *   budget only defers creates; the next run reads them first, since what was created is linked.
+ * Then the recently tombstoned links, and what is left of the daily creation cap.
  */
 import { AppError } from '../errors/AppError.js';
 import { CalendarNotPrimaryError } from '../errors/CalendarNotPrimaryError.js';
@@ -19,15 +24,19 @@ import {
   getSyncRunRepository,
 } from '../models/index.js';
 import type { RuleGroup } from '../types/builder.js';
-import type { ItemQueryRow } from '../types/builder.js';
+import { compileQuery, parseQuery } from '../builder/compile.js';
 import { Actor } from '../classes/base/Actor.js';
 import { Caller } from '../classes/base/Caller.js';
+import { CalendarLink } from '../classes/calendar/CalendarLink.js';
 import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
-import { PrimaryCalendar } from '../classes/workspace/PrimaryCalendar.js';
-import { runWorkspaceQuery } from '../services/workspaceQuery.js';
+import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
+import { WorkspaceSettings } from '../classes/workspace/WorkspaceSettings.js';
+import { redactString } from '../services/secretPatterns.js';
 import { zonedTime } from '../sync/transports/fixtureDates.js';
 import {
   buildOps,
+  localDate,
+  PAST_WINDOW_DAYS,
   TOMBSTONE_MS,
   type BuildResult,
   type PushConfig,
@@ -39,9 +48,13 @@ import {
 export const DAILY_CREATE_CAP = 4000;
 export const DEFAULT_HORIZON_DAYS = 90;
 export const DEFAULT_MAX_OPS = 50;
-/** The most items one push query returns (CAPS.maxLimit). */
-const QUERY_LIMIT = 200;
+/** How long reading the items to create may take; the rest waits for the next run. */
+export const PLAN_BUDGET_MS = 5_000;
+/** Items read per page (and link items per chunk). */
+const PAGE_SIZE = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+type Filter = Record<string, unknown>;
 
 export interface CalendarEntry {
   id: string;
@@ -76,16 +89,6 @@ export function readGcalConfig(integration: IntegrationData): GcalConfig {
   };
 }
 
-/** The push rule: every item with a date (planned, start or due). Not configurable. */
-const PUSH_RULE: RuleGroup = {
-  combinator: 'or',
-  rules: [
-    { field: 'overlay.plannedAt', operator: 'notNull' },
-    { field: 'dueAt', operator: 'notNull' },
-    { field: 'startAt', operator: 'notNull' },
-  ],
-};
-
 /** Narrows the plan to some items (the MCP dry run): nothing is deleted then. */
 export interface PlanNarrowing {
   where?: RuleGroup;
@@ -98,22 +101,42 @@ export interface LoadedPlan extends BuildResult {
   config: GcalConfig;
 }
 
-function pushQuery(narrowing: PlanNarrowing | undefined, tz: string): unknown {
-  const query: Record<string, unknown> = { source: 'items', where: PUSH_RULE, limit: QUERY_LIMIT };
-  if (narrowing?.where !== undefined) {
-    query['where'] = { combinator: 'and', rules: [PUSH_RULE, narrowing.where] };
-  }
-  const range = narrowing?.range;
-  if (range?.from !== undefined || range?.to !== undefined) {
-    const from = range.from === undefined ? new Date(0) : localMidnight(range.from, tz);
-    const to =
-      range.to === undefined
-        ? new Date('2100-01-01T00:00:00Z')
-        : new Date(localMidnight(range.to, tz).getTime() + DAY_MS);
-    query['dateRange'] = { from: from.toISOString(), to: to.toISOString() };
-    query['dateField'] = 'any';
-  }
-  return query;
+/** A span of time, as instants and as the local dates a planned date is compared with. */
+interface Span {
+  from: Date;
+  to: Date;
+  fromDay: string;
+  toDay: string;
+}
+
+function spanOf(from: Date, to: Date, timeZone: string): Span {
+  return { from, to, fromDay: localDate(from, timeZone), toDay: localDate(to, timeZone) };
+}
+
+/**
+ * Dated within `span`: a planned date (`YYYY-MM-DD…` compares as text), a due date, or a start
+ * whose span (to its end) reaches into it. diff.ts's window check decides exactly.
+ */
+function datedWithin(span: Span): Filter {
+  return {
+    $or: [
+      { 'overlay.plannedAt': { $gte: span.fromDay, $lte: `${span.toDay}T23:59` } },
+      { dueAt: { $gte: span.from, $lte: span.to } },
+      {
+        startAt: { $lte: span.to },
+        $or: [{ startAt: { $gte: span.from } }, { endAt: { $gte: span.from } }],
+      },
+    ],
+  };
+}
+
+/** The push set's own rules: dated in the window, not Google Calendar's, not turned off. */
+function pushRule(window: Span): Filter[] {
+  return [
+    { 'source.provider': { $ne: 'google_calendar' } },
+    { 'overlay.calendarSync': { $ne: false } },
+    datedWithin(window),
+  ];
 }
 
 function localMidnight(day: string, timeZone: string): Date {
@@ -122,6 +145,129 @@ function localMidnight(day: string, timeZone: string): Date {
     { year: year ?? 1970, month: month ?? 1, day: date ?? 1, hour: 0, minute: 0 },
     timeZone,
   );
+}
+
+/**
+ * An MCP dry run's narrowing as filters: its rules (compiled by the Logic Bridge, like any query)
+ * and its date range (planned dates included).
+ */
+function narrowingFilters(
+  narrowing: PlanNarrowing | undefined,
+  caller: Caller,
+  policy: ItemPolicy,
+  now: Date,
+): Filter[] {
+  if (narrowing === undefined) return [];
+  const filters: Filter[] = [];
+  const timeZone = caller.settings.timezone;
+  if (narrowing.where !== undefined) {
+    const compiled = compileQuery(parseQuery({ source: 'items', where: narrowing.where }), {
+      ws: { id: caller.workspaceId },
+      userId: caller.userId,
+      access: policy.access,
+      vars: {},
+      now,
+      timeZone,
+      weekStart: caller.settings.weekStart,
+      preview: false,
+      attributes: AttributeDefinitions.of(caller.settings).toJSON(),
+    });
+    // The pipeline is the base filter, then the query's own filters (when it has any).
+    const match = compiled.pipeline[1]?.['$match'];
+    if (typeof match === 'object' && match !== null) filters.push(match as Filter);
+  }
+  const range = narrowing.range;
+  if (range?.from !== undefined || range?.to !== undefined) {
+    const from = range.from === undefined ? new Date(0) : localMidnight(range.from, timeZone);
+    const to =
+      range.to === undefined
+        ? new Date('2100-01-01T00:00:00Z')
+        : new Date(localMidnight(range.to, timeZone).getTime() + DAY_MS - 1);
+    filters.push(datedWithin(spanOf(from, to, timeZone)));
+  }
+  return filters;
+}
+
+/** The fields the diff reads of an item. */
+const PUSH_FIELDS = {
+  title: 1,
+  startAt: 1,
+  dueAt: 1,
+  endAt: 1,
+  allDay: 1,
+  'source.provider': 1,
+  'source.url': 1,
+  'overlay.calendarSync': 1,
+  'overlay.plannedAt': 1,
+  'overlay.editedAt': 1,
+  updatedAt: 1,
+} as const;
+
+interface PushDoc {
+  _id: string;
+  title?: string;
+  startAt?: Date | null;
+  dueAt?: Date | null;
+  endAt?: Date | null;
+  allDay?: boolean;
+  source?: { provider?: string; url?: string };
+  overlay?: { calendarSync?: boolean | null; plannedAt?: string | null; editedAt?: Date | null };
+  updatedAt?: Date;
+}
+
+const dateOr = (value: unknown): Date | null => (value instanceof Date ? value : null);
+
+function toPushItem(doc: PushDoc): PushItem {
+  const updated = dateOr(doc.updatedAt);
+  const edited = dateOr(doc.overlay?.editedAt);
+  return {
+    id: doc._id,
+    title: redactString(typeof doc.title === 'string' ? doc.title : ''),
+    startAt: dateOr(doc.startAt),
+    dueAt: dateOr(doc.dueAt),
+    endAt: dateOr(doc.endAt),
+    allDay: doc.allDay === true,
+    source: { provider: doc.source?.provider ?? '', url: doc.source?.url ?? '' },
+    calendarSync: typeof doc.overlay?.calendarSync === 'boolean' ? doc.overlay.calendarSync : null,
+    plannedAt: typeof doc.overlay?.plannedAt === 'string' ? doc.overlay.plannedAt : null,
+    editedAt:
+      updated !== null && edited !== null
+        ? new Date(Math.max(+updated, +edited))
+        : (updated ?? edited),
+  };
+}
+
+/**
+ * The push set's items, read in two parts (see the header): every item of `linked` still in it,
+ * then, page by page within `budgetMs`, the others (one page at least).
+ */
+async function pushItems(
+  workspaceId: string,
+  scope: readonly Filter[],
+  linked: readonly string[],
+  budgetMs: number,
+): Promise<PushItem[]> {
+  const items = await getItemRepository();
+  const read = (match: Filter[], extra: Record<string, unknown>[] = []): Promise<PushDoc[]> =>
+    items.aggregate<PushDoc>(workspaceId, [
+      { $match: { $and: match } },
+      ...extra,
+      { $project: PUSH_FIELDS },
+    ]);
+  const found: PushDoc[] = [];
+  for (let at = 0; at < linked.length; at += PAGE_SIZE) {
+    found.push(...(await read([...scope, { _id: { $in: linked.slice(at, at + PAGE_SIZE) } }])));
+  }
+  const deadline = Date.now() + budgetMs;
+  let after: string | null = null;
+  do {
+    const unlinked: Filter =
+      after === null ? { _id: { $nin: [...linked] } } : { _id: { $nin: [...linked], $gt: after } };
+    const page = await read([...scope, unlinked], [{ $sort: { _id: 1 } }, { $limit: PAGE_SIZE }]);
+    found.push(...page);
+    after = page.length < PAGE_SIZE ? null : (page.at(-1)?._id ?? null);
+  } while (after !== null && Date.now() < deadline);
+  return found.map(toPushItem);
 }
 
 /** Creations still allowed today: the cap minus what runs of the last 24 hours created. */
@@ -156,50 +302,12 @@ export async function loadPlan(
   if (caller === null) {
     throw new AppError(409, 'The member who connected this integration is gone');
   }
-  const primary = PrimaryCalendar.from(caller.settings.primaryCalendar);
+  const primary = WorkspaceSettings.from(caller.settings).primaryCalendar;
   if (primary?.isOn(integration.id) !== true) throw new CalendarNotPrimaryError(integration.id);
-  const ctx = caller.context;
-  const timeZone = ctx.settings.timezone;
-
-  // Everything its owner may see (their own, the shared integrations, the to-dos they may see).
-  const result = await runWorkspaceQuery(
-    ctx,
-    owner,
-    { draft: pushQuery(narrowing, timeZone) },
-    now,
-    await ItemPolicy.for(caller),
-  );
-  const rows = (result.rows ?? []).filter(
-    (row): row is ItemQueryRow => 'kind' in row && row.source.provider !== 'google_calendar',
-  );
-  const truncated = result.total > (result.rows ?? []).length;
-
-  const edits = await updatedAtOf(
-    workspaceId,
-    rows.map((row) => row.id),
-  );
-  const items: PushItem[] = rows.map((row) => {
-    const updated = edits.get(row.id) ?? null;
-    const edited = row.overlay.editedAt;
-    return {
-      id: row.id,
-      title: row.title,
-      startAt: row.startAt,
-      dueAt: row.dueAt,
-      endAt: row.endAt,
-      allDay: row.allDay,
-      source: { provider: row.source.provider, url: row.source.url },
-      calendarSync: row.overlay.calendarSync,
-      plannedAt: row.overlay.plannedAt,
-      editedAt:
-        updated !== null && edited !== null
-          ? new Date(Math.max(+updated, +edited))
-          : (updated ?? edited),
-    };
-  });
+  const timeZone = caller.settings.timezone;
 
   const linkRepo = await getCalendarLinkRepository();
-  const [live, stones] = await Promise.all([
+  const [allLive, stones] = await Promise.all([
     linkRepo.listLive(workspaceId, integration.id),
     linkRepo.listTombstonedSince(
       workspaceId,
@@ -207,7 +315,28 @@ export async function loadPlan(
       new Date(now.getTime() - TOMBSTONE_MS),
     ),
   ]);
+  // Only links to events TodoList made are ever updated, moved or deleted (CalendarLink).
+  const live = allLive.filter((link) => CalendarLink.isOwnLive(link));
   const links: PushLink[] = [...live, ...stones];
+
+  // Everything its owner may see (their own, the shared integrations, the to-dos they may see).
+  const policy = await ItemPolicy.for(caller);
+  const window = spanOf(
+    new Date(now.getTime() - PAST_WINDOW_DAYS * DAY_MS),
+    new Date(now.getTime() + config.horizonDays * DAY_MS),
+    timeZone,
+  );
+  const scope: Filter[] = [
+    policy.itemFilter(caller.context),
+    ...pushRule(window),
+    ...narrowingFilters(narrowing, caller, policy, now),
+  ];
+  const items = await pushItems(
+    workspaceId,
+    scope,
+    live.map((link) => link.itemId),
+    PLAN_BUDGET_MS,
+  );
 
   const cfg: PushConfig & { calendarId: string } = {
     workspaceId,
@@ -216,23 +345,8 @@ export async function loadPlan(
     horizonDays: config.horizonDays,
     maxOps: config.maxOpsPerRun,
     maxCreates: await remainingCreates(integration, now),
-    allowDelete: !truncated && narrowing === undefined,
+    // Every live link's item was read, so a delete is always right; a narrowed plan sees a part.
+    allowDelete: narrowing === undefined,
   };
   return { ...buildOps(items, links, cfg, now), cfg, config };
-}
-
-async function updatedAtOf(
-  workspaceId: string,
-  ids: readonly string[],
-): Promise<Map<string, Date>> {
-  if (ids.length === 0) return new Map();
-  const docs = await (
-    await getItemRepository()
-  ).aggregate<{ _id: string; updatedAt?: Date }>(workspaceId, [
-    { $match: { _id: { $in: [...ids] } } },
-    { $project: { updatedAt: 1 } },
-  ]);
-  const out = new Map<string, Date>();
-  for (const doc of docs) if (doc.updatedAt instanceof Date) out.set(doc._id, doc.updatedAt);
-  return out;
 }

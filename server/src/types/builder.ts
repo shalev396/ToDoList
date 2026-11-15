@@ -198,7 +198,7 @@ export const ConnectorScopesSchema = z
   .record(
     IdSchema,
     z
-      .array(z.string().min(1).max(1024))
+      .array(z.string().min(1).max(255))
       .min(1)
       .max(MAX_SCOPED_CONTAINERS)
       .refine((ids) => new Set(ids).size === ids.length, 'containers must differ'),
