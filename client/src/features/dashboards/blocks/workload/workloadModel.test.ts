@@ -30,6 +30,7 @@ function row(id: string, patch: Partial<ItemQueryRow>): ItemQueryRow {
       hidden: null,
       topicOverride: null,
       calendarSync: null,
+      plannedAt: null,
       editedAt: null,
       attrs: {},
     },

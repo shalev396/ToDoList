@@ -29,6 +29,7 @@ import { CopyChips } from './CopyChips';
 import { SourcePreview } from './SourcePreview';
 import { describeProps, type ItemField } from './itemFields';
 import { useItemParam } from './useItemParam';
+import { formatPlannedAt, parsePlannedAt } from './plannedAt';
 import { dateInZone, noonInZone } from './zonedDate';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
@@ -478,7 +479,15 @@ function OverlayControls({
   const overlay = useUpdateOverlay(workspace?.id ?? '', item.id);
   const attributes = useAttributes(workspace?.id ?? null);
   const [note, setNote] = useState(item.overlay.note ?? '');
-  const ids = { pin: useId(), hide: useId(), topic: useId(), note: useId() };
+  const ids = {
+    pin: useId(),
+    hide: useId(),
+    topic: useId(),
+    note: useId(),
+    date: useId(),
+    time: useId(),
+  };
+  const planned = parsePlannedAt(item.overlay.plannedAt);
 
   const save = (body: Parameters<typeof overlay.mutate>[0]) => {
     overlay.mutate(body, {
@@ -544,6 +553,55 @@ function OverlayControls({
             ...topics.map((topic) => ({ value: topic.id, label: topic.name })),
           ]}
         />
+      </div>
+      <div data-planned-at className="flex flex-col gap-1.5">
+        <Label htmlFor={ids.date}>{t('items.sheet.plannedAt')}</Label>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            id={ids.date}
+            type="date"
+            data-planned-date
+            className="w-auto"
+            value={planned.date}
+            disabled={overlay.isPending}
+            onChange={(event) => {
+              const next = formatPlannedAt({ date: event.target.value, time: planned.time });
+              if (next !== (item.overlay.plannedAt ?? null)) {
+                save({ plannedAt: next });
+              }
+            }}
+          />
+          <Input
+            id={ids.time}
+            type="time"
+            data-planned-time
+            aria-label={t('items.sheet.plannedTime')}
+            className="w-auto"
+            value={planned.time}
+            disabled={overlay.isPending || planned.date === ''}
+            onChange={(event) => {
+              save({
+                plannedAt: formatPlannedAt({ date: planned.date, time: event.target.value }),
+              });
+            }}
+          />
+          {planned.date === '' ? null : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              data-planned-clear
+              className="max-md:h-11"
+              disabled={overlay.isPending}
+              onClick={() => {
+                save({ plannedAt: null });
+              }}
+            >
+              {t('items.sheet.plannedClear')}
+            </Button>
+          )}
+        </div>
+        <p className="text-[13px] text-muted-foreground">{t('items.sheet.plannedHint')}</p>
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={ids.note}>{t('items.sheet.note')}</Label>
