@@ -17,7 +17,7 @@ import type {
 import { getIntegrationRepository } from '../../models/index.js';
 import { assertUserConnectable } from '../../services/integrationConfig.js';
 import { OAuthFailure } from '../../services/oauth/failure.js';
-import { assertTopicOf, topicIdBySlug } from '../../services/topics.js';
+import { Topic } from '../workspace/Topic.js';
 import type { Provider } from '../../types/domain.js';
 import { requireDefinition, type ConnectionInput } from './definitions/index.js';
 import type { Integration } from './Integration.js';
@@ -99,11 +99,11 @@ export class IntegrationConnector {
     if (options.demo !== true) assertUserConnectable(input.provider);
     const plan = requireDefinition(input.provider).planConnection(input);
     if (plan.topicId !== undefined && plan.topicId !== null) {
-      await assertTopicOf(workspaceId, plan.topicId);
+      await Topic.assertOf(workspaceId, plan.topicId);
     }
     const topicId =
       plan.topicId === undefined
-        ? await topicIdBySlug(workspaceId, plan.defaultTopic)
+        ? ((await Topic.bySlug(workspaceId, plan.defaultTopic))?.id ?? null)
         : plan.topicId;
     let result: WithinCaps;
     try {
@@ -173,7 +173,7 @@ export class IntegrationConnector {
     const existing = await find();
     if (existing !== null) return reconnectable(existing);
     if (!caller.role.atLeast('editor')) throw new OAuthFailure('oauth_not_editor');
-    const topicId = await topicIdBySlug(workspaceId, conn.topicSlug);
+    const topicId = (await Topic.bySlug(workspaceId, conn.topicSlug))?.id ?? null;
     try {
       const result = await IntegrationConnector.#createWithinCaps(workspaceId, {
         connectedBy: caller.userId,

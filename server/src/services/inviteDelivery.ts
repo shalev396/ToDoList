@@ -1,15 +1,10 @@
 /**
- * Getting an invite to the invitee: the link to the accept page, and the email that carries it.
- * The link holds the raw token, so the email body is never logged.
+ * Getting an invite to the invitee: the link to the accept page, and the email that carries it
+ * (Invite#deliver sends it). The link holds the raw token, so the email body is never logged.
  */
 import { environment } from '../config/environment.js';
-import type { InviteData } from '../models/index.js';
 import type { Role } from '../types/domain.js';
 import { escapeHtml, sendEmail, type SendEmailParams } from '../utils/sesUtil.js';
-import type { WorkspaceContext } from './accessFilter.js';
-import { logger } from './logger.js';
-import { getWorkspace } from './workspaces.js';
-import { findUser } from './users.js';
 
 export type InviteLanguage = 'en' | 'he';
 
@@ -120,33 +115,4 @@ export function inviteEmail(invite: InviteEmailInput): SendEmailParams {
 
 export async function sendInviteEmail(invite: InviteEmailInput): Promise<void> {
   await sendEmail(inviteEmail(invite));
-}
-
-/**
- * Emails an invite's link to the invitee, straight through SES from this request (no queue, like
- * Elytra). A failed email doesn't fail the invite: it is logged, and the inviter still has the
- * link to share or can invite again. The REST route and the MCP tool both deliver through here.
- */
-export async function emailInvite(
-  ctx: WorkspaceContext,
-  inviterId: string,
-  invite: InviteData,
-  url: string,
-  extras: { message?: string | null | undefined; language?: InviteLanguage | undefined } = {},
-): Promise<void> {
-  try {
-    const [workspace, inviter] = await Promise.all([getWorkspace(ctx), findUser(inviterId)]);
-    await sendInviteEmail({
-      to: invite.email,
-      workspaceName: workspace.workspace.name,
-      inviterName: inviter?.name ?? null,
-      role: invite.role,
-      url,
-      expiresAt: invite.expiresAt,
-      message: extras.message ?? null,
-      language: extras.language,
-    });
-  } catch (error) {
-    logger.error('The invite email could not be sent', error);
-  }
 }

@@ -52,7 +52,7 @@ import {
   getSyncStateRepository,
   getWorkspaceRepository,
 } from '../models/index.js';
-import { classifyTopic, defaultTopicForIntegration } from '../services/topicRules.js';
+import { TopicRules } from '../classes/workspace/TopicRules.js';
 import { logger } from '../services/logger.js';
 import type { IntegrationStatus, SyncRunStatus, SyncTrigger } from '../types/domain.js';
 import type { SyncMode } from '../types/env.d.ts';
@@ -331,13 +331,10 @@ function toContainerUpsert(
     topicId:
       mapped.topicId !== undefined
         ? mapped.topicId
-        : classifyTopic(
-            {
-              matchKey: mapped.matchKey ?? mapped.name,
-              defaultTopicId: defaultTopicForIntegration(integration),
-            },
-            run.workspace.settings.topicRules,
-          ),
+        : TopicRules.of(run.workspace.settings.topicRules).classify({
+            matchKey: mapped.matchKey ?? mapped.name,
+            defaultTopicId: TopicRules.defaultFor(integration),
+          }),
     type: mapped.type,
     name: mapped.name,
     path: mapped.path ?? [],
@@ -366,7 +363,7 @@ function toItemUpsert(
         ? mapped.topicId
         : container !== null
           ? container.topicId
-          : defaultTopicForIntegration(integration),
+          : TopicRules.defaultFor(integration),
     title: mapped.title,
     bodyPreview: mapped.bodyPreview ?? null,
     status: mapped.status,

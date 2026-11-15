@@ -28,7 +28,8 @@ export const BUILTIN_IMPORTANCE_DEFAULT = 3;
 export const RATING_MIN = 1;
 export const RATING_MAX = 5;
 export const MAX_ATTRIBUTE_OPTIONS = 30;
-const MAX_TEXT = 500;
+/** The longest text attribute value. */
+export const ATTRIBUTE_TEXT_MAX = 500;
 const DEFAULT_NUMBER_MIN = 0;
 const DEFAULT_NUMBER_MAX = 100;
 
@@ -140,47 +141,4 @@ export const BUILTIN_IMPORTANCE: AttributeDef = {
 /** The range a number attribute is normalised against. */
 export function numberRange(def: AttributeDef): { min: number; max: number } {
   return { min: def.min ?? DEFAULT_NUMBER_MIN, max: def.max ?? DEFAULT_NUMBER_MAX };
-}
-
-function isRating(value: unknown): boolean {
-  return (
-    Number.isInteger(value) && (value as number) >= RATING_MIN && (value as number) <= RATING_MAX
-  );
-}
-
-/**
- * A reason a value does not fit the definition, or null when it does. `null` always fits (it
- * clears the value). Dates are ISO date-times.
- */
-export function attributeValueError(def: AttributeDef, value: unknown): string | null {
-  if (value === null) return null;
-  const options = def.options ?? [];
-  switch (def.type) {
-    case 'rating':
-      return isRating(value)
-        ? null
-        : `${def.key} is a rating from ${String(RATING_MIN)} to ${String(RATING_MAX)}`;
-    case 'number':
-      return typeof value === 'number' && Number.isFinite(value) ? null : `${def.key} is a number`;
-    case 'text':
-      return typeof value === 'string' && value.length <= MAX_TEXT
-        ? null
-        : `${def.key} is text of at most ${String(MAX_TEXT)} characters`;
-    case 'checkbox':
-      return typeof value === 'boolean' ? null : `${def.key} is true or false`;
-    case 'date':
-      return typeof value === 'string' && dayOf(value) !== null
-        ? null
-        : `${def.key} is a date (YYYY-MM-DD or an ISO date-time)`;
-    case 'select':
-      return typeof value === 'string' && options.includes(value)
-        ? null
-        : `${def.key} is one of its options`;
-    case 'multiSelect':
-      return Array.isArray(value) &&
-        value.length <= MAX_ATTRIBUTE_OPTIONS &&
-        value.every((entry) => typeof entry === 'string' && options.includes(entry))
-        ? null
-        : `${def.key} is a list of its options`;
-  }
 }

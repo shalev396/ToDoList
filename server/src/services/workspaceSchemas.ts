@@ -6,7 +6,8 @@
 import { z } from 'zod';
 
 import { canonicalTimeZone } from '../utils/timeZone.js';
-import { TOPIC_RULE_MATCH_MAX, TOPIC_RULES_MAX, WORKSPACE_NAME_MAX } from './workspaces.js';
+import { TopicRules } from '../classes/workspace/TopicRules.js';
+import { WORKSPACE_NAME_MAX } from '../classes/workspace/workspaceRules.js';
 
 const WorkspaceName = z.string().trim().min(1).max(WORKSPACE_NAME_MAX);
 const TimeZone = z
@@ -36,11 +37,11 @@ export const UpdateWorkspaceBody = z.strictObject({
       topicRules: z
         .array(
           z.strictObject({
-            match: z.string().trim().min(1).max(TOPIC_RULE_MATCH_MAX),
+            match: z.string().trim().min(1).max(TopicRules.MATCH_MAX),
             topicId: z.string().min(1).max(100),
           }),
         )
-        .max(TOPIC_RULES_MAX)
+        .max(TopicRules.MAX)
         .optional(),
       allowAgentPublish: z.boolean().optional(),
     })

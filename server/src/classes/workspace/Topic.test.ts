@@ -5,24 +5,25 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
-import type { SourceRef } from '../models/definitions/common.js';
-import type { WorkspaceContext } from './accessFilter.js';
-import type * as Topics from './topics.js';
-import type * as Models from '../models/index.js';
+import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
+import type { SourceRef } from '../../models/definitions/common.js';
+import type { WorkspaceContext } from '../../services/accessFilter.js';
+import type * as Classes from './index.js';
+import { callerOf } from '../../testing/workspaceFixtures.js';
+import type * as Models from '../../models/index.js';
 
 let db: TestDatabase;
-let topics: typeof Topics;
+let Topic: typeof Classes.Topic;
 let models: typeof Models;
 
-const EDITOR = { userId: 'u-editor', agentId: null };
+const EDITOR = 'u-editor';
 let workspaces = 0;
 
 before(async () => {
   db = await startTestDatabase('todolist_topics_service_test');
-  topics = await import('./topics.js');
-  models = await import('../models/index.js');
-  const { TopicMongoModel } = await import('../models/mongoose/Topic.js');
+  ({ Topic } = await import('./index.js'));
+  models = await import('../../models/index.js');
+  const { TopicMongoModel } = await import('../../models/mongoose/Topic.js');
   await TopicMongoModel.syncIndexes();
 });
 
@@ -53,28 +54,28 @@ function source(externalId: string): SourceRef {
 
 describe('defaultTopicId', () => {
   it('is stable, UUID-shaped, and differs by workspace and slug', () => {
-    const work = topics.defaultTopicId('w-1', 'work');
-    assert.equal(topics.defaultTopicId('w-1', 'work'), work);
+    const work = Topic.defaultId('w-1', 'work');
+    assert.equal(Topic.defaultId('w-1', 'work'), work);
     assert.match(work, /^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    assert.notEqual(topics.defaultTopicId('w-2', 'work'), work);
-    assert.notEqual(topics.defaultTopicId('w-1', 'college'), work);
+    assert.notEqual(Topic.defaultId('w-2', 'work'), work);
+    assert.notEqual(Topic.defaultId('w-1', 'college'), work);
   });
 });
 
 describe('ensureDefaultTopics', () => {
   it('creates the missing defaults with their stable ids, in the language asked, once', async () => {
     const ws = await workspace();
-    await topics.ensureDefaultTopics(ws.id, ['personal'], 'he');
-    const all = await topics.ensureDefaultTopics(ws.id, ['work', 'college', 'personal'], 'en');
+    await Topic.ensureDefaults(ws.id, ['personal'], 'he');
+    const all = await Topic.ensureDefaults(ws.id, ['work', 'college', 'personal'], 'en');
     assert.deepEqual(
       all.map((topic) => [topic.slug, topic.name, topic.id, topic.icon]),
       [
-        ['personal', 'אישי', topics.defaultTopicId(ws.id, 'personal'), 'leaf'],
-        ['work', 'Work', topics.defaultTopicId(ws.id, 'work'), 'briefcase'],
-        ['college', 'College', topics.defaultTopicId(ws.id, 'college'), 'graduation-cap'],
+        ['personal', 'אישי', Topic.defaultId(ws.id, 'personal'), 'leaf'],
+        ['work', 'Work', Topic.defaultId(ws.id, 'work'), 'briefcase'],
+        ['college', 'College', Topic.defaultId(ws.id, 'college'), 'graduation-cap'],
       ],
     );
-    const again = await topics.ensureDefaultTopics(ws.id, ['work', 'college', 'personal'], 'en');
+    const again = await Topic.ensureDefaults(ws.id, ['work', 'college', 'personal'], 'en');
     assert.equal(again.length, 3);
   });
 });
@@ -82,17 +83,17 @@ describe('ensureDefaultTopics', () => {
 describe('createTopic', () => {
   it('standardizes the slug, keeps it unique and appends the topic at the end', async () => {
     const ws = await workspace();
-    await topics.ensureDefaultTopics(ws.id, ['work'], 'en');
-    const acme = await topics.createTopic(ws, EDITOR, { name: '  Acme   Corp ' });
+    await Topic.ensureDefaults(ws.id, ['work'], 'en');
+    const acme = await Topic.create(callerOf(ws, EDITOR), { name: '  Acme   Corp ' });
     assert.deepEqual(
       [acme.name, acme.slug, acme.createdBy],
       ['Acme   Corp', 'acme-corp', 'u-editor'],
     );
-    const work2 = await topics.createTopic(ws, EDITOR, { name: 'WORK!', colour: 'teal' });
+    const work2 = await Topic.create(callerOf(ws, EDITOR), { name: 'WORK!', colour: 'teal' });
     assert.deepEqual([work2.slug, work2.colour], ['work-2', 'teal']);
-    const hebrew = await topics.createTopic(ws, EDITOR, { name: 'עבודה בלילה', icon: 'star' });
+    const hebrew = await Topic.create(callerOf(ws, EDITOR), { name: 'עבודה בלילה', icon: 'star' });
     assert.equal(hebrew.slug, 'עבודה-בלילה');
-    const listed = await topics.listTopics(ws);
+    const listed = await Topic.list(ws.id);
     assert.deepEqual(
       listed.map((topic) => topic.slug),
       ['work', 'acme-corp', 'work-2', 'עבודה-בלילה'],
@@ -103,11 +104,11 @@ describe('createTopic', () => {
 
   it('refuses viewers, empty or long names, and more topics than the cap', async () => {
     const ws = await workspace();
-    await assert.rejects(topics.createTopic({ ...ws, role: 'viewer' }, EDITOR, { name: 'X' }), {
+    await assert.rejects(Topic.create(callerOf({ ...ws, role: 'viewer' }, EDITOR), { name: 'X' }), {
       statusCode: 403,
     });
-    await assert.rejects(topics.createTopic(ws, EDITOR, { name: '   ' }), { statusCode: 400 });
-    await assert.rejects(topics.createTopic(ws, EDITOR, { name: 'x'.repeat(61) }), {
+    await assert.rejects(Topic.create(callerOf(ws, EDITOR), { name: '   ' }), { statusCode: 400 });
+    await assert.rejects(Topic.create(callerOf(ws, EDITOR), { name: 'x'.repeat(61) }), {
       statusCode: 400,
     });
     const repository = await models.getTopicRepository();
@@ -118,12 +119,14 @@ describe('createTopic', () => {
         order: index,
       });
     }
-    await assert.rejects(topics.createTopic(ws, EDITOR, { name: 'One more' }), { statusCode: 409 });
+    await assert.rejects(Topic.create(callerOf(ws, EDITOR), { name: 'One more' }), {
+      statusCode: 409,
+    });
   });
 
   it('starts the page from a topic template, bound to the new topic', async () => {
     const ws = await workspace();
-    const { topic, dashboardId } = await topics.createTopicPage(ws, EDITOR, {
+    const { topic, dashboardId } = await Topic.createPage(callerOf(ws, EDITOR), {
       name: 'Night job',
       templateKey: 'work@1',
       language: 'en',
@@ -139,14 +142,14 @@ describe('createTopic', () => {
 
   it('starts an empty page without a template, and refuses a group template', async () => {
     const ws = await workspace();
-    const { topic, dashboardId } = await topics.createTopicPage(ws, EDITOR, {
+    const { topic, dashboardId } = await Topic.createPage(callerOf(ws, EDITOR), {
       name: 'Garden',
       language: 'en',
     });
     const dashboard = await (await models.getDashboardRepository()).findById(ws.id, dashboardId);
     assert.deepEqual([dashboard?.scope.topicId, dashboard?.blocks.length], [topic.id, 0]);
     await assert.rejects(
-      topics.createTopicPage(ws, EDITOR, {
+      Topic.createPage(callerOf(ws, EDITOR), {
         name: 'Courses',
         templateKey: 'college-course@1',
         language: 'en',
@@ -155,7 +158,7 @@ describe('createTopic', () => {
     );
     // A refused template leaves no topic behind.
     assert.equal(
-      (await topics.listTopics(ws)).some((entry) => entry.name === 'Courses'),
+      (await Topic.list(ws.id)).some((entry) => entry.name === 'Courses'),
       false,
     );
   });
@@ -164,8 +167,8 @@ describe('createTopic', () => {
 describe('updateTopic', () => {
   it('renames, recolours and moves a topic, and keeps its slug', async () => {
     const ws = await workspace();
-    const created = await topics.createTopic(ws, EDITOR, { name: 'Side gig' });
-    const renamed = await topics.updateTopic(ws, EDITOR, created.id, {
+    const created = await Topic.create(callerOf(ws, EDITOR), { name: 'Side gig' });
+    const renamed = await Topic.update(callerOf(ws, EDITOR), created.id, {
       name: 'Freelance',
       colour: 'violet',
       icon: 'code',
@@ -175,14 +178,14 @@ describe('updateTopic', () => {
       [renamed.name, renamed.slug, renamed.colour, renamed.icon, renamed.order],
       ['Freelance', 'side-gig', 'violet', 'code', 7],
     );
-    await assert.rejects(topics.updateTopic(ws, EDITOR, created.id, { name: '' }), {
+    await assert.rejects(Topic.update(callerOf(ws, EDITOR), created.id, { name: '' }), {
       statusCode: 400,
     });
     await assert.rejects(
-      topics.updateTopic({ ...ws, role: 'viewer' }, EDITOR, created.id, { name: 'No' }),
+      Topic.update(callerOf({ ...ws, role: 'viewer' }, EDITOR), created.id, { name: 'No' }),
       { statusCode: 403 },
     );
-    await assert.rejects(topics.updateTopic(ws, EDITOR, 'missing', { name: 'No' }), {
+    await assert.rejects(Topic.update(callerOf(ws, EDITOR), 'missing', { name: 'No' }), {
       statusCode: 404,
     });
   });
@@ -191,7 +194,7 @@ describe('updateTopic', () => {
 describe('deleteTopic', () => {
   it('removes only its pages; its items, local to-dos included, stay as Unsorted', async () => {
     const ws = await workspace();
-    const [work, personal] = await topics.ensureDefaultTopics(ws.id, ['work', 'personal'], 'en');
+    const [work, personal] = await Topic.ensureDefaults(ws.id, ['work', 'personal'], 'en');
     assert.ok(work && personal);
     const dashboards = await models.getDashboardRepository();
     const workPage = await dashboards.create(ws.id, {
@@ -255,7 +258,7 @@ describe('deleteTopic', () => {
       },
     });
 
-    const result = await topics.deleteTopic(ws, EDITOR, work.id);
+    const result = await Topic.delete(callerOf(ws, EDITOR), work.id);
     assert.deepEqual(result, { dashboards: 2, items: 1, containers: 1, integrations: 1, rules: 1 });
 
     assert.equal(await dashboards.findById(ws.id, workPage.id), null);
@@ -276,19 +279,19 @@ describe('deleteTopic', () => {
     const settings = (await (await models.getWorkspaceRepository()).findById(ws.id))?.settings;
     assert.deepEqual(settings?.topicRules, [{ match: 'me/*', topicId: personal.id }]);
     assert.deepEqual(
-      (await topics.listTopics(ws)).map((topic) => topic.slug),
+      (await Topic.list(ws.id)).map((topic) => topic.slug),
       ['personal'],
     );
   });
 
   it('refuses viewers and unknown topics', async () => {
     const ws = await workspace();
-    const [personal] = await topics.ensureDefaultTopics(ws.id, ['personal'], 'en');
+    const [personal] = await Topic.ensureDefaults(ws.id, ['personal'], 'en');
     assert.ok(personal);
-    await assert.rejects(topics.deleteTopic({ ...ws, role: 'viewer' }, EDITOR, personal.id), {
+    await assert.rejects(Topic.delete(callerOf({ ...ws, role: 'viewer' }, EDITOR), personal.id), {
       statusCode: 403,
     });
-    await assert.rejects(topics.deleteTopic(ws, EDITOR, 'missing'), { statusCode: 404 });
+    await assert.rejects(Topic.delete(callerOf(ws, EDITOR), 'missing'), { statusCode: 404 });
   });
 });
 
@@ -296,11 +299,11 @@ describe('topic lookups', () => {
   it('finds a topic id by slug and checks a topic id belongs to the workspace', async () => {
     const ws = await workspace();
     const other = await workspace();
-    const [personal] = await topics.ensureDefaultTopics(ws.id, ['personal'], 'en');
+    const [personal] = await Topic.ensureDefaults(ws.id, ['personal'], 'en');
     assert.ok(personal);
-    assert.equal(await topics.topicIdBySlug(ws.id, 'personal'), personal.id);
-    assert.equal(await topics.topicIdBySlug(ws.id, 'work'), null);
-    await topics.assertTopicOf(ws.id, personal.id);
-    await assert.rejects(topics.assertTopicOf(other.id, personal.id), { statusCode: 400 });
+    assert.equal((await Topic.bySlug(ws.id, 'personal'))?.id ?? null, personal.id);
+    assert.equal((await Topic.bySlug(ws.id, 'work'))?.id ?? null, null);
+    await Topic.assertOf(ws.id, personal.id);
+    await assert.rejects(Topic.assertOf(other.id, personal.id), { statusCode: 400 });
   });
 });

@@ -6,26 +6,29 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
-import type { WorkspaceContext } from './accessFilter.js';
-import type * as Attributes from './attributes.js';
-import type * as Items from './items.js';
-import type * as Models from '../models/index.js';
-import { PLAN_LIMITS } from '../types/limits.js';
+import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
+import type { WorkspaceContext } from '../../services/accessFilter.js';
+import type * as Classes from './index.js';
+import type * as Items from '../../services/items.js';
+import type { AttributeDef, NewAttribute, AttributePatch } from '../../types/attributes.js';
+import { callerOf } from '../../testing/workspaceFixtures.js';
+import type * as Models from '../../models/index.js';
+import { PLAN_LIMITS } from '../../types/limits.js';
 
 let db: TestDatabase;
-let attributes: typeof Attributes;
+let Workspace: typeof Classes.Workspace;
+let AttributeDefinitions: typeof Classes.AttributeDefinitions;
 let items: typeof Items;
 let models: typeof Models;
 
-const EDITOR = { userId: 'u-editor', agentId: null };
+const EDITOR = { userId: 'u-editor' };
 let count = 0;
 
 before(async () => {
   db = await startTestDatabase('todolist_attributes_test');
-  attributes = await import('./attributes.js');
-  items = await import('./items.js');
-  models = await import('../models/index.js');
+  ({ Workspace, AttributeDefinitions } = await import('./index.js'));
+  items = await import('../../services/items.js');
+  models = await import('../../models/index.js');
 });
 
 after(async () => {
@@ -40,6 +43,29 @@ async function workspace(role: WorkspaceContext['role'] = 'editor'): Promise<Wor
   return { id: created.id, role, settings: created.settings };
 }
 
+async function createAttribute(ws: WorkspaceContext, input: NewAttribute): Promise<AttributeDef> {
+  const caller = callerOf(ws, EDITOR.userId);
+  return (await Workspace.load(caller)).createAttribute(caller, input);
+}
+
+async function updateAttribute(
+  ws: WorkspaceContext,
+  key: string,
+  patch: AttributePatch,
+): Promise<AttributeDef> {
+  const caller = callerOf(ws, EDITOR.userId);
+  return (await Workspace.load(caller)).updateAttribute(caller, key, patch);
+}
+
+async function deleteAttribute(ws: WorkspaceContext, key: string): Promise<{ items: number }> {
+  const caller = callerOf(ws, EDITOR.userId);
+  return (await Workspace.load(caller)).deleteAttribute(caller, key);
+}
+
+function listAttributes(ws: WorkspaceContext): AttributeDef[] {
+  return AttributeDefinitions.of(ws.settings).toJSON();
+}
+
 /** The context as the next request would see it: settings read again. */
 async function fresh(ws: WorkspaceContext): Promise<WorkspaceContext> {
   const stored = await (await models.getWorkspaceRepository()).findById(ws.id);
@@ -50,9 +76,9 @@ async function fresh(ws: WorkspaceContext): Promise<WorkspaceContext> {
 async function mirroredItem(ws: WorkspaceContext, externalId = 'M-1'): Promise<string> {
   // PERMISSIONS-V2: the editor's own integration, so its items are theirs to see.
   const integrationId = `i-${ws.id}`;
-  const { IntegrationMongoModel } = await import('../models/mongoose/Integration.js');
+  const { IntegrationMongoModel } = await import('../../models/mongoose/Integration.js');
   if ((await IntegrationMongoModel.countDocuments({ _id: integrationId })) === 0) {
-    const { seedIntegration } = await import('../testing/integrationFixtures.js');
+    const { seedIntegration } = await import('../../testing/integrationFixtures.js');
     await seedIntegration(ws.id, {
       id: integrationId,
       ownerUserId: EDITOR.userId,
@@ -87,7 +113,7 @@ async function mirroredItem(ws: WorkspaceContext, externalId = 'M-1'): Promise<s
 describe('definitions', () => {
   it('every new workspace has the built-in Importance, a rating, first', async () => {
     const ws = await workspace();
-    const [first] = attributes.listAttributes(ws);
+    const [first] = listAttributes(ws);
     assert.deepEqual(first, {
       key: 'importance',
       name: 'Importance',
@@ -98,7 +124,7 @@ describe('definitions', () => {
 
   it('an editor adds, changes and deletes a custom attribute', async () => {
     const ws = await workspace();
-    const created = await attributes.createAttribute(ws, EDITOR, {
+    const created = await createAttribute(ws, {
       key: 'effort',
       name: 'Effort',
       type: 'select',
@@ -111,39 +137,38 @@ describe('definitions', () => {
       options: ['S', 'M', 'L'],
       builtIn: false,
     });
-    const updated = await attributes.updateAttribute(await fresh(ws), EDITOR, 'effort', {
+    const updated = await updateAttribute(await fresh(ws), 'effort', {
       name: 'Size',
       options: ['S', 'L'],
     });
     assert.equal(updated.name, 'Size');
     assert.deepEqual(updated.options, ['S', 'L']);
-    const keys = attributes.listAttributes(await fresh(ws)).map((def) => def.key);
+    const keys = listAttributes(await fresh(ws)).map((def) => def.key);
     assert.deepEqual(keys, ['importance', 'effort']);
-    await attributes.deleteAttribute(await fresh(ws), EDITOR, 'effort');
+    await deleteAttribute(await fresh(ws), 'effort');
     assert.deepEqual(
-      attributes.listAttributes(await fresh(ws)).map((def) => def.key),
+      listAttributes(await fresh(ws)).map((def) => def.key),
       ['importance'],
     );
   });
 
   it('a viewer cannot define, change or delete (403)', async () => {
     const ws = await workspace('viewer');
-    await assert.rejects(
-      attributes.createAttribute(ws, EDITOR, { key: 'x', name: 'X', type: 'text' }),
-      { statusCode: 403 },
-    );
-    await assert.rejects(attributes.updateAttribute(ws, EDITOR, 'importance', { name: 'Y' }), {
+    await assert.rejects(createAttribute(ws, { key: 'x', name: 'X', type: 'text' }), {
       statusCode: 403,
     });
-    await assert.rejects(attributes.deleteAttribute(ws, EDITOR, 'importance'), { statusCode: 403 });
+    await assert.rejects(updateAttribute(ws, 'importance', { name: 'Y' }), {
+      statusCode: 403,
+    });
+    await assert.rejects(deleteAttribute(ws, 'importance'), { statusCode: 403 });
   });
 
   it('the built-in is renamable and never deletable (409 attribute_builtin)', async () => {
     const ws = await workspace();
-    const renamed = await attributes.updateAttribute(ws, EDITOR, 'importance', { name: 'Urgency' });
+    const renamed = await updateAttribute(ws, 'importance', { name: 'Urgency' });
     assert.equal(renamed.name, 'Urgency');
     assert.equal(renamed.builtIn, true);
-    await assert.rejects(attributes.deleteAttribute(await fresh(ws), EDITOR, 'importance'), {
+    await assert.rejects(deleteAttribute(await fresh(ws), 'importance'), {
       statusCode: 409,
       code: 'attribute_builtin',
     });
@@ -151,29 +176,29 @@ describe('definitions', () => {
 
   it('a taken key is 409 attribute_exists', async () => {
     const ws = await workspace();
-    await assert.rejects(
-      attributes.createAttribute(ws, EDITOR, { key: 'importance', name: 'Dup', type: 'text' }),
-      { statusCode: 409, code: 'attribute_exists' },
-    );
+    await assert.rejects(createAttribute(ws, { key: 'importance', name: 'Dup', type: 'text' }), {
+      statusCode: 409,
+      code: 'attribute_exists',
+    });
   });
 
   it('the plan limit caps them (409 attribute_limit), the built-in counted', async () => {
     const ws = await workspace();
     for (let index = 1; index < PLAN_LIMITS.attributesPerWorkspace; index += 1) {
-      await attributes.createAttribute(ws, EDITOR, {
+      await createAttribute(ws, {
         key: `a${String(index)}`,
         name: `A${String(index)}`,
         type: 'text',
       });
     }
-    await assert.rejects(
-      attributes.createAttribute(ws, EDITOR, { key: 'over', name: 'Over', type: 'text' }),
-      { statusCode: 409, code: 'attribute_limit' },
-    );
+    await assert.rejects(createAttribute(ws, { key: 'over', name: 'Over', type: 'text' }), {
+      statusCode: 409,
+      code: 'attribute_limit',
+    });
   });
 
   it('a number range must have max above min, defaults included (create and patch)', async () => {
-    const { NewAttributeSchema } = await import('../types/attributes.js');
+    const { NewAttributeSchema } = await import('../../types/attributes.js');
     const make = (extra: object): boolean =>
       NewAttributeSchema.safeParse({ key: 'n', name: 'N', type: 'number', ...extra }).success;
     assert.equal(make({}), true);
@@ -184,33 +209,33 @@ describe('definitions', () => {
     assert.equal(make({ min: 5, max: 5 }), false);
 
     const ws = await workspace();
-    await attributes.createAttribute(ws, EDITOR, { key: 'cost', name: 'Cost', type: 'number' });
+    await createAttribute(ws, { key: 'cost', name: 'Cost', type: 'number' });
     const ready = await fresh(ws);
-    await assert.rejects(attributes.updateAttribute(ready, EDITOR, 'cost', { min: 100 }), {
+    await assert.rejects(updateAttribute(ready, 'cost', { min: 100 }), {
       statusCode: 400,
     });
-    await assert.rejects(attributes.updateAttribute(ready, EDITOR, 'cost', { max: 0 }), {
+    await assert.rejects(updateAttribute(ready, 'cost', { max: 0 }), {
       statusCode: 400,
     });
-    const ok = await attributes.updateAttribute(ready, EDITOR, 'cost', { min: 10, max: 500 });
+    const ok = await updateAttribute(ready, 'cost', { min: 10, max: 500 });
     assert.deepEqual([ok.min, ok.max], [10, 500]);
-    await assert.rejects(attributes.updateAttribute(await fresh(ws), EDITOR, 'cost', { max: 10 }), {
+    await assert.rejects(updateAttribute(await fresh(ws), 'cost', { max: 10 }), {
       statusCode: 400,
     });
   });
 
   it('refuses a missing or unknown attribute (404)', async () => {
     const ws = await workspace();
-    await assert.rejects(attributes.updateAttribute(ws, EDITOR, 'nope', { name: 'N' }), {
+    await assert.rejects(updateAttribute(ws, 'nope', { name: 'N' }), {
       statusCode: 404,
     });
-    await assert.rejects(attributes.deleteAttribute(ws, EDITOR, 'nope'), { statusCode: 404 });
+    await assert.rejects(deleteAttribute(ws, 'nope'), { statusCode: 404 });
   });
 });
 
 describe('a workspace the migration has not reached yet', () => {
   it('counts the built-in against the cap and can rename it, on the first write', async () => {
-    const { WorkspaceMongoModel } = await import('../models/mongoose/Workspace.js');
+    const { WorkspaceMongoModel } = await import('../../models/mongoose/Workspace.js');
     const ws = await workspace();
     await WorkspaceMongoModel.collection.updateOne(
       { _id: ws.id as never },
@@ -218,11 +243,11 @@ describe('a workspace the migration has not reached yet', () => {
     );
     const stale = await fresh(ws);
     assert.deepEqual(
-      attributes.listAttributes(stale).map((def) => def.key),
+      listAttributes(stale).map((def) => def.key),
       ['importance'],
       'implied on read',
     );
-    const renamed = await attributes.updateAttribute(stale, EDITOR, 'importance', {
+    const renamed = await updateAttribute(stale, 'importance', {
       name: 'Urgency',
     });
     assert.equal(renamed.name, 'Urgency');
@@ -232,21 +257,21 @@ describe('a workspace the migration has not reached yet', () => {
       { $unset: { 'settings.attributes': '' } },
     );
     for (let index = 1; index < PLAN_LIMITS.attributesPerWorkspace; index += 1) {
-      await attributes.createAttribute(await fresh(ws), EDITOR, {
+      await createAttribute(await fresh(ws), {
         key: `b${String(index)}`,
         name: `B${String(index)}`,
         type: 'text',
       });
     }
     await assert.rejects(
-      attributes.createAttribute(await fresh(ws), EDITOR, {
+      createAttribute(await fresh(ws), {
         key: 'over',
         name: 'Over',
         type: 'text',
       }),
       { statusCode: 409, code: 'attribute_limit' },
     );
-    const keys = attributes.listAttributes(await fresh(ws)).map((def) => def.key);
+    const keys = listAttributes(await fresh(ws)).map((def) => def.key);
     assert.equal(keys.length, PLAN_LIMITS.attributesPerWorkspace);
     assert.equal(keys[0], 'importance');
   });
@@ -269,13 +294,13 @@ describe('values in the overlay', () => {
 
   it('checks values against the definition: type, range, options, unknown keys', async () => {
     const ws = await workspace();
-    await attributes.createAttribute(ws, EDITOR, {
+    await createAttribute(ws, {
       key: 'effort',
       name: 'Effort',
       type: 'select',
       options: ['S', 'L'],
     });
-    await attributes.createAttribute(ws, EDITOR, {
+    await createAttribute(ws, {
       key: 'due_review',
       name: 'Review',
       type: 'date',
@@ -302,7 +327,7 @@ describe('values in the overlay', () => {
 
   it('stores a date attribute as its day at noon UTC, from a day or an ISO date-time', async () => {
     const ws = await workspace();
-    await attributes.createAttribute(ws, EDITOR, { key: 'review', name: 'Review', type: 'date' });
+    await createAttribute(ws, { key: 'review', name: 'Review', type: 'date' });
     const ready = await fresh(ws);
     const id = await mirroredItem(ready, 'M-5');
     for (const value of ['2026-12-01', '2026-12-01T00:00:00Z', '2026-12-01T21:30:00Z']) {
@@ -329,11 +354,11 @@ describe('values in the overlay', () => {
 
   it('deleting an attribute clears its values on items', async () => {
     const ws = await workspace();
-    await attributes.createAttribute(ws, EDITOR, { key: 'stars', name: 'Stars', type: 'rating' });
+    await createAttribute(ws, { key: 'stars', name: 'Stars', type: 'rating' });
     const ready = await fresh(ws);
     const id = await mirroredItem(ready, 'M-4');
     await items.updateOverlay(ready, 'u-editor', id, { attrs: { stars: 3, importance: 2 } });
-    const removed = await attributes.deleteAttribute(ready, EDITOR, 'stars');
+    const removed = await deleteAttribute(ready, 'stars');
     assert.equal(removed.items, 1);
     const item = await items.getItem(await fresh(ws), 'u-editor', id);
     assert.deepEqual(item.overlay.attrs, { importance: 2 });
@@ -343,7 +368,7 @@ describe('values in the overlay', () => {
 describe('migration', () => {
   it('gives a workspace stored before attributes the built-in, once', async () => {
     const mongoose = (await import('mongoose')).default;
-    const { MIGRATIONS } = await import('../migrations/index.js');
+    const { MIGRATIONS } = await import('../../migrations/index.js');
     const migration = MIGRATIONS.find((entry) => entry.id.endsWith('add-importance-attribute'));
     assert.ok(migration);
     const raw = mongoose.connection.db;

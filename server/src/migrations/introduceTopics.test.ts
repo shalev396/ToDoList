@@ -10,20 +10,20 @@ import assert from 'node:assert/strict';
 import type mongoose from 'mongoose';
 
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
-import type * as TopicsService from '../services/topics.js';
+import type * as Classes from '../classes/workspace/index.js';
 import type * as Migration from './introduceTopics.js';
 
 let db: TestDatabase;
 let raw: mongoose.mongo.Db;
 let migration: typeof Migration;
-let topics: typeof TopicsService;
+let Topic: typeof Classes.Topic;
 
 const NOW = new Date('2026-11-13T09:00:00Z');
 
 before(async () => {
   db = await startTestDatabase('todolist_migration_topics');
   migration = await import('./introduceTopics.js');
-  topics = await import('../services/topics.js');
+  ({ Topic } = await import('../classes/workspace/index.js'));
   const { connection } = (await import('mongoose')).default;
   assert.ok(connection.db);
   raw = connection.db;
@@ -235,8 +235,7 @@ describe('introduce topics (migration)', () => {
       .find({ workspaceId: 'w-he' })
       .sort({ order: 1 })
       .toArray();
-    const id = (slug: 'work' | 'college' | 'personal'): string =>
-      topics.defaultTopicId('w-he', slug);
+    const id = (slug: 'work' | 'college' | 'personal'): string => Topic.defaultId('w-he', slug);
     // The workspace's own areas first, in their order, then the rest; Hebrew titles mean Hebrew names.
     assert.deepEqual(
       he.map((topic): unknown[] => [topic._id, topic['slug'], topic['name'], topic['order']]),
@@ -255,8 +254,8 @@ describe('introduce topics (migration)', () => {
       en.map((topic): unknown[] => [topic._id, topic['slug'], topic['name']]),
       [
         ['topic-made-early', 'work', 'Work'],
-        [topics.defaultTopicId('w-en', 'college'), 'college', 'College'],
-        [topics.defaultTopicId('w-en', 'personal'), 'personal', 'Personal'],
+        [Topic.defaultId('w-en', 'college'), 'college', 'College'],
+        [Topic.defaultId('w-en', 'personal'), 'personal', 'Personal'],
       ],
     );
 
@@ -290,8 +289,7 @@ describe('introduce topics (migration)', () => {
   });
 
   it('rewrites stored dashboard queries, published copies, history and saved views', async () => {
-    const id = (slug: 'work' | 'college' | 'personal'): string =>
-      topics.defaultTopicId('w-he', slug);
+    const id = (slug: 'work' | 'college' | 'personal'): string => Topic.defaultId('w-he', slug);
     const main = await raw.collection('Dashboards').findOne({ _id: 'd-main' as never });
     assert.ok(main);
     assert.deepEqual(main['scope'], {

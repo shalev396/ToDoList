@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { listAttributes } from '../../../services/attributes.js';
+import { AttributeDefinitions } from '../../../classes/workspace/index.js';
 import { ATTRIBUTE_TYPES } from '../../../types/attributes.js';
 import { defineTool } from '../../tool.js';
 
@@ -36,6 +36,8 @@ export const listAttributesTool = defineTool({
   scopes: ['read'],
   minRole: 'viewer',
   handler(ctx) {
-    return Promise.resolve({ output: { attributes: listAttributes(ctx.workspace) } });
+    return Promise.resolve({
+      output: { attributes: AttributeDefinitions.of(ctx.workspace.settings).toJSON() },
+    });
   },
 });

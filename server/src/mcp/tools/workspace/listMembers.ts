@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 import { Integration } from '../../../classes/integration/index.js';
-import { listMembers } from '../../../services/workspaces.js';
+import { Member } from '../../../classes/workspace/index.js';
+import { toolCaller } from '../../auth/principal.js';
 import { defineTool } from '../../tool.js';
 import { MemberView, toMemberView } from './views.js';
 
@@ -22,7 +23,7 @@ export const workspaceListMembers = defineTool({
   scopes: ['workspace:read'],
   minRole: 'viewer',
   async handler(ctx) {
-    const members = await listMembers(ctx.workspace);
+    const members = await Member.list(toolCaller(ctx));
     const providers = await Integration.providersByMember(ctx.workspace.id);
     return {
       output: { members: members.map((member) => toMemberView(member, providers)) },

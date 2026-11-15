@@ -54,7 +54,7 @@ import { removeConnectorEverywhere } from '../../services/dashboards.js';
 import { EMPTY_UPDATE_MESSAGE } from '../../services/integrationConfig.js';
 import { logger } from '../../services/logger.js';
 import { writeModeFor } from '../../services/providerCreate/mode.js';
-import { assertTopicOf } from '../../services/topics.js';
+import { Topic } from '../workspace/Topic.js';
 import '../../sync/providers/index.js';
 import { getAdapter } from '../../sync/registry.js';
 import { RUN_STATE_RESOURCE } from '../../sync/runSync.js';
@@ -381,6 +381,29 @@ export abstract class Integration<
     return theirs.length;
   }
 
+  /**
+   * Removes every integration of a workspace that is being deleted: the credentials first,
+   * hard-deleted and checked gone, so nothing can decrypt for it any more; then the integrations
+   * themselves, soft-deleted (the sync dispatcher stops scheduling them). Idempotent.
+   */
+  static async removeAllIn(workspaceId: string): Promise<void> {
+    const integrations = await getIntegrationRepository();
+    const live = await integrations.list(workspaceId);
+    await Credential.destroyAllIn(
+      workspaceId,
+      live.map((integration) => integration.id),
+    );
+    await integrations.softDeleteForWorkspace(workspaceId);
+  }
+
+  /**
+   * The owners of the integrations a workspace deletion removed, even when it resumes after
+   * deleting them: the members to tell.
+   */
+  static async ownersRemovedWith(workspaceId: string): Promise<string[]> {
+    return (await getIntegrationRepository()).listOwnersForWorkspaceDeletion(workspaceId);
+  }
+
   // ─── What every integration is ───────────────────────────────────────────
 
   get provider(): Provider {
@@ -542,7 +565,7 @@ export abstract class Integration<
     const patch: IntegrationPatch = {};
     if (input.label !== undefined) patch.label = input.label;
     if (input.topicId !== undefined) {
-      if (input.topicId !== null) await assertTopicOf(this.workspaceId, input.topicId);
+      if (input.topicId !== null) await Topic.assertOf(this.workspaceId, input.topicId);
       patch.topicId = input.topicId;
     }
     if (input.config !== undefined) {

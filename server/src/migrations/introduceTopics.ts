@@ -2,7 +2,7 @@
  * H2 (PERMISSIONS-V2 "Dynamic topics", NEXT-FEATURES D2): the fixed areas become topics.
  *
  * Every workspace gets the three default topics (work, college, personal) with their stable ids
- * (services/topics.ts defaultTopicId), so `/t/work` keeps working: its own areas first, in their
+ * (classes/workspace/Topic.ts), so `/t/work` keeps working: its own areas first, in their
  * order, then the rest; named in Hebrew when its dashboards are titled in Hebrew, else English. A
  * default slug the workspace already holds (a topic made before this ran) keeps that topic.
  *
@@ -31,7 +31,7 @@ import { ITEM_TABLE_NAME } from '../models/definitions/Item.js';
 import { TOPIC_TABLE_NAME } from '../models/definitions/Topic.js';
 import { VIEW_TABLE_NAME } from '../models/definitions/View.js';
 import { WORKSPACE_TABLE_NAME } from '../models/definitions/Workspace.js';
-import { defaultTopicId } from '../services/topics.js';
+import { Topic } from '../classes/workspace/Topic.js';
 import {
   DEFAULT_TOPIC_SLUGS,
   DEFAULT_TOPICS,
@@ -154,7 +154,7 @@ async function topicsFor(
     }
     const topic = DEFAULT_TOPICS.find((entry) => entry.slug === slug);
     if (topic === undefined) continue;
-    const id = defaultTopicId(workspaceId, slug);
+    const id = Topic.defaultId(workspaceId, slug);
     order += 1;
     const result = await collection.updateOne(
       { _id: id as never },

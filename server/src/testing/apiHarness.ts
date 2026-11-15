@@ -50,7 +50,7 @@ export async function loginForTests(
   rawEmail: string,
 ): Promise<{ token: string; data: Record<string, unknown> }> {
   const { User } = await import('../classes/index.js');
-  const { workspaceStatus } = await import('../services/workspaces.js');
+  const { Workspace } = await import('../classes/workspace/index.js');
   const email = rawEmail.trim().toLowerCase();
   const sub = testSubForEmail(email);
   const existing = await User.findByCognitoSub(sub);
@@ -60,7 +60,7 @@ export async function loginForTests(
   const data: Record<string, unknown> = {
     user: { id: user.cognitoSub, email: user.email ?? email, name: user.name ?? name },
     tokens: { idToken: token, refreshToken: '', expiresIn: 3600 },
-    ...(await workspaceStatus(user)),
+    ...(await Workspace.statusFor(user)),
   };
   return { token, data };
 }

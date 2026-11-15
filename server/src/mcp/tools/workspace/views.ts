@@ -6,10 +6,9 @@
 import { z } from 'zod';
 
 import { AppError } from '../../../errors/AppError.js';
-import type { InviteData } from '../../../models/index.js';
-import { listMembers, type MemberWithUser } from '../../../services/workspaces.js';
-import type { WorkspaceContext } from '../../../services/accessFilter.js';
+import type { Caller } from '../../../classes/base/Caller.js';
 import { Integration } from '../../../classes/integration/index.js';
+import { Member, type Invite } from '../../../classes/workspace/index.js';
 import { INVITE_STATUSES, PROVIDERS, ROLES, type Provider } from '../../../types/domain.js';
 
 export const MemberView = z.object({
@@ -25,16 +24,16 @@ export const MemberView = z.object({
 export type MemberView = z.infer<typeof MemberView>;
 
 export function toMemberView(
-  { membership, name, email }: MemberWithUser,
+  member: Member,
   providers: ReadonlyMap<string, Provider[]>,
 ): MemberView {
   return {
-    userId: membership.userId,
-    name,
-    email,
-    role: membership.role,
-    joinedAt: membership.createdAt.toISOString(),
-    providers: providers.get(membership.userId) ?? [],
+    userId: member.userId,
+    name: member.name,
+    email: member.email,
+    role: member.role.name,
+    joinedAt: member.joinedAt.toISOString(),
+    providers: providers.get(member.userId) ?? [],
   };
 }
 
@@ -49,11 +48,11 @@ export const InviteView = z.object({
 });
 export type InviteView = z.infer<typeof InviteView>;
 
-export function toInviteView(invite: InviteData): InviteView {
+export function toInviteView(invite: Invite): InviteView {
   return {
     id: invite.id,
     email: invite.email,
-    role: invite.role,
+    role: invite.role.name,
     status: invite.status,
     expiresAt: invite.expiresAt.toISOString(),
     createdAt: invite.createdAt.toISOString(),
@@ -68,8 +67,8 @@ export const MemberUserId = z
   .describe('The member’s userId, from workspace_list_members');
 
 /** An active member of this workspace, or 404: an id from elsewhere is simply not found. */
-export async function findMemberView(ws: WorkspaceContext, userId: string): Promise<MemberView> {
-  const member = (await listMembers(ws)).find((m) => m.membership.userId === userId);
+export async function findMemberView(caller: Caller, userId: string): Promise<MemberView> {
+  const member = (await Member.list(caller)).find((m) => m.userId === userId);
   if (member === undefined) throw new AppError(404, 'Member not found');
-  return toMemberView(member, await Integration.providersByMember(ws.id));
+  return toMemberView(member, await Integration.providersByMember(caller.workspaceId));
 }

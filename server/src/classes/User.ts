@@ -5,7 +5,7 @@ import {
 } from '@aws-sdk/client-cognito-identity-provider';
 import { environment } from '../config/environment.js';
 import type { Actor } from './base/Actor.js';
-import { deleteAccountCascade } from '../services/workspaces.js';
+import { Workspace } from './workspace/Workspace.js';
 
 const cognitoClient = new CognitoIdentityProviderClient({
   region: environment.awsRegion,
@@ -132,7 +132,7 @@ export class User {
     // Workspaces first: the ones this user solely owns are deleted, every other membership
     // and agent key is revoked. If this fails, the account (Cognito and the row) is still there
     // and the request can be retried.
-    await deleteAccountCascade(userId, actor);
+    await Workspace.deleteAccountCascade(userId, actor);
 
     try {
       const userPoolId = environment.cognitoUserPoolId;

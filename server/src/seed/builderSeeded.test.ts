@@ -12,7 +12,7 @@ import { contextFor, newUser } from '../testing/workspaceFixtures.js';
 import { installOutboundGuard, type OutboundGuard } from '../testing/outboundGuard.js';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import type * as Models from '../models/index.js';
-import type * as Workspaces from '../services/workspaces.js';
+import type * as Classes from '../classes/workspace/index.js';
 import type * as Query from '../services/workspaceQuery.js';
 import type * as Seed from './seedWorkspace.js';
 import type * as DemoData from './demoData.js';
@@ -33,7 +33,7 @@ const noWaitClock: Clock = { now: () => Date.now(), sleep: () => Promise.resolve
 let db: TestDatabase;
 let guard: OutboundGuard;
 let models: typeof Models;
-let workspaces: typeof Workspaces;
+let Workspace: typeof Classes.Workspace;
 let queries: typeof Query;
 let seed: typeof Seed;
 let demo: typeof DemoData;
@@ -53,7 +53,7 @@ before(async () => {
   const { syncDB } = await import('../config/database.js');
   await syncDB();
   models = await import('../models/index.js');
-  workspaces = await import('../services/workspaces.js');
+  ({ Workspace } = await import('../classes/workspace/index.js'));
   queries = await import('../services/workspaceQuery.js');
   seed = await import('./seedWorkspace.js');
   demo = await import('./demoData.js');
@@ -64,7 +64,7 @@ before(async () => {
   guard = installOutboundGuard();
   const owner = await newUser('builder-seeded');
   ownerId = owner.id;
-  const workspace = await workspaces.createWorkspace(owner, { name: 'Builder seeded' });
+  const workspace = await Workspace.create(owner, { name: 'Builder seeded' });
   seeded = await seed.seedWorkspace(workspace.id, NOW);
   ctx = await contextFor(workspace.id, ownerId);
   items = await storedItems();

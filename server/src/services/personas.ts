@@ -9,6 +9,7 @@
 import { getPersona, type PersonaFile } from '../builder/personas.js';
 import { resolveTemplateKey, type TemplateLanguage } from '../builder/templates.js';
 import { resolveViewTemplateKey } from '../builder/viewTemplates.js';
+import { Caller } from '../classes/base/Caller.js';
 import { WorkspacePolicy } from '../classes/policies/WorkspacePolicy.js';
 import { AppError } from '../errors/AppError.js';
 import { getDashboardRepository } from '../models/index.js';
@@ -20,7 +21,7 @@ import {
   templateShares,
   type BuilderActor,
 } from './dashboards.js';
-import { createTopic, listTopics, type TopicLanguage } from './topics.js';
+import { Topic, type TopicLanguage } from '../classes/workspace/Topic.js';
 
 export interface InstantiatePersonaInput {
   personaKey: string;
@@ -59,7 +60,7 @@ export async function planPersona(
   WorkspacePolicy.requireRole(ws.role, 'edit', 'add pages');
   const found = persona(input.personaKey);
   const dashboards = await getDashboardRepository();
-  const topics = await listTopics(ws);
+  const topics = await Topic.list(ws.id);
   const planned: PersonaPlan['topics'] = [];
   for (const topic of found.topics) {
     const existing = topics.find((entry) => entry.slug === topic.slug);
@@ -105,10 +106,10 @@ export async function instantiatePersona(
   const result: PersonaInstantiateResult = { personaKey: found.key, topics: [] };
 
   for (const planned of found.topics) {
-    const existing = (await listTopics(ws)).find((topic) => topic.slug === planned.slug);
+    const existing = (await Topic.list(ws.id)).find((topic) => topic.slug === planned.slug);
     const topic =
       existing ??
-      (await createTopic(ws, actor, {
+      (await Topic.create(Caller.fromContext(ws, actor), {
         name: planned.names[language],
         icon: planned.icon,
         colour: planned.colour,

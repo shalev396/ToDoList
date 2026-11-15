@@ -7,8 +7,8 @@ import { readBackGithub } from '../../../services/providerCreate/created.js';
 import { checkedId, splitRepo } from '../../../services/providerCreate/ids.js';
 import { asDate, asObject, asString } from '../../../sync/providers/trackerCommon.js';
 import type { ItemStatus } from '../../../types/domain.js';
-import { topicIdBySlug } from '../../../services/topics.js';
-import { TOPIC_RULES_MAX } from '../../../services/workspaces.js';
+import { Topic } from '../../workspace/Topic.js';
+import { TopicRules } from '../../workspace/TopicRules.js';
 import type { GitHubConfig, WritableField } from '../../../types/integrations.js';
 import type { CreateTarget } from '../../../types/providerCreate.js';
 import type { ApiKeyAuth } from '../auth/ApiKeyAuth.js';
@@ -92,12 +92,12 @@ export class GitHubIntegration
   protected override async onConnected(): Promise<Record<string, unknown>> {
     const login = this.config.owner;
     if (this.config.ownerType !== 'user' || typeof login !== 'string') return {};
-    const personal = await topicIdBySlug(this.workspaceId, 'personal');
+    const personal = (await Topic.bySlug(this.workspaceId, 'personal'))?.id ?? null;
     if (personal === null) return {};
     const match = `${login.toLowerCase()}/*`;
     const added = await (
       await getWorkspaceRepository()
-    ).appendTopicRule(this.workspaceId, { match, topicId: personal }, TOPIC_RULES_MAX);
+    ).appendTopicRule(this.workspaceId, { match, topicId: personal }, TopicRules.MAX);
     return added ? { topicRule: match } : {};
   }
 

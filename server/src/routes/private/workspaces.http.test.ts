@@ -121,8 +121,8 @@ describe('PATCH /workspaces/:wid', () => {
       assert.equal((await patch(body)).status, 400, JSON.stringify(body));
     }
     // A new workspace has its Personal topic, under its stable id.
-    const { defaultTopicId } = await import('../../services/topics.js');
-    const personal = defaultTopicId(wid, 'personal');
+    const { Topic } = await import('../../classes/workspace/index.js');
+    const personal = Topic.defaultId(wid, 'personal');
     const ok = await patch({
       name: 'Patched',
       settings: {

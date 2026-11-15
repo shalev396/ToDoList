@@ -58,8 +58,8 @@ before(async () => {
   session.coOwner = coOwner.token;
   const ownerUser = await (await models.getUserRepository()).findById(owner.userId);
   assert.ok(ownerUser !== null);
-  const { createWorkspace } = await import('../../services/workspaces.js');
-  workspaceId = (await createWorkspace(ownerUser, { name: 'Connect' })).id;
+  const { Workspace } = await import('../../classes/workspace/index.js');
+  workspaceId = (await Workspace.create(ownerUser, { name: 'Connect' })).id;
   const memberships = await models.getMembershipRepository();
   await memberships.create(workspaceId, { userId: coOwner.userId, role: 'owner' });
   const { newUser } = await import('../../testing/workspaceFixtures.js');

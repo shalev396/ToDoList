@@ -26,8 +26,8 @@ import type {
 import { LOCAL_CONNECTOR } from '../types/builder.js';
 import type { ItemCopyView } from '../types/items.js';
 import type { ContainerType, ItemKind, ItemStatus, Provider } from '../types/domain.js';
-import { prepareAttributeValues } from './attributes.js';
-import { assertTopicOf, topicIdBySlug } from './topics.js';
+import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
+import { Topic } from '../classes/workspace/Topic.js';
 import { scrub } from './scrub.js';
 import { redactString } from './secretPatterns.js';
 
@@ -399,10 +399,12 @@ export async function createItem(
     await assertContainer(ws, await policyFor(ws, userId), input.containerId);
   }
   if (input.topicId !== undefined && input.topicId !== null) {
-    await assertTopicOf(ws.id, input.topicId);
+    await Topic.assertOf(ws.id, input.topicId);
   }
   const topicId =
-    input.topicId === undefined ? await topicIdBySlug(ws.id, 'personal') : input.topicId;
+    input.topicId === undefined
+      ? ((await Topic.bySlug(ws.id, 'personal'))?.id ?? null)
+      : input.topicId;
   const items = await getItemRepository();
   let item: ItemData;
   try {
@@ -481,7 +483,7 @@ export async function updateItem(
     await assertContainer(ws, policy, input.containerId);
   }
   if (input.topicId !== undefined && input.topicId !== null) {
-    await assertTopicOf(ws.id, input.topicId);
+    await Topic.assertOf(ws.id, input.topicId);
   }
   return updateLocal(ws, id, {
     ...(input.title === undefined ? {} : { title: input.title }),
@@ -524,7 +526,7 @@ export async function updateOverlay(
 ): Promise<ItemDetail> {
   await loadVisible(ws, await policyFor(ws, userId), id);
   if (overlay.topicOverride !== undefined && overlay.topicOverride !== null) {
-    await assertTopicOf(ws.id, overlay.topicOverride);
+    await Topic.assertOf(ws.id, overlay.topicOverride);
   }
   const items = await getItemRepository();
   const updated = await items.setOverlay(ws.id, id, {
@@ -533,7 +535,9 @@ export async function updateOverlay(
     ...(overlay.hidden === undefined ? {} : { hidden: overlay.hidden }),
     ...(overlay.topicOverride === undefined ? {} : { topicOverride: overlay.topicOverride }),
     ...(overlay.calendarSync === undefined ? {} : { calendarSync: overlay.calendarSync }),
-    ...(overlay.attrs === undefined ? {} : { attrs: prepareAttributeValues(ws, overlay.attrs) }),
+    ...(overlay.attrs === undefined
+      ? {}
+      : { attrs: AttributeDefinitions.of(ws.settings).prepare(overlay.attrs) }),
     editedAt: new Date(),
   });
   if (updated === null) throw new AppError(404, 'Not found');

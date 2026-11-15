@@ -1,9 +1,8 @@
 import { z } from 'zod';
 
 import { UpdateMemberBody } from '../../../services/workspaceSchemas.js';
-import { updateMember } from '../../../services/workspaces.js';
+import { Member } from '../../../classes/workspace/index.js';
 import { Integration } from '../../../classes/integration/index.js';
-import { findUser } from '../../../services/users.js';
 import { confirmField } from '../../middleware/confirm.js';
 import { toolCaller } from '../../auth/principal.js';
 import { defineTool } from '../../tool.js';
@@ -41,7 +40,7 @@ export const workspaceUpdateMember = defineTool({
   scopes: ['workspace:share'],
   minRole: 'owner',
   async preview(ctx, input) {
-    const member = await findMemberView(ctx.workspace, input.userId);
+    const member = await findMemberView(toolCaller(ctx), input.userId);
     const change = { role: input.role };
     return {
       output: {
@@ -58,26 +57,15 @@ export const workspaceUpdateMember = defineTool({
   },
   async handler(ctx, input) {
     const change = { role: input.role };
-    const membership = await updateMember(
-      ctx.workspace,
-      ctx.principal.userId,
-      input.userId,
-      change,
-      ctx.principal.agentId,
-      toolCaller(ctx).actor,
-    );
-    const person = await findUser(membership.userId);
+    const member = await Member.update(toolCaller(ctx), input.userId, change);
     return {
       output: {
         applied: true,
-        member: toMemberView(
-          { membership, name: person?.name ?? null, email: person?.email ?? null },
-          await Integration.providersByMember(ctx.workspace.id),
-        ),
+        member: toMemberView(member, await Integration.providersByMember(ctx.workspace.id)),
         change,
         summary: 'The member was updated.',
       },
-      target: { type: 'user', id: membership.userId },
+      target: { type: 'user', id: member.userId },
     };
   },
 });

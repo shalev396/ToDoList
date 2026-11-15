@@ -11,7 +11,7 @@ import type { CallToolResult } from '@modelcontextprotocol/client';
 
 import type * as Models from '../../models/index.js';
 import type * as GuardHarness from '../../testing/guardHarness.js';
-import type * as Workspaces from '../../services/workspaces.js';
+import type * as Classes from '../../classes/workspace/index.js';
 import type * as Audit from '../middleware/audit.js';
 import { insertAgentKey, newRawKey, type TestKey } from './helpers/agentKeys.js';
 import {
@@ -25,7 +25,7 @@ import { newTeam, type Team } from './helpers/team.js';
 
 let h: McpHarness;
 let models: typeof Models;
-let workspaces: typeof Workspaces;
+let Member: typeof Classes.Member;
 let audit: typeof Audit;
 let captureStderr: typeof GuardHarness.captureStderr;
 
@@ -61,7 +61,7 @@ const UNAUTHORIZED_BODY = {
 before(async () => {
   h = await startMcpHarness('todolist_mcp_http_test', {});
   models = await import('../../models/index.js');
-  workspaces = await import('../../services/workspaces.js');
+  ({ Member } = await import('../../classes/workspace/index.js'));
   audit = await import('../middleware/audit.js');
   ({ captureStderr } = await import('../../testing/guardHarness.js'));
 });
@@ -172,11 +172,8 @@ describe('authentication', () => {
     });
     assert.equal((await h.post('/api/mcp', INITIALIZE, bearer(left.raw))).status, 200);
     // The editor leaves (their keys are revoked with the membership)…
-    const { contextFor } = await import('../../testing/workspaceFixtures.js');
-    await workspaces.leaveWorkspace(
-      await contextFor(team.workspace.id, team.editor.id),
-      team.editor.id,
-    );
+    const { callerFor } = await import('../../testing/workspaceFixtures.js');
+    await Member.leave(await callerFor(team.workspace.id, team.editor.id));
     await expectUnauthorized(bearer(left.raw), true);
     // …and a membership that ends without the key cascade still shuts the key out.
     await (await models.getMembershipRepository()).revoke(team.workspace.id, team.viewer.id);

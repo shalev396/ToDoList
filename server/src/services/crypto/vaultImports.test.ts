@@ -46,7 +46,7 @@ const ENVELOPE = 'services/crypto/envelope.ts';
 const KEY_PROVIDERS = 'services/crypto/keyProviders.ts';
 const STAGE_KEY_PROVIDER = 'services/crypto/stageKeyProvider.ts';
 /** Seals a workspace's join-link token with the stage key (A2); it never touches credentials. */
-const JOIN_LINK_VAULT = 'services/crypto/joinLinkVault.ts';
+const JOIN_LINK_VAULT = 'classes/workspace/JoinLink.ts';
 const CREDENTIAL_MODULES = new Set([
   'models/mongoose/Credential.ts',
   'models/definitions/Credential.ts',

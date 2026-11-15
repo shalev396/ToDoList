@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { AppError } from '../../errors/AppError.js';
 import type { ItemDetail, ItemSummary } from '../../routes/private/items.js';
 import type { WorkspaceContext } from '../../services/accessFilter.js';
-import { listTopics } from '../../services/topics.js';
+import { Topic } from '../../classes/workspace/index.js';
 import { ITEM_KINDS, ITEM_STATUSES, PROVIDERS } from '../../types/domain.js';
 import { TOPICS_PER_WORKSPACE_MAX } from '../../types/topics.js';
 
@@ -142,7 +142,7 @@ export async function topicIds(
   refs: readonly string[] | undefined,
 ): Promise<string[] | undefined> {
   if (refs === undefined) return undefined;
-  const topics = await listTopics(ws);
+  const topics = await Topic.list(ws.id);
   return refs.map((ref) => {
     const found = topics.find((topic) => topic.slug === ref || topic.id === ref);
     if (found === undefined) {

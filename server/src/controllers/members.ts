@@ -7,80 +7,66 @@ import type {
   UpdateMemberResponseData,
 } from '../routes/private/members.js';
 import { UpdateMemberBody } from '../services/workspaceSchemas.js';
-import {
-  countFormerMembersTodos,
-  deleteFormerMembersTodos,
-  leaveWorkspace,
-  listMembers,
-  removeMember,
-  updateMember,
-  type MemberWithUser,
-} from '../services/workspaces.js';
 import { Integration } from '../classes/integration/index.js';
-import { findUser } from '../services/users.js';
+import { Member } from '../classes/workspace/index.js';
 import type { Provider } from '../types/domain.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
 
-function toMemberView(
-  { membership, name, email }: MemberWithUser,
-  providers: ReadonlyMap<string, Provider[]>,
-): MemberView {
+function toMemberView(member: Member, providers: ReadonlyMap<string, Provider[]>): MemberView {
   return {
-    userId: membership.userId,
-    name,
-    email,
-    role: membership.role,
-    invitedBy: membership.invitedBy,
-    joinedAt: membership.createdAt,
-    providers: providers.get(membership.userId) ?? [],
+    userId: member.userId,
+    name: member.name,
+    email: member.email,
+    role: member.role.name,
+    invitedBy: member.invitedBy,
+    joinedAt: member.joinedAt,
+    providers: providers.get(member.userId) ?? [],
   };
 }
 
 const list: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace } = req as WorkspaceRequest;
+  const { workspace, caller } = req as WorkspaceRequest;
   const providers = await Integration.providersByMember(workspace.id);
-  const data: ListMembersResponseData = (await listMembers(workspace)).map((member) =>
+  const data: ListMembersResponseData = (await Member.list(caller)).map((member) =>
     toMemberView(member, providers),
   );
   res.success(data);
 };
 
 const leave: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user, caller } = req as WorkspaceRequest;
-  await leaveWorkspace(workspace, user.id, caller.actor);
+  const { caller } = req as WorkspaceRequest;
+  await Member.leave(caller);
   res.status(204).end();
 };
 
 const update: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(UpdateMemberBody, req.body);
-  const { workspace, user, caller } = req as WorkspaceRequest;
-  const memberId = routeParam(req, 'uid');
-  const membership = await updateMember(workspace, user.id, memberId, body, null, caller.actor);
-  const person = await findUser(memberId);
+  const { workspace, caller } = req as WorkspaceRequest;
+  const member = await Member.update(caller, routeParam(req, 'uid'), body);
   const data: UpdateMemberResponseData = toMemberView(
-    { membership, name: person?.name ?? null, email: person?.email ?? null },
+    member,
     await Integration.providersByMember(workspace.id),
   );
   res.success(data);
 };
 
 const remove: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user, caller } = req as WorkspaceRequest;
-  await removeMember(workspace, user.id, routeParam(req, 'uid'), null, caller.actor);
+  const { caller } = req as WorkspaceRequest;
+  await Member.remove(caller, routeParam(req, 'uid'));
   res.status(204).end();
 };
 
 const formerTodos: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace } = req as WorkspaceRequest;
-  const data: FormerMemberTodosResponseData = { count: await countFormerMembersTodos(workspace) };
+  const { caller } = req as WorkspaceRequest;
+  const data: FormerMemberTodosResponseData = { count: await Member.countFormerTodos(caller) };
   res.success(data);
 };
 
 const deleteFormerTodos: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user, caller } = req as WorkspaceRequest;
+  const { caller } = req as WorkspaceRequest;
   const data: DeleteFormerMemberTodosResponseData = {
-    deleted: await deleteFormerMembersTodos(workspace, user.id, caller.actor),
+    deleted: await Member.deleteFormerTodos(caller),
   };
   res.success(data);
 };

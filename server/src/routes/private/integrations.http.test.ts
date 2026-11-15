@@ -152,15 +152,15 @@ async function newWorkspace(): Promise<string> {
   await memberships.create(workspace.id, { userId: ids.viewer, role: 'viewer' });
   await memberships.create(workspace.id, { userId: ids.viewer2, role: 'viewer' });
   // As every workspace has them since the topics migration.
-  const { ensureDefaultTopics } = await import('../../services/topics.js');
-  await ensureDefaultTopics(workspace.id, ['work', 'college', 'personal'], 'en');
+  const { Topic } = await import('../../classes/workspace/index.js');
+  await Topic.ensureDefaults(workspace.id, ['work', 'college', 'personal'], 'en');
   return workspace.id;
 }
 
 /** A default topic's id in a test workspace. */
 async function topicOf(wid: string, slug: 'work' | 'college' | 'personal'): Promise<string> {
-  const { defaultTopicId } = await import('../../services/topics.js');
-  return defaultTopicId(wid, slug);
+  const { Topic } = await import('../../classes/workspace/index.js');
+  return Topic.defaultId(wid, slug);
 }
 
 const path = (wid: string, rest = ''): string =>

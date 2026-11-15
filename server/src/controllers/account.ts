@@ -20,7 +20,7 @@ import { getPresignedDownloadUrl, uploadExportZip } from '../utils/s3Util.js';
 import { createUserExportZip } from '../utils/exportZipUtil.js';
 import { sendEmail, escapeHtml } from '../utils/sesUtil.js';
 import { environment } from '../config/environment.js';
-import { workspaceStatus } from '../services/workspaces.js';
+import { Workspace } from '../classes/workspace/index.js';
 import { findSecrets } from '../services/secretPatterns.js';
 
 /** What a 5xx answers with; the real error only goes to the (redacting) log. */
@@ -60,7 +60,7 @@ const getMe: RequestHandler = async (req, res): Promise<void> => {
 const EXPORT_URL_TTL_SECONDS = 900;
 
 async function toMeResponse(user: User, photoUrl: string | null): Promise<MeResponseData> {
-  const { hasWorkspaces, defaultWorkspaceId } = await workspaceStatus(user);
+  const { hasWorkspaces, defaultWorkspaceId } = await Workspace.statusFor(user);
   return {
     id: user.id,
     cognitoSub: user.cognitoSub,

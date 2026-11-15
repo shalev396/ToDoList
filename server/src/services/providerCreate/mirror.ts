@@ -16,7 +16,7 @@ import { getContainerRepository, getItemRepository } from '../../models/index.js
 import { itemSourceHash } from '../../sync/hash.js';
 import { itemProblem } from '../../sync/recordCheck.js';
 import type { MappedItem } from '../../sync/types.js';
-import { defaultTopicForIntegration } from '../topicRules.js';
+import { TopicRules } from '../../classes/workspace/TopicRules.js';
 
 const RESOURCES: Readonly<Record<string, string>> = {
   jira: 'issues',
@@ -61,7 +61,7 @@ export async function storeMirroredItem(
         ? mapped.topicId
         : container !== null
           ? container.topicId
-          : defaultTopicForIntegration(integration),
+          : TopicRules.defaultFor(integration),
     title: mapped.title,
     bodyPreview: mapped.bodyPreview ?? null,
     status: mapped.status,

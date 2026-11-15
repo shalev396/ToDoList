@@ -12,7 +12,6 @@ import type { WorkspaceContext } from './accessFilter.js';
 import type * as Models from '../models/index.js';
 import type * as Query from './workspaceQuery.js';
 import type * as Items from './items.js';
-import type * as Workspaces from './workspaces.js';
 import type { ItemUpsert } from '../models/definitions/Item.js';
 import type { ItemQueryRow, Query as BuilderQuery, QueryResult } from '../types/builder.js';
 import type { ImportanceConfig } from '../types/importance.js';
@@ -33,10 +32,10 @@ before(async () => {
   models = await import('../models/index.js');
   queries = await import('./workspaceQuery.js');
   items = await import('./items.js');
-  const workspaces: typeof Workspaces = await import('./workspaces.js');
+  const { Workspace } = await import('../classes/workspace/index.js');
   const user = await newUser('importance-query');
   userId = user.id;
-  const workspace = await workspaces.createWorkspace(user, { name: 'Importance query' });
+  const workspace = await Workspace.create(user, { name: 'Importance query' });
   ctx = await contextFor(workspace.id, userId);
   // PERMISSIONS-V2: the items are the member's own integration's, so they see them.
   const { seedIntegration } = await import('../testing/integrationFixtures.js');

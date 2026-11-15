@@ -12,7 +12,7 @@ import { contextFor, newUser } from '../testing/workspaceFixtures.js';
 import { installOutboundGuard, type OutboundGuard } from '../testing/outboundGuard.js';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import type * as Models from '../models/index.js';
-import type * as Workspaces from '../services/workspaces.js';
+import type * as Classes from '../classes/workspace/index.js';
 import type * as Seed from './seedWorkspace.js';
 import type * as DemoData from './demoData.js';
 import type { SeedSummary } from './seedWorkspace.js';
@@ -27,7 +27,7 @@ const TIME_ZONE = 'Asia/Jerusalem';
 let db: TestDatabase;
 let guard: OutboundGuard;
 let models: typeof Models;
-let workspaces: typeof Workspaces;
+let Workspace: typeof Classes.Workspace;
 let seed: typeof Seed;
 let demo: typeof DemoData;
 
@@ -36,7 +36,7 @@ before(async () => {
   const { syncDB } = await import('../config/database.js');
   await syncDB();
   models = await import('../models/index.js');
-  workspaces = await import('../services/workspaces.js');
+  ({ Workspace } = await import('../classes/workspace/index.js'));
   seed = await import('./seedWorkspace.js');
   demo = await import('./demoData.js');
   guard = installOutboundGuard();
@@ -49,7 +49,7 @@ after(async () => {
 
 async function newWorkspace(label: string): Promise<{ workspaceId: string; ownerId: string }> {
   const owner = await newUser(label);
-  const workspace = await workspaces.createWorkspace(owner, { name: `Demo ${label}` });
+  const workspace = await Workspace.create(owner, { name: `Demo ${label}` });
   return { workspaceId: workspace.id, ownerId: owner.id };
 }
 
@@ -92,9 +92,9 @@ describe('seedWorkspace', () => {
 
   before(async () => {
     ({ workspaceId, ownerId } = await newWorkspace('seeded'));
-    const { defaultTopicId } = await import('../services/topics.js');
+    const { Topic } = await import('../classes/workspace/index.js');
     for (const slug of ['work', 'college', 'personal'] as const) {
-      ids[slug] = defaultTopicId(workspaceId, slug);
+      ids[slug] = Topic.defaultId(workspaceId, slug);
     }
     const started = Date.now();
     first = await seed.seedWorkspace(workspaceId, NOW);
@@ -119,10 +119,10 @@ describe('seedWorkspace', () => {
 
   it('connects one integration per demo account, each synced from its fixtures', async () => {
     assert.equal(first.workspaceId, workspaceId);
-    const { defaultTopicId } = await import('../services/topics.js');
+    const { Topic } = await import('../classes/workspace/index.js');
     const slugs = new Map(
       (['work', 'college', 'personal'] as const).map((slug) => [
-        defaultTopicId(workspaceId, slug),
+        Topic.defaultId(workspaceId, slug),
         slug,
       ]),
     );
@@ -369,7 +369,7 @@ describe("createWorkspace's loadDemoData", () => {
 
   it('fills a new workspace on dev: its main dashboard shows the demo data', async () => {
     const owner = await newUser('load-demo');
-    const workspace = await workspaces.createWorkspace(owner, {
+    const workspace = await Workspace.create(owner, {
       name: 'Loaded demo',
       loadDemoData: true,
     });
@@ -410,7 +410,7 @@ describe("createWorkspace's loadDemoData", () => {
   it('loads it on qa too', async () => {
     const owner = await newUser('load-demo-qa');
     let seeded = '';
-    const qa = await workspaces.createWorkspace(
+    const qa = await Workspace.create(
       owner,
       { name: 'QA demo', loadDemoData: true },
       {
@@ -427,7 +427,7 @@ describe("createWorkspace's loadDemoData", () => {
   it('refuses it on prod before creating anything, and leaves a plain workspace empty', async () => {
     const owner = await newUser('load-demo-prod');
     await assert.rejects(
-      workspaces.createWorkspace(
+      Workspace.create(
         owner,
         { name: 'Prod demo', loadDemoData: true },
         { env: 'prod', seed: () => assert.fail('never seeded') },
@@ -438,7 +438,7 @@ describe("createWorkspace's loadDemoData", () => {
         error.message === 'Demo data is not available on this stage',
     );
     assert.equal((await docs('Workspaces', { name: 'Prod demo' })).length, 0);
-    const plain = await workspaces.createWorkspace(owner, { name: 'Plain' });
+    const plain = await Workspace.create(owner, { name: 'Plain' });
     for (const workspace of [plain]) {
       for (const collection of ['Integrations', 'Credentials', 'Items', 'Containers']) {
         const rows = await docs(collection, { workspaceId: workspace.id });

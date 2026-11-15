@@ -65,7 +65,6 @@ export const LEGACY_DB_IMPORTERS = [
   'src/mcp/tools/workspace/auditLogQuery.ts',
   'src/seed/seedWorkspace.ts',
   'src/services/agentKeys.ts',
-  'src/services/attributes.ts',
   'src/services/connectLinks.ts',
   'src/services/dashboards.ts',
   'src/services/items.ts',
@@ -75,10 +74,8 @@ export const LEGACY_DB_IMPORTERS = [
   'src/services/providerFields.ts',
   'src/services/syncJobs.ts',
   'src/services/syncRuns.ts',
-  'src/services/topics.ts',
   'src/services/views.ts',
   'src/services/workspaceQuery.ts',
-  'src/services/workspaces.ts',
   'src/sync/dispatcher.ts',
   'src/sync/runSync.ts',
 ];

@@ -24,7 +24,7 @@
  * with a JSON pointer).
  */
 import type { ImportanceConfig } from '../types/importance.js';
-import { attributesOf } from './attributes.js';
+import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
 import { providerFieldsOf, registryOf } from './providerFields.js';
 import { createPatch } from 'rfc6902';
 
@@ -117,7 +117,7 @@ import { IntegrationPolicy } from '../classes/policies/IntegrationPolicy.js';
 import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
 import { ForbiddenError } from '../errors/ForbiddenError.js';
 import { logger } from './logger.js';
-import { assertTopicOf } from './topics.js';
+import { Topic } from '../classes/workspace/Topic.js';
 
 /** Versions kept per dashboard, besides the published one (DATA.md §3.12, MCP.md §13). */
 export const KEEP_VERSIONS = 50;
@@ -838,7 +838,7 @@ export async function previewCreateDashboard(
   shares: IntegrationShare[];
 }> {
   const { draft, templateKey } = await plannedDashboard(ws, actor, input);
-  if (draft.scope.topicId !== null) await assertTopicOf(ws.id, draft.scope.topicId);
+  if (draft.scope.topicId !== null) await Topic.assertOf(ws.id, draft.scope.topicId);
   return {
     draft,
     templateKey,
@@ -857,7 +857,7 @@ export async function createDashboard(
   input: CreateDashboardInput,
 ): Promise<DashboardView> {
   const { draft, templateKey } = await plannedDashboard(ws, actor, input);
-  if (draft.scope.topicId !== null) await assertTopicOf(ws.id, draft.scope.topicId);
+  if (draft.scope.topicId !== null) await Topic.assertOf(ws.id, draft.scope.topicId);
   await assertConnectors(ws, actor, [], draft.blocks);
   const dashboards = await getDashboardRepository();
   const created = await dashboards.create(ws.id, {
@@ -1026,7 +1026,7 @@ async function previews(
             weekStart: ws.settings.weekStart,
             preview: true,
             blockType: block.type,
-            attributes: attributesOf(ws),
+            attributes: AttributeDefinitions.of(ws.settings).toJSON(),
             fieldRegistry,
             ...(draft.importance === undefined ? {} : { importance: draft.importance }),
           },

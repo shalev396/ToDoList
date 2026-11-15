@@ -12,13 +12,13 @@ import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js
 import { contextFor, hasStatus, newUser } from '../testing/workspaceFixtures.js';
 import type { WorkspaceContext } from '../services/accessFilter.js';
 import type * as Dashboards from '../services/dashboards.js';
-import type * as TopicsService from '../services/topics.js';
+import type * as Classes from '../classes/workspace/index.js';
 import type * as Migration from './introduceTopics.js';
 
 let db: TestDatabase;
 let raw: mongoose.mongo.Db;
 let svc: typeof Dashboards;
-let topics: typeof TopicsService;
+let Topic: typeof Classes.Topic;
 let migration: typeof Migration;
 let ctx: WorkspaceContext;
 let actor: { userId: string; agentId: null };
@@ -81,7 +81,7 @@ async function snapshotOfCollections(): Promise<unknown[]> {
 before(async () => {
   db = await startTestDatabase('todolist_migration_topics_history');
   svc = await import('../services/dashboards.js');
-  topics = await import('../services/topics.js');
+  ({ Topic } = await import('../classes/workspace/index.js'));
   migration = await import('./introduceTopics.js');
   const models = await import('../models/index.js');
   const { connection } = (await import('mongoose')).default;
@@ -151,7 +151,7 @@ after(async () => {
 describe('introduce topics (migration): dashboard history', () => {
   it('ends the history at the migration and keeps the current state', async () => {
     await migration.introduceTopics.run(raw, NOW);
-    const workId = topics.defaultTopicId(workspaceId, 'work');
+    const workId = Topic.defaultId(workspaceId, 'work');
 
     const view = await svc.getDashboard(ctx, actor, DASHBOARD_ID, {});
     assert.equal(view.version, 4);
@@ -193,7 +193,7 @@ describe('introduce topics (migration): dashboard history', () => {
     }
 
     // After the boundary, history works again, and stays on topics.
-    const workId = topics.defaultTopicId(workspaceId, 'work');
+    const workId = Topic.defaultId(workspaceId, 'work');
     const reverted = await svc.revertDashboard(ctx, actor, DASHBOARD_ID, {
       expectedVersion: 4,
       toVersion: 4,

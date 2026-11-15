@@ -13,12 +13,12 @@ export interface Team {
 }
 
 export async function newTeam(label: string): Promise<Team> {
-  const { createWorkspace } = await import('../../../services/workspaces.js');
+  const { Workspace } = await import('../../../classes/workspace/index.js');
   const { getMembershipRepository } = await import('../../../models/index.js');
   const owner = await newUser(`${label}-owner`);
   const editor = await newUser(`${label}-editor`);
   const viewer = await newUser(`${label}-viewer`);
-  const workspace = await createWorkspace(owner, { name: `Team ${label}` });
+  const workspace = (await Workspace.create(owner, { name: `Team ${label}` })).toJSON();
   const memberships = await getMembershipRepository();
   await memberships.create(workspace.id, { userId: editor.id, role: 'editor' });
   await memberships.create(workspace.id, { userId: viewer.id, role: 'viewer' });

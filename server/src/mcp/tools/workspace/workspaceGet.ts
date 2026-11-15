@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { listTopics } from '../../../services/topics.js';
-import { getWorkspace } from '../../../services/workspaces.js';
+import { Topic, Workspace } from '../../../classes/workspace/index.js';
+import { toolCaller } from '../../auth/principal.js';
 import { AGENT_SCOPES, ROLES } from '../../../types/domain.js';
 import { defineTool } from '../../tool.js';
 
@@ -49,9 +49,11 @@ export const workspaceGet = defineTool({
   scopes: ['workspace:read'],
   minRole: 'viewer',
   async handler(ctx) {
-    const { workspace, role } = await getWorkspace(ctx.workspace);
+    const caller = toolCaller(ctx);
+    const workspace = await Workspace.load(caller);
+    const role = caller.role.name;
     const { settings } = workspace;
-    const topics = await listTopics(ctx.workspace);
+    const topics = await Topic.list(ctx.workspace.id);
     return {
       output: {
         topics: topics.map(({ id, slug, name }) => ({ id, slug, name })),
@@ -62,8 +64,8 @@ export const workspaceGet = defineTool({
           settings: {
             timezone: settings.timezone,
             weekStart: settings.weekStart,
-            topicRules: settings.topicRules.map(({ match, topicId }) => ({ match, topicId })),
-            allowAgentPublish: settings.allowAgentPublish ?? false,
+            topicRules: settings.topicRules.toJSON(),
+            allowAgentPublish: settings.allowAgentPublish,
           },
         },
         member: {

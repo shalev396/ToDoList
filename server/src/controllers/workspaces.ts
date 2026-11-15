@@ -1,6 +1,6 @@
 import { type RequestHandler } from 'express';
 import { Actor } from '../classes/base/Actor.js';
-import type { WorkspaceData } from '../models/index.js';
+import { Workspace, type MyWorkspace } from '../classes/workspace/index.js';
 import type {
   CreateWorkspaceResponseData,
   GetWorkspaceResponseData,
@@ -15,31 +15,24 @@ import {
   SetDefaultWorkspaceBody,
   UpdateWorkspaceBody,
 } from '../services/workspaceSchemas.js';
-import {
-  createWorkspace,
-  deleteWorkspace,
-  getWorkspace,
-  listMyWorkspaces,
-  setDefaultWorkspace,
-  updateWorkspace,
-  type MyWorkspace,
-} from '../services/workspaces.js';
 import { requireUser } from '../services/users.js';
 import type { AuthenticatedRequest, WorkspaceRequest } from '../types/express.js';
 import { parseOr400 } from '../utils/validation.js';
 
 /** Field by field, so nothing added to WorkspaceData later reaches the API by accident. */
-export function toWorkspaceView(workspace: WorkspaceData): WorkspaceView {
+/** Field by field, so nothing added to a workspace later reaches the API by accident. */
+export function toWorkspaceView(workspace: Workspace): WorkspaceView {
+  const { settings } = workspace;
   return {
     id: workspace.id,
     name: workspace.name,
     slug: workspace.slug,
     ownerId: workspace.ownerId,
     settings: {
-      timezone: workspace.settings.timezone,
-      weekStart: workspace.settings.weekStart,
-      topicRules: workspace.settings.topicRules.map(({ match, topicId }) => ({ match, topicId })),
-      allowAgentPublish: workspace.settings.allowAgentPublish ?? false,
+      timezone: settings.timezone,
+      weekStart: settings.weekStart,
+      topicRules: settings.topicRules.toJSON(),
+      allowAgentPublish: settings.allowAgentPublish,
     },
     createdAt: workspace.createdAt,
     updatedAt: workspace.updatedAt,
@@ -55,7 +48,9 @@ function toMyWorkspaceView(workspace: MyWorkspace): MyWorkspaceView {
 
 const list: RequestHandler = async (req, res): Promise<void> => {
   const { user } = req as AuthenticatedRequest;
-  const data: ListWorkspacesResponseData = (await listMyWorkspaces(user.id)).map(toMyWorkspaceView);
+  const data: ListWorkspacesResponseData = (await Workspace.listFor(user.id)).map(
+    toMyWorkspaceView,
+  );
   res.success(data);
 };
 
@@ -63,7 +58,7 @@ const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateWorkspaceBody, req.body);
   const user = await requireUser((req as AuthenticatedRequest).user.id);
   // `loadDemoData` fills the new workspace with seedWorkspace's demo data (dev and qa only).
-  const workspace = await createWorkspace(
+  const workspace = await Workspace.create(
     { id: user.id, email: user.email },
     body,
     {},
@@ -74,23 +69,26 @@ const create: RequestHandler = async (req, res): Promise<void> => {
 };
 
 const get: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace } = req as WorkspaceRequest;
-  const data: GetWorkspaceResponseData = toMyWorkspaceView(await getWorkspace(workspace));
+  const { caller } = req as WorkspaceRequest;
+  const data: GetWorkspaceResponseData = toMyWorkspaceView({
+    workspace: await Workspace.load(caller),
+    role: caller.role.name,
+  });
   res.success(data);
 };
 
 const update: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(UpdateWorkspaceBody, req.body);
-  const { workspace, user, caller } = req as WorkspaceRequest;
+  const { caller } = req as WorkspaceRequest;
   const data: UpdateWorkspaceResponseData = toWorkspaceView(
-    await updateWorkspace(workspace, user.id, body, caller.actor),
+    await (await Workspace.load(caller)).update(caller, body),
   );
   res.success(data);
 };
 
 const remove: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user, caller } = req as WorkspaceRequest;
-  await deleteWorkspace(workspace, user.id, caller.actor);
+  const { caller } = req as WorkspaceRequest;
+  await (await Workspace.load(caller)).delete(caller);
   res.status(204).end();
 };
 
@@ -98,7 +96,7 @@ const setDefault: RequestHandler = async (req, res): Promise<void> => {
   const { workspaceId } = parseOr400(SetDefaultWorkspaceBody, req.body);
   const { user } = req as AuthenticatedRequest;
   const data: SetDefaultWorkspaceResponseData = {
-    defaultWorkspaceId: await setDefaultWorkspace(user.id, workspaceId),
+    defaultWorkspaceId: await Workspace.setDefault(user.id, workspaceId),
   };
   res.success(data);
 };

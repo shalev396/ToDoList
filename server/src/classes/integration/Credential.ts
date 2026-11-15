@@ -177,6 +177,20 @@ export class Credential<TSecret extends SecretJson = SecretJson> {
     }
   }
 
+  /**
+   * Hard-deletes every credential of a workspace (it is being deleted), then checks that none of
+   * `integrationIds` kept one: a survivor is a 500, loudly, before anything else is removed.
+   */
+  static async destroyAllIn(workspaceId: string, integrationIds: readonly string[]): Promise<void> {
+    const credentials = await getCredentialRepository();
+    await credentials.deleteForWorkspace(workspaceId);
+    for (const integrationId of integrationIds) {
+      if ((await credentials.findMeta(workspaceId, integrationId)) !== null) {
+        throw new Error('Workspace deletion left a credential behind');
+      }
+    }
+  }
+
   get integrationId(): string {
     return this.#integrationId;
   }

@@ -1,7 +1,7 @@
 import { type RequestHandler } from 'express';
 
 import { describeCatalog } from '../builder/catalog.js';
-import { attributesOf } from '../services/attributes.js';
+import { AttributeDefinitions } from '../classes/workspace/index.js';
 import { providerFieldsOf } from '../services/providerFields.js';
 import { listPersonas } from '../builder/personas.js';
 import { listTemplates } from '../builder/templates.js';
@@ -36,7 +36,7 @@ import { withBuilderErrors } from './builderErrors.js';
 const catalog: RequestHandler = async (req, res): Promise<void> => {
   const { workspace, user } = req as WorkspaceRequest;
   const data: BuilderCatalogResponseData = describeCatalog({
-    attributes: attributesOf(workspace),
+    attributes: AttributeDefinitions.of(workspace.settings).toJSON(),
     providerFields: await providerFieldsOf(workspace, user.id),
   });
   res.success(data);

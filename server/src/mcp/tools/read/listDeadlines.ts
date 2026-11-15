@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { getFacets } from '../../../services/items.js';
-import { listTopics } from '../../../services/topics.js';
+import { Topic } from '../../../classes/workspace/index.js';
 import { defineTool } from '../../tool.js';
 import {
   ItemSummaryView,
@@ -81,7 +81,7 @@ export const listDeadlines = defineTool({
     );
     const labels =
       input.groupBy === 'topic'
-        ? new Map((await listTopics(ctx.workspace)).map((topic) => [topic.id, topic.name]))
+        ? new Map((await Topic.list(ctx.workspace.id)).map((topic) => [topic.id, topic.name]))
         : input.groupBy === 'container'
           ? new Map(
               (await getFacets(ctx.workspace, ctx.principal.userId)).containers.map((container) => [

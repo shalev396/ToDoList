@@ -13,7 +13,7 @@ import {
   listDashboardVersions,
   validateDashboardDraft,
 } from '../../../services/dashboards.js';
-import { attributesOf } from '../../../services/attributes.js';
+import { AttributeDefinitions } from '../../../classes/workspace/index.js';
 import { providerFieldsOf } from '../../../services/providerFields.js';
 import { OpSchema } from '../../../types/builder.js';
 import { DASHBOARD_PAGES } from '../../../types/domain.js';
@@ -169,7 +169,7 @@ export const builderListBlockTypes = defineTool({
   minRole: 'viewer',
   async handler(ctx) {
     const catalog = describeCatalog({
-      attributes: attributesOf(ctx.workspace),
+      attributes: AttributeDefinitions.of(ctx.workspace.settings).toJSON(),
       providerFields: await providerFieldsOf(ctx.workspace, ctx.principal.userId),
     });
     const field = (spec: { field: string; type: string }): { field: string; type: string } => ({

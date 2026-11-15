@@ -37,7 +37,7 @@ import { createHash } from 'node:crypto';
 
 import type { SyncStateData } from '../../models/definitions/SyncState.js';
 import type { Provider } from '../../types/domain.js';
-import { matchesTopicPattern } from '../../services/topicRules.js';
+import { TopicRules } from '../../classes/workspace/TopicRules.js';
 import { stableStringify } from '../hash.js';
 import { createReadOnlyClient, ProviderHttpError } from '../http.js';
 import { registerAdapter } from '../registry.js';
@@ -443,7 +443,7 @@ function selectRepos(listed: readonly RestRepo[], config: GithubConfig): RestRep
     if (repo.archived === true && !config.repos.archived) continue;
     if (
       config.repos.include.length > 0 &&
-      !config.repos.include.some((glob) => matchesTopicPattern(glob, fullName))
+      !config.repos.include.some((glob) => TopicRules.matches(glob, fullName))
     ) {
       continue;
     }
@@ -623,7 +623,7 @@ function cardRef(board: GqlBoard, fields: BoardFields, card: GqlCard): BoardRef 
 function wantedBoard(board: GqlBoard, include: readonly (number | string)[]): boolean {
   if (include.length === 0) return !board.closed;
   return include.some((entry) =>
-    typeof entry === 'number' ? entry === board.number : matchesTopicPattern(entry, board.title),
+    typeof entry === 'number' ? entry === board.number : TopicRules.matches(entry, board.title),
   );
 }
 

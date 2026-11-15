@@ -12,7 +12,7 @@ import {
 import jwt from 'jsonwebtoken';
 import { User } from '../classes/index.js';
 import { environment } from '../config/environment.js';
-import { workspaceStatus } from '../services/workspaces.js';
+import { Workspace } from '../classes/workspace/index.js';
 import type { CognitoJwtPayload } from '../types/express.js';
 import type { EmptySuccessResponseData } from '../types/response.js';
 import type {
@@ -221,7 +221,7 @@ const login: RequestHandler = async (req, res): Promise<void> => {
         expiresIn: expiresIn ?? 3600,
       },
       // No workspace is created here: onboarding does that.
-      ...(await workspaceStatus(user)),
+      ...(await Workspace.statusFor(user)),
     };
 
     allowSecretKinds(res, 'jwt'); // the user's own session tokens

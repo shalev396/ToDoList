@@ -9,7 +9,8 @@ import assert from 'node:assert/strict';
 import type * as MongooseNs from 'mongoose';
 
 import { startMemoryMongo, type MemoryMongo } from '../testing/memoryMongo.js';
-import { dayOf, noonOf, attributeValueError, type AttributeDef } from '../types/attributes.js';
+import { AttributeDefinition } from '../classes/workspace/AttributeDefinition.js';
+import { dayOf, noonOf, type AttributeDef } from '../types/attributes.js';
 import type { Query } from '../types/builder.js';
 import { compileQuery } from './compile.js';
 
@@ -24,9 +25,9 @@ describe('normalising a date attribute value', () => {
     assert.equal(dayOf('2026-02-30'), null);
     assert.equal(dayOf('tomorrow'), null);
     assert.equal(noonOf('2026-12-01').toISOString(), '2026-12-01T12:00:00.000Z');
-    assert.equal(attributeValueError(DUE, '2026-12-01'), null);
-    assert.equal(attributeValueError(DUE, '2026-12-01T00:00:00Z'), null);
-    assert.notEqual(attributeValueError(DUE, 'soon'), null);
+    assert.equal(AttributeDefinition.of(DUE).check('2026-12-01'), null);
+    assert.equal(AttributeDefinition.of(DUE).check('2026-12-01T00:00:00Z'), null);
+    assert.notEqual(AttributeDefinition.of(DUE).check('soon'), null);
   });
 });
 

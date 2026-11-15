@@ -1,23 +1,28 @@
 import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { contextFor, hasStatus, newUser } from '../testing/workspaceFixtures.js';
-import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
-import type * as Models from '../models/index.js';
-import type { UserData, WorkspaceData } from '../models/index.js';
-import type { CredentialEnvelope } from '../models/definitions/Credential.js';
-import type * as Workspaces from './workspaces.js';
+import { callerFor, hasStatus, newUser } from '../../testing/workspaceFixtures.js';
+import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
+import type * as Models from '../../models/index.js';
+import type { UserData } from '../../models/index.js';
+import type { CredentialEnvelope } from '../../models/definitions/Credential.js';
+import type * as Classes from './index.js';
+import type { Workspace as WorkspaceEntity } from './index.js';
 
 let db: TestDatabase;
-let workspaces: typeof Workspaces;
+let Workspace: typeof Classes.Workspace;
+let Member: typeof Classes.Member;
+let Invite: typeof Classes.Invite;
 let models: typeof Models;
 
 before(async () => {
   db = await startTestDatabase('todolist_cascade_test');
-  const { syncDB } = await import('../config/database.js');
+  const { syncDB } = await import('../../config/database.js');
   await syncDB();
-  workspaces = await import('./workspaces.js');
-  models = await import('../models/index.js');
+  // Registers the integration classes the cascade disconnects through.
+  await import('../integration/index.js');
+  ({ Workspace, Member, Invite } = await import('./index.js'));
+  models = await import('../../models/index.js');
 });
 
 after(async () => {
@@ -37,7 +42,7 @@ const ENVELOPE: CredentialEnvelope = {
 };
 
 /** A workspace with a connected integration, its credential, items, a container and an invite. */
-async function seedWorkspaceData(workspace: WorkspaceData, owner: UserData): Promise<void> {
+async function seedWorkspaceData(workspace: WorkspaceEntity, owner: UserData): Promise<void> {
   const integration = await (
     await models.getIntegrationRepository()
   ).create(workspace.id, {
@@ -82,7 +87,7 @@ async function seedWorkspaceData(workspace: WorkspaceData, owner: UserData): Pro
     },
   ]);
   await items.createLocal(workspace.id, { ownerUserId: owner.id, title: 'Local', topicId: 'work' });
-  await workspaces.createInvite(await contextFor(workspace.id, owner.id), owner.id, {
+  await Invite.create(await callerFor(workspace.id, owner.id), {
     email: `pending-${workspace.slug}@example.test`,
     role: 'viewer',
   });
@@ -102,11 +107,11 @@ async function giveKey(workspaceId: string, userId: string, name: string): Promi
 
 /** What is left of a workspace, straight from the collections. */
 async function remains(workspaceId: string): Promise<Record<string, unknown>> {
-  const { CredentialMongoModel } = await import('../models/mongoose/Credential.js');
-  const { IntegrationMongoModel } = await import('../models/mongoose/Integration.js');
-  const { ItemMongoModel } = await import('../models/mongoose/Item.js');
-  const { ContainerMongoModel } = await import('../models/mongoose/Container.js');
-  const { WorkspaceMongoModel } = await import('../models/mongoose/Workspace.js');
+  const { CredentialMongoModel } = await import('../../models/mongoose/Credential.js');
+  const { IntegrationMongoModel } = await import('../../models/mongoose/Integration.js');
+  const { ItemMongoModel } = await import('../../models/mongoose/Item.js');
+  const { ContainerMongoModel } = await import('../../models/mongoose/Container.js');
+  const { WorkspaceMongoModel } = await import('../../models/mongoose/Workspace.js');
   const live = { workspaceId, deletedAt: null };
   const workspace = await WorkspaceMongoModel.findById(workspaceId).lean();
   return {
@@ -148,7 +153,7 @@ describe('deleteWorkspace', () => {
   it('hard-deletes credentials, soft-deletes the rest, and ends every membership', async () => {
     const owner = await newUser('del-owner');
     const viewer = await newUser('del-viewer');
-    const workspace = await workspaces.createWorkspace(owner, { name: 'Doomed' });
+    const workspace = await Workspace.create(owner, { name: 'Doomed' });
     await (
       await models.getMembershipRepository()
     ).create(workspace.id, {
@@ -158,10 +163,11 @@ describe('deleteWorkspace', () => {
     await seedWorkspaceData(workspace, owner);
     await giveKey(workspace.id, viewer.id, 'del-viewer-key');
     const bystanderOwner = await newUser('del-bystander');
-    const bystander = await workspaces.createWorkspace(bystanderOwner, { name: 'Bystander' });
+    const bystander = await Workspace.create(bystanderOwner, { name: 'Bystander' });
     await seedWorkspaceData(bystander, bystanderOwner);
 
-    await workspaces.deleteWorkspace(await contextFor(workspace.id, owner.id), owner.id);
+    const caller = await callerFor(workspace.id, owner.id);
+    await (await Workspace.load(caller)).delete(caller);
 
     assert.deepEqual(await remains(workspace.id), DELETED);
     assert.deepEqual(await remains(bystander.id), { ...UNTOUCHED, members: 1 });
@@ -169,9 +175,9 @@ describe('deleteWorkspace', () => {
       await (await models.getAgentKeyRepository()).countForUser(workspace.id, viewer.id),
       0,
     );
-    const { getWorkspaceContext } = await import('./workspaceContext.js');
+    const { getWorkspaceContext } = await import('../../services/workspaceContext.js');
     assert.equal(await getWorkspaceContext(workspace.id, owner.id), null);
-    assert.deepEqual(await workspaces.listMyWorkspaces(viewer.id), []);
+    assert.deepEqual(await Workspace.listFor(viewer.id), []);
     const [entry] = await (await models.getAuditLogRepository()).list(workspace.id, {}, 1);
     assert.deepEqual([entry?.action, entry?.actorUserId], ['workspace.delete', owner.id]);
   });
@@ -179,7 +185,7 @@ describe('deleteWorkspace', () => {
   it('is for owners only', async () => {
     const owner = await newUser('del-guard-owner');
     const editor = await newUser('del-guard-editor');
-    const workspace = await workspaces.createWorkspace(owner, { name: 'Guarded' });
+    const workspace = await Workspace.create(owner, { name: 'Guarded' });
     await (
       await models.getMembershipRepository()
     ).create(workspace.id, {
@@ -187,10 +193,8 @@ describe('deleteWorkspace', () => {
       role: 'editor',
     });
     await seedWorkspaceData(workspace, owner);
-    await assert.rejects(
-      workspaces.deleteWorkspace(await contextFor(workspace.id, editor.id), editor.id),
-      hasStatus(403),
-    );
+    const caller = await callerFor(workspace.id, editor.id);
+    await assert.rejects((await Workspace.load(caller)).delete(caller), hasStatus(403));
     assert.deepEqual(await remains(workspace.id), { ...UNTOUCHED, members: 2 });
   });
 });
@@ -202,20 +206,20 @@ describe('deleteAccountCascade', () => {
     const otherOwner = await newUser('acct-other-owner');
     const memberships = await models.getMembershipRepository();
 
-    const solo = await workspaces.createWorkspace(leaving, { name: 'Solo' });
+    const solo = await Workspace.create(leaving, { name: 'Solo' });
     await seedWorkspaceData(solo, leaving);
     // Two owners: ownership transfer is out of scope, so the second owner is set up directly.
-    const shared = await workspaces.createWorkspace(leaving, { name: 'Shared' });
+    const shared = await Workspace.create(leaving, { name: 'Shared' });
     await memberships.create(shared.id, { userId: coOwner.id, role: 'owner' });
     await seedWorkspaceData(shared, leaving);
-    const theirs = await workspaces.createWorkspace(otherOwner, { name: 'Theirs' });
+    const theirs = await Workspace.create(otherOwner, { name: 'Theirs' });
     await memberships.create(theirs.id, { userId: leaving.id, role: 'viewer' });
     for (const workspace of [solo, shared, theirs]) {
       await giveKey(workspace.id, leaving.id, `acct-${workspace.slug}`);
     }
     await giveKey(shared.id, coOwner.id, 'acct-co-owner-key');
 
-    await workspaces.deleteAccountCascade(leaving.id);
+    await Workspace.deleteAccountCascade(leaving.id);
 
     assert.deepEqual(await remains(solo.id), DELETED);
     // PERMISSIONS-V2 ruling 6: the integration they owned in the shared workspace is
@@ -233,7 +237,7 @@ describe('deleteAccountCascade', () => {
     assert.equal(await memberships.find(shared.id, leaving.id), null);
     assert.equal(await memberships.find(theirs.id, leaving.id), null);
     assert.equal((await memberships.find(theirs.id, otherOwner.id))?.role, 'owner');
-    assert.deepEqual(await workspaces.listMyWorkspaces(leaving.id), []);
+    assert.deepEqual(await Workspace.listFor(leaving.id), []);
 
     const keys = await models.getAgentKeyRepository();
     for (const workspace of [solo, shared, theirs]) {
@@ -254,17 +258,17 @@ describe('deleteAccountCascade', () => {
 
   it('runs before User.deleteAccount deletes the user row', async () => {
     const user = await newUser('acct-class');
-    const workspace = await workspaces.createWorkspace(user, { name: 'Class workspace' });
-    const { User } = await import('../classes/User.js');
+    const workspace = await Workspace.create(user, { name: 'Class workspace' });
+    const { User } = await import('../User.js');
     await User.deleteAccount(user.id, user.cognitoSub);
     assert.equal(await (await models.getUserRepository()).findById(user.id), null);
     assert.equal((await remains(workspace.id))['workspaceDeleted'], true);
-    assert.deepEqual(await workspaces.listMyWorkspaces(user.id), []);
+    assert.deepEqual(await Workspace.listFor(user.id), []);
   });
 });
 
 /** A member's own Jira integration with its credential and one mirrored item. */
-async function seedOwnIntegration(workspace: WorkspaceData, member: UserData): Promise<string> {
+async function seedOwnIntegration(workspace: WorkspaceEntity, member: UserData): Promise<string> {
   const integration = await (
     await models.getIntegrationRepository()
   ).create(workspace.id, {
@@ -310,12 +314,12 @@ describe('ending a membership (PERMISSIONS-V2 ruling 6)', () => {
   it('ends access before disconnecting; the owner finishes a disconnect that stopped part-way', async () => {
     const owner = await newUser('end-owner');
     const editor = await newUser('end-editor');
-    const workspace = await workspaces.createWorkspace(owner, { name: 'Ending' });
+    const workspace = await Workspace.create(owner, { name: 'Ending' });
     const memberships = await models.getMembershipRepository();
     await memberships.create(workspace.id, { userId: editor.id, role: 'editor' });
     const integrationId = await seedOwnIntegration(workspace, editor);
     const credentials = await models.getCredentialRepository();
-    const { ItemMongoModel } = await import('../models/mongoose/Item.js');
+    const { ItemMongoModel } = await import('../../models/mongoose/Item.js');
     const liveItems = (): Promise<number> =>
       ItemMongoModel.countDocuments({ workspaceId: workspace.id, integrationId, deletedAt: null });
 
@@ -324,10 +328,7 @@ describe('ending a membership (PERMISSIONS-V2 ruling 6)', () => {
       Promise.reject(new Error('vault down')),
     );
     try {
-      await assert.rejects(
-        workspaces.leaveWorkspace(await contextFor(workspace.id, editor.id), editor.id),
-        /vault down/,
-      );
+      await assert.rejects(Member.leave(await callerFor(workspace.id, editor.id)), /vault down/);
     } finally {
       failing.mock.restore();
     }
@@ -341,13 +342,13 @@ describe('ending a membership (PERMISSIONS-V2 ruling 6)', () => {
     assert.equal(await liveItems(), 1);
 
     // M5: removing them again finishes it, soft-deleted integration included.
-    const ownerCtx = await contextFor(workspace.id, owner.id);
-    await workspaces.removeMember(ownerCtx, owner.id, editor.id);
+    const ownerCaller = await callerFor(workspace.id, owner.id);
+    await Member.remove(ownerCaller, editor.id);
     assert.equal(await credentials.findMeta(workspace.id, integrationId), null);
     assert.equal(await liveItems(), 0);
 
     // Someone who was never a member here and owns nothing here: 404.
     const stranger = await newUser('end-stranger');
-    await assert.rejects(workspaces.removeMember(ownerCtx, owner.id, stranger.id), hasStatus(404));
+    await assert.rejects(Member.remove(ownerCaller, stranger.id), hasStatus(404));
   });
 });

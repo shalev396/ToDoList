@@ -35,7 +35,7 @@ import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
 import { Role } from '../classes/base/Role.js';
 import { DashboardPolicy } from '../classes/policies/DashboardPolicy.js';
 import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
-import { attributesOf } from './attributes.js';
+import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
 import { logger } from './logger.js';
 import { providerFieldsOf, registryOf } from './providerFields.js';
 
@@ -220,7 +220,7 @@ export async function runWorkspaceQuery(
       timeZone: workspace.settings.timezone,
       weekStart: workspace.settings.weekStart,
       preview: request.preview ?? false,
-      attributes: attributesOf(workspace),
+      attributes: AttributeDefinitions.of(workspace.settings).toJSON(),
       ...(importance === undefined ? {} : { importance }),
       ...(JSON.stringify(query).includes('props.')
         ? { fieldRegistry: registryOf(await providerFieldsOf(workspace, userId, now.getTime())) }

@@ -47,8 +47,8 @@ import {
 } from '../services/integrationConfig.js';
 import { createItem } from '../services/items.js';
 import { DEFAULT_TOPIC_SLUGS, type DefaultTopicSlug } from '../types/topics.js';
-import { ensureDefaultTopics } from '../services/topics.js';
-import { updateWorkspace } from '../services/workspaces.js';
+import { Topic } from '../classes/workspace/Topic.js';
+import { Workspace } from '../classes/workspace/Workspace.js';
 import { Actor, type ActorRef } from '../classes/base/Actor.js';
 import { Integration } from '../classes/integration/index.js';
 import { Caller } from '../classes/base/Caller.js';
@@ -184,16 +184,14 @@ async function ensureTopicRules(
   actorUserId: string,
   topics: TopicIds,
 ): Promise<void> {
-  const workspace = await (await getWorkspaceRepository()).findById(ctx.id);
-  if (workspace === null) throw new Error('seedWorkspace: the workspace is gone');
-  const rules = workspace.settings.topicRules;
+  const caller = Caller.fromContext(ctx, Actor.user(actorUserId));
+  const workspace = await Workspace.load(caller);
+  const rules = workspace.settings.topicRules.toJSON();
   const missing = DEMO_TOPIC_RULES.filter(
     (rule) => !rules.some((have) => have.match.toLowerCase() === rule.match.toLowerCase()),
   ).map((rule) => ({ match: rule.match, topicId: topics[rule.topic] }));
   if (missing.length === 0) return;
-  await updateWorkspace(ctx, actorUserId, {
-    settings: { topicRules: [...rules, ...missing] },
-  });
+  await workspace.update(caller, { settings: { topicRules: [...rules, ...missing] } });
 }
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -259,7 +257,7 @@ async function leaveMinimalShape(
   actor: ActorRef,
   language: TemplateLanguage,
 ): Promise<TopicIds> {
-  const all = await ensureDefaultTopics(ctx.id, DEFAULT_TOPIC_SLUGS, language);
+  const all = await Topic.ensureDefaults(ctx.id, DEFAULT_TOPIC_SLUGS, language);
   const idOf = (slug: DefaultTopicSlug): string => {
     const topic = all.find((entry) => entry.slug === slug);
     if (topic === undefined) throw new Error(`seedWorkspace: no ${slug} topic`);
