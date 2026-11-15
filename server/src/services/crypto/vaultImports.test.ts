@@ -5,7 +5,10 @@
  *   to it; no file re-exports it; outside the allow-list, non-test code may not even name it;
  * - sync/secrets.ts, the sync's one door to a credential (through the integration's read
  *   session), is imported only by sync/runSync.ts (and tests), and only they name its exports;
- * - nothing under src/mcp/ names the credential or the Credential repository, anywhere in its
+ * - `Integration.withSyncSecret`, that read session (it opens any integration's credential by
+ *   id, for the sync engine), is named only by Integration.ts and sync/secrets.ts;
+ * - nothing under src/mcp/ names the credential, the sync's read session or the Credential
+ *   repository, anywhere in its
  *   source (an import clause alone misses namespace imports, destructured dynamic imports and
  *   re-exports);
  * - every dynamic import in non-test code takes one string literal, so this graph sees every edge
@@ -77,6 +80,12 @@ const SECRETS_EXPORTS: readonly { name: string; pattern: RegExp; allowed: Readon
       allowed: new Set([SECRETS, RUN_SYNC]),
     },
     {
+      // The sync's read session on the integration class: any integration's secret, by id.
+      name: 'withSyncSecret',
+      pattern: /\bwithSyncSecret\b/,
+      allowed: new Set([INTEGRATION, SECRETS]),
+    },
+    {
       name: 'setVaultLoaderForTests',
       pattern: /\bsetVaultLoaderForTests\b/,
       allowed: new Set([SECRETS]),
@@ -88,7 +97,7 @@ const NAMES_VAULT = /integration\/Credential\b|\bCredential\.(?:of|seal|meta|des
 
 /** What MCP code may not name: matched against its whole source, comments left out. */
 const MCP_FORBIDDEN =
-  /integration\/Credential|credentialVault|credentialWriter|getCredentialRepository|CredentialRepository|CredentialMongoModel|models\/mongoose\/Credential|CREDENTIAL_TABLE_NAME/i;
+  /integration\/Credential|withSyncSecret|credentialVault|credentialWriter|getCredentialRepository|CredentialRepository|CredentialMongoModel|models\/mongoose\/Credential|CREDENTIAL_TABLE_NAME/i;
 /** The credential class by name (the word "credential" in a message is fine). */
 const MCP_FORBIDDEN_NAME = /\bCredential\b/;
 /** The Credential model or collection by name, e.g. mongoose.model('Credential'). */
@@ -331,6 +340,19 @@ describe('the import rules, on synthetic trees (one per known bypass)', () => {
         'mcp/tools/fine.ts': `import * as models from '../../models/index.js';\nexport const items = () => models.getItemRepository();`,
       }),
       ['mcp/tools/namespace.ts'],
+    );
+  });
+
+  it('the sync read session: only Integration.ts and sync/secrets.ts name withSyncSecret, MCP never', () => {
+    assert.deepEqual(
+      flagged({
+        'mcp/tools/peek.ts': `import { Integration } from '../../classes/integration/index.js';\nexport const peek = (id: string) => Integration.withSyncSecret(id, async (s) => s.token);`,
+        'services/peek.ts': `import { Integration } from '../classes/integration/index.js';\nexport const peek = (id: string) => Integration.withSyncSecret(id, async () => 1);`,
+        'classes/integration/Integration.ts': `export class Integration { static async withSyncSecret() {} }`,
+        'sync/secrets.ts': `const load = async () => (await import('../classes/integration/index.js')).Integration.withSyncSecret;`,
+        'sync/runSync.test.ts': `Integration.withSyncSecret('i', async () => 1);`,
+      }),
+      ['mcp/tools/peek.ts', 'services/peek.ts'],
     );
   });
 

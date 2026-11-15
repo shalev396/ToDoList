@@ -3,14 +3,16 @@
  * (IntegrationRegistry), the capability contracts each provider class implements, the auth
  * strategies' headers, and the write gate's order (demo data, then read-only) and ownership.
  */
-import { describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ReadOnlyIntegrationError } from '../../errors/ReadOnlyIntegrationError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { WorkspaceSettings } from '../../models/definitions/Workspace.js';
+import type { HttpRequest, HttpResponse, Transport } from '../../sync/http.js';
 import type { AuthMethod, Provider } from '../../types/domain.js';
+import type { CreateOptionsQuery, CreateTarget } from '../../types/providerCreate.js';
 import { Actor } from '../base/Actor.js';
 import { Caller } from '../base/Caller.js';
 import {
@@ -30,6 +32,7 @@ import {
   supportsOAuth,
   UnlistedIntegration,
 } from './index.js';
+import { setCreateTransportForTests } from './TrackerIntegration.js';
 
 const SETTINGS = { timezone: 'UTC', weekStart: 1 } as unknown as WorkspaceSettings;
 const NOW = new Date('2026-11-15T10:00:00Z');
@@ -217,10 +220,140 @@ describe('the write gate', () => {
     }, NotFoundError);
   });
 
+  it('the owner check comes first: someone else on demo data gets 404, not provider_writes_off', () => {
+    const demo = Integration.from(
+      stored('clickup', { demo: true, mode: 'read_write' }, 'personal_token'),
+    );
+    assert.throws(() => {
+      demo.assertWritable(caller('u-other'));
+    }, NotFoundError);
+  });
+
+  it('checkMode: its owner only; read is always allowed; demo data never read & write', () => {
+    const live = Integration.from(stored('linear'));
+    assert.equal(live.checkMode(caller(), 'read_write'), Mode.readWrite);
+    assert.throws(() => live.checkMode(caller('u-other'), 'read'), NotFoundError);
+    const demo = Integration.from(stored('linear', { demo: true }, 'personal_api_key'));
+    assert.equal(demo.canSwitchMode, false);
+    assert.equal(demo.toView().canSwitchMode, false);
+    assert.equal(demo.checkMode(caller(), 'read'), Mode.read);
+    assert.throws(
+      () => demo.checkMode(caller(), 'read_write'),
+      (error: unknown) => (error as { statusCode?: number }).statusCode === 400,
+    );
+    assert.equal(live.toView().canSwitchMode, true);
+  });
+
   it('Google Calendar is writable on a fixtures stage too; demo data never is', () => {
     const google = Integration.from(stored('google_calendar', { mode: 'read_write' }));
     assert.equal(google.allowsWrites, true);
     const demo = Integration.from(stored('google_calendar', { mode: 'read_write', demo: true }));
     assert.equal(demo.allowsWrites, false);
   });
+});
+
+/** Each tracker's first funnel step and a target of its own. */
+const TRACKERS: Partial<Record<Provider, { step: CreateOptionsQuery; target: CreateTarget }>> = {
+  jira: {
+    step: { step: 'site' },
+    target: { provider: 'jira', projectId: '10001', issueTypeId: '10002' },
+  },
+  clickup: {
+    step: { step: 'workspace' },
+    target: { provider: 'clickup', listId: '90200' },
+  },
+  linear: {
+    step: { step: 'linearTeam' },
+    target: { provider: 'linear', teamId: '4a1b2c3d-0000-4000-8000-000000000001' },
+  },
+  github: {
+    step: { step: 'repo' },
+    target: { provider: 'github', repo: 'mock-org/mock-repo' },
+  },
+};
+
+describe('every provider class, read-only: refused before anything is sent', () => {
+  const sent: string[] = [];
+  const realFetch = globalThis.fetch;
+  const recording: Transport = {
+    send(request: HttpRequest): Promise<HttpResponse> {
+      sent.push(`${request.method} ${request.url}`);
+      return Promise.reject(new Error('nothing may be sent'));
+    },
+  };
+
+  before(() => {
+    setCreateTransportForTests(() => recording);
+    globalThis.fetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      const url = input instanceof Request ? input.url : input.toString();
+      sent.push(`${init?.method ?? 'GET'} ${url}`);
+      return Promise.reject(new Error('nothing may be sent'));
+    };
+  });
+
+  after(() => {
+    setCreateTransportForTests(null);
+    globalThis.fetch = realFetch;
+  });
+
+  const fields = {
+    title: 'Write the report',
+    description: null,
+    dueAt: NOW,
+    allDay: false,
+    priority: null,
+    timeZone: 'UTC',
+  };
+  const readOnly = (error: unknown): boolean =>
+    error instanceof ReadOnlyIntegrationError && error.code === 'integration_read_only';
+
+  for (const provider of [
+    'jira',
+    'clickup',
+    'linear',
+    'github',
+    'google_calendar',
+    'moodle',
+    'slack',
+  ] as const) {
+    it(`${provider}: every write it can make is refused while read-only`, async () => {
+      const integration = Integration.from(stored(provider));
+      const tracker = TRACKERS[provider];
+      if (isTaskProvider(integration)) {
+        assert.ok(tracker, provider);
+        const settled: unknown[] = [];
+        await assert.rejects(integration.createOptions(caller(), tracker.step), readOnly);
+        await assert.rejects(
+          integration.createTask(caller(), {
+            target: tracker.target,
+            fields,
+            settle: (result) => {
+              settled.push(result);
+              return Promise.resolve();
+            },
+          }),
+          readOnly,
+        );
+        assert.deepEqual(settled, []);
+      } else if (isCalendarProvider(integration)) {
+        await assert.rejects(integration.createOptions(caller(), { step: 'calendar' }), readOnly);
+        await assert.rejects(
+          integration.insertEvent(caller(), 'primary', {
+            id: 'h5abc',
+            summary: 'Dentist',
+            description: '',
+            start: { date: '2026-11-20' },
+            end: { date: '2026-11-21' },
+            status: 'confirmed',
+          }),
+          readOnly,
+        );
+        await assert.rejects(integration.push(caller(), { ops: [], now: NOW }), readOnly);
+      } else {
+        // Nothing it could write: no to-do or calendar capability at all.
+        assert.equal(tracker, undefined);
+      }
+      assert.deepEqual(sent, []);
+    });
+  }
 });
