@@ -187,12 +187,16 @@ function ConnectorChecks({
   const toggle = (id: string, checked: boolean) => {
     onChange(toggleConnector({ ...pick, connectors: [...picked] }, id, checked));
   };
-  /** The containers a connector offers: a Google Calendar's calendars, else any the facets list. */
+  /**
+   * The containers a connector offers: a Google Calendar's calendars, else any the facets list
+   * except folders (items point at lists, never at a folder).
+   */
   const containersOf = (integration: IntegrationStatusView): FacetContainer[] => {
     const seen = new Set<string>();
     return (containers ?? []).filter((container) => {
       if (
         container.integrationId !== integration.id ||
+        container.type === 'folder' ||
         (integration.provider === 'google_calendar' && container.type !== 'calendar') ||
         seen.has(container.externalId)
       ) {
@@ -252,7 +256,7 @@ function ConnectorChecks({
                   <span data-connector-label>
                     {t(`sources.${integration.provider}`, { defaultValue: integration.provider })}
                     {' · '}
-                    {integration.accountLabel}
+                    <bdi>{integration.accountLabel}</bdi>
                   </span>
                 </>,
                 checked,

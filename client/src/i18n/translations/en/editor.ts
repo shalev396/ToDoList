@@ -65,7 +65,8 @@ export const editor = {
       'Another member added this. You can remove it from the block; only they can add it back.',
     aMember: 'A member',
     shareTitle: 'Share {{name}} with the workspace?',
-    shareBody: 'Adding {{name}} shares its items with everyone in {{workspace}}.',
+    shareBody:
+      'Adding {{name}} shares its items with everyone in {{workspace}}. Their dated items are also sent to the workspace calendar, a Google calendar the workspace owner chose.',
     shareConfirm: 'Share',
     shareCancel: 'Cancel',
   },
