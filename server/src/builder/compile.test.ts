@@ -41,9 +41,9 @@ function where(...rules: unknown[]): Query['where'] {
   return { combinator: 'and', rules } as Query['where'];
 }
 
-/** The filter stage after the base filter, if any. */
+/** The filter stage after the base filter (and, for items, the effective values), if any. */
 function filterOf(compiled: CompiledQuery): Record<string, unknown> | undefined {
-  const stage = compiled.pipeline.length === 3 ? compiled.pipeline[1] : undefined;
+  const stage = compiled.pipeline.slice(1, -1).find((entry) => '$match' in entry);
   return stage?.['$match'] as Record<string, unknown> | undefined;
 }
 
@@ -258,6 +258,30 @@ describe('compileQuery: base filter', () => {
       $in: ['college'],
     });
     assert.deepEqual(filterOf(compiled), { topicId: 'work' });
+  });
+});
+
+describe('compileQuery: effective values (a mirrored item’s overrides)', () => {
+  it('projects every overridable field right after the base filter, for items only', () => {
+    const compiled = compileQuery(
+      { source: 'items', where: where({ field: 'status', operator: '=', value: 'done' }) },
+      context(),
+    );
+    assert.ok('$match' in (compiled.pipeline[0] ?? {}), 'the access filter stays first');
+    assert.deepEqual(compiled.pipeline[1], {
+      $addFields: {
+        title: { $ifNull: ['$overlay.overrides.title', '$title'] },
+        status: { $ifNull: ['$overlay.overrides.status', '$status'] },
+        dueAt: { $ifNull: ['$overlay.overrides.dueAt', '$dueAt'] },
+        allDay: { $ifNull: ['$overlay.overrides.allDay', '$allDay'] },
+        startAt: { $ifNull: ['$overlay.overrides.startAt', '$startAt'] },
+        priority: { $ifNull: ['$overlay.overrides.priority', '$priority'] },
+      },
+    });
+    // The filter, sort and groups come after it, so they read what the item reads as.
+    assert.deepEqual(filterOf(compiled), { status: 'done' });
+    const containers = compileQuery({ source: 'containers' }, context());
+    assert.ok(!containers.pipeline.some((stage) => '$addFields' in stage));
   });
 });
 
@@ -548,7 +572,8 @@ describe('compileQuery: variables and dynamic values', () => {
       context(),
     );
     assert.equal(filterOf(compiled), undefined);
-    assert.equal(compiled.pipeline.length, 2);
+    // The base filter, the effective values, the facet.
+    assert.equal(compiled.pipeline.length, 3);
   });
 
   it('resolves @me to the caller, @now to now and @today to local midnight', () => {
@@ -883,6 +908,7 @@ describe('compileQuery: block connectors (PERMISSIONS-V2)', () => {
     const stages = compiled.pipeline.map((stage) => Object.keys(stage)[0]);
     assert.deepEqual(stages, [
       '$match',
+      '$addFields',
       '$match',
       '$addFields',
       '$sort',
@@ -890,7 +916,7 @@ describe('compileQuery: block connectors (PERMISSIONS-V2)', () => {
       '$replaceRoot',
       '$facet',
     ]);
-    const group = compiled.pipeline[4]?.['$group'] as Record<string, unknown>;
+    const group = compiled.pipeline[5]?.['$group'] as Record<string, unknown>;
     assert.deepEqual(group['doc'], { $first: '$$ROOT' });
     assert.match(JSON.stringify(group['_id']), /source\.accountId/);
     // Not for containers, and not with fewer than two integrations to choose from.

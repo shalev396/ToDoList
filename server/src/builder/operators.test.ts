@@ -328,7 +328,8 @@ describe('attribute fields', () => {
       },
       context({ attributes }),
     );
-    assert.deepEqual(compiled.pipeline[1], {
+    // After the base filter and the effective values.
+    assert.deepEqual(compiled.pipeline[2], {
       $addFields: { 'overlay.attrs.importance': { $ifNull: ['$overlay.attrs.importance', 3] } },
     });
   });
@@ -336,13 +337,16 @@ describe('attribute fields', () => {
 
 describe('the computed importance field', () => {
   it('adds the score stage only when the query uses it, and never from a user value', () => {
+    // Every items query has the effective values' stage; only one using importance scores it.
+    const scores = (stages: readonly Record<string, unknown>[]): boolean =>
+      stages.some((stage) => JSON.stringify(stage['$addFields'] ?? {}).includes('"importance"'));
     const plain = compileQuery({ source: 'items' }, context());
-    assert.ok(!plain.pipeline.some((stage) => '$addFields' in stage));
+    assert.ok(!scores(plain.pipeline));
     const sorted = compileQuery(
       { source: 'items', sort: [{ field: 'importance', dir: 'desc' }] },
       context({ attributes: [BUILTIN_IMPORTANCE] }),
     );
-    assert.ok(sorted.pipeline.some((stage) => '$addFields' in stage));
+    assert.ok(scores(sorted.pipeline));
     const filtered = filter({ field: 'importance', operator: '>=', value: 70 });
     assert.deepEqual(filtered, { importance: { $gte: 70 } });
   });

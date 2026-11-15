@@ -5,6 +5,9 @@
  * - the first stage is always the access base filter (DATA.md §5, PERMISSIONS-V2): this
  *   workspace, not deleted, only integrations the caller may see (their own and the shared ones)
  *   and only local to-dos they may see;
+ * - for items, the next stage projects each item's effective values (Overrides: a mirrored item's
+ *   local override of a field its provider lacks, else the provider's value), so every filter,
+ *   sort, group and row after it reads what the item reads as;
  * - field names come only from the catalog whitelist (credential paths are never fields);
  * - values are literals checked against their field's type: an object with a `$` key is refused
  *   anywhere in the query and in any variable's value, so `$where`, `$function`, `$expr` and the
@@ -14,6 +17,7 @@
 import type { WeekStart } from '../models/definitions/Workspace.js';
 import type { WorkspaceContext } from '../classes/base/Caller.js';
 import { ItemAccessFilter, type ItemAccess } from '../classes/policies/ItemAccessFilter.js';
+import { Overrides } from '../classes/item/Overrides.js';
 import {
   CAPS,
   DATE_PRESETS,
@@ -102,8 +106,9 @@ export interface CompileContext {
 export interface CompiledQuery {
   collection: 'Items' | 'Containers';
   /**
-   * `$match` base filter, then `$match` of the query's filters (when it has any), then one
-   * `$facet`: `total` (`[{count}]`) plus `rows` and/or `groups`.
+   * `$match` base filter, then (items) `$addFields` of the effective values, then `$match` of the
+   * query's filters (when it has any), then one `$facet`: `total` (`[{count}]`) plus `rows`
+   * and/or `groups`.
    */
   pipeline: PipelineStage[];
   warnings: string[];
@@ -867,6 +872,8 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
       : [];
   const pipeline: PipelineStage[] = [
     { $match: base },
+    // The effective values right after the access filter: everything below reads them.
+    ...(source === 'items' ? [{ $addFields: Overrides.projection() }] : []),
     ...(Object.keys(computed).length === 0 ? [] : [{ $addFields: computed }]),
     ...(filter === null ? [] : [{ $match: filter }]),
     ...dedup,

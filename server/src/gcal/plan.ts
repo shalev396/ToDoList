@@ -31,6 +31,7 @@ import { Caller } from '../classes/base/Caller.js';
 import { CalendarLink } from '../classes/calendar/CalendarLink.js';
 import { TimeBudget, WRITE_BUDGET_MS } from '../classes/integration/calendar/TimeBudget.js';
 import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
+import { Overrides } from '../classes/item/Overrides.js';
 import { AttributeDefinitions } from '../classes/workspace/AttributeDefinitions.js';
 import { WorkspaceSettings } from '../classes/workspace/WorkspaceSettings.js';
 import { redactString } from '../services/secretPatterns.js';
@@ -132,12 +133,14 @@ function datedWithin(span: Span): Filter {
   };
 }
 
-/** The push set's own rules: dated in the window, not Google Calendar's, not turned off. */
-function pushRule(window: Span): Filter[] {
+/**
+ * The push set's own rules on what the sync stores: not Google Calendar's, not turned off. Being
+ * dated in the window (datedWithin) is checked on the effective values, after the projection.
+ */
+function pushRule(): Filter[] {
   return [
     { 'source.provider': { $ne: 'google_calendar' } },
     { 'overlay.calendarSync': { $ne: false } },
-    datedWithin(window),
   ];
 }
 
@@ -250,11 +253,14 @@ function toPushItem(doc: PushDoc): PushItem {
 /**
  * The push set's items, read in two parts (see the header): every item of `linked` still in it,
  * then, page by page while `budget` keeps the writes' reserve, the others (one page at least).
- * `narrowed` are a dry run's own stages (its compiled filter), after the first match.
+ * `scope` (the access filter first) is matched on what is stored; then every item's effective
+ * values are projected (Overrides: a mirrored item's overrides, so its event is placed at the date
+ * it reads as), and `dated` and `narrowed` (a dry run's own stages, its compiled filter) read them.
  */
 async function pushItems(
   workspaceId: string,
   scope: readonly Filter[],
+  dated: readonly Filter[],
   narrowed: readonly Record<string, unknown>[],
   linked: readonly string[],
   budget: TimeBudget,
@@ -263,6 +269,8 @@ async function pushItems(
   const read = (match: Filter[], extra: Record<string, unknown>[] = []): Promise<PushDoc[]> =>
     items.aggregate<PushDoc>(workspaceId, [
       { $match: { $and: match } },
+      { $addFields: Overrides.projection() },
+      { $match: { $and: [...dated] } },
       ...narrowed,
       ...extra,
       { $project: PUSH_FIELDS },
@@ -342,14 +350,11 @@ export async function loadPlan(
     timeZone,
   );
   const narrowed = narrowingOf(narrowing, caller, policy, now);
-  const scope: Filter[] = [
-    policy.itemFilter(caller.context),
-    ...pushRule(window),
-    ...narrowed.filters,
-  ];
+  const scope: Filter[] = [policy.itemFilter(caller.context), ...pushRule()];
   const items = await pushItems(
     workspaceId,
     scope,
+    [datedWithin(window), ...narrowed.filters],
     narrowed.stages,
     live.map((link) => link.itemId),
     budget,

@@ -655,7 +655,8 @@ describe('connect_blocks', () => {
       });
       assert.deepEqual(result.warnings, [], id);
       return {
-        filter: JSON.stringify(result.pipeline[1]),
+        // After the base filter and the effective values' stage.
+        filter: JSON.stringify(result.pipeline[2]),
         applied: Object.keys(result.appliedVars).sort(),
       };
     };

@@ -126,3 +126,52 @@ describe('the push plan with more than 200 candidates', () => {
     assert.equal(plan.counts.remove, 0);
   });
 });
+
+describe('the push plan reads the effective values (Phase 4a overrides)', () => {
+  it('an undated mirrored item with a due-date override is pushed then, under its own title', async () => {
+    const { seedIntegration } = await import('../testing/integrationFixtures.js');
+    await seedIntegration(fx.workspaceId, {
+      id: 'plan-github',
+      ownerUserId: fx.userId,
+      provider: 'github',
+      accountId: 'plan-octo',
+    });
+    const items = await fx.models.getItemRepository();
+    const account = { provider: 'github' as const, accountId: 'plan-octo' };
+    await items.bulkUpsert(fx.workspaceId, [
+      {
+        integrationId: 'plan-github',
+        kind: 'issue',
+        topicId: null,
+        title: 'Undated at GitHub',
+        status: 'open',
+        source: {
+          ...account,
+          externalId: 'plan-issue-1',
+          key: null,
+          url: 'https://github.com/octo/hello/issues/1',
+          updatedAtSource: null,
+          etag: null,
+          hash: 'h',
+        },
+      },
+    ]);
+    const issue = await items.findBySource(
+      fx.workspaceId,
+      { ...account, integrationId: 'plan-github' },
+      'plan-issue-1',
+    );
+    assert.ok(issue);
+    const undated = await loadPlan(await integration(), NOW);
+    assert.ok(!undated.entries.some((entry) => entry.itemId === issue.id), 'no date: not pushed');
+
+    const due = new Date(NOW.getTime() + 4 * DAY);
+    await items.setOverlay(fx.workspaceId, issue.id, {
+      overrides: { dueAt: due, title: 'My name for it' },
+    });
+    const plan = await loadPlan(await integration(), NOW);
+    const entry = plan.entries.find((candidate) => candidate.itemId === issue.id);
+    assert.ok(entry, 'its override dates it');
+    assert.deepEqual([entry.type, entry.title], ['create', 'My name for it']);
+  });
+});
