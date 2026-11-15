@@ -284,12 +284,32 @@ describe('consent', () => {
     assert.ok(flags.every((flag) => !flag));
   });
 
-  it('asking for write on a provider without a write scope is a 400', async () => {
-    const response = await api.call('POST', `${W()}/integrations/oauth/clickup/start`, {
-      token,
-      body: { includeWrite: true },
-    });
-    assert.equal(response.status, 400);
+  it('a reconnect asking for write on GitHub or ClickUp asks for their normal scopes', async () => {
+    for (const provider of ['github', 'clickup'] as const) {
+      const response = await api.call('POST', `${W()}/integrations/oauth/${provider}/start`, {
+        token,
+        body: { integrationId: integrations.get(provider), includeWrite: true },
+      });
+      assert.equal(response.status, 200, response.text);
+      const url = new URL(data(response.body)['authorizeUrl'] as string);
+      assert.equal(url.searchParams.get('scope'), null);
+      assert.ok(!url.search.includes('write'));
+    }
+  });
+
+  it('a reconnect asking for write on Jira or Linear asks for their write scope', async () => {
+    for (const [provider, scope] of [
+      ['jira', 'write:jira-work'],
+      ['linear', 'read,write'],
+    ] as const) {
+      const response = await api.call('POST', `${W()}/integrations/oauth/${provider}/start`, {
+        token,
+        body: { integrationId: integrations.get(provider), includeWrite: true },
+      });
+      assert.equal(response.status, 200, response.text);
+      const url = new URL(data(response.body)['authorizeUrl'] as string);
+      assert.ok((url.searchParams.get('scope') ?? '').includes(scope));
+    }
   });
 });
 

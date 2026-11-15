@@ -119,9 +119,6 @@ export class OAuthFlow {
   ): Promise<OAuthStart> {
     const oauth = OAuthFlow.#oauthOf(integrationClass);
     const provider = oauth.provider;
-    if (input.includeWrite === true && oauth.writeScopes.length === 0) {
-      throw new AppError(400, `includeWrite: ${provider} has no scope to ask for`);
-    }
     let loginHint: string | null = null;
     if (input.integrationId === undefined) caller.require('editor');
     else {
@@ -154,7 +151,8 @@ export class OAuthFlow {
         redirectUri: callbackUrl(oauth.callbackPath),
         state: fresh.state,
         verifier: fresh.verifier,
-        includeWrite: input.includeWrite === true,
+        // A provider without write scopes (GitHub, ClickUp) has nothing more to ask for.
+        includeWrite: input.includeWrite === true && oauth.writeScopes.length > 0,
         loginHint,
       }),
       browserNonce: fresh.browserNonce,
