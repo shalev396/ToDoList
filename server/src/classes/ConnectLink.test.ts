@@ -100,4 +100,22 @@ describe('ConnectLink', () => {
       [ConnectLink.Audit.used, t.editor.userId, null],
     );
   });
+
+  it('is used once under concurrency: one consume wins, the other is a 410, one entry', async () => {
+    const t = await team('link-race');
+    const link = await ConnectLink.create(t.editor, 'github', NOW);
+    const raw = rawOf(link.connectUrl);
+    const outcomes = await Promise.allSettled([
+      ConnectLink.consume(t.editor, raw, NOW),
+      ConnectLink.consume(t.editor, raw, NOW),
+    ]);
+    assert.equal(outcomes.filter((outcome) => outcome.status === 'fulfilled').length, 1);
+    const [refused] = outcomes.filter((outcome) => outcome.status === 'rejected');
+    assert.ok(refused?.status === 'rejected' && hasStatus(410)(refused.reason));
+    const { getAuditLogRepository } = await import('../models/index.js');
+    const used = (await (await getAuditLogRepository()).list(t.workspaceId, {}, 10)).filter(
+      (entry) => entry.action === ConnectLink.Audit.used,
+    );
+    assert.equal(used.length, 1);
+  });
 });
