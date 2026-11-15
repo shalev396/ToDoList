@@ -9,6 +9,8 @@
  */
 import type { SyncStateData } from '../../models/definitions/SyncState.js';
 
+const copyOf = (date: Date | null): Date | null => (date === null ? null : new Date(date));
+
 export class SyncCursor {
   /** A resource never synced. */
   static readonly none = new SyncCursor(null);
@@ -16,7 +18,8 @@ export class SyncCursor {
   readonly #state: Readonly<SyncStateData> | null;
 
   private constructor(state: SyncStateData | null) {
-    this.#state = state === null ? null : Object.freeze({ ...state });
+    // A deep copy (its dates too), so neither the row it came from nor a getter's caller changes it.
+    this.#state = state === null ? null : Object.freeze(structuredClone(state));
     Object.freeze(this);
   }
 
@@ -42,16 +45,19 @@ export class SyncCursor {
     return this.#state?.etag ?? null;
   }
 
+  /** A copy: the cursor's own dates never leave it. */
   get updatedSince(): Date | null {
-    return this.#state?.updatedSince ?? null;
+    return copyOf(this.#state?.updatedSince ?? null);
   }
 
+  /** A copy. */
   get lastFullSyncAt(): Date | null {
-    return this.#state?.lastFullSyncAt ?? null;
+    return copyOf(this.#state?.lastFullSyncAt ?? null);
   }
 
+  /** A copy. */
   get lastIncrementalAt(): Date | null {
-    return this.#state?.lastIncrementalAt ?? null;
+    return copyOf(this.#state?.lastIncrementalAt ?? null);
   }
 
   get consecutiveErrors(): number {
@@ -64,9 +70,9 @@ export class SyncCursor {
     return last === null || now.getTime() - last.getTime() >= intervalMs;
   }
 
-  /** The stored state as adapters read it: the row, or null for a resource never synced. */
+  /** The stored state as adapters read it (a deep copy): the row, or null for one never synced. */
   toState(): SyncStateData | null {
-    return this.#state === null ? null : { ...this.#state };
+    return this.#state === null ? null : structuredClone(this.#state);
   }
 
   /** Same position: the same token, cursor, etag, window and counters. */

@@ -298,6 +298,23 @@ describe('SyncCursor', () => {
     assert.equal(a.syncToken, 'tok-1');
   });
 
+  it('its dates never leave it: getters return copies; the row it came from can’t change it', () => {
+    const iso = (date: Date | null): string | null => date?.toISOString() ?? null;
+    const row = state();
+    const cursor = SyncCursor.of(row);
+    const read = cursor.lastFullSyncAt;
+    assert.ok(read !== null);
+    read.setTime(0);
+    row.lastFullSyncAt?.setTime(0);
+    row.syncToken = 'changed';
+    assert.equal(iso(cursor.lastFullSyncAt), '2026-11-14T00:00:00.000Z');
+    assert.equal(cursor.syncToken, 'tok-1');
+    const handed = cursor.toState();
+    handed?.lastFullSyncAt?.setTime(0);
+    assert.equal(iso(cursor.lastFullSyncAt), '2026-11-14T00:00:00.000Z');
+    assert.ok(cursor.equals(SyncCursor.of(state())));
+  });
+
   it('a full sync is due once the last complete one is at least the interval old', () => {
     const cursor = SyncCursor.of(state());
     const day = 24 * 60 * 60 * 1000;

@@ -2,7 +2,8 @@
  * What one push to the workspace's primary calendar would do (plan Addendum A2), as a value
  * object: the ops to send (at most `maxOpsPerRun`), one entry per planned op, the skipped items
  * and the counts, with the config it was planned under. Made by Calendar#plan (the diff, gcal/
- * diff.ts, is pure); read by the push, the dry run and the scheduled sync. Immutable.
+ * diff.ts, is pure); read by the push, the dry run and the scheduled sync. Deeply immutable: it
+ * holds a frozen copy, and hands out frozen data (`ops`) or copies (`toDryRun`, `toJSON`).
  *
  * Also the push's own settings: a Google Calendar integration's stored config, with its defaults
  * (readGcalConfig), and the narrowing of an MCP dry run (PlanNarrowing).
@@ -60,11 +61,21 @@ export interface LoadedPlan extends BuildResult {
   config: GcalConfig;
 }
 
+/** Freezes a value and everything in it. */
+function deepFreeze<T>(value: T): T {
+  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const inner of Object.values(value)) deepFreeze(inner);
+  }
+  return value;
+}
+
 export class PushPlan {
+  /** A deep copy, deeply frozen: nothing handed in or out can change it. */
   readonly #plan: Readonly<LoadedPlan>;
 
   private constructor(plan: LoadedPlan) {
-    this.#plan = Object.freeze({ ...plan });
+    this.#plan = deepFreeze(structuredClone(plan));
     Object.freeze(this);
   }
 
@@ -99,14 +110,15 @@ export class PushPlan {
     );
   }
 
-  /** What a dry run shows: counts, entries and skipped items; nothing is written. */
+  /** What a dry run shows: counts, entries and skipped items (a copy); nothing is written. */
   toDryRun(): { dryRun: true } & Pick<BuildResult, 'counts' | 'entries' | 'skipped'> {
-    const { counts, entries, skipped } = this.#plan;
+    const { counts, entries, skipped } = structuredClone(this.#plan);
     return { dryRun: true, counts, entries, skipped };
   }
 
+  /** The plan as plain data: a copy. */
   toJSON(): LoadedPlan {
-    return { ...this.#plan };
+    return structuredClone(this.#plan);
   }
 
   /** Same ops into the same calendar under the same limits. */
