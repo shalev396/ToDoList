@@ -13,7 +13,7 @@ import { setFields, uuidIdField } from './common.js';
 
 type CalendarLinkFields = Omit<CalendarLinkData, 'id'> & { _id: string };
 
-const DELETED_BY: readonly CalendarLinkDeletedBy[] = ['google', 'dashboard'];
+const DELETED_BY: readonly CalendarLinkDeletedBy[] = ['google', 'dashboard', 'google_kept'];
 
 const calendarLinkSchema = new mongoose.Schema<CalendarLinkFields>(
   {
@@ -119,6 +119,16 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
       workspaceId,
       itemId,
       tombstonedAt: null,
+    }).lean<CalendarLinkFields[]>();
+    return docs.map(toCalendarLinkData);
+  },
+
+  async listKeptStops(workspaceId, integrationId) {
+    const docs = await CalendarLinkMongoModel.find({
+      workspaceId,
+      integrationId,
+      tombstonedAt: { $ne: null },
+      deletedBy: 'google_kept',
     }).lean<CalendarLinkFields[]>();
     return docs.map(toCalendarLinkData);
   },

@@ -5,11 +5,13 @@
  * - in scope with no link: `create`; with a link whose `pushedHash` no longer matches the
  *   projection: `update`; a live link whose item is gone or out of scope: `delete`;
  * - a live link on another calendar than the primary one (the workspace's primary calendar
- *   changed): `delete` there and `create` in the primary calendar, in the same run; never one
- *   without the other, so a narrowed or truncated plan (no deletes) leaves it where it is;
+ *   changed): `delete` there and `create` in the primary calendar, in the same run and next to
+ *   each other (moves first); never one without the other, so a narrowed plan (no deletes) leaves
+ *   it where it is;
  * - an item projects to its planned time when it has one (`overlay.plannedAt`), else to its start
  *   or due date;
- * - a tombstoned link (30 days) blocks re-creation unless the item was edited after `tombstonedAt`;
+ * - a tombstoned link (30 days; for good when `google_kept`) blocks re-creation unless the item
+ *   was edited after `tombstonedAt`;
  * - event ids are deterministic (`el` + the item id in base32hex), so a repeated create is
  *   idempotent; an op id carries the type, the item and the projection hash, which the commit
  *   reads back (`parseOpId`);
@@ -53,6 +55,8 @@ export interface PushLink {
   lastEtag: string | null;
   pushedHash: string | null;
   tombstonedAt: Date | null;
+  /** `google_kept`: another member's item deleted in Google, held back for good (until edited). */
+  deletedBy?: string | null;
 }
 
 export interface PushConfig {
@@ -266,6 +270,9 @@ function span(event: EventBody): { from: number; to: number } {
 
 // ─── the diff ───────────────────────────────────────────────────────────────
 
+/** The item an op is for (its op id carries it). */
+const itemOf = (op: WireOp): string => parseOpId(op.opId)?.itemId ?? '';
+
 interface Planned {
   op: WireOp;
   entry: PlanEntry;
@@ -281,7 +288,10 @@ export function buildOps(
   const tombstoned = new Map<string, PushLink>();
   for (const link of links) {
     if (link.tombstonedAt === null) live.set(link.itemId, link);
-    else if (now.getTime() - link.tombstonedAt.getTime() < TOMBSTONE_MS) {
+    else if (
+      link.deletedBy === 'google_kept' ||
+      now.getTime() - link.tombstonedAt.getTime() < TOMBSTONE_MS
+    ) {
       tombstoned.set(link.itemId, link);
     }
   }
@@ -379,7 +389,25 @@ export function buildOps(
     }
   }
 
-  const all = [...removes, ...updates, ...creates];
+  // A moved event's create goes right after its delete, so a big move never leaves items on
+  // neither calendar for several runs; then the other deletes, the updates and the creates.
+  const movedCreates = new Map(
+    creates
+      .filter(({ op }) => moving.has(itemOf(op)))
+      .map((planned) => [itemOf(planned.op), planned]),
+  );
+  const moves = removes
+    .filter(({ op }) => moving.has(itemOf(op)))
+    .flatMap((planned) => {
+      const create = movedCreates.get(itemOf(planned.op));
+      return create === undefined ? [planned] : [planned, create];
+    });
+  const all = [
+    ...moves,
+    ...removes.filter(({ op }) => !moving.has(itemOf(op))),
+    ...updates,
+    ...creates.filter(({ op }) => !moving.has(itemOf(op))),
+  ];
   return {
     ops: all.slice(0, cfg.maxOps).map(({ op }) => op),
     entries: all.map(({ entry }) => entry),

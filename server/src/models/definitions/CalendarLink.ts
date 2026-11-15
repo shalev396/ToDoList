@@ -1,6 +1,11 @@
 import type { CalendarLinkDirection } from '../../types/domain.js';
 
-export type CalendarLinkDeletedBy = 'google' | 'dashboard';
+/**
+ * Who ended a link: `google` (deleted there), `dashboard` (TodoList deleted the event), or
+ * `google_kept` (deleted in Google, but the item is another member's: TodoList only stops sending
+ * it, for good, until the item is edited; this tombstone never ages out).
+ */
+export type CalendarLinkDeletedBy = 'google' | 'dashboard' | 'google_kept';
 
 /** One item ↔ Google event mapping of the personal calendar bridge (DATA.md §3.15). */
 export interface CalendarLinkData {
@@ -62,6 +67,11 @@ export interface ICalendarLinkRepository {
   listLive(workspaceId: string, integrationId: string): Promise<CalendarLinkData[]>;
   /** The item's links that are not tombstoned, of any integration of the workspace. */
   listLiveForItem(workspaceId: string, itemId: string): Promise<CalendarLinkData[]>;
+  /**
+   * The `google_kept` tombstones, whatever their age: another member's items deleted in Google,
+   * which stay unsent until edited.
+   */
+  listKeptStops(workspaceId: string, integrationId: string): Promise<CalendarLinkData[]>;
   /** Tombstoned links whose tombstone is newer than `since` (the 30-day window). */
   listTombstonedSince(
     workspaceId: string,

@@ -374,7 +374,8 @@ describe('commit: another member’s shared item never changes from Google (I6)'
     assert.equal(after?.deletedAt, null);
     assert.equal(after.overlay.calendarSync, null);
     const link = await linkOf(created.id);
-    assert.equal(link.deletedBy, 'google');
+    // Held back for good (never ages out), until their item is edited.
+    assert.equal(link.deletedBy, 'google_kept');
     assert.notEqual(link.tombstonedAt, null);
   });
 });

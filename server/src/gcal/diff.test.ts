@@ -312,3 +312,19 @@ describe('the primary calendar changed', () => {
     assert.deepEqual(held.ops, []);
   });
 });
+
+describe('another member’s item deleted in Google (google_kept)', () => {
+  it('stays unsent for good: its tombstone never ages out, until the item is edited', () => {
+    const it0 = item(ID_A);
+    const longAgo = new Date(NOW.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const kept = linkFor(it0, { tombstonedAt: longAgo, deletedBy: 'google_kept' });
+    assert.deepEqual(buildOps([it0], [kept], cfg(), NOW).ops, []);
+    // A plain tombstone that old no longer holds.
+    assert.equal(buildOps([it0], [{ ...kept, deletedBy: 'google' }], cfg(), NOW).ops.length, 1);
+    const edited = { ...it0, editedAt: new Date(NOW.getTime() - 1000) };
+    assert.deepEqual(
+      buildOps([edited], [kept], cfg(), NOW).ops.map((op) => op.type),
+      ['create'],
+    );
+  });
+});

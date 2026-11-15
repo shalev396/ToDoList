@@ -244,12 +244,13 @@ async function applyLinkedEvent(
   if (ev.status === 'cancelled') {
     // Deleted in Google. The owner's own item goes (a to-do) or stops projecting (a mirrored item;
     // the provider is never touched); another member's item is left as it is: only this link
-    // goes, so the event is not made again (unless the item is edited later).
+    // goes (`google_kept`, which never ages out), so the event is not made again unless the item
+    // is edited later.
     if (owned) {
       if (isLocal(item)) await items.softDelete(workspaceId, item.id);
       else await items.setOverlay(workspaceId, item.id, { calendarSync: false });
     }
-    await links.tombstone(workspaceId, link.id, 'google');
+    await links.tombstone(workspaceId, link.id, owned ? 'google' : 'google_kept');
     run.counts.deleted += 1;
     await AuditLog.record(
       systemIn(run),
