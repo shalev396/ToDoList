@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
-import { createConnectLink } from '../../../services/connectLinks.js';
+import { ConnectLink } from '../../../classes/ConnectLink.js';
+import { Caller } from '../../../classes/base/Caller.js';
 import { CONNECTABLE_PROVIDERS } from '../../../types/integrations.js';
 import { toolCaller } from '../../auth/principal.js';
 import { defineTool } from '../../tool.js';
@@ -26,9 +27,8 @@ export const integrationsStartConnect = defineTool({
   scopes: ['integrations:connect'],
   minRole: 'editor',
   async handler(ctx, input) {
-    const link = await createConnectLink(
-      ctx.workspace,
-      toolCaller(ctx).actor,
+    const link = await ConnectLink.create(
+      Caller.fromContext(ctx.workspace, toolCaller(ctx).actor),
       input.provider,
       ctx.now(),
     );
