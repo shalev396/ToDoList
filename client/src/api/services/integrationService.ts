@@ -10,6 +10,7 @@ import type {
   GetIntegrationConfigResponseData,
   IntegrationSharingResponseData,
   ClearPrimaryCalendarResponseData,
+  RemovePushedResponseData,
   GetPrimaryCalendarResponseData,
   ListGoogleCalendarsResponseData,
   SetPrimaryCalendarRequestBody,
@@ -112,6 +113,23 @@ export async function deleteIntegration(
     ...config,
     ...(options.removeAdded === true ? { params: { removeAdded: true } } : {}),
   });
+}
+
+/**
+ * Google Calendar, read & write, the connection's owner: deletes the events TodoList sent with
+ * it. Out of time: 409 `cleanup_incomplete` with the progress; call it again to continue.
+ */
+export async function removePushedEvents(
+  workspaceId: string,
+  integrationId: string,
+  config?: ApiRequestConfig,
+) {
+  const response = await api.post<ApiSuccessResponse<RemovePushedResponseData>>(
+    `${integrationPath(workspaceId, integrationId)}/remove-pushed`,
+    undefined,
+    config,
+  );
+  return response.data;
 }
 
 function primaryCalendarPath(workspaceId: string): string {

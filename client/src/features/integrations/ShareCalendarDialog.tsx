@@ -17,9 +17,12 @@ import { calendarSettingsUrl, GOOGLE_SHARE_HELP_URL } from './calendarLinks';
  */
 export function ShareCalendarDialog({
   calendarId,
+  accountEmail,
   onClose,
 }: {
   calendarId: string;
+  /** The Google account that owns the connection: Calendar opens the settings under it. */
+  accountEmail?: string | undefined;
   onClose: () => void;
 }) {
   const { t } = useTranslation();
@@ -47,6 +50,9 @@ export function ShareCalendarDialog({
             <p className="text-muted-foreground">{t('connect.share.secretBody')}</p>
           </li>
         </ul>
+        <p className="text-sm text-muted-foreground" data-share-permissions>
+          {t('connect.share.permissions')}
+        </p>
         <a
           href={GOOGLE_SHARE_HELP_URL}
           target="_blank"
@@ -62,7 +68,7 @@ export function ShareCalendarDialog({
           </Button>
           <Button asChild className="max-md:min-h-11">
             <a
-              href={calendarSettingsUrl(calendarId)}
+              href={calendarSettingsUrl(calendarId, accountEmail)}
               target="_blank"
               rel="noopener noreferrer"
               data-share-open

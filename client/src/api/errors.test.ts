@@ -10,6 +10,7 @@ import {
   apiErrorCode,
   apiErrorStatus,
   apiOpenIn,
+  cleanupProgressOf,
   errorKey,
   errorMessage,
 } from './errors.ts';
@@ -139,5 +140,23 @@ describe('apiOpenIn', () => {
     assert.equal(apiOpenIn(failure(409, { message: 'x', currentVersion: 3 })), null);
     assert.equal(apiOpenIn(failure(400, { openIn: { provider: 'jira', url: 'u' } })), null);
     assert.equal(apiOpenIn(new Error('x')), null);
+  });
+});
+
+describe('cleanupProgressOf', () => {
+  const progress = { events: 12, calendars: 1, calendarsKept: 0, remaining: 30 };
+  it('reads the progress of a cleanup_incomplete 409', () => {
+    const error = failed(409, { message: 'Out of time', code: 'cleanup_incomplete', progress });
+    assert.deepEqual(cleanupProgressOf(error), progress);
+  });
+  it('is null for other codes, other statuses and a broken body', () => {
+    assert.equal(cleanupProgressOf(failed(409, { code: 'slug_taken', progress })), null);
+    assert.equal(cleanupProgressOf(failed(500, { code: 'cleanup_incomplete', progress })), null);
+    assert.equal(cleanupProgressOf(failed(409, { code: 'cleanup_incomplete' })), null);
+    assert.equal(
+      cleanupProgressOf(failed(409, { code: 'cleanup_incomplete', progress: { events: 'x' } })),
+      null,
+    );
+    assert.equal(cleanupProgressOf(new Error('offline')), null);
   });
 });

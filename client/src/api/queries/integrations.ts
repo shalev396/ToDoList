@@ -13,6 +13,7 @@ import {
   listIntegrations,
   listOAuthProviders,
   listOAuthResources,
+  removePushedEvents,
   setPrimaryCalendar,
   stopSharingIntegration,
   syncIntegration,
@@ -92,6 +93,8 @@ export function useRefreshIntegrations(workspaceId: string) {
     Promise.all([
       queryClient.invalidateQueries({ queryKey: queryKeys.integrations(workspaceId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.syncRuns(workspaceId) }),
+      // A mode switch or a disconnect can suspend or revive the workspace calendar.
+      queryClient.invalidateQueries({ queryKey: queryKeys.primaryCalendar(workspaceId) }),
     ]);
 }
 
@@ -133,7 +136,6 @@ export function useUpdateIntegration(workspaceId: string) {
 }
 
 export function useDisconnectIntegration(workspaceId: string) {
-  const queryClient = useQueryClient();
   const refresh = useRefreshIntegrations(workspaceId);
   return useMutation({
     mutationFn: (input: string | { id: string; removeAdded?: boolean }) => {
@@ -142,10 +144,18 @@ export function useDisconnectIntegration(workspaceId: string) {
         suppressErrorToast: true,
       });
     },
-    onSuccess: async () => {
-      await refresh();
-      await queryClient.invalidateQueries({ queryKey: queryKeys.primaryCalendar(workspaceId) });
-    },
+    onSuccess: refresh,
+  });
+}
+
+/** "Remove": deletes the events TodoList pushed with this connection; the cards refresh. */
+export function useRemovePushedEvents(workspaceId: string) {
+  const refresh = useRefreshIntegrations(workspaceId);
+  return useMutation({
+    mutationFn: async (integrationId: string) =>
+      (await removePushedEvents(workspaceId, integrationId, { suppressErrorToast: true })).data,
+    // An incomplete clean-up (409) still removed some events, so refresh then too.
+    onSettled: refresh,
   });
 }
 

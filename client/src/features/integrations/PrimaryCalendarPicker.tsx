@@ -20,6 +20,8 @@ import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { SaveStatus } from '@/components/ui/save-status';
 import { Skeleton } from '@/components/ui/skeleton';
+import { CleanupNote, RemoveOldCheckbox } from './CleanupNote';
+import { useRemovableOldPrimary, useRemovePushed } from './useRemovePushed';
 
 /** The name a new calendar starts with: a product name, the same in every language. */
 export const DEFAULT_CALENDAR_NAME = 'TodoList';
@@ -148,18 +150,28 @@ export function PrimaryCalendarPicker({
   const [name, setName] = useState(DEFAULT_CALENDAR_NAME);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [removeOld, setRemoveOld] = useState(false);
+  const oldIntegrationId = useRemovableOldPrimary(workspaceId);
+  const cleanup = useRemovePushed(workspaceId);
+  const [cleanedId, setCleanedId] = useState<string | null>(null);
   const mine = (integrations.data ?? []).filter(
     (entry) => entry.provider === 'google_calendar' && entry.authMethod === 'oauth',
   );
   const creating = calendar === CREATE;
   const ready =
-    integrationId !== '' && calendar !== '' && (!creating || name.trim() !== '') && !set.isPending;
+    integrationId !== '' &&
+    calendar !== '' &&
+    (!creating || name.trim() !== '') &&
+    !set.isPending &&
+    !saved;
 
   const save = async () => {
     if (!ready) {
       return;
     }
     setError(null);
+    // The calendar being left: read before the save, since the save moves the workspace calendar.
+    const leaving = removeOld ? oldIntegrationId : null;
     try {
       await set.mutateAsync(
         creating
@@ -167,6 +179,10 @@ export function PrimaryCalendarPicker({
           : { integrationId, calendarId: calendar },
       );
       setSaved(true);
+      if (leaving !== null) {
+        setCleanedId(leaving);
+        await cleanup.run(leaving);
+      }
     } catch (failure) {
       setSaved(false);
       setError(
@@ -240,6 +256,22 @@ export function PrimaryCalendarPicker({
                 }}
                 name={name}
                 onName={setName}
+              />
+            )}
+            {oldIntegrationId === null || saved ? null : (
+              <RemoveOldCheckbox
+                id="primary-remove-old"
+                checked={removeOld}
+                onChange={setRemoveOld}
+              />
+            )}
+            {cleanedId === null ? null : (
+              <CleanupNote
+                outcome={cleanup.outcome}
+                pending={cleanup.pending}
+                onContinue={() => {
+                  void cleanup.run(cleanedId);
+                }}
               />
             )}
           </div>

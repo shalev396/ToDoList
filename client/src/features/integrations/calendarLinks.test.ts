@@ -14,6 +14,13 @@ describe('calendarSettingsUrl', () => {
     assert.equal(calendarSettingsUrl('a'), `${BASE}YQ`);
     assert.ok(!calendarSettingsUrl('ab').includes('='));
   });
+  it('adds the account as authuser, encoded', () => {
+    assert.equal(
+      calendarSettingsUrl('a', 'alice+x@example.com'),
+      `${BASE}YQ?authuser=alice%2Bx%40example.com`,
+    );
+    assert.equal(calendarSettingsUrl('a', ''), `${BASE}YQ`);
+  });
   it('encodes multi-byte characters as UTF-8', () => {
     assert.equal(calendarSettingsUrl('é'), `${BASE}w6k`);
   });

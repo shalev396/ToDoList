@@ -9,6 +9,7 @@
  */
 import type { TFunction } from 'i18next';
 import { isErrorCode, type ErrorCode } from '@api-types/errorCodes.ts';
+import type { CleanupProgress } from '@api-types/primaryCalendar.ts';
 import { limits } from '../data/limits.ts';
 
 /** The i18n key for each server error code. */
@@ -38,6 +39,7 @@ export const ERROR_CODE_KEYS: Readonly<Record<ErrorCode, string>> = {
   status_not_available: 'errors.codes.statusNotAvailable',
   scope_missing: 'errors.codes.scopeMissing',
   calendar_not_primary: 'errors.codes.calendarNotPrimary',
+  cleanup_incomplete: 'errors.codes.cleanupIncomplete',
   field_not_writable: 'errors.codes.fieldNotWritable',
   provider_partial_write: 'errors.codes.providerPartialWrite',
   provider_item_missing: 'errors.codes.providerItemMissing',
@@ -150,4 +152,42 @@ export function apiOpenIn(error: unknown): { provider: string; url: string } | n
   }
   const { provider, url } = openIn as { provider?: unknown; url?: unknown };
   return typeof provider === 'string' && typeof url === 'string' ? { provider, url } : null;
+}
+
+/**
+ * The progress of a clean-up that stopped early: 409 `cleanup_incomplete` with
+ * `{ message, code, progress }`. Null for any other failure, or a body without a full progress.
+ */
+export function cleanupProgressOf(error: unknown): CleanupProgress | null {
+  if (apiErrorStatus(error) !== 409 || apiErrorCode(error) !== 'cleanup_incomplete') {
+    return null;
+  }
+  const data = responseOf(error)?.data;
+  const progress =
+    typeof data === 'object' && data !== null && 'progress' in data
+      ? (data as { progress?: unknown }).progress
+      : undefined;
+  if (typeof progress !== 'object' || progress === null) {
+    return null;
+  }
+  const { events, calendars, calendarsKept, remaining } = progress as Record<string, unknown>;
+  const count = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+  const parsed = {
+    events: count(events),
+    calendars: count(calendars),
+    calendarsKept: count(calendarsKept),
+    remaining: count(remaining),
+  };
+  return parsed.events === null ||
+    parsed.calendars === null ||
+    parsed.calendarsKept === null ||
+    parsed.remaining === null
+    ? null
+    : {
+        events: parsed.events,
+        calendars: parsed.calendars,
+        calendarsKept: parsed.calendarsKept,
+        remaining: parsed.remaining,
+      };
 }

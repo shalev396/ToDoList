@@ -39,6 +39,7 @@ export const connect = {
     disconnectBody:
       'This deletes the saved credentials and removes its items from every dashboard. Blocks it was on say a source was removed. You can connect it again later.',
     removeAdded: 'Also remove everything TodoList added to this calendar',
+    removeAddedHint: 'A calendar TodoList created is deleted for everyone it is shared with.',
     removeAddedNeedsWrite: 'Switch to Read & write first to remove what TodoList added',
     disconnectError: 'It couldn’t be disconnected. Try again.',
     docs: 'How to get a token',
@@ -199,11 +200,25 @@ export const connect = {
       description: 'Choose the ClickUp workspaces this connection reads.',
     },
   },
+  pushed: {
+    leftover_one: '{{count}} event from an earlier workspace calendar is still in Google Calendar',
+    leftover_other:
+      '{{count}} events from an earlier workspace calendar are still in Google Calendar',
+    remove: 'Remove',
+    needsWrite: 'Switch to Read & write first',
+    progress: 'Removed {{events}}; {{remaining}} left',
+    continue: 'Continue',
+    done_one: 'Removed {{count}} event from Google Calendar.',
+    done_other: 'Removed {{count}} events from Google Calendar.',
+    error: 'The events couldn’t be removed. Try again.',
+  },
   primary: {
     title: 'Workspace calendar',
     description: 'The one Google Calendar that dated to-dos are sent to.',
     unset: 'No workspace calendar yet: dated to-dos are not sent to Google Calendar.',
-    activeOther: 'Dated to-dos are sent to the workspace calendar.',
+    activeOther: 'Dated items are sent to the workspace calendar.',
+    pausedOther: 'Sending to the workspace calendar is paused.',
+    removeOld: 'Also remove the events TodoList added to the old calendar',
     activeMine: 'Dated to-dos are sent to {{name}}.',
     suspendedReadOnly:
       'TodoList stopped sending to the workspace calendar: its Google Calendar connection is read-only. Switch it to Read & write, or choose another calendar.',
@@ -246,6 +261,8 @@ export const connect = {
     secretBody:
       'Anyone with this address can subscribe to the calendar from any calendar app. Keep it private.',
     open: 'Open this calendar’s settings in Google Calendar',
+    permissions:
+      'Give people “See all event details”. With “Make changes to events”, their changes reach TodoList.',
     help: 'Google’s help page on sharing a calendar',
   },
   oauth: {

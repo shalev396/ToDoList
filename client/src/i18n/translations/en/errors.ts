@@ -33,6 +33,8 @@ export const errors = {
       'That tool has no way to set this item to that status. Change it there instead.',
     scopeMissing:
       'This connection needs a new permission for that. Connect it again and allow everything it asks for.',
+    cleanupIncomplete:
+      'The clean-up ran out of time before it finished. Continue to remove the rest.',
     calendarNotPrimary:
       'That calendar is not the workspace calendar. Choose it as the workspace calendar first.',
     fieldNotWritable:

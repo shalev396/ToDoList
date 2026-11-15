@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
-import { errorMessage } from '@/api/errors';
+import { cleanupProgressOf, errorMessage } from '@/api/errors';
+import type { CleanupProgress } from '@api-types/api-contracts';
 import {
   useDisconnectIntegration,
+  usePrimaryCalendar,
   useStopSharing,
   useUpdateIntegration,
   useSyncIntegration,
@@ -44,9 +46,11 @@ import {
   type OAuthMode,
 } from './oauthSetup';
 import { PROVIDER_REGISTRY } from './providers';
+import { CleanupNote, CleanupProgressLine } from './CleanupNote';
 import { daysUntil, needsRenewalHint } from './status';
 import { SyncStatus } from './SyncStatus';
 import { TokenFallback } from './TokenFallback';
+import { useRemovePushed } from './useRemovePushed';
 
 interface IntegrationCardProps {
   workspaceId: string;
@@ -112,6 +116,9 @@ export function IntegrationCard({
   const [confirmingStop, setConfirmingStop] = useState(false);
   const [confirmingWrite, setConfirmingWrite] = useState(false);
   const [removeAdded, setRemoveAdded] = useState(false);
+  const [disconnectProgress, setDisconnectProgress] = useState<CleanupProgress | null>(null);
+  const primary = usePrimaryCalendar(workspaceId);
+  const leftover = useRemovePushed(workspaceId);
   const testConnection = useTestIntegration(workspaceId);
   const syncNow = useSyncIntegration(workspaceId);
   const disconnect = useDisconnectIntegration(workspaceId);
@@ -182,14 +189,35 @@ export function IntegrationCard({
     if (integration === undefined) {
       return;
     }
+    setDisconnectProgress(null);
     try {
       await disconnect.mutateAsync(
         removeAdded && provider === 'google_calendar' && integration.mode === 'read_write'
           ? { id: integration.id, removeAdded: true }
           : integration.id,
       );
+      setConfirming(false);
     } catch (failure) {
+      const progress = cleanupProgressOf(failure);
+      if (progress !== null) {
+        // Out of time, still connected: the dialog stays open and can continue.
+        setDisconnectProgress(progress);
+        return;
+      }
+      setConfirming(false);
       setProblem(errorMessage(t, failure, 'connect.card.disconnectError'));
+    }
+  };
+
+  /** "Remove": the events pushed with a connection that is no longer the workspace calendar. */
+  const removeLeftover = async () => {
+    if (integration === undefined) {
+      return;
+    }
+    setProblem(null);
+    const outcome = await leftover.run(integration.id);
+    if (outcome.kind === 'done') {
+      toast.success(t('connect.pushed.done', { count: outcome.events }));
     }
   };
 
@@ -198,6 +226,14 @@ export function IntegrationCard({
     integration !== undefined && needsRenewalHint(integration.expiresAt, now) && days !== null;
   const status = integration?.status;
   const comingSoon = comingSoonOf(capabilities, provider);
+  const isPrimary =
+    integration !== undefined &&
+    primary.data?.mine === true &&
+    primary.data.integrationId === integration.id;
+  const pushedLeft =
+    provider === 'google_calendar' && integration !== undefined && !isPrimary
+      ? (integration.pushedEvents ?? 0)
+      : 0;
 
   return (
     <article
@@ -340,6 +376,40 @@ export function IntegrationCard({
                 } else {
                   void setMode('read');
                 }
+              }}
+            />
+          )}
+        </div>
+      )}
+      {integration === undefined || pushedLeft <= 0 ? null : (
+        <div data-pushed-leftover className="flex flex-col gap-1.5 text-[13px]">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="min-w-0 flex-1 basis-48">
+              {t('connect.pushed.leftover', { count: pushedLeft })}
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="max-md:h-11"
+              data-pushed-remove
+              disabled={integration.mode === 'read' || leftover.pending}
+              onClick={() => {
+                void removeLeftover();
+              }}
+            >
+              {t('connect.pushed.remove')}
+            </Button>
+          </div>
+          {integration.mode === 'read' ? (
+            <span className="text-muted-foreground">{t('connect.pushed.needsWrite')}</span>
+          ) : null}
+          {leftover.outcome?.kind === 'done' ? null : (
+            <CleanupNote
+              outcome={leftover.outcome}
+              pending={leftover.pending}
+              onContinue={() => {
+                void removeLeftover();
               }}
             />
           )}
@@ -541,6 +611,7 @@ export function IntegrationCard({
         onOpenChange={(open) => {
           setConfirming(open);
           setRemoveAdded(false);
+          setDisconnectProgress(null);
         }}
       >
         <AlertDialogContent>
@@ -580,16 +651,30 @@ export function IntegrationCard({
                     disabled={integration.mode === 'read'}
                     onCheckedChange={(value) => {
                       setRemoveAdded(value === true);
+                      setDisconnectProgress(null);
                     }}
                   />
                   <label htmlFor={`remove-added-${integration.id}`} className="text-sm">
                     {t('connect.card.removeAdded')}
                   </label>
                 </div>
-                {integration.mode === 'read' ? (
-                  <p className="ps-6 text-[13px] text-muted-foreground">
-                    {t('connect.card.removeAddedNeedsWrite')}
-                  </p>
+                <p className="ps-6 text-[13px] text-muted-foreground">
+                  {t(
+                    integration.mode === 'read'
+                      ? 'connect.card.removeAddedNeedsWrite'
+                      : 'connect.card.removeAddedHint',
+                  )}
+                </p>
+                {disconnectProgress !== null && removeAdded ? (
+                  <div className="ps-6">
+                    <CleanupProgressLine
+                      progress={disconnectProgress}
+                      pending={disconnect.isPending}
+                      onContinue={() => {
+                        void confirmDisconnect();
+                      }}
+                    />
+                  </div>
                 ) : null}
               </div>
             ) : null}
@@ -597,7 +682,10 @@ export function IntegrationCard({
           <AlertDialogFooter>
             <AlertDialogCancel>{t('connect.cancel')}</AlertDialogCancel>
             <AlertDialogAction
-              onClick={() => {
+              disabled={disconnect.isPending}
+              onClick={(event) => {
+                // Stays open while it runs, and when the clean-up stops early.
+                event.preventDefault();
                 void confirmDisconnect();
               }}
             >

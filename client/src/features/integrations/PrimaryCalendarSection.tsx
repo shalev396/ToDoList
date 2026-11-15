@@ -5,6 +5,7 @@ import { errorMessage } from '@/api/errors';
 import {
   useClearPrimaryCalendar,
   useGoogleCalendars,
+  useIntegrations,
   usePrimaryCalendar,
 } from '@/api/queries/integrations';
 import {
@@ -21,8 +22,10 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { PrimaryCalendarView } from '@api-types/api-contracts';
+import { CleanupNote, RemoveOldCheckbox } from './CleanupNote';
 import { PrimaryCalendarPicker } from './PrimaryCalendarPicker';
 import { ShareCalendarDialog } from './ShareCalendarDialog';
+import { useRemovableOldPrimary, useRemovePushed } from './useRemovePushed';
 
 /** The calendar's name from the account's calendars; its id until they load. */
 function useCalendarName(workspaceId: string, view: PrimaryCalendarView): string {
@@ -69,15 +72,27 @@ export function PrimaryCalendarSection({ workspaceId }: { workspaceId: string })
   const [sharing, setSharing] = useState(false);
   const [confirmingStop, setConfirmingStop] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [removeOld, setRemoveOld] = useState(false);
+  const [cleanedId, setCleanedId] = useState<string | null>(null);
+  const integrations = useIntegrations(workspaceId);
+  const oldIntegrationId = useRemovableOldPrimary(workspaceId);
+  const cleanup = useRemovePushed(workspaceId);
   const isOwner = role === 'owner';
   const view = primary.data;
 
   const stop = async () => {
     setProblem(null);
+    // The calendar being left: read before the stop, since the stop clears the workspace calendar.
+    const leaving = removeOld ? oldIntegrationId : null;
     try {
       await clear.mutateAsync();
     } catch (failure) {
       setProblem(errorMessage(t, failure, 'connect.primary.stopFailed'));
+      return;
+    }
+    if (leaving !== null) {
+      setCleanedId(leaving);
+      await cleanup.run(leaving);
     }
   };
 
@@ -155,6 +170,11 @@ export function PrimaryCalendarSection({ workspaceId }: { workspaceId: string })
           </p>
         )}
       </div>
+      {view?.state === 'suspended' && !isOwner && !view.mine ? (
+        <p role="status" data-primary-paused className="text-sm text-muted-foreground">
+          {t('connect.primary.pausedOther')}
+        </p>
+      ) : null}
       {view?.state === 'suspended' && (isOwner || view.mine) ? (
         <p
           role="status"
@@ -185,19 +205,44 @@ export function PrimaryCalendarSection({ workspaceId }: { workspaceId: string })
           }}
         />
       ) : null}
+      {cleanedId === null ? null : (
+        <CleanupNote
+          outcome={cleanup.outcome}
+          pending={cleanup.pending}
+          onContinue={() => {
+            void cleanup.run(cleanedId);
+          }}
+        />
+      )}
       {sharing && view?.calendarId !== undefined && view.calendarId !== null ? (
         <ShareCalendarDialog
           calendarId={view.calendarId}
+          accountEmail={
+            integrations.data?.find((entry) => entry.id === view.integrationId)?.accountLabel
+          }
           onClose={() => {
             setSharing(false);
           }}
         />
       ) : null}
-      <AlertDialog open={confirmingStop} onOpenChange={setConfirmingStop}>
+      <AlertDialog
+        open={confirmingStop}
+        onOpenChange={(open) => {
+          setConfirmingStop(open);
+          setRemoveOld(false);
+        }}
+      >
         <AlertDialogContent data-primary-stop-confirm>
           <AlertDialogHeader>
             <AlertDialogTitle>{t('connect.primary.stopTitle')}</AlertDialogTitle>
             <AlertDialogDescription>{t('connect.primary.stopBody')}</AlertDialogDescription>
+            {oldIntegrationId === null ? null : (
+              <RemoveOldCheckbox
+                id="primary-stop-remove-old"
+                checked={removeOld}
+                onChange={setRemoveOld}
+              />
+            )}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('connect.cancel')}</AlertDialogCancel>
