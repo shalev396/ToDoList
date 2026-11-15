@@ -21,7 +21,7 @@ It is updated every phase.
 | 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects, the cascade template; `User` calls `Workspace.deleteAccountCascade`                                                                                                                                           | **built** |
 | PC    | The calendar phase: the workspace's `PrimaryCalendar` (value object in `WorkspaceSettings`, `PrimaryCalendarStatus`), the fixed push rule, `PlannedAt`, a pushed event deleted with its to-do, "Also remove everything TodoList added" (`AddedContentRemover`), block connector scopes | **built** |
 | 4a    | Server: the `Item` hierarchy (`Todo`, `MirroredItem`, `TaskItem`, `PullRequest`, `CalendarEvent`), `Container`, `ItemQuery`, `QueryTarget`, `ProviderFields`, `CreateQuota`, `TodoCopy`; overlay overrides and effective values; the split edit; recurring to-dos                      | **built** |
-| 4b    | Client: the item sheet's editing and hints, the Repeat control, copy fixes                                                                                                                                                                                                             | planned   |
+| 4b    | Client: the item sheet's editing and hints, the Repeat control, copy fixes; server: the primary calendar is always read, `ItemDetail.sourceValues`                                                                                                                                     | **built** |
 | 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                                                                                              | planned   |
 | 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                                                                                                    | planned   |
 | 7     | The legacy list emptied, dead services deleted                                                                                                                                                                                                                                         | planned   |
@@ -1805,6 +1805,31 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
   409 reads as `existed`), a store failure is 409 `created_not_stored` with `details.written`.
 - **Copy flow**: `Todo.copyOwn` → `TodoCopy.start` (each check once); `providerIds.ts` and
   `createFields.ts` live in `classes/integration/`, the field discovery in `builder/`.
+
+## What phase 4b built (client, and a few server fixes)
+
+- **The primary calendar is always a read calendar** (owner ruling R1). One audited helper,
+  `GoogleCalendarIntegration#ensureReads` (`integration.update`, `reason: primary_calendar_read`,
+  no Google call), runs when the owner sets an existing calendar as the primary
+  (`Workspace#setPrimaryCalendar`, before the setting is stored) and when a recurring to-do is
+  created (it only restores the invariant, never adds a calendar the owner wasn't told about); a
+  calendar TodoList creates is read already. The owner's own config update keeps the primary in
+  the read list (`checkSelection` → `#keepPrimaryRead`). Migration
+  `2026-11-15-primary-calendar-read` reads every existing primary. The pickers say so: "Events in
+  this calendar will also show in TodoList", and the calendar list keeps its box ticked.
+- **Recurring create** applies the request's topic and priority on Google's `existed` path too, and
+  a read-helper failure after Google made the event is 409 `created_not_stored`.
+- **`ItemDetail.sourceValues`** (additive, REST only): a mirrored item's values at its provider
+  under its overrides (title redacted), so "Use <provider>'s value" can send the provider's own
+  title or status (a date or the priority clears with null).
+- **The pull-back** in `gcal/commit.ts` redacts the title like the plan; MCP `create_todo` is
+  `openWorldHint: true`.
+- **Client.** `features/items/editing/`: `editPlan.ts` (which fields show, provider or "Only in
+  TodoList", the one `ProviderLock` reason, the draft and the one PATCH), `saveProblem.ts` (each
+  refusal code to its copy; `provider_partial_write` lists what was written and not),
+  `MirroredEditor.tsx` (the form, the guests dialog, `SaveStatus`); `features/items/create/`:
+  `recurrence.ts` (the RRULE line the server's `RecurrenceRule` takes), `RepeatControl.tsx`,
+  `RepeatTarget.tsx`; `plannedAt.ts#createCommitPolicy` (Chromium's date and time inputs).
 
 ## Where phase 4a left the old modules
 
