@@ -355,7 +355,7 @@ describe('a recurring to-do', () => {
     const [entry] = await (
       await models.getAuditLogRepository()
     ).list(wid, { action: 'integration.update' }, 1);
-    assert.deepEqual(entry?.meta, { changed: ['config'], reason: 'workspace_calendar_read' });
+    assert.deepEqual(entry?.meta, { changed: ['config'], reason: 'primary_calendar_read' });
   });
 
   it('made at Google but not stored here: 409 created_not_stored with details.written', async () => {
@@ -364,7 +364,11 @@ describe('a recurring to-do', () => {
     const failing: typeof MirroredItem.store = () => Promise.reject(new Error('database down'));
     MirroredItem.store = failing;
     try {
-      const res = await recurring('owner', { title: 'Quarterly review', idempotencyKey: 'q1' });
+      const res = await recurring('owner', {
+        title: 'Quarterly review',
+        idempotencyKey: 'q1',
+        priority: 2,
+      });
       assert.equal(res.status, 409, res.text);
       assert.equal(res.body?.['code'], 'created_not_stored');
       assert.deepEqual(res.body['details'], { written: ['event'] });
@@ -374,9 +378,14 @@ describe('a recurring to-do', () => {
     }
     // The retry with the same key is the same event (Google had it): stored now, nothing new made.
     const before = writes();
-    const again = await recurring('owner', { title: 'Quarterly review', idempotencyKey: 'q1' });
+    const again = await recurring('owner', {
+      title: 'Quarterly review',
+      idempotencyKey: 'q1',
+      priority: 2,
+    });
     assert.equal(again.status, 200, again.text);
     assert.equal(data(again)['kind'], 'event');
+    assert.equal(data(again)['priority'], 2, 'the retry still applies the request’s priority');
     assert.equal(
       mock.events(ALICE.email).filter((entry) => entry.summary === 'Quarterly review').length,
       1,
@@ -385,6 +394,24 @@ describe('a recurring to-do', () => {
     assert.deepEqual(calendarWrites(since(before)), [
       `POST /calendar/v3/calendars/${encodeURIComponent(ALICE.email)}/events`,
     ]);
+  });
+
+  it('the read calendar failing after Google created the event: 409 created_not_stored, not a 500', async () => {
+    const { GoogleCalendarIntegration } =
+      await import('../../classes/integration/providers/GoogleCalendarIntegration.js');
+    const proto = GoogleCalendarIntegration.prototype;
+    const original: unknown = Reflect.get(proto, 'ensureReads');
+    const failing = (): Promise<boolean> => Promise.reject(new Error('database down'));
+    Reflect.set(proto, 'ensureReads', failing);
+    try {
+      const res = await recurring('owner', { title: 'Yearly review', idempotencyKey: 'y1' });
+      assert.equal(res.status, 409, res.text);
+      assert.equal(res.body?.['code'], 'created_not_stored');
+      assert.deepEqual(res.body['details'], { written: ['event'] });
+      assert.ok(mock.events(ALICE.email).some((entry) => entry.summary === 'Yearly review'));
+    } finally {
+      Reflect.set(proto, 'ensureReads', original);
+    }
   });
 
   it('while its integration is read-only: 409 integration_read_only, nothing sent', async () => {
@@ -399,5 +426,41 @@ describe('a recurring to-do', () => {
     } finally {
       await call('owner', 'PATCH', `/integrations/${iid}`, { mode: 'read_write' });
     }
+  });
+});
+
+describe('the primary calendar is always a read calendar', () => {
+  const calendarIds = async (): Promise<string[]> => {
+    const stored = await (await models.getIntegrationRepository()).findById(wid, iid);
+    return ((stored?.config as { calendars?: { id: string }[] }).calendars ?? []).map(
+      (calendar) => calendar.id,
+    );
+  };
+
+  it('setting it adds the calendar to the integration’s reads, audited, with no Google write', async () => {
+    await (await models.getIntegrationRepository()).update(wid, iid, { config: { calendars: [] } });
+    const before = writes();
+    const set = await call('owner', 'PUT', '/primary-calendar', {
+      integrationId: iid,
+      calendarId: ALICE.email,
+    });
+    assert.equal(set.status, 200, set.text);
+    assert.deepEqual(await calendarIds(), [ALICE.email]);
+    assert.deepEqual(calendarWrites(since(before)), []);
+    const [entry] = await (
+      await models.getAuditLogRepository()
+    ).list(wid, { action: 'integration.update' }, 1);
+    assert.deepEqual(entry?.meta, { changed: ['config'], reason: 'primary_calendar_read' });
+  });
+
+  it('the owner’s own update of the read calendars keeps it, as read', async () => {
+    const res = await call('owner', 'PATCH', `/integrations/${iid}`, {
+      config: { calendars: [] },
+    });
+    assert.equal(res.status, 200, res.text);
+    const stored = await (await models.getIntegrationRepository()).findById(wid, iid);
+    assert.deepEqual((stored?.config as { calendars?: unknown }).calendars, [
+      { id: ALICE.email, mode: 'read' },
+    ]);
   });
 });

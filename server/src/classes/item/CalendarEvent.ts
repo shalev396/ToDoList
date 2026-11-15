@@ -175,7 +175,13 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
    * (409 `primary_calendar_unset`), owned by the caller (403 `integration_not_owner`), read & write
    * (409 `integration_read_only`; demo data: `provider_writes_off`), under the hourly create limit
    * (429 `create_rate_limited`); then the integration's write session inserts it. Audited as
-   * `provider.create`. A topic files it (its overlay); a priority is kept as an override.
+   * `provider.create`. A topic files it (its overlay); a priority is kept as an override (also on
+   * a retry that found the event at Google already).
+   *
+   * The primary calendar is always one the integration reads, so the integration's
+   * `ensureReads` (the same audited helper that setting the primary calls, reason
+   * `primary_calendar_read`) only restores that invariant here (it was disclosed when the owner
+   * picked the calendar). If it fails after Google created the event: 409 `created_not_stored`.
    */
   static async createRecurring(
     caller: Caller,
@@ -246,10 +252,19 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
     } else {
       await auditProviderCreate(caller, data, 'created', result.record);
     }
-    // Its sync must keep this calendar's events: the workspace calendar is read from now on.
-    await integration.ensureReads(caller, calendarId);
+    // The primary calendar is always a read calendar (the owner was told when picking it): this
+    // only restores that invariant, it never widens what the integration reads.
+    try {
+      await integration.ensureReads(caller, calendarId);
+    } catch (error) {
+      // The event exists at Google already: a masked 500 would invite a second series.
+      logger.warn('A created recurring event could not be kept read', {
+        integrationId: data.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+      throw new CreatedNotStoredError(data.provider, ['event']);
+    }
     const stored = await CalendarEvent.#storeCreated(caller, data, calendarId, event, rule, result);
-    if (existed) return { event: stored, created: false };
     const local = {
       ...(input.topicId === undefined || input.topicId === null
         ? {}
@@ -258,9 +273,10 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
         ? {}
         : { overrides: { priority: input.priority } }),
     };
-    if (Object.keys(local).length === 0) return { event: stored, created: true };
+    if (Object.keys(local).length === 0) return { event: stored, created: !existed };
+    // Also on a retry that found the event at Google: the same values again, so it is idempotent.
     const updated = await stored.storeOverlay({ ...local, editedAt: now });
-    return { event: updated instanceof CalendarEvent ? updated : stored, created: true };
+    return { event: updated instanceof CalendarEvent ? updated : stored, created: !existed };
   }
 
   /**
