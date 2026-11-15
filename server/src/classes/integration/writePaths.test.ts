@@ -12,8 +12,13 @@
  *   (`createWriteClient`, `calendarWriter`, `guardedTransport`);
  * - each factory has one call site, pinned: `createWriteClient(` in TrackerIntegration.ts and
  *   `calendarWriter(` in GoogleCalendarIntegration.ts, each inside a `createWriter` method body;
- *   `applyOps(` (it takes a writer) once, in GoogleCalendarIntegration.ts; `guardedTransport` is
- *   named nowhere but the writers. A writer made anywhere else (in a read session, say) fails.
+ *   `applyOps(` (it takes a writer) once, in GoogleCalendarIntegration.ts, inside a
+ *   `withWriteSession(…)` call; `guardedTransport` is named nowhere but the writers. A writer made
+ *   anywhere else (in a read session, say) fails.
+ * - the write-back hook `applyUpdate` (it sends with a writer) is called once in all of server/src:
+ *   as `this.applyUpdate(` in TrackerIntegration.ts's template, inside a `withWriteSession(…)`
+ *   call. The provider classes only declare it; a call from a read session, or anywhere else,
+ *   fails.
  * - no alias gets round that: inside classes/integration/ (the writers aside) the only mention of
  *   a factory besides a plain named import is its pinned call, so `const w = calendarWriter`,
  *   `import { x as y }`, `export { x as y }`, a destructured `await import(…)` and a re-export
@@ -33,12 +38,23 @@ const GOOGLE = 'classes/integration/providers/GoogleCalendarIntegration.ts';
 const WRITER_NAMES = /\b(?:createWriteClient|calendarWriter|guardedTransport)\b/;
 const MODE_SWITCH_NAMES = /\b(?:setMode|checkMode|UpdateIntegrationBody)\b/;
 
-/** Each factory: where its one call site may be, and whether it must sit in `createWriter`. */
-const PINNED: readonly { name: string; file: string; inCreateWriter: boolean }[] = [
-  { name: 'createWriteClient', file: TRACKER_BASE, inCreateWriter: true },
-  { name: 'calendarWriter', file: GOOGLE, inCreateWriter: true },
-  { name: 'applyOps', file: GOOGLE, inCreateWriter: false },
+/** Where a pinned call must sit: a `createWriter` body, or a `withWriteSession(…)` call. */
+type Within = 'createWriter' | 'writeSession';
+
+/** Each factory: where its one call site may be, and what it must sit in. */
+const PINNED: readonly { name: string; file: string; within: Within }[] = [
+  { name: 'createWriteClient', file: TRACKER_BASE, within: 'createWriter' },
+  { name: 'calendarWriter', file: GOOGLE, within: 'createWriter' },
+  { name: 'applyOps', file: GOOGLE, within: 'writeSession' },
 ];
+
+/** Protected hooks that write with a writer: their one call site, as `this.<hook>(`. */
+const HOOKS: readonly { name: string; file: string }[] = [
+  { name: 'applyUpdate', file: TRACKER_BASE },
+];
+
+/** A method declared with this name (not a call of it): what precedes its name. */
+const DECLARATION = /(?:function|async|static|abstract|protected|private|public|override|#)\s*$/;
 
 const isTest = (file: string): boolean => file.endsWith('.test.ts');
 
@@ -69,23 +85,82 @@ function createWriterBodies(masked: string): [number, number][] {
   return bodies;
 }
 
+/** The [start, end) ranges of every `withWriteSession(…)` call's arguments in masked code. */
+function writeSessionCalls(masked: string): [number, number][] {
+  const calls: [number, number][] = [];
+  for (const match of masked.matchAll(/\bwithWriteSession\s*\(/g)) {
+    const open = match.index + match[0].length - 1;
+    let depth = 0;
+    for (let at = open; at < masked.length; at += 1) {
+      if (masked[at] === '(') depth += 1;
+      else if (masked[at] === ')') {
+        depth -= 1;
+        if (depth === 0) {
+          // A declaration's parameter list is no call.
+          if (!DECLARATION.test(masked.slice(0, match.index))) calls.push([open, at]);
+          break;
+        }
+      }
+    }
+  }
+  return calls;
+}
+
+/** A call site: its file, and what it sits in. */
+interface Site {
+  file: string;
+  inCreateWriter: boolean;
+  inWriteSession: boolean;
+}
+
+const inside = (ranges: readonly [number, number][], at: number): boolean =>
+  ranges.some(([start, end]) => at > start && at < end);
+
 /** Every call of `name(` in non-test code under classes/integration/ (the writers aside). */
-function callSites(
-  files: ReadonlyMap<string, string>,
-  name: string,
-): { file: string; inCreateWriter: boolean }[] {
-  const sites: { file: string; inCreateWriter: boolean }[] = [];
+function callSites(files: ReadonlyMap<string, string>, name: string): Site[] {
+  const sites: Site[] = [];
   const call = new RegExp(`(?<![\\w$.])${name}\\s*\\(`, 'g');
   for (const [file, source] of files) {
     if (isTest(file) || !file.startsWith(CLASSES) || file.startsWith(WRITERS)) continue;
     const { masked } = scan(source);
     const bodies = createWriterBodies(masked);
+    const sessions = writeSessionCalls(masked);
     for (const match of masked.matchAll(call)) {
       // A method declared with this name is not a call of it.
-      if (/(?:function|async|static|#)\s*$/.test(masked.slice(0, match.index))) continue;
+      if (DECLARATION.test(masked.slice(0, match.index))) continue;
       sites.push({
         file,
-        inCreateWriter: bodies.some(([start, end]) => match.index > start && match.index < end),
+        inCreateWriter: inside(bodies, match.index),
+        inWriteSession: inside(sessions, match.index),
+      });
+    }
+  }
+  return sites;
+}
+
+/**
+ * Every mention of a hook `name(` in non-test code anywhere (declarations aside): each must be
+ * `this.<name>(`, and the one call sits where HOOKS pins it.
+ */
+function hookSites(
+  files: ReadonlyMap<string, string>,
+  name: string,
+): (Site & { viaThis: boolean })[] {
+  const sites: (Site & { viaThis: boolean })[] = [];
+  const mention = new RegExp(`\\b${name}\\b`, 'g');
+  for (const [file, source] of files) {
+    if (isTest(file)) continue;
+    const { masked } = scan(source);
+    const sessions = writeSessionCalls(masked);
+    for (const match of masked.matchAll(mention)) {
+      const before = masked.slice(0, match.index);
+      if (DECLARATION.test(before)) continue;
+      sites.push({
+        file,
+        inCreateWriter: false,
+        inWriteSession: inside(sessions, match.index),
+        viaThis:
+          /\bthis\s*\.\s*$/.test(before) && /^\s*\(/.test(masked.slice(match.index + name.length)),
       });
     }
   }
@@ -162,7 +237,7 @@ function violations(files: ReadonlyMap<string, string>): string[] {
       if (named !== null) found.push(`${file}: names ${named[0]}: MCP never switches the mode`);
     }
   }
-  for (const { name, file, inCreateWriter } of PINNED) {
+  for (const { name, file, within } of PINNED) {
     const sites = callSites(files, name);
     if (sites.length > 1) {
       for (const site of sites) {
@@ -173,8 +248,22 @@ function violations(files: ReadonlyMap<string, string>): string[] {
     for (const site of sites) {
       if (site.file !== file) {
         found.push(`${site.file}: calls ${name}: its one call site is in ${file}`);
-      } else if (inCreateWriter && !site.inCreateWriter) {
+      } else if (within === 'createWriter' && !site.inCreateWriter) {
         found.push(`${site.file}: calls ${name} outside createWriter (the write session's)`);
+      } else if (within === 'writeSession' && !site.inWriteSession) {
+        found.push(`${site.file}: calls ${name} outside a withWriteSession(…) call`);
+      }
+    }
+  }
+  for (const { name, file } of HOOKS) {
+    const sites = hookSites(files, name);
+    for (const site of sites) {
+      if (sites.length > 1) {
+        found.push(`${site.file}: names ${name}: it has one call site, in ${file}`);
+      } else if (site.file !== file || !site.viaThis) {
+        found.push(`${site.file}: names ${name}: its one call is this.${name}( in ${file}`);
+      } else if (!site.inWriteSession) {
+        found.push(`${site.file}: calls ${name} outside a withWriteSession(…) call`);
       }
     }
   }
@@ -210,9 +299,23 @@ export class GoogleCalendarIntegration {
 
 const GOOD_TRACKER = `import { createWriteClient } from './writers/trackerWriter.js';
 export abstract class TrackerIntegration {
+  async updateTask(caller: Caller, item: Item, patch: Patch): Promise<Item> {
+    const confirmed = await this.withWriteSession(caller, ({ writer }) =>
+      this.applyUpdate(writer, item, patch),
+    );
+    return save(confirmed);
+  }
+  protected abstract applyUpdate(session: Session, item: Item, patch: Patch): Promise<Fields>;
   protected createWriter(secret: Secret): Promise<Session> {
     const transport = transportFor(this);
     return Promise.resolve({ write: createWriteClient(transport, this.writeBases()) });
+  }
+}`;
+
+/** A provider class that only declares the hook. */
+const GOOD_JIRA = `export class JiraIntegration extends TrackerIntegration {
+  protected async applyUpdate(session: Session, item: Item, patch: Patch): Promise<Fields> {
+    return send(session.write, item, patch);
   }
 }`;
 
@@ -350,6 +453,53 @@ export { createWriteClient as make };`,
     );
   });
 
+  it('the write-back hook: one call, this.applyUpdate( inside withWriteSession, in the tracker base', () => {
+    assert.deepEqual(
+      flagged({
+        [TRACKER_BASE]: GOOD_TRACKER,
+        'classes/integration/providers/JiraIntegration.ts': GOOD_JIRA,
+      }),
+      [],
+    );
+    // Called from a read session.
+    assert.deepEqual(
+      flagged({
+        [TRACKER_BASE]: GOOD_TRACKER.replace(
+          'this.withWriteSession(caller, ({ writer })',
+          'this.withReadSession(({ writer })',
+        ),
+      }),
+      [TRACKER_BASE],
+    );
+    // Called a second time, from a provider class or a service.
+    assert.deepEqual(
+      flagged({
+        [TRACKER_BASE]: GOOD_TRACKER,
+        'classes/integration/providers/JiraIntegration.ts': GOOD_JIRA.replace(
+          'return send(session.write, item, patch);',
+          'return this.applyUpdate(session, item, patch);',
+        ),
+      }),
+      [TRACKER_BASE, 'classes/integration/providers/JiraIntegration.ts'].sort(),
+    );
+    assert.deepEqual(
+      flagged({
+        'services/bound.ts': `export const go = (t: Tracker) => t.applyUpdate.call(t, s, i, p);`,
+      }),
+      ['services/bound.ts'],
+    );
+    // A withWriteSession parameter list is no session: the call must sit in a call's arguments.
+    assert.deepEqual(
+      flagged({
+        [GOOGLE]: GOOD_GOOGLE.replace(
+          'await this.withWriteSession(caller, ({ writer }) => applyOps(writer, [], 0));',
+          'const ops = applyOps(writer, [], 0);',
+        ),
+      }),
+      [GOOGLE],
+    );
+  });
+
   it('a namespace import of a writer module fails (its factories under a computed name)', () => {
     const provider = `export class P {
   protected createWriter(): Promise<never> {
@@ -436,9 +586,26 @@ describe('server/src write paths', () => {
     assert.ok(files.has('services/providerCreate/service.ts'));
   });
 
-  it('each writer factory has exactly its one call site, inside createWriter where pinned', () => {
-    for (const { name, file, inCreateWriter } of PINNED) {
-      assert.deepEqual(callSites(files, name), [{ file, inCreateWriter }], name);
+  it('each writer factory has exactly its one call site, inside what it is pinned to', () => {
+    for (const { name, file, within } of PINNED) {
+      const sites = callSites(files, name);
+      assert.deepEqual(
+        sites.map((site) => site.file),
+        [file],
+        name,
+      );
+      assert.ok(
+        (within === 'createWriter' ? sites[0]?.inCreateWriter : sites[0]?.inWriteSession) === true,
+        `${name} sits in ${within}`,
+      );
+    }
+  });
+
+  it('the write-back hook has its one call, this.applyUpdate( inside withWriteSession', () => {
+    for (const { name, file } of HOOKS) {
+      assert.deepEqual(hookSites(files, name), [
+        { file, inCreateWriter: false, inWriteSession: true, viaThis: true },
+      ]);
     }
   });
 
