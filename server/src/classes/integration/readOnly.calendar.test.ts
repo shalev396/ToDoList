@@ -266,6 +266,72 @@ describe('Google Calendar while read-only', () => {
     assert.deepEqual(mock.events(ALICE.email), []);
   });
 
+  it('a recurring to-do and a pulled event’s edit (PATCH …/items/:id): 409, nothing written', async () => {
+    const before = writes();
+    const recurring = await api.call('POST', `${W()}/items`, {
+      token,
+      body: {
+        title: 'Weekly review',
+        dueAt: '2026-11-23T07:00:00.000Z',
+        recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'],
+      },
+    });
+    assert.equal(recurring.status, 409, recurring.text);
+    assert.equal(recurring.body?.['code'], 'integration_read_only');
+    const added = mock.addEvent(ALICE.email, {
+      summary: 'Pulled',
+      start: { dateTime: '2026-11-24T07:00:00Z' },
+      end: { dateTime: '2026-11-24T07:30:00Z' },
+    });
+    const integration = await (await models.getIntegrationRepository()).findById(wid, iid);
+    assert.ok(integration);
+    const account = { provider: 'google_calendar' as const, accountId: integration.accountId };
+    const items = await models.getItemRepository();
+    await items.bulkUpsert(wid, [
+      {
+        integrationId: iid,
+        kind: 'event',
+        topicId: null,
+        title: 'Pulled',
+        status: 'open',
+        startAt: new Date('2026-11-24T07:00:00Z'),
+        endAt: new Date('2026-11-24T07:30:00Z'),
+        props: { calendarId: ALICE.email, eventId: added.id, guestsCount: 0 },
+        source: {
+          ...account,
+          externalId: `${ALICE.email}:${added.id}`,
+          key: null,
+          url: 'https://calendar.google.com/calendar/event?eid=x',
+          updatedAtSource: null,
+          etag: null,
+          hash: 'h',
+        },
+      },
+    ]);
+    const pulled = await items.findBySource(
+      wid,
+      { ...account, integrationId: iid },
+      `${ALICE.email}:${added.id}`,
+    );
+    assert.ok(pulled);
+    const edited = await api.call('PATCH', `${W()}/items/${pulled.id}`, {
+      token,
+      body: { title: 'Renamed while read-only' },
+    });
+    assert.equal(edited.status, 409, edited.text);
+    assert.equal(edited.body?.['code'], 'integration_read_only');
+    assert.deepEqual(writes(), before);
+    assert.equal(
+      mock.events(ALICE.email).find((entry) => entry.id === added.id)?.summary,
+      'Pulled',
+    );
+    // Out of the way of the dry runs below.
+    await items.softDeleteBySource(wid, { ...account, integrationId: iid }, [
+      `${ALICE.email}:${added.id}`,
+    ]);
+    mock.deleteEvent(ALICE.email, added.id);
+  });
+
   it('REST gcal-sync: the dry run answers; the confirmed push is 409 before any run', async () => {
     const before = writes();
     const dry = await push(false);

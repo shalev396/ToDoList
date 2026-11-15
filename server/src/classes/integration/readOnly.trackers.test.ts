@@ -206,6 +206,44 @@ describe('a to-do integration while read-only', () => {
     assert.equal(mock.created('clickup').count, 0);
   });
 
+  it('an edit of its item (REST PATCH, MCP update_todo): 409 integration_read_only, nothing sent', async () => {
+    const integration = await (await models.getIntegrationRepository()).findById(wid, iid);
+    assert.ok(integration);
+    const account = { provider: 'clickup' as const, accountId: integration.accountId };
+    const items = await models.getItemRepository();
+    await items.bulkUpsert(wid, [
+      {
+        integrationId: iid,
+        kind: 'task',
+        topicId: null,
+        title: 'Synced task',
+        status: 'open',
+        source: {
+          ...account,
+          externalId: 'ro-task-1',
+          key: null,
+          url: 'https://app.clickup.com/t/ro-task-1',
+          updatedAtSource: null,
+          etag: null,
+          hash: 'h',
+        },
+      },
+    ]);
+    const item = await items.findBySource(wid, { ...account, integrationId: iid }, 'ro-task-1');
+    assert.ok(item);
+    const before = writes();
+    const refused = await api.call('PATCH', `${W()}/items/${item.id}`, {
+      token,
+      body: { title: 'Renamed while read-only' },
+    });
+    assert.equal(refused.status, 409, refused.text);
+    assert.equal(refused.body?.['code'], 'integration_read_only');
+    const viaAgent = await tool('update_todo', { id: item.id, title: 'Renamed by an agent' });
+    assert.equal(viaAgent.isError, true);
+    assert.deepEqual(writes(), before);
+    assert.equal((await items.findById(wid, item.id))?.title, 'Synced task');
+  });
+
   it('MCP never sees the mode', async () => {
     const result = await tool('integrations_list', {});
     const [listed] = (result.structuredContent as { integrations: Json[] }).integrations;

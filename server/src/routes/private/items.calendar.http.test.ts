@@ -1,0 +1,319 @@
+/**
+ * Calendar events and recurring to-dos over HTTP (Phase 4a), against the mock Google with a real
+ * OAuth grant:
+ * - an event's edit is split like any mirrored item's: its title and time go to Google through
+ *   CalendarProvider#updateEvent (its owner only, read & write; the time given whole, a new start
+ *   keeping the duration and the event's own all-day form), guests need `notifyGuests`, and what
+ *   Google lacks (a priority, a due date) is kept as an override with nothing sent;
+ * - a recurring to-do (`POST …/items` with `recurrence`) is created in the workspace's primary
+ *   calendar only, by its integration's owner while it is read & write, and answered at once as
+ *   its event item; no local to-do is made. Every refusal sends Google nothing but reads.
+ */
+import { after, before, describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+
+import type * as Models from '../../models/index.js';
+import { startApiHarness, type ApiHarness, type ApiResponse } from '../../testing/apiHarness.js';
+import {
+  pointAppAtMockGoogle,
+  startMockGoogle,
+  type MockGoogle,
+} from '../../testing/mockGoogle.js';
+import { installOutboundGuard, type OutboundGuard } from '../../testing/outboundGuard.js';
+
+const CLIENT_ID = 'FAKE-client-id.apps.googleusercontent.example';
+const CLIENT_SECRET = 'FAKE-client-secret-0123456789';
+const ALICE = { sub: '100000000000000000077', email: 'alice.items@example.test' };
+const TZ = 'Asia/Jerusalem';
+const WEEKLY = ['RRULE:FREQ=WEEKLY;BYDAY=MO'];
+
+type Json = Record<string, unknown>;
+
+let guard: OutboundGuard;
+let mock: MockGoogle;
+let api: ApiHarness;
+let models: typeof Models;
+const token = { owner: '', editor: '' };
+const ids = { owner: '', editor: '' };
+let wid = '';
+let iid = '';
+
+const W = (): string => `/api/private/workspaces/${wid}`;
+const call = (
+  who: keyof typeof token,
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<ApiResponse> =>
+  api.call(method, `${W()}${path}`, { token: token[who], ...(body === undefined ? {} : { body }) });
+const data = (res: ApiResponse): Json => (res.body?.['data'] ?? {}) as Json;
+
+/** What Google was sent that is not a read (a token exchange included). */
+const writes = (): string[] =>
+  mock
+    .requests()
+    .filter((request) => request.method !== 'GET')
+    .map((request) => `${request.method} ${request.path}`);
+const since = (before: readonly string[]): string[] => writes().slice(before.length);
+const calendarWrites = (list: readonly string[]): string[] =>
+  list.filter((line) => !line.endsWith('/token'));
+
+before(async () => {
+  guard = installOutboundGuard();
+  mock = await startMockGoogle({
+    clientId: CLIENT_ID,
+    clientSecret: CLIENT_SECRET,
+    port: 0,
+    account: ALICE,
+  });
+  api = await startApiHarness('todolist_items_calendar_http');
+  await pointAppAtMockGoogle(
+    mock,
+    { clientId: CLIENT_ID, clientSecret: CLIENT_SECRET },
+    api.baseUrl,
+  );
+  models = await import('../../models/index.js');
+  for (const who of ['owner', 'editor'] as const) {
+    token[who] = (await api.login(`items-cal-${who}@example.test`)).token;
+    ids[who] = (data(await api.call('GET', '/api/private/me', { token: token[who] }))['id'] ??
+      '') as string;
+  }
+  wid = (
+    await (
+      await models.getWorkspaceRepository()
+    ).create({
+      name: 'Calendar items',
+      slug: `cal-items-${randomUUID().slice(0, 8)}`,
+      ownerId: ids.owner,
+      settings: { timezone: TZ },
+    })
+  ).id;
+  const memberships = await models.getMembershipRepository();
+  await memberships.create(wid, { userId: ids.owner, role: 'owner' });
+  await memberships.create(wid, { userId: ids.editor, role: 'editor' });
+  iid = await connect();
+  const switched = await call('owner', 'PATCH', `/integrations/${iid}`, { mode: 'read_write' });
+  assert.equal(switched.status, 200, switched.text);
+  // Shared: the editor sees its events (and is not their integration's owner).
+  const { shareIntegrations } = await import('../../testing/integrationFixtures.js');
+  await shareIntegrations(wid, ids.owner, [iid]);
+});
+
+after(async () => {
+  await api.stop();
+  await mock.close();
+  guard.restore();
+});
+
+/** Google Calendar connected by the owner through the OAuth flow; its id. */
+async function connect(): Promise<string> {
+  const started = await fetch(`${api.baseUrl}${W()}/integrations/google-calendar/oauth/start`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token.owner}` },
+    body: '{}',
+  });
+  const cookie = /todolist_oauth=[A-Za-z0-9_-]{43}/.exec(
+    started.headers.get('set-cookie') ?? '',
+  )?.[0];
+  assert.ok(cookie !== undefined);
+  const { authorizeUrl } = ((await started.json()) as { data: { authorizeUrl: string } }).data;
+  const authorized = await fetch(authorizeUrl, { redirect: 'manual' });
+  const landed = await fetch(authorized.headers.get('location') ?? '', {
+    redirect: 'manual',
+    headers: { cookie },
+  });
+  const connected = /connected=([0-9a-f-]{36})/.exec(landed.headers.get('location') ?? '');
+  assert.ok(connected, landed.headers.get('location') ?? '');
+  return connected[1] ?? '';
+}
+
+/** An event "in Google" on Alice's calendar, and its item here (as a sync writes it). */
+async function pulled(summary: string, props: Json = {}): Promise<{ eventId: string; id: string }> {
+  const added = mock.addEvent(ALICE.email, {
+    summary,
+    start: { dateTime: '2026-11-24T07:00:00Z' },
+    end: { dateTime: '2026-11-24T07:30:00Z' },
+  });
+  const items = await models.getItemRepository();
+  const integration = await (await models.getIntegrationRepository()).findById(wid, iid);
+  assert.ok(integration);
+  const account = { provider: 'google_calendar' as const, accountId: integration.accountId };
+  const externalId = `${ALICE.email}:${added.id}`;
+  await items.bulkUpsert(wid, [
+    {
+      integrationId: iid,
+      kind: 'event',
+      topicId: null,
+      title: summary,
+      status: 'open',
+      statusRaw: 'confirmed',
+      startAt: new Date('2026-11-24T07:00:00Z'),
+      endAt: new Date('2026-11-24T07:30:00Z'),
+      allDay: false,
+      props: { calendarId: ALICE.email, eventId: added.id, guestsCount: 0, ...props },
+      source: {
+        ...account,
+        externalId,
+        key: null,
+        url: 'https://calendar.google.com/calendar/event?eid=x',
+        updatedAtSource: null,
+        etag: null,
+        hash: 'h-synced',
+      },
+    },
+  ]);
+  const stored = await items.findBySource(wid, { ...account, integrationId: iid }, externalId);
+  assert.ok(stored);
+  return { eventId: added.id, id: stored.id };
+}
+
+describe('an event’s edit, split', () => {
+  it('its owner moves it: one PATCH, the duration and its timed form kept; a priority stays here', async () => {
+    const { eventId, id } = await pulled('Dentist');
+    const before = writes();
+    const res = await call('owner', 'PATCH', `/items/${id}`, {
+      startAt: '2026-11-25T08:00:00.000Z',
+      priority: 2,
+    });
+    assert.equal(res.status, 200, res.text);
+    assert.deepEqual(calendarWrites(since(before)), [
+      `PATCH /calendar/v3/calendars/${encodeURIComponent(ALICE.email)}/events/${eventId}`,
+    ]);
+    const atGoogle = mock.events(ALICE.email).find((entry) => entry.id === eventId);
+    assert.equal((atGoogle?.start as Json | undefined)?.['dateTime'], '2026-11-25T08:00:00.000Z');
+    assert.equal((atGoogle?.end as Json | undefined)?.['dateTime'], '2026-11-25T08:30:00.000Z');
+    const item = data(res);
+    assert.deepEqual(
+      [item['startAt'], item['endAt'], item['allDay'], item['priority']],
+      ['2026-11-25T08:00:00.000Z', '2026-11-25T08:30:00.000Z', false, 2],
+    );
+    const editing = item['editing'] as Json;
+    assert.deepEqual(
+      [editing['providerFields'], editing['overridableFields'], editing['needsGuestNotice']],
+      [['title', 'startAt', 'endAt'], ['status', 'dueAt', 'priority'], false],
+    );
+  });
+
+  it('an event with other guests: 409 event_has_guests, then sent with sendUpdates', async () => {
+    const { eventId, id } = await pulled('Team sync', { guestsCount: 3 });
+    const before = writes();
+    const refused = await call('owner', 'PATCH', `/items/${id}`, { title: 'Team sync (moved)' });
+    assert.equal(refused.status, 409, refused.text);
+    assert.equal(refused.body?.['code'], 'event_has_guests');
+    assert.deepEqual(calendarWrites(since(before)), []);
+    const view = data(await call('owner', 'GET', `/items/${id}`));
+    assert.equal((view['editing'] as Json)['needsGuestNotice'], true);
+    const sentWith = await call('owner', 'PATCH', `/items/${id}`, {
+      title: 'Team sync (moved)',
+      notifyGuests: true,
+    });
+    assert.equal(sentWith.status, 200, sentWith.text);
+    const patched = mock
+      .requests()
+      .filter((request) => request.method === 'PATCH' && request.path.endsWith(eventId));
+    assert.match(patched.at(-1)?.query ?? '', /sendUpdates=all/);
+  });
+
+  it('anyone else: 403 for its time, with nothing sent; what Google lacks is still theirs to keep', async () => {
+    const { id } = await pulled('Gym');
+    const before = writes();
+    const refused = await call('editor', 'PATCH', `/items/${id}`, {
+      startAt: '2026-11-26T08:00:00.000Z',
+      endAt: '2026-11-26T09:00:00.000Z',
+    });
+    assert.equal(refused.status, 403, refused.text);
+    assert.equal(refused.body?.['code'], 'integration_not_owner');
+    const kept = await call('editor', 'PATCH', `/items/${id}`, { status: 'done' });
+    assert.equal(kept.status, 200, kept.text);
+    assert.equal(data(kept)['status'], 'done');
+    assert.deepEqual(since(before), []);
+  });
+});
+
+describe('a recurring to-do', () => {
+  const recurring = (who: keyof typeof token, extra: Json = {}): Promise<ApiResponse> =>
+    call(who, 'POST', '/items', {
+      title: 'Weekly review',
+      dueAt: '2026-11-23T07:00:00.000Z',
+      recurrence: WEEKLY,
+      ...extra,
+    });
+
+  it('needs the workspace’s primary calendar: 409 primary_calendar_unset, nothing sent', async () => {
+    const before = writes();
+    const res = await recurring('owner');
+    assert.equal(res.status, 409, res.text);
+    assert.equal(res.body?.['code'], 'primary_calendar_unset');
+    assert.deepEqual(since(before), []);
+  });
+
+  it('is created there by its integration’s owner, and answered as its event item at once', async () => {
+    const set = await call('owner', 'PUT', '/primary-calendar', {
+      integrationId: iid,
+      calendarId: ALICE.email,
+    });
+    assert.equal(set.status, 200, set.text);
+    const locals = async (): Promise<number> =>
+      (
+        await (
+          await models.getItemRepository()
+        ).aggregate(wid, [{ $match: { 'source.provider': 'local' } }])
+      ).length;
+    const localsBefore = await locals();
+    const before = writes();
+    const res = await recurring('owner', { idempotencyKey: 'weekly-review', priority: 3 });
+    assert.equal(res.status, 201, res.text);
+    assert.deepEqual(calendarWrites(since(before)), [
+      `POST /calendar/v3/calendars/${encodeURIComponent(ALICE.email)}/events`,
+    ]);
+    const item = data(res);
+    assert.equal(item['kind'], 'event');
+    assert.equal((item['source'] as Json)['provider'], 'google_calendar');
+    assert.deepEqual((item['props'] as Json)['recurrence'], ['RRULE:FREQ=WEEKLY;BYDAY=MO']);
+    assert.equal(item['priority'], 3, 'kept as an override: Google has no priority');
+    const atGoogle = mock.events(ALICE.email).find((entry) => entry.summary === 'Weekly review');
+    assert.deepEqual(atGoogle?.recurrence, ['RRULE:FREQ=WEEKLY;BYDAY=MO']);
+    assert.equal(await locals(), localsBefore, 'no local to-do is made');
+    const [audit] = await (
+      await models.getAuditLogRepository()
+    ).list(wid, { action: 'provider.create' }, 1);
+    assert.deepEqual(
+      [audit?.targetId, (audit?.meta as Json | undefined)?.['result']],
+      [iid, 'created'],
+    );
+  });
+
+  it('anyone but its owner: 403; a bad rule, no due date or a container: 400; nothing sent', async () => {
+    const before = writes();
+    const notOwner = await recurring('editor');
+    assert.equal(notOwner.status, 403, notOwner.text);
+    assert.equal(notOwner.body?.['code'], 'integration_not_owner');
+    const badRule = await recurring('owner', { recurrence: ['RRULE:FREQ=HOURLY'] });
+    assert.equal(badRule.status, 400, badRule.text);
+    const twoRules = await recurring('owner', {
+      recurrence: ['RRULE:FREQ=DAILY', 'RRULE:FREQ=WEEKLY'],
+    });
+    assert.equal(twoRules.status, 400, twoRules.text);
+    const noDue = await recurring('owner', { dueAt: null });
+    assert.equal(noDue.status, 400, noDue.text);
+    assert.equal(noDue.body?.['code'], 'needs_due_date');
+    const container = await recurring('owner', { containerId: 'c-1' });
+    assert.equal(container.status, 400, container.text);
+    assert.deepEqual(calendarWrites(since(before)), []);
+  });
+
+  it('while its integration is read-only: 409 integration_read_only, nothing sent', async () => {
+    const readOnly = await call('owner', 'PATCH', `/integrations/${iid}`, { mode: 'read' });
+    assert.equal(readOnly.status, 200, readOnly.text);
+    try {
+      const before = writes();
+      const res = await recurring('owner');
+      assert.equal(res.status, 409, res.text);
+      assert.equal(res.body?.['code'], 'integration_read_only');
+      assert.deepEqual(since(before), []);
+    } finally {
+      await call('owner', 'PATCH', `/integrations/${iid}`, { mode: 'read_write' });
+    }
+  });
+});
