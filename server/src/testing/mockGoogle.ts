@@ -14,7 +14,7 @@
  *   A created calendar belongs to the account, owned, and takes events; calendars.delete takes
  *   only a calendar the account made that way (a primary one is 400).
  * - `failNextWrite(status)` makes the next Calendar API write answer that status (a 5xx: no answer
- *   to rely on).
+ *   to rely on); `holdNextWrite(hook)` holds the next one until `hook` is done (a race).
  * - token: the code grant (client secret, redirect URI and PKCE S256 checked; a code works once,
  *   for 10 minutes) and the refresh grant (a revoked grant is `invalid_grant`).
  * - revoke: a refresh or access token ends its whole grant, as Google does.
@@ -113,6 +113,11 @@ export interface MockGoogle {
    * Google's error `reason` when given (`rateLimitExceeded`, `forbidden`…).
    */
   failNextWrite(status: number, reason?: string): void;
+  /**
+   * The next Calendar API write waits for `hook` before it is applied: what happens while that
+   * write is in flight (a race), run in the test's own process.
+   */
+  holdNextWrite(hook: () => Promise<void>): void;
   /** The next single-event read (events.get) answers that status (a 404, a 410…). */
   failNextRead(status: number): void;
   reset(): void;
@@ -191,6 +196,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
   let seq = 0;
   let failWrite: { status: number; reason?: string } | null = null;
   let failRead: number | null = null;
+  let holdWrite: (() => Promise<void>) | null = null;
 
   const calendarsOf = (who: MockGoogleAccount): CalendarEntry[] => [
     { id: who.email, summary: who.email, primary: true, accessRole: 'owner' },
@@ -525,6 +531,11 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
   ): Promise<void> {
     const grant = grantOf(req, res);
     if (grant === null) return;
+    if (holdWrite !== null && req.method !== 'GET') {
+      const hook = holdWrite;
+      holdWrite = null;
+      await hook();
+    }
     if (failWrite !== null && req.method !== 'GET') {
       const { status, reason } = failWrite;
       failWrite = null;
@@ -603,6 +614,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     seq = 0;
     next = null;
     failWrite = null;
+    holdWrite = null;
   };
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -732,6 +744,9 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     requests: (): readonly { method: string; path: string; query: string }[] => [...received],
     failNextWrite(status, reason): void {
       failWrite = reason === undefined ? { status } : { status, reason };
+    },
+    holdNextWrite(hook): void {
+      holdWrite = hook;
     },
     failNextRead(status): void {
       failRead = status;
