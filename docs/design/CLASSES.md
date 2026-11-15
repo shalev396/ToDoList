@@ -1888,9 +1888,11 @@ options)` is the worker's and the seed's entry (the integration and workspace lo
   (a method object; closes its `SyncRun` with `succeed`). `gcal/plan.ts` and `gcal/commit.ts` are
   gone; `gcal/diff.ts` and `calendarApi.ts` stay pure. `GoogleCalendarIntegration` keeps `push`,
   `dryRun` and `insertEvent`.
-- **Carried fixes:** a clean-up racing another integration's push (a cancellation of an event
-  another integration tombstoned `dashboard` in the last 10 minutes drops only this link row, the
-  item stays); a 403 without a permission reason in a clean-up says it will be retried; the
+- **Carried fixes:** a clean-up racing another integration's push (fix round 1: every TodoList
+  delete of a pushed event claims its own link first, `EventClaim`, so its tombstone exists while
+  the DELETE is in flight; a push whose adopt is committed while another integration's claim on
+  that event stands, from a minute before its run was created, drops its own link, so none of its
+  pulls reads that delete as the user's, and its next push makes the event again); a 403 without a permission reason in a clean-up says it will be retried; the
   `CalendarLinks (workspaceId, calendarId, googleEventId)` index; MCP names `provider_no_answer`
   ("may have been made at …") and `provider_unreachable` ("nothing was changed"); a partial write's
   `details.kept` names only the edit's own local fields.

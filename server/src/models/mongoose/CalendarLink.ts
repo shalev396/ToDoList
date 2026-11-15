@@ -40,9 +40,9 @@ calendarLinkSchema.index(
   { integrationId: 1, tombstonedAt: 1 },
   { partialFilterExpression: { tombstonedAt: null } },
 ); // live links for diffing
-// One event across the workspace's integrations: one tracker per event (removeOthersForEvent) and
-// another integration's recent clean-up of it (findOthersCleanup) are point lookups, not a seek
-// per integration.
+// One event across the workspace's integrations: one tracker per event (removeOthersForEvent,
+// hasOtherLive) and another integration's delete of it (findOthersDeleted) are point lookups, not
+// a seek per integration.
 calendarLinkSchema.index({ workspaceId: 1, calendarId: 1, googleEventId: 1 });
 
 export const CalendarLinkMongoModel = mongoose.model<CalendarLinkFields>(
@@ -187,7 +187,7 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
     return result.deletedCount;
   },
 
-  async findOthersCleanup(workspaceId, integrationId, key, since) {
+  async findOthersDeleted(workspaceId, integrationId, key, since) {
     const doc = await CalendarLinkMongoModel.findOne({
       workspaceId,
       calendarId: key.calendarId,
@@ -196,6 +196,26 @@ export const CalendarLinkRepository: ICalendarLinkRepository = {
       deletedBy: 'dashboard',
       tombstonedAt: { $gte: since },
     }).lean<CalendarLinkFields>();
+    return doc ? toCalendarLinkData(doc) : null;
+  },
+
+  async hasOtherLive(workspaceId, integrationId, key) {
+    const found = await CalendarLinkMongoModel.exists({
+      workspaceId,
+      calendarId: key.calendarId,
+      googleEventId: key.googleEventId,
+      integrationId: { $ne: integrationId },
+      tombstonedAt: null,
+    });
+    return found !== null;
+  },
+
+  async release(workspaceId, id, calendarId) {
+    const doc = await CalendarLinkMongoModel.findOneAndUpdate(
+      { _id: id, workspaceId, calendarId, deletedBy: 'dashboard', tombstonedAt: { $ne: null } },
+      { $set: { tombstonedAt: null, deletedBy: null } },
+      { new: true, runValidators: true },
+    ).lean<CalendarLinkFields>();
     return doc ? toCalendarLinkData(doc) : null;
   },
 

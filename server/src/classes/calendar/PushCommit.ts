@@ -4,8 +4,12 @@
  * Calendar#commit runs it for the calendar the push wrote to.
  *
  * - op results: a created or updated event gets its link (etag, hash, times), and another
- *   integration's live link to that same event goes (one tracker per event); a delete gets its
- *   tombstone; a create went to the workspace's primary calendar (its link moves there when the
+ *   integration's live link to that same event goes (one tracker per event). When another
+ *   integration of the workspace claimed that same event for TodoList's own delete during this
+ *   push (its link tombstoned `dashboard` since the run was created, less CLAIM_MARGIN_MS for a
+ *   delete still in flight then; EventClaim tombstones before every DELETE), the event may be gone:
+ *   this link goes too, so no later pull reads that delete as the user's, and the next push makes
+ *   or adopts the event again. A delete gets its tombstone (already claimed before it was sent); a create went to the workspace's primary calendar (its link moves there when the
  *   primary calendar changed), an update to its link's calendar; every write is audited
  *   (`gcal.write`); a 412 is a conflict, settled by the next pull;
  * - echoes (`etag == link.lastEtag`) are our own writes and are skipped;
@@ -19,10 +23,9 @@
  *   edits lose (re-pushed), and its delete only tombstones the link (not made again unless edited);
  * - a Google-side delete of an owner's item soft-deletes a local one, or sets
  *   `overlay.calendarSync=false` on a mirrored one, and tombstones the link; the provider is never
- *   touched. Unless another integration of the workspace just deleted that same event itself
- *   (its link tombstoned `dashboard` within CLEANUP_RACE_MS: its clean-up raced this push): that is
- *   TodoList's own delete, never a user's, so only this link row goes and the item stays (a later
- *   push on that calendar makes the event again);
+ *   touched. A cancellation is read as the user's whenever this integration still holds a live
+ *   link: TodoList's own deletes of an event another integration adopted are kept from it by the
+ *   op-result rule above, not here;
  * - events with no link are ignored here (the sync engine's pull maps Google-native ones); the
  *   pull keeps a sync token apart from the engine's (`gcal:<id>`, not `calendar:<id>`);
  * - `nextSyncToken` is saved only when the calendar's listing was complete; `reset` clears it.
@@ -48,14 +51,15 @@ import {
   getItemRepository,
   getWorkspaceRepository,
 } from '../../models/index.js';
-import { logger } from '../../services/logger.js';
 import { redactString } from '../../services/secretPatterns.js';
 
 /**
- * How recent another integration's clean-up of the same event must be for a cancellation to read
- * as TodoList's own (the clean-up raced this integration's push), rather than a user's delete.
+ * How long before its run was created another integration's claim on the same event still counts
+ * (PushCommit's op-result rule): a delete claimed then may still have been in flight when this
+ * push adopted the event. A Calendar API call gives up after STEP_CEILING_MS (8 s), and Google
+ * may still apply a request it got just before; a minute covers that with room.
  */
-export const CLEANUP_RACE_MS = 10 * 60 * 1000;
+export const CLAIM_MARGIN_MS = 60 * 1000;
 
 const OpResult = z.object({
   opId: z.string().max(200),
@@ -153,8 +157,8 @@ export class PushCommit {
   readonly #primaryCalendarId: string | null;
   /** The integration owner's own integrations: their items may change from Google's side. */
   readonly #ownIntegrations: ReadonlySet<string>;
-  /** Cancellations after this are checked against another integration's clean-up. */
-  readonly #raceSince: Date;
+  /** Another integration's claim on an event this push wrote counts from this time on. */
+  readonly #claimsSince: Date;
   readonly #counts: CommitCounts = {
     pulled: 0,
     created: 0,
@@ -171,7 +175,6 @@ export class PushCommit {
     timeZone: string;
     primaryCalendarId: string | null;
     ownIntegrations: ReadonlySet<string>;
-    now: Date;
   }) {
     this.#integration = state.integration;
     this.#workspaceId = state.integration.workspaceId;
@@ -179,9 +182,9 @@ export class PushCommit {
     this.#timeZone = state.timeZone;
     this.#primaryCalendarId = state.primaryCalendarId;
     this.#ownIntegrations = state.ownIntegrations;
-    this.#raceSince = new Date(
-      Math.min(state.run.startedAt.getTime(), state.now.getTime() - CLEANUP_RACE_MS),
-    );
+    // The run's creation time is the database's wall clock, like a claim's tombstone (a run's
+    // `startedAt` may be a caller's `now`).
+    this.#claimsSince = new Date(state.run.createdAt.getTime() - CLAIM_MARGIN_MS);
   }
 
   /**
@@ -216,7 +219,6 @@ export class PushCommit {
       primaryCalendarId:
         pushedTo ?? (primary?.isOn(integration.id) === true ? primary.calendarId : null),
       ownIntegrations: new Set(own.map((entry) => entry.id)),
-      now,
     });
     return commit.#apply(body, now);
   }
@@ -291,7 +293,8 @@ export class PushCommit {
       return;
     }
     const eventId = result.eventId ?? link?.googleEventId ?? eventIdFor(op.itemId);
-    await links.upsert(
+    const key = { calendarId, googleEventId: eventId };
+    const written = await links.upsert(
       workspaceId,
       this.#integration.id,
       { calendarId, googleEventId: eventId },
@@ -309,10 +312,17 @@ export class PushCommit {
     // One tracker per event: another integration of the workspace that pushed this same event (the
     // ids are per item, so a create adopts it) no longer tracks it, so its pull or clean-up can never
     // read our later delete or move as its own (rows only; nothing is sent to Google).
-    await links.removeOthersForEvent(workspaceId, this.#integration.id, {
-      calendarId,
-      googleEventId: eventId,
-    });
+    await links.removeOthersForEvent(workspaceId, this.#integration.id, key);
+    // Another integration claimed this event for TodoList's own delete while this push ran (its
+    // tombstone survives removeOthersForEvent): the event may be gone, so this link goes too and
+    // no later pull of ours reads that delete as the user's; the next push makes or adopts it.
+    const claimed = await links.findOthersDeleted(
+      workspaceId,
+      this.#integration.id,
+      key,
+      this.#claimsSince,
+    );
+    if (claimed !== null) await links.remove(workspaceId, written.id);
     if (op.type === 'create') this.#counts.created += 1;
     else this.#counts.updated += 1;
     await AuditLog.record(
@@ -336,33 +346,6 @@ export class PushCommit {
       : item.integrationId !== null && this.#ownIntegrations.has(item.integrationId);
   }
 
-  /**
-   * A cancellation of an event another integration of the workspace just deleted itself (its link
-   * tombstoned `dashboard` since the race window opened): TodoList's own clean-up raced this push,
-   * which adopted the event. Only this link row goes; the item stays, with no stop, so a later push
-   * on that calendar makes the event again. Whether it was so.
-   */
-  async #droppedForCleanup(
-    calendarId: string,
-    ev: SlimEvent,
-    link: CalendarLinkData,
-  ): Promise<boolean> {
-    const links = await getCalendarLinkRepository();
-    const cleanup = await links.findOthersCleanup(
-      this.#workspaceId,
-      this.#integration.id,
-      { calendarId, googleEventId: ev.id },
-      this.#raceSince,
-    );
-    if (cleanup === null) return false;
-    await links.remove(this.#workspaceId, link.id);
-    logger.info('A cancelled event was TodoList’s own clean-up: the link goes, the item stays', {
-      runId: this.#run.id,
-      integrationId: this.#integration.id,
-    });
-    return true;
-  }
-
   async #applyLinkedEvent(
     calendarId: string,
     ev: SlimEvent,
@@ -377,7 +360,6 @@ export class PushCommit {
     const owned = this.#ownedByOwner(item);
 
     if (ev.status === 'cancelled') {
-      if (await this.#droppedForCleanup(calendarId, ev, link)) return;
       // Deleted in Google. The owner's own item goes (a to-do) or stops projecting (a mirrored item;
       // the provider is never touched); another member's item is left as it is: only this link
       // goes (`google_kept`, which never ages out), so the event is not made again unless the item

@@ -7,10 +7,13 @@
  * - a push move only, no clean-up: IA on C, IB on C, IA on D, IB on C again;
  * - the primary integration's own disconnect with "Also remove", then the other one back on C.
  * In both, no owner's to-do is soft-deleted and no other member's item is held back.
- * - the in-flight race (re-review 3's probe P4): IB's push adopts IA's event; meanwhile the primary
- *   moves away and IA's owner presses Remove, deleting the event; then IB's commit lands, its pull
- *   reading the event cancelled. That cancellation is TodoList's own clean-up, not the user's: the
- *   to-do stays and IB's next push on the calendar makes the event again.
+ * - a clean-up racing another integration's push (re-review 3's probe P4 and phase 5's R1 and
+ *   R2): IB's push adopts IA's event while IA's owner presses Remove. IA claims (tombstones) its
+ *   row before its DELETE, so IB's commit can't remove that row and sees the claim: IB drops its
+ *   own link, whether its pull read the delete (P4), read C before it (R1), or committed while the
+ *   DELETE was in flight (R2). No pull of IB reads TodoList's delete as the user's, and IB's next
+ *   push makes the event again. A claim older than a minute before IB's run is not this race: a
+ *   user's delete in Google then counts, as does one with no claim at all.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -219,78 +222,173 @@ describe('shared calendar, the primary integration’s own disconnect with "Also
   });
 });
 
-describe('shared calendar, a clean-up racing another integration’s push (probe P4)', () => {
-  it('IB’s commit reads IA’s own delete as a clean-up: the to-do stays, the event comes back', async () => {
-    const { applyCommit } = await import('../testing/calendarCalls.js');
-    const { eventIdFor, opIdOf, ORIGIN } = await import('./diff.js');
-    const t = await team('race');
-    const ia = await connect(t, t.first);
-    const ib = await connect(t, t.second);
-    const c = await primary(t, t.first, { integrationId: ia, newCalendarName: 'Race' });
-    const x = await todo(t, t.second, 'Second owner’s raced to-do', 1);
-    await push(t, t.first, ia);
-    const links = await models.getCalendarLinkRepository();
-    const iaLink = await links.findByItem(t.wid, ia, x);
-    assert.ok(iaLink !== null && iaLink.pushedHash !== null);
+/** IA pushed the second owner's to-do X on C; IB is primary on C with a push run open. */
+async function raced(tag: string): Promise<{
+  t: Team;
+  ia: string;
+  ib: string;
+  c: string;
+  x: string;
+  runId: string;
+  ibData: Models.IntegrationData;
+  iaLinkId: string;
+  adopt: Json;
+  cancelled: Json;
+}> {
+  const { eventIdFor, opIdOf, ORIGIN } = await import('./diff.js');
+  const t = await team(tag);
+  const ia = await connect(t, t.first);
+  const ib = await connect(t, t.second);
+  const c = await primary(t, t.first, { integrationId: ia, newCalendarName: `Race ${tag}` });
+  const x = await todo(t, t.second, `Second owner’s raced to-do ${tag}`, 1);
+  await push(t, t.first, ia);
+  const iaLink = await (await models.getCalendarLinkRepository()).findByItem(t.wid, ia, x);
+  assert.ok(iaLink !== null && iaLink.pushedHash !== null);
+  // IB is made primary on C; its push runs (its adopt reaches Google: the event is live)…
+  await primary(t, t.second, { integrationId: ib, calendarId: c });
+  const run = await (
+    await models.getSyncRunRepository()
+  ).create(t.wid, { integrationId: ib, trigger: 'calendar_push', status: 'running' });
+  const ibData = await (await models.getIntegrationRepository()).findById(t.wid, ib);
+  assert.ok(ibData !== null);
+  const eventId = eventIdFor(x);
+  return {
+    t,
+    ia,
+    ib,
+    c,
+    x,
+    runId: run.id,
+    ibData,
+    iaLinkId: iaLink.id,
+    adopt: { opId: opIdOf('create', x, iaLink.pushedHash), ok: true, eventId, etag: '"adopted"' },
+    // Real Google lists a cancelled event on a full listing too; the mock drops it there, so a
+    // pull's read of it is handed to the commit as Google would send it.
+    cancelled: {
+      id: eventId,
+      status: 'cancelled',
+      etag: '"cancelled"',
+      priv: { origin: ORIGIN, todolistWs: t.wid, todolistItemId: x },
+    },
+  };
+}
 
-    // IB is made primary on C; its push reaches Google (the adopt: the event is live, unchanged)…
-    await primary(t, t.second, { integrationId: ib, calendarId: c });
-    const run = await (
+/** IB's commit: its op results and what its pull read of C. */
+async function commitOf(
+  r: Awaited<ReturnType<typeof raced>>,
+  runId: string,
+  opResults: Json[],
+  events: Json[],
+): Promise<void> {
+  const { applyCommit } = await import('../testing/calendarCalls.js');
+  await applyCommit(
+    r.ibData,
+    { runId, opResults, calendars: [{ id: r.c, events, nextSyncToken: null }] },
+    new Date(),
+    r.c,
+  );
+}
+
+/** A later push run of IB (its next pull of C). */
+async function nextRun(r: Awaited<ReturnType<typeof raced>>): Promise<string> {
+  return (
+    await (
       await models.getSyncRunRepository()
-    ).create(t.wid, {
-      integrationId: ib,
-      trigger: 'calendar_push',
-      status: 'running',
-      startedAt: new Date(),
-    });
-    // …meanwhile an owner moves the primary to D and IA's owner presses Remove (IA's row is still
-    // live, so IA deletes the event at Google and tombstones its row).
-    await primary(t, t.first, { integrationId: ia, calendarId: ALICE.email });
-    const removed = await t.call(t.first, 'POST', `/integrations/${ia}/remove-pushed`);
-    assert.equal(removed.status, 200, removed.text);
-    assert.equal(data(removed.body)['events'], 1);
-    assert.equal(mock.events(c).length, 0, 'IA deleted the event');
+    ).create(r.t.wid, { integrationId: r.ib, trigger: 'calendar_push', status: 'running' })
+  ).id;
+}
 
-    // …then IB's commit lands: its op result, and its pull, which read C after IA's delete. (Real
-    // Google lists a cancelled event on a full listing too; the mock drops it there.)
-    const ibData = await (await models.getIntegrationRepository()).findById(t.wid, ib);
-    assert.ok(ibData !== null);
-    const eventId = eventIdFor(x);
-    await applyCommit(
-      ibData,
-      {
-        runId: run.id,
-        opResults: [
-          { opId: opIdOf('create', x, iaLink.pushedHash), ok: true, eventId, etag: '"adopted"' },
-        ],
-        calendars: [
-          {
-            id: c,
-            events: [
-              {
-                id: eventId,
-                status: 'cancelled',
-                etag: '"cancelled"',
-                priv: { origin: ORIGIN, todolistWs: t.wid, todolistItemId: x },
-              },
-            ],
-            nextSyncToken: null,
-          },
-        ],
-      },
-      new Date(),
-      c,
-    );
+/** IA's tombstone, made older (time passes). */
+async function ageClaim(r: Awaited<ReturnType<typeof raced>>, ms: number): Promise<void> {
+  const { CalendarLinkMongoModel } = await import('../models/mongoose/CalendarLink.js');
+  await CalendarLinkMongoModel.updateOne(
+    { _id: r.iaLinkId },
+    { $set: { tombstonedAt: new Date(Date.now() - ms) } },
+  );
+}
+
+/** IA's owner moves the primary to D and presses Remove: IA's clean-up of its events on C. */
+async function iaRemoves(r: Awaited<ReturnType<typeof raced>>): Promise<void> {
+  await primary(r.t, r.t.first, { integrationId: r.ia, calendarId: ALICE.email });
+  const removed = await r.t.call(r.t.first, 'POST', `/integrations/${r.ia}/remove-pushed`);
+  assert.equal(removed.status, 200, removed.text);
+  assert.equal(data(removed.body)['events'], 1);
+  assert.equal(mock.events(r.c).length, 0, 'IA deleted the event');
+}
+
+describe('shared calendar, a clean-up racing another integration’s push', () => {
+  it('P4: IB’s commit lands after IA’s Remove and its pull reads the delete: the to-do stays', async () => {
+    const r = await raced('p4');
+    await iaRemoves(r);
+    await commitOf(r, r.runId, [r.adopt], [r.cancelled]);
     // The to-do stays; IB's row goes (no stop is kept), so nothing holds the event back.
-    await nothingLost(t, [x], [ia, ib]);
-    assert.equal(await links.findByItem(t.wid, ib, x), null, 'IB no longer tracks the event');
+    await nothingLost(r.t, [r.x], [r.ia, r.ib]);
+    const links = await models.getCalendarLinkRepository();
+    assert.equal(await links.findByItem(r.t.wid, r.ib, r.x), null, 'IB no longer tracks it');
 
-    // IB is primary on C again and pushes: the event is made again, tracked by IB.
-    await primary(t, t.second, { integrationId: ib, calendarId: c });
-    await push(t, t.second, ib);
-    await nothingLost(t, [x], [ia, ib]);
-    assert.equal(mock.events(c).length, 1, 'the event is back');
-    assert.equal((await links.findByItem(t.wid, ib, x))?.tombstonedAt, null);
+    // IB pushes again: the event is made again. Within a minute of IA's claim IB doesn't track it
+    // yet (a delete claimed then may still land); once the claim is older, it does.
+    await primary(r.t, r.t.second, { integrationId: r.ib, calendarId: r.c });
+    await push(r.t, r.t.second, r.ib);
+    assert.equal(mock.events(r.c).length, 1, 'the event is back');
+    assert.equal(await links.findByItem(r.t.wid, r.ib, r.x), null, 'not tracked within the minute');
+    await ageClaim(r, 61_000);
+    await push(r.t, r.t.second, r.ib);
+    await nothingLost(r.t, [r.x], [r.ia, r.ib]);
+    assert.equal(mock.events(r.c).length, 1);
+    assert.equal((await links.findByItem(r.t.wid, r.ib, r.x))?.tombstonedAt, null, 'tracked');
+  });
+
+  it('R1: IB’s pull read C before IA’s Remove; its next pull, much later, keeps the to-do', async () => {
+    const r = await raced('r1');
+    await iaRemoves(r);
+    // IB's commit: its adopt, and a pull that listed C before IA's delete (nothing for it).
+    await commitOf(r, r.runId, [r.adopt], []);
+    const links = await models.getCalendarLinkRepository();
+    assert.equal(
+      await links.findByItem(r.t.wid, r.ib, r.x),
+      null,
+      'IB doesn’t track a deleted event',
+    );
+    // Eleven minutes on, IB's next pull reads the cancellation.
+    await ageClaim(r, 11 * 60_000);
+    await commitOf(r, await nextRun(r), [], [r.cancelled]);
+    await nothingLost(r.t, [r.x], [r.ia, r.ib]);
+  });
+
+  it('R2: IB’s commit lands while IA’s DELETE is in flight; its next pull keeps the to-do', async () => {
+    const r = await raced('r2');
+    const links = await models.getCalendarLinkRepository();
+    // IA's DELETE is held at Google while IB's commit (its adopt; its pull listed C before the
+    // delete) lands: IA's row was claimed first, so IB's commit can't remove it, and sees it.
+    let claimSeen: boolean | null = null;
+    mock.holdNextWrite(async () => {
+      const iaRow = await links.findByItem(r.t.wid, r.ia, r.x);
+      claimSeen = iaRow?.deletedBy === 'dashboard';
+      await commitOf(r, r.runId, [r.adopt], []);
+    });
+    await iaRemoves(r);
+    assert.equal(claimSeen, true, 'IA tombstoned its row before its DELETE');
+    assert.equal((await links.findByItem(r.t.wid, r.ia, r.x))?.deletedBy, 'dashboard');
+    assert.equal(await links.findByItem(r.t.wid, r.ib, r.x), null, 'IB doesn’t track it');
+    // IB's next pull, at once, reads the cancellation.
+    await commitOf(r, await nextRun(r), [], [r.cancelled]);
+    await nothingLost(r.t, [r.x], [r.ia, r.ib]);
+  });
+
+  it('a claim older than the minute before IB’s run is not this race: the user’s delete counts', async () => {
+    const r = await raced('edge');
+    await iaRemoves(r);
+    // IA's claim is 61 s older than IB's run (the margin is 60 s): IB keeps tracking its adopt.
+    await ageClaim(r, 61_000);
+    await commitOf(r, r.runId, [r.adopt], []);
+    const links = await models.getCalendarLinkRepository();
+    assert.equal((await links.findByItem(r.t.wid, r.ib, r.x))?.tombstonedAt, null, 'IB tracks it');
+    // The user deletes the event in Google; IB's next pull reads it. X is IB's owner's own to-do,
+    // so it is soft-deleted, as any Google-side delete of one's own item.
+    await commitOf(r, await nextRun(r), [], [r.cancelled]);
+    assert.equal(await (await models.getItemRepository()).findById(r.t.wid, r.x), null);
+    assert.equal((await links.findByItem(r.t.wid, r.ib, r.x))?.deletedBy, 'google');
   });
 
   it('a user’s own delete in Google, with no clean-up of that event, still deletes the to-do', async () => {
@@ -306,7 +404,9 @@ describe('shared calendar, a clean-up racing another integration’s push (probe
     const link = await (await models.getCalendarLinkRepository()).findByItem(t.wid, ia, x);
     assert.equal(link?.deletedBy, 'google');
   });
+});
 
+describe('the outbound guard', () => {
   it('nothing but loopback was connected to', () => {
     assert.deepEqual(guard.externalHosts(), []);
   });

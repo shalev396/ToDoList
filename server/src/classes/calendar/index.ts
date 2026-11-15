@@ -6,6 +6,7 @@
 export { Calendar, DAILY_CREATE_CAP, WRITE_RESERVE_MS, type CalendarData } from './Calendar.js';
 export { CalendarLink } from './CalendarLink.js';
 export { CalendarLinks } from './CalendarLinks.js';
+export { EventClaim } from './EventClaim.js';
 export {
   DEFAULT_HORIZON_DAYS,
   DEFAULT_MAX_OPS,
@@ -17,7 +18,7 @@ export {
   type PlanNarrowing,
 } from './PushPlan.js';
 export {
-  CLEANUP_RACE_MS,
+  CLAIM_MARGIN_MS,
   CommitBody,
   PushCommit,
   toPushItem,

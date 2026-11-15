@@ -109,16 +109,23 @@ export interface ICalendarLinkRepository {
    */
   removeForIntegration(workspaceId: string, integrationId: string): Promise<number>;
   /**
-   * Another integration's link of the workspace to the same event (`key`), tombstoned by
-   * TodoList's own clean-up (`dashboard`) since `since`: that integration just deleted the event
-   * at Google. Null when there is none.
+   * Another integration's link of the workspace to the same event (`key`), tombstoned `dashboard`
+   * (TodoList itself deleted the event, or is deleting it: a clean-up step, a to-do's delete, a
+   * push's delete or move) since `since`. Null when there is none.
    */
-  findOthersCleanup(
+  findOthersDeleted(
     workspaceId: string,
     integrationId: string,
     key: CalendarLinkKey,
     since: Date,
   ): Promise<CalendarLinkData | null>;
+  /** Whether another integration of the workspace holds a live link to the same event. */
+  hasOtherLive(workspaceId: string, integrationId: string, key: CalendarLinkKey): Promise<boolean>;
+  /**
+   * A `dashboard` tombstone taken back (a claimed delete that was not made): the link is live
+   * again, only while it is still that tombstone on `calendarId`. Null otherwise.
+   */
+  release(workspaceId: string, id: string, calendarId: string): Promise<CalendarLinkData | null>;
   /** One link removed (its row, nothing at Google). False when it was not there. */
   remove(workspaceId: string, id: string): Promise<boolean>;
 }

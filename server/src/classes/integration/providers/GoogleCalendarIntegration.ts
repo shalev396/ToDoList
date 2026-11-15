@@ -35,7 +35,13 @@ import { ProviderNoAnswerError } from '../../../errors/ProviderNoAnswerError.js'
 import { ScopeMissingError } from '../../../errors/ScopeMissingError.js';
 import { WrittenNotStoredError } from '../../../errors/WrittenNotStoredError.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
-import { eventIdFor, ORIGIN, PAST_WINDOW_DAYS } from '../../../gcal/diff.js';
+import {
+  eventIdFor,
+  ORIGIN,
+  PAST_WINDOW_DAYS,
+  parseOpId,
+  type WireOp,
+} from '../../../gcal/diff.js';
 import type { CalendarLinkData } from '../../../models/definitions/CalendarLink.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
 import type { ItemData } from '../../../models/definitions/Item.js';
@@ -86,6 +92,7 @@ import {
 } from '../definitions/googleCalendar.js';
 import { Calendar } from '../../calendar/Calendar.js';
 import { CalendarLink } from '../../calendar/CalendarLink.js';
+import { EventClaim } from '../../calendar/EventClaim.js';
 import type { PlanNarrowing } from '../../calendar/PushPlan.js';
 import { SyncRun } from '../../sync/SyncRun.js';
 import { AppCreatedCalendars } from '../calendar/AppCreatedCalendars.js';
@@ -697,12 +704,17 @@ export class GoogleCalendarIntegration
     this.assertWritable(caller);
     const { workspaceId } = this;
     const run = await SyncRun.begin(this, 'calendar_push', now);
+    // Claim before delete: each delete (or move) op's own link is tombstoned before its DELETE is
+    // sent; one that is no longer this integration's (adopted, moved) is not sent at all.
+    const claims = await this.#claimDeletes(ops);
+    const sent = ops.filter((op) => op.type !== 'delete' || claims.has(op.opId));
     let opResults: OpResult[];
     try {
       opResults = await this.withWriteSession(caller, ({ writer }) =>
-        applyOps(writer, ops, budget.deadline, Date.now, STEP_CEILING_MS),
+        applyOps(writer, sent, budget.deadline, Date.now, STEP_CEILING_MS),
       );
     } catch (error) {
+      await Promise.all([...claims.values()].map((claim) => claim.release()));
       const authFailed = error instanceof ProviderHttpError && error.code === 'auth_failed';
       // Only while it is still open (a conditional write).
       await run.cancel(
@@ -726,6 +738,10 @@ export class GoogleCalendarIntegration
         errorName: error instanceof Error ? error.name : typeof error,
       });
       throw new AppError(502, 'Google Calendar did not answer. Try again in a moment.');
+    }
+    // A delete that was not made (deferred, refused, no answer) takes its claim back.
+    for (const result of opResults) {
+      if (!result.ok) await claims.get(result.opId)?.release();
     }
     // The pull that follows the writes (their etags are the links' by then, so our echoes are
     // skipped): Google-side edits and deletes of what we pushed. A failed pull never fails the
@@ -826,15 +842,51 @@ export class GoogleCalendarIntegration
     return links.filter((link) => CalendarLink.isOwnLive(link));
   }
 
-  /** One of this integration's own live links: its event deleted, audited, then the link tombstoned. */
+  /**
+   * One of this integration's own live links: claimed (tombstoned) first, then its event deleted
+   * and audited (EventClaim). 404 when the claim fails: the event is no longer this integration's
+   * (another integration adopted it, or it moved). A delete that fails takes its claim back.
+   */
   async #deleteLink(caller: Caller, link: CalendarLinkData): Promise<void> {
     const calendarId = checkedId('calendarId', link.calendarId, 'link');
     const eventId = checkedId('eventId', link.googleEventId, 'link');
     this.assertWritable(caller);
+    const claim = await EventClaim.take(link);
+    if (claim === null) throw new NotFoundError();
     const meta = { operation: 'event.delete', itemId: link.itemId };
-    await this.#calendarWrite(caller, meta, (writer) => writer.remove(calendarId, eventId));
+    try {
+      await this.#calendarWrite(caller, meta, (writer) => writer.remove(calendarId, eventId));
+    } catch (error) {
+      await claim.release();
+      throw error;
+    }
     await this.recordWrite(caller, meta);
-    await (await getCalendarLinkRepository()).tombstone(this.workspaceId, link.id, 'dashboard');
+  }
+
+  /**
+   * The push's delete ops (a delete, or a move's first half), each claimed on its own live link
+   * (EventClaim) before anything is sent: by op id. An op whose link is no longer this
+   * integration's own and live on that calendar and event is left out.
+   */
+  async #claimDeletes(ops: readonly WireOp[]): Promise<Map<string, EventClaim>> {
+    const claims = new Map<string, EventClaim>();
+    const links = await getCalendarLinkRepository();
+    for (const op of ops) {
+      const parsed = op.type === 'delete' ? parseOpId(op.opId) : null;
+      if (parsed === null) continue;
+      const link = await links.findByItem(this.workspaceId, this.id, parsed.itemId);
+      if (
+        link === null ||
+        !CalendarLink.isOwnLive(link) ||
+        link.calendarId !== op.calendarId ||
+        link.googleEventId !== op.eventId
+      ) {
+        continue;
+      }
+      const claim = await EventClaim.take(link);
+      if (claim !== null) claims.set(op.opId, claim);
+    }
+    return claims;
   }
 
   /**
@@ -874,10 +926,10 @@ export class GoogleCalendarIntegration
             ) {
               return 'skipped';
             }
-            // Only while the link is still on that calendar (N2): a move meanwhile keeps it live.
-            const forget = async (): Promise<void> => {
-              await links.tombstone(this.workspaceId, fresh.id, 'dashboard', fresh.calendarId);
-            };
+            // Claim before delete (EventClaim): tombstoned first, only while it is still live on
+            // that calendar (N2: a move meanwhile keeps it live); no claim, nothing is sent.
+            const claim = await EventClaim.take(fresh);
+            if (claim === null) return 'skipped';
             return this.#refusable(
               caller,
               { operation: 'event.delete', itemId: fresh.itemId },
@@ -887,7 +939,7 @@ export class GoogleCalendarIntegration
                   checkedId('eventId', fresh.googleEventId, 'link'),
                 );
               },
-              forget,
+              () => claim.release(),
             );
           },
           createdCalendars: () => this.#createdCalendars.ids,
@@ -897,14 +949,9 @@ export class GoogleCalendarIntegration
             return this.#contentsOf(calendarId, ownItems, budget);
           },
           deleteCalendar: (calendarId) =>
-            this.#refusable(
-              caller,
-              { operation: 'calendar.delete' },
-              async () => {
-                await writer.removeCalendar(calendarId);
-              },
-              () => Promise.resolve(),
-            ),
+            this.#refusable(caller, { operation: 'calendar.delete' }, async () => {
+              await writer.removeCalendar(calendarId);
+            }),
           forgetCalendar: (calendarId) => this.#forgetCalendar(calendarId),
           removeLinks: async (): Promise<void> => {
             await (
@@ -930,33 +977,31 @@ export class GoogleCalendarIntegration
   }
 
   /**
-   * One clean-up step at Google, audited as `integration.write` with `meta`, then `forget` (the
-   * step's own bookkeeping: no longer tracked), when it was done or refused for good
+   * One clean-up step at Google (its bookkeeping, a link's tombstone, was claimed before it ran),
+   * audited as `integration.write` with `meta` when it was done or refused for good
    * (refusedForGood: a rejected request, a permission 403), recorded then as `outcome: 'refused'`
-   * so the next call moves on. An outcome Google left unknown (no answer, a 5xx) is recorded as
-   * such and stops the call, as do a 401 (reconnect), a 429 and a rate-limit 403 (busy): the next
-   * call retries.
+   * so the next call moves on. Otherwise the step was not made: `undo` takes its claim back, and
+   * an outcome Google left unknown (no answer, a 5xx) is recorded as such; it stops the call, as do
+   * a 401 (reconnect), a 429 and a 403 without a permission reason: the next call retries.
    */
   async #refusable(
     caller: Caller,
     meta: Record<string, unknown>,
     step: () => Promise<void>,
-    forget: () => Promise<void>,
+    undo: () => Promise<void> = () => Promise.resolve(),
   ): Promise<StepOutcome> {
     try {
       await step();
     } catch (error) {
-      if (outcomeUnknown(error)) {
-        await this.recordWrite(caller, { ...meta, outcome: 'unknown' });
-        throw error;
+      if (refusedForGood(error)) {
+        await this.recordWrite(caller, { ...meta, outcome: 'refused' });
+        return 'refused';
       }
-      if (!refusedForGood(error)) throw error;
-      await this.recordWrite(caller, { ...meta, outcome: 'refused' });
-      await forget();
-      return 'refused';
+      await undo();
+      if (outcomeUnknown(error)) await this.recordWrite(caller, { ...meta, outcome: 'unknown' });
+      throw error;
     }
     await this.recordWrite(caller, meta);
-    await forget();
     return 'done';
   }
 
