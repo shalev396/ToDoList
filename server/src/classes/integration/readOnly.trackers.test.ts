@@ -244,8 +244,11 @@ describe('a to-do integration while read-only', () => {
       confirm: true,
     });
     assert.equal(viaAgent.isError, true);
-    // The read-only gate answers (not the confirm gate before it).
-    assert.match(JSON.stringify(viaAgent.content), /read-only/);
+    // The read-only gate answers (MCP sends ReadOnlyIntegrationError's text, not the code).
+    assert.match(
+      JSON.stringify(viaAgent.content),
+      /This integration is read-only: its owner can switch it/,
+    );
     assert.deepEqual(writes(), before);
     assert.equal((await items.findById(wid, item.id))?.title, 'Synced task');
   });
