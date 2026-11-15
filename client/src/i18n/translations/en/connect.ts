@@ -205,6 +205,20 @@ export const connect = {
     leftover_other:
       '{{count}} events from an earlier workspace calendar are still in Google Calendar',
     remove: 'Remove',
+    confirmTitle_one: 'Delete {{count}} event TodoList added from Google Calendar?',
+    confirmTitle_other: 'Delete {{count}} events TodoList added from Google Calendar?',
+    confirmBody:
+      'Only events TodoList added; the workspace calendar’s own events are never touched.',
+    confirmDelete: 'Delete',
+    removing: 'Removing…',
+    removingSoFar: 'Removing… {{done}} so far',
+    stop: 'Cancel',
+    failed_one:
+      '{{count}} event couldn’t be removed at Google (no permission). TodoList no longer tracks it.',
+    failed_other:
+      '{{count}} events couldn’t be removed at Google (no permission). TodoList no longer tracks them.',
+    skipped_one: '{{count}} event is on the current workspace calendar and was left in place.',
+    skipped_other: '{{count}} events are on the current workspace calendar and were left in place.',
     needsWrite: 'Switch to Read & write first',
     progress: 'Removed {{events}}; {{remaining}} left',
     continue: 'Continue',
@@ -214,12 +228,12 @@ export const connect = {
   },
   primary: {
     title: 'Workspace calendar',
-    description: 'The one Google Calendar that dated to-dos are sent to.',
-    unset: 'No workspace calendar yet: dated to-dos are not sent to Google Calendar.',
+    description: 'The one Google Calendar that dated items are sent to.',
+    unset: 'No workspace calendar yet: dated items are not sent to Google Calendar.',
     activeOther: 'Dated items are sent to the workspace calendar.',
     pausedOther: 'Sending to the workspace calendar is paused.',
     removeOld: 'Also remove the events TodoList added to the old calendar',
-    activeMine: 'Dated to-dos are sent to {{name}}.',
+    activeMine: 'Dated items are sent to {{name}}.',
     suspendedReadOnly:
       'TodoList stopped sending to the workspace calendar: its Google Calendar connection is read-only. Switch it to Read & write, or choose another calendar.',
     suspendedDisconnected:
@@ -231,13 +245,13 @@ export const connect = {
     stop: 'Stop sending',
     stopTitle: 'Stop sending to the workspace calendar?',
     stopBody:
-      'Events already in Google Calendar stay as they are, and new changes are not sent. You can choose a calendar again later.',
+      'Events already in Google Calendar stay as they are, unless you tick the box below, and new changes are not sent. You can choose a calendar again later.',
     stopFailed: 'Sending couldn’t be stopped. Try again.',
     loadFailed: 'The workspace calendar couldn’t be loaded.',
     picker: {
       title: 'Choose the workspace calendar',
       description:
-        'Pick one of your Google Calendar connections, then the calendar dated to-dos are sent to.',
+        'Pick one of your Google Calendar connections, then the calendar dated items are sent to.',
       account: 'Google Calendar connection',
       readOnlyHint: 'Switch this connection to Read & write first',
       noneHint: 'Connect Google Calendar first, then come back here.',
@@ -382,8 +396,10 @@ export const templates = {
   createFailed: 'The page couldn’t be created. Try again.',
   share: {
     title: 'Share your connections?',
-    body_one: 'Adding {{names}} shares its items with everyone in {{workspace}}.',
-    body_other: 'Adding {{names}} shares their items with everyone in {{workspace}}.',
+    body_one:
+      'Adding {{names}} shares its items with everyone in {{workspace}}. Their dated items are also sent to the workspace calendar, a Google calendar the workspace owner chose.',
+    body_other:
+      'Adding {{names}} shares their items with everyone in {{workspace}}. Their dated items are also sent to the workspace calendar, a Google calendar the workspace owner chose.',
     share: 'Share and create',
     without: 'Create without them',
     cancel: 'Cancel',

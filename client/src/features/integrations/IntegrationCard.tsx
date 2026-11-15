@@ -2,8 +2,8 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
-import { cleanupProgressOf, errorMessage } from '@/api/errors';
-import type { CleanupProgress } from '@api-types/api-contracts';
+import { errorMessage } from '@/api/errors';
+import type { CleanupProgress } from '@api-types/primaryCalendar.ts';
 import {
   useDisconnectIntegration,
   usePrimaryCalendar,
@@ -46,11 +46,11 @@ import {
   type OAuthMode,
 } from './oauthSetup';
 import { PROVIDER_REGISTRY } from './providers';
-import { CleanupNote, CleanupProgressLine } from './CleanupNote';
+import { CleanupNote, CleanupProgressLine, CleanupRunning } from './CleanupNote';
 import { daysUntil, needsRenewalHint } from './status';
 import { SyncStatus } from './SyncStatus';
 import { TokenFallback } from './TokenFallback';
-import { useRemovePushed } from './useRemovePushed';
+import { useCleanupRunner, useRemovePushed } from './useRemovePushed';
 
 interface IntegrationCardProps {
   workspaceId: string;
@@ -119,6 +119,8 @@ export function IntegrationCard({
   const [disconnectProgress, setDisconnectProgress] = useState<CleanupProgress | null>(null);
   const primary = usePrimaryCalendar(workspaceId);
   const leftover = useRemovePushed(workspaceId);
+  const disconnectCleanup = useCleanupRunner();
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
   const testConnection = useTestIntegration(workspaceId);
   const syncNow = useSyncIntegration(workspaceId);
   const disconnect = useDisconnectIntegration(workspaceId);
@@ -190,23 +192,27 @@ export function IntegrationCard({
       return;
     }
     setDisconnectProgress(null);
-    try {
-      await disconnect.mutateAsync(
-        removeAdded && provider === 'google_calendar' && integration.mode === 'read_write'
-          ? { id: integration.id, removeAdded: true }
-          : integration.id,
-      );
-      setConfirming(false);
-    } catch (failure) {
-      const progress = cleanupProgressOf(failure);
-      if (progress !== null) {
-        // Out of time, still connected: the dialog stays open and can continue.
-        setDisconnectProgress(progress);
-        return;
-      }
-      setConfirming(false);
-      setProblem(errorMessage(t, failure, 'connect.card.disconnectError'));
+    const withRemoval =
+      removeAdded && provider === 'google_calendar' && integration.mode === 'read_write';
+    // Out of time, still connected: the clean-up goes on by itself while it makes progress.
+    const result = await disconnectCleanup.run(() =>
+      disconnect.mutateAsync(
+        withRemoval ? { id: integration.id, removeAdded: true } : integration.id,
+      ),
+    );
+    if (result.kind === 'incomplete') {
+      // Stopped (Cancel, or no progress): the dialog stays open and can continue.
+      setDisconnectProgress(result.progress);
+      return;
     }
+    setConfirming(false);
+    if (result.kind === 'done') {
+      if (result.totals.failed > 0) {
+        toast.warning(t('connect.pushed.failed', { count: result.totals.failed }));
+      }
+      return;
+    }
+    setProblem(errorMessage(t, result.failure, 'connect.card.disconnectError'));
   };
 
   /** "Remove": the events pushed with a connection that is no longer the workspace calendar. */
@@ -215,10 +221,7 @@ export function IntegrationCard({
       return;
     }
     setProblem(null);
-    const outcome = await leftover.run(integration.id);
-    if (outcome.kind === 'done') {
-      toast.success(t('connect.pushed.done', { count: outcome.events }));
-    }
+    await leftover.run(integration.id);
   };
 
   const days = integration === undefined ? null : daysUntil(integration.expiresAt, now);
@@ -226,12 +229,10 @@ export function IntegrationCard({
     integration !== undefined && needsRenewalHint(integration.expiresAt, now) && days !== null;
   const status = integration?.status;
   const comingSoon = comingSoonOf(capabilities, provider);
-  const isPrimary =
-    integration !== undefined &&
-    primary.data?.mine === true &&
-    primary.data.integrationId === integration.id;
+  // The server counts only events that are not on the current workspace calendar. Not shown
+  // until the workspace calendar has loaded, so the count is never read against an unknown one.
   const pushedLeft =
-    provider === 'google_calendar' && integration !== undefined && !isPrimary
+    provider === 'google_calendar' && integration !== undefined && primary.isSuccess
       ? (integration.pushedEvents ?? 0)
       : 0;
 
@@ -395,7 +396,7 @@ export function IntegrationCard({
               data-pushed-remove
               disabled={integration.mode === 'read' || leftover.pending}
               onClick={() => {
-                void removeLeftover();
+                setConfirmingRemove(true);
               }}
             >
               {t('connect.pushed.remove')}
@@ -404,16 +405,17 @@ export function IntegrationCard({
           {integration.mode === 'read' ? (
             <span className="text-muted-foreground">{t('connect.pushed.needsWrite')}</span>
           ) : null}
-          {leftover.outcome?.kind === 'done' ? null : (
-            <CleanupNote
-              outcome={leftover.outcome}
-              pending={leftover.pending}
-              onContinue={() => {
-                void removeLeftover();
-              }}
-            />
-          )}
         </div>
+      )}
+      {integration === undefined || provider !== 'google_calendar' ? null : (
+        <CleanupNote
+          outcome={leftover.outcome}
+          pending={leftover.pending}
+          runner={leftover.runner}
+          onContinue={() => {
+            void removeLeftover();
+          }}
+        />
       )}
       {run === undefined ? null : <SyncStatus run={run} />}
       {test === null ? null : (
@@ -561,6 +563,27 @@ export function IntegrationCard({
         )}
       </footer>
 
+      <AlertDialog open={confirmingRemove} onOpenChange={setConfirmingRemove}>
+        <AlertDialogContent data-pushed-confirm>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {t('connect.pushed.confirmTitle', { count: integration?.pushedEvents ?? 0 })}
+            </AlertDialogTitle>
+            <AlertDialogDescription>{t('connect.pushed.confirmBody')}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('connect.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                void removeLeftover();
+              }}
+            >
+              {t('connect.pushed.confirmDelete')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <AlertDialog open={confirmingWrite} onOpenChange={setConfirmingWrite}>
         <AlertDialogContent data-mode-confirm>
           <AlertDialogHeader>
@@ -665,7 +688,11 @@ export function IntegrationCard({
                       : 'connect.card.removeAddedHint',
                   )}
                 </p>
-                {disconnectProgress !== null && removeAdded ? (
+                {removeAdded && disconnectCleanup.runner.running ? (
+                  <div className="ps-6">
+                    <CleanupRunning runner={disconnectCleanup.runner} />
+                  </div>
+                ) : disconnectProgress !== null && removeAdded ? (
                   <div className="ps-6">
                     <CleanupProgressLine
                       progress={disconnectProgress}
@@ -682,7 +709,7 @@ export function IntegrationCard({
           <AlertDialogFooter>
             <AlertDialogCancel>{t('connect.cancel')}</AlertDialogCancel>
             <AlertDialogAction
-              disabled={disconnect.isPending}
+              disabled={disconnect.isPending || disconnectCleanup.runner.running}
               onClick={(event) => {
                 // Stays open while it runs, and when the clean-up stops early.
                 event.preventDefault();

@@ -269,6 +269,7 @@ export function PrimaryCalendarPicker({
               <CleanupNote
                 outcome={cleanup.outcome}
                 pending={cleanup.pending}
+                runner={cleanup.runner}
                 onContinue={() => {
                   void cleanup.run(cleanedId);
                 }}
