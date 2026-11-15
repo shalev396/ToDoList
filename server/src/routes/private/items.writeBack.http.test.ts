@@ -428,6 +428,17 @@ describe('the provider half: its integration’s owner, read & write', () => {
     assert.equal(after['title'], 'Ship the report, twice');
     assert.equal(after['startAt'], LATER, 'the local half was kept');
     assert.notEqual(after['status'], 'done');
+
+    // A cleared override is kept too: `null` is what was asked, and it is stored.
+    const cleared = await call('owner', 'PATCH', `/items/${jiraItemId}`, {
+      title: 'Ship the report, thrice',
+      status: 'done',
+      startAt: null,
+    });
+    assert.equal(cleared.body?.['code'], 'provider_partial_write');
+    assert.deepEqual((cleared.body['details'] as Json)['kept'], ['startAt']);
+    const again = data(await call('owner', 'GET', `/items/${jiraItemId}`));
+    assert.equal(again['startAt'], null, 'the start override was cleared');
   });
 });
 

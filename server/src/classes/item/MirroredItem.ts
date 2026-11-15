@@ -174,10 +174,9 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
    */
   async #keepLocal(error: ProviderPartialWriteError, overrides: MutableOverrides): Promise<void> {
     this.#clearStale(overrides, error.written);
-    const names = Object.entries(overrides)
-      .filter(([, value]) => value !== null)
-      .map(([name]) => name);
-    if (Object.keys(overrides).length === 0) return;
+    // Every override the store carries counts, a cleared one too (`null` is what was asked).
+    const names = Object.keys(overrides);
+    if (names.length === 0) return;
     try {
       await this.storeOverlay({ overrides, editedAt: new Date() });
       error.kept = names;
