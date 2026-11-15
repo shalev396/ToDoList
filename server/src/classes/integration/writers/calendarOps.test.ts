@@ -43,6 +43,9 @@ function scripted(script: Record<string, number>): CalendarWriter & { calls: str
         throw error;
       });
     },
+    // The push never edits by hand or makes a calendar.
+    update: () => Promise.reject(new Error('the push does not call update')),
+    insertCalendar: () => Promise.reject(new Error('the push does not call insertCalendar')),
   };
 }
 

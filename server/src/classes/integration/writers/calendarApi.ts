@@ -1,10 +1,16 @@
 /**
- * The Google Calendar push's writes through the Calendar API, reached only inside
- * GoogleCalendarIntegration's write session (never for a read-only integration):
- * events.insert, events.patch (with `If-Match`) and events.delete, nothing else, on
- * `<calendar base>/calendars/<id>/events…` only. The base is Google's (googleEndpoints), or a
- * test's stand-in. No redirect is followed, a call gives up after 15 s, and a
- * failure is a CalendarApiError with the HTTP status only: never a token, a body or a URL.
+ * The Google Calendar writes through the Calendar API (the push, an event from a to-do, an event's
+ * edit or delete, a calendar of TodoList's own), reached only inside GoogleCalendarIntegration's
+ * write session (never for a read-only integration). The writer's allow-list is exact, by method
+ * and path under the calendar base, with no query:
+ *   POST   /calendars                         calendars.insert
+ *   POST   /calendars/{id}/events             events.insert
+ *   PATCH  /calendars/{id}/events/{eventId}   events.patch (the push's with `If-Match`)
+ *   DELETE /calendars/{id}/events/{eventId}   events.delete
+ * Anything else (a calendar's delete, its ACL, a GET) is refused before it is sent. The base is
+ * Google's (googleEndpoints), or a test's stand-in. No redirect is followed, a call gives up after
+ * 15 s, and a failure is a CalendarApiError with the HTTP status only: never a token, a body or a
+ * URL.
  */
 import { loopbackAllowedForTests } from '../../../config/testSwitches.js';
 import { assertPublicHttpsUrl } from '../../../services/netGuard.js';
@@ -25,6 +31,14 @@ export class CalendarApiError extends Error {
   }
 }
 
+/** A write the allow-list does not name. A bug in our code, never a user input. */
+export class CalendarWriteRefusedError extends Error {
+  constructor() {
+    super('Refused: not a Calendar API write this client may send');
+    this.name = 'CalendarWriteRefusedError';
+  }
+}
+
 /** What a write answers with that the commit keeps. */
 export interface WrittenEvent {
   id: string;
@@ -32,19 +46,73 @@ export interface WrittenEvent {
   updated: string | undefined;
 }
 
+/** An event's edit as Google answered it: what the commit keeps, and the event as it now is. */
+export interface UpdatedEvent extends WrittenEvent {
+  record: Record<string, unknown>;
+}
+
+/** A calendar TodoList created. */
+export interface CreatedCalendar {
+  id: string;
+  summary: string | null;
+}
+
 /** An event a user created a to-do as (H5): no projection marker, so the pull maps it as any event. */
 export type PlainEventBody = Omit<EventBody, 'extendedProperties' | 'source'>;
 
+/** A to-do's event that repeats (plan Addendum A3): its one RRULE line, checked by RecurrenceRule. */
+export type RecurringEventBody = PlainEventBody & { recurrence?: readonly string[] };
+
+/** A changed event time, as a patch sends it: the other form cleared (Google merges a patch). */
+export type EventTimeChange =
+  | { date: string; dateTime: null; timeZone: null }
+  | { dateTime: string; timeZone: string; date: null };
+
+/** An event's edit, as a patch (EventEdit builds it). */
+export interface EventChanges {
+  summary?: string;
+  description?: string;
+  start?: EventTimeChange;
+  end?: EventTimeChange;
+}
+
 export interface CalendarWriter {
-  insert(calendarId: string, event: EventBody | PlainEventBody): Promise<WrittenEvent>;
+  insert(calendarId: string, event: EventBody | RecurringEventBody): Promise<WrittenEvent>;
   patch(
     calendarId: string,
     eventId: string,
     body: Partial<EventBody> & { status?: string },
     etag?: string,
   ): Promise<WrittenEvent>;
+  /** An event's edit (CalendarProvider#updateEvent): the event as Google now has it. */
+  update(calendarId: string, eventId: string, changes: EventChanges): Promise<UpdatedEvent>;
   /** 404 and 410 (already gone) are done. */
   remove(calendarId: string, eventId: string): Promise<void>;
+  /** A secondary calendar, owned by the account (calendars.insert). */
+  insertCalendar(summary: string, timeZone: string): Promise<CreatedCalendar>;
+}
+
+/** `/calendars/<id>/events` and `/calendars/<id>/events/<eventId>`, ids percent-encoded. */
+const EVENTS = /^\/calendars\/[^/?#]{1,1024}\/events$/;
+const EVENT = /^\/calendars\/[^/?#]{1,1024}\/events\/[^/?#]{1,1100}$/;
+
+/**
+ * Whether a write is exactly one this client may send (the header's list): its method, and its
+ * path under the calendar base, with no query or fragment.
+ */
+export function isAllowedCalendarWrite(method: string, url: string): boolean {
+  const base = googleEndpoints().calendar;
+  if (!url.startsWith(`${base}/`) || url.includes('?') || url.includes('#')) return false;
+  const path = url.slice(base.length);
+  switch (method) {
+    case 'POST':
+      return path === '/calendars' || EVENTS.test(path);
+    case 'PATCH':
+    case 'DELETE':
+      return EVENT.test(path);
+    default:
+      return false;
+  }
 }
 
 function eventsUrl(calendarId: string, eventId?: string): string {
@@ -143,14 +211,19 @@ export function calendarReader(auth: Readonly<Record<string, string>>): Calendar
   };
 }
 
-/** A writer acting with the grant's auth headers (its strategy's, for one push only). */
+/** A writer acting with the grant's auth headers (its strategy's, for one write session only). */
 export function calendarWriter(auth: Readonly<Record<string, string>>): CalendarWriter {
   const call = (
     method: 'POST' | 'PATCH' | 'DELETE',
     url: string,
     body?: unknown,
     headers: Record<string, string> = {},
-  ): Promise<unknown> => request(auth, method, url, body, headers);
+  ): Promise<unknown> => {
+    if (!isAllowedCalendarWrite(method, url)) {
+      return Promise.reject(new CalendarWriteRefusedError());
+    }
+    return request(auth, method, url, body, headers);
+  };
 
   return {
     async insert(calendarId, event): Promise<WrittenEvent> {
@@ -159,6 +232,21 @@ export function calendarWriter(auth: Readonly<Record<string, string>>): Calendar
     async patch(calendarId, eventId, body, etag): Promise<WrittenEvent> {
       const ifMatch: Record<string, string> = etag === undefined ? {} : { 'if-match': etag };
       return writtenEvent(await call('PATCH', eventsUrl(calendarId, eventId), body, ifMatch));
+    },
+    async update(calendarId, eventId, changes): Promise<UpdatedEvent> {
+      const data = await call('PATCH', eventsUrl(calendarId, eventId), changes);
+      const record =
+        typeof data === 'object' && data !== null ? (data as Record<string, unknown>) : {};
+      return { ...writtenEvent(data), record };
+    },
+    async insertCalendar(summary, timeZone): Promise<CreatedCalendar> {
+      const data = await call('POST', `${googleEndpoints().calendar}/calendars`, {
+        summary,
+        timeZone,
+      });
+      const { id, summary: named } = (data ?? {}) as Record<string, unknown>;
+      if (typeof id !== 'string' || !/^\S{1,255}$/.test(id)) throw new CalendarApiError(null);
+      return { id, summary: typeof named === 'string' ? named : null };
     },
     async remove(calendarId, eventId): Promise<void> {
       try {
