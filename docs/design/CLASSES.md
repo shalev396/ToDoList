@@ -1848,6 +1848,21 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 - **Read calendars**: `ensureReads` and `#keepPrimaryRead` match legacy string entries and refuse
   (400) past the 50-calendar limit; the migration skips deleted rows and full lists.
 
+### Phase 4b, fix round 2
+
+- **`OAuthFlow.start`** ignores `includeWrite` for a provider without write scopes (GitHub,
+  ClickUp), so their Reconnect never answers 400.
+- **More codes kept on a 5xx**: `provider_unreachable` (502: nothing was sent, a tracker
+  `unreachable` write or a failed lookup) beside `provider_no_answer`.
+- **`WrittenNotStoredError`** (409 `provider_written_not_stored`, `details.written`): the provider
+  took the write and the store after it failed (a tracker save, the local half after a provider
+  half, Google's refreshed item). A partial write whose store fails still answers the partial
+  write; its `details.kept` names the overrides stored (a cleared one included).
+- **`createRecurring`** applies topic and priority on every path (a retry completes a failed
+  store); a series deleted at Google between tries is 404 `provider_item_missing`.
+  `GoogleCalendarIntegration#readEvent` asks for the owner.
+- **MCP `update_todo`** takes `null` to clear a title or status override, as REST does.
+
 ## Where phase 4a left the old modules
 
 | Module                               | Now                                                                                                                                                  |
