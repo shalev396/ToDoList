@@ -461,10 +461,7 @@ export function CopyTargets({
           {locked.lead}
         </>
       )}
-      <ul
-        className="m-0 flex list-none flex-wrap gap-2 p-0"
-        aria-disabled={locked === undefined ? undefined : true}
-      >
+      <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
         {chips.map((target) => (
           <Chip
             key={target.integrationId}

@@ -47,7 +47,7 @@ describe('buildRecurrence', () => {
         on({ preset: 'custom', interval: 2, frequency: 'WEEKLY', days: ['TU'] }),
         timed,
       ),
-      ['RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU'],
+      ['RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,WE'],
     );
     assert.deepEqual(
       buildRecurrence(on({ preset: 'custom', interval: 1, frequency: 'DAILY' }), timed),
@@ -179,10 +179,19 @@ describe('weekdays and UNTIL', () => {
     assert.equal(weekdayOf('nope'), null);
   });
 
-  it('falls back to the due date’s day only when none is picked', () => {
+  it('always holds the due date’s day: Google counts the first event as one', () => {
     assert.deepEqual(weeklyDays(on({ days: [] }), '2026-11-20'), ['FR']);
-    assert.deepEqual(weeklyDays(on({ days: ['SU', 'MO'] }), '2026-11-20'), ['MO', 'SU']);
+    assert.deepEqual(weeklyDays(on({ days: ['SU', 'MO'] }), '2026-11-20'), ['MO', 'FR', 'SU']);
+    assert.deepEqual(weeklyDays(on({ days: ['FR'] }), '2026-11-20'), ['FR']);
     assert.deepEqual(weeklyDays(on({ days: [] }), ''), []);
+  });
+
+  it('a Tuesday due date with only Thursday picked repeats on both (no hidden extra Tuesday)', () => {
+    // 1 Dec 2026 is a Tuesday.
+    assert.deepEqual(
+      buildRecurrence(on({ preset: 'weekly', days: ['TH'] }), { ...timed, dueDate: '2026-12-01' }),
+      ['RRULE:FREQ=WEEKLY;BYDAY=TU,TH'],
+    );
   });
 
   it('writes UNTIL in summer time too', () => {

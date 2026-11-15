@@ -1,7 +1,7 @@
 import { useId, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Check, ExternalLink } from 'lucide-react';
-import { apiErrorCode, errorMessage } from '@/api/errors';
+import { apiErrorCode, apiErrorStatus, errorMessage } from '@/api/errors';
 import { usePrimaryCalendar } from '@/api/queries/integrations';
 import { useCreateLocalItem } from '@/api/queries/providerCreate';
 import { useMe } from '@/api/queries/user';
@@ -65,6 +65,8 @@ export function NewTodoSheet({
   const [repeat, setRepeat] = useState<Repeat>(NO_REPEAT);
   const [repeatTarget, setRepeatTarget] = useState(true);
   const [recurring, setRecurring] = useState<RecurringResult | null>(null);
+  // Sent, and Google's answer never came back: it may exist. Only the same request may follow.
+  const [uncertain, setUncertain] = useState(false);
   // One key per repeating to-do: a retry after a lost answer is the same event, never a second.
   const recurringKey = useRef<string | null>(null);
   const primary = usePrimaryCalendar(workspace?.id ?? '');
@@ -81,6 +83,7 @@ export function NewTodoSheet({
     setRepeat(NO_REPEAT);
     setRepeatTarget(true);
     setRecurring(null);
+    setUncertain(false);
     recurringKey.current = null;
     runner.reset();
     todoId.current = null;
@@ -91,7 +94,7 @@ export function NewTodoSheet({
   const selected = Object.values(funnels);
   const repeating = isRepeating(repeat);
   const recurrence = buildRecurrence(repeat, { dueDate: day, allDay: time === '', timeZone });
-  const repeatBlocked = primary.isError ? 'unset' : repeatBlockOf(primary.data);
+  const repeatBlocked = primary.isError ? 'error' : repeatBlockOf(primary.data);
   const unready = repeating
     ? recurrence === null || !repeatTarget || repeatBlocked !== null
     : selected.some((funnel) => !isReady(funnel, dueAt !== null));
@@ -108,16 +111,36 @@ export function NewTodoSheet({
         recurrence: lines,
         idempotencyKey: recurringKey.current,
       });
+      setUncertain(false);
       setRecurring({ kind: 'created', url: item.openIn.url });
     } catch (failure) {
-      if (apiErrorCode(failure) === 'created_not_stored') {
+      const code = apiErrorCode(failure);
+      const status = apiErrorStatus(failure);
+      if (code === 'created_not_stored') {
+        setUncertain(false);
         setRecurring({ kind: 'notStored' });
+      } else if (
+        code === 'provider_no_answer' ||
+        status === undefined ||
+        (code === undefined && (status === 502 || status === 503 || status === 504))
+      ) {
+        // The form stays as it was sent: "Try again" is the same request (the same key).
+        setUncertain(true);
       } else {
         setError(errorMessage(t, failure, 'items.newTodo.saveError'));
       }
     } finally {
       setSaving(false);
     }
+  };
+  /** "Try again" after a create that wasn't stored, or wasn't answered: the same key. */
+  const retryRepeating = () => {
+    if (recurrence === null || saving) {
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    void saveRepeating(recurrence);
   };
 
   const save = async (event: FormEvent) => {
@@ -219,6 +242,24 @@ export function NewTodoSheet({
                   </span>
                 )}
               </div>
+              {recurring.kind === 'notStored' ? (
+                // A second try with the same key stores the event now (nothing is made twice).
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="self-start"
+                  disabled={saving}
+                  data-recurring-retry=""
+                  onClick={retryRepeating}
+                >
+                  {t('items.newTodo.repeat.tryAgain')}
+                </Button>
+              ) : null}
+              {error === null ? null : (
+                <p className="text-sm text-destructive" role="alert">
+                  {error}
+                </p>
+              )}
               <Button
                 type="button"
                 className="self-end"
@@ -239,109 +280,124 @@ export function NewTodoSheet({
               className="flex flex-col gap-4"
               noValidate
             >
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${ids}-title`}>{t('items.newTodo.name')}</Label>
-                <Input
-                  id={`${ids}-title`}
-                  value={title}
-                  autoFocus
-                  maxLength={255}
-                  placeholder={t('items.newTodo.namePlaceholder')}
-                  aria-invalid={error !== null && title.trim() === ''}
-                  onChange={(event) => {
-                    setTitle(event.target.value);
-                  }}
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${ids}-note`}>{t('items.newTodo.note')}</Label>
-                <Input
-                  id={`${ids}-note`}
-                  value={note}
-                  maxLength={NOTE_MAX}
-                  onChange={(event) => {
-                    setNote(event.target.value);
-                  }}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
+              <fieldset
+                disabled={uncertain}
+                className="m-0 flex min-w-0 flex-col gap-4 border-0 p-0"
+                data-new-todo-fields=""
+              >
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor={`${ids}-day`}>{t('items.newTodo.due')}</Label>
+                  <Label htmlFor={`${ids}-title`}>{t('items.newTodo.name')}</Label>
                   <Input
-                    id={`${ids}-day`}
-                    type="date"
-                    value={day}
-                    min={dateInZone(new Date('2000-01-01'), timeZone)}
+                    id={`${ids}-title`}
+                    value={title}
+                    autoFocus
+                    maxLength={255}
+                    placeholder={t('items.newTodo.namePlaceholder')}
+                    aria-invalid={error !== null && title.trim() === ''}
                     onChange={(event) => {
-                      setDay(event.target.value);
-                      if (event.target.value === '') {
-                        setTime('');
-                      }
+                      setTitle(event.target.value);
                     }}
                   />
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor={`${ids}-time`}>{t('items.newTodo.dueTime')}</Label>
+                  <Label htmlFor={`${ids}-note`}>{t('items.newTodo.note')}</Label>
                   <Input
-                    id={`${ids}-time`}
-                    type="time"
-                    value={time}
-                    disabled={day === ''}
+                    id={`${ids}-note`}
+                    value={note}
+                    maxLength={NOTE_MAX}
                     onChange={(event) => {
-                      setTime(event.target.value);
+                      setNote(event.target.value);
                     }}
                   />
                 </div>
-              </div>
-              <RepeatControl value={repeat} onChange={setRepeat} dueDate={day} />
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor={`${ids}-topic`}>{t('items.newTodo.topic')}</Label>
-                <SelectField
-                  id={`${ids}-topic`}
-                  value={topicId}
-                  onValueChange={setTopicId}
-                  options={topicOptions}
-                />
-              </div>
-              {workspace === null || userId === '' ? null : (
-                <CopyTargets
-                  workspaceId={workspace.id}
-                  userId={userId}
-                  hasDueDate={dueAt !== null}
-                  value={funnels}
-                  onChange={setFunnels}
-                  locked={
-                    repeating
-                      ? {
-                          note: t('items.newTodo.repeat.calendarOnly'),
-                          lead: (
-                            <>
-                              <RepeatTarget
-                                workspaceId={workspace.id}
-                                checked={repeatTarget}
-                                onCheckedChange={setRepeatTarget}
-                              />
-                              {repeatTarget || repeatBlocked !== null ? null : (
-                                <p
-                                  className="text-[13px] text-destructive"
-                                  role="status"
-                                  data-repeat-needs-target=""
-                                >
-                                  {t('items.newTodo.repeat.needsTarget')}
-                                </p>
-                              )}
-                            </>
-                          ),
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`${ids}-day`}>{t('items.newTodo.due')}</Label>
+                    <Input
+                      id={`${ids}-day`}
+                      type="date"
+                      value={day}
+                      min={dateInZone(new Date('2000-01-01'), timeZone)}
+                      onChange={(event) => {
+                        setDay(event.target.value);
+                        if (event.target.value === '') {
+                          setTime('');
                         }
-                      : undefined
-                  }
-                />
-              )}
+                      }}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor={`${ids}-time`}>{t('items.newTodo.dueTime')}</Label>
+                    <Input
+                      id={`${ids}-time`}
+                      type="time"
+                      value={time}
+                      disabled={day === ''}
+                      onChange={(event) => {
+                        setTime(event.target.value);
+                      }}
+                    />
+                  </div>
+                </div>
+                <RepeatControl value={repeat} onChange={setRepeat} dueDate={day} />
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor={`${ids}-topic`}>{t('items.newTodo.topic')}</Label>
+                  <SelectField
+                    id={`${ids}-topic`}
+                    value={topicId}
+                    onValueChange={setTopicId}
+                    options={topicOptions}
+                  />
+                </div>
+                {workspace === null || userId === '' ? null : (
+                  <CopyTargets
+                    workspaceId={workspace.id}
+                    userId={userId}
+                    hasDueDate={dueAt !== null}
+                    value={funnels}
+                    onChange={setFunnels}
+                    locked={
+                      repeating
+                        ? {
+                            note: t('items.newTodo.repeat.calendarOnly'),
+                            lead: (
+                              <>
+                                <RepeatTarget
+                                  workspaceId={workspace.id}
+                                  checked={repeatTarget}
+                                  onCheckedChange={setRepeatTarget}
+                                />
+                                {repeatTarget || repeatBlocked !== null ? null : (
+                                  <p
+                                    className="text-[13px] text-destructive"
+                                    role="status"
+                                    data-repeat-needs-target=""
+                                  >
+                                    {t('items.newTodo.repeat.needsTarget')}
+                                  </p>
+                                )}
+                              </>
+                            ),
+                          }
+                        : undefined
+                    }
+                  />
+                )}
+              </fieldset>
               {error === null ? null : (
                 <p className="text-sm text-destructive" role="alert" data-new-todo-error="">
                   {error}
                 </p>
               )}
+              {uncertain ? (
+                <p
+                  role="alert"
+                  data-recurring-uncertain=""
+                  className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-[13px] text-destructive"
+                >
+                  {t('items.newTodo.repeat.uncertain')}
+                </p>
+              ) : null}
               <div className="flex justify-end gap-2">
                 <Button
                   type="button"
@@ -351,10 +407,14 @@ export function NewTodoSheet({
                     reset();
                   }}
                 >
-                  {t('items.newTodo.cancel')}
+                  {uncertain ? t('items.newTodo.close') : t('items.newTodo.cancel')}
                 </Button>
                 <Button type="submit" disabled={saving || unready} data-new-todo-save="">
-                  {saving ? t('items.newTodo.saving') : t('items.newTodo.save')}
+                  {saving
+                    ? t('items.newTodo.saving')
+                    : uncertain
+                      ? t('items.newTodo.repeat.tryAgain')
+                      : t('items.newTodo.save')}
                 </Button>
               </div>
             </form>

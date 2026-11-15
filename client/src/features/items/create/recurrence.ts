@@ -96,14 +96,15 @@ export function frequencyOf(repeat: Repeat): Frequency | null {
   }
 }
 
-/** The days a weekly rule repeats on: the ones picked, else the due date's, Monday first. */
+/**
+ * The days a weekly rule repeats on, Monday first: the ones picked, and always the due date's own.
+ * Google (RFC 5545) makes the first event, on the due date, an occurrence whatever BYDAY says, so
+ * "Weekly on Thursday" from a Tuesday would also hold that Tuesday; naming its day keeps the rule
+ * and what the member sees the same.
+ */
 export function weeklyDays(repeat: Repeat, dueDate: string): Weekday[] {
-  const picked = WEEKDAYS.filter((day) => repeat.days.includes(day));
-  if (picked.length > 0) {
-    return picked;
-  }
   const own = weekdayOf(dueDate);
-  return own === null ? [] : [own];
+  return WEEKDAYS.filter((day) => repeat.days.includes(day) || day === own);
 }
 
 /** Why a repeat can't be sent yet; null when it can (or it doesn't repeat). */

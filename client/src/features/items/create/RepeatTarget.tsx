@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { CircleAlert } from 'lucide-react';
 import { useGoogleCalendars, usePrimaryCalendar } from '@/api/queries/integrations';
 import { SourceDot } from '@/components/items/SourceDot';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -52,10 +53,30 @@ export function RepeatTarget({
   const id = useId();
   const primary = usePrimaryCalendar(workspaceId);
   const view: PrimaryCalendarView | undefined = primary.data;
-  const block = primary.isError ? 'unset' : repeatBlockOf(view);
+  const block = repeatBlockOf(view);
   const integrationId = view?.integrationId ?? null;
   const calendarId = view?.calendarId ?? null;
 
+  // Not loaded is not "none": it says so, and offers another try.
+  if (primary.isError) {
+    return (
+      <div role="status" data-repeat-blocked="error" className="flex flex-col gap-1.5 text-[13px]">
+        <p className="flex items-start gap-1.5">
+          <CircleAlert aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+          {t('items.newTodo.repeat.loadFailed')}
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="ms-5 self-start"
+          onClick={() => void primary.refetch()}
+        >
+          {t('items.newTodo.retry')}
+        </Button>
+      </div>
+    );
+  }
   if (block === 'loading') {
     return <Skeleton className="h-6 w-2/3" aria-busy="true" />;
   }

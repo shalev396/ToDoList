@@ -14,6 +14,7 @@ import {
   WEEKDAYS,
   frequencyOf,
   repeatProblem,
+  weekdayOf,
   weeklyDays,
   type Frequency,
   type Repeat,
@@ -94,11 +95,15 @@ export function RepeatControl({
     }
   };
 
+  // The due date's day is always one of them (Google counts the first event): it can't be unticked.
+  const dueDay = weekdayOf(dueDate);
   const toggleDay = (day: Weekday) => {
-    const current = value.days.length === 0 ? days : value.days;
-    const next = current.includes(day)
-      ? current.filter((entry) => entry !== day)
-      : [...current, day];
+    if (day === dueDay) {
+      return;
+    }
+    const next = value.days.includes(day)
+      ? value.days.filter((entry) => entry !== day)
+      : [...value.days, day];
     set({ days: next });
   };
 
@@ -170,13 +175,21 @@ export function RepeatControl({
               <div role="group" aria-labelledby={`${ids}-days`} className="flex flex-wrap gap-1.5">
                 {WEEK_ORDER.map((day) => {
                   const on = days.includes(day);
+                  const fixed = day === dueDay;
                   return (
                     <button
                       key={day}
                       type="button"
                       aria-pressed={on}
-                      aria-label={weekdayName(day, locale, 'long')}
+                      aria-disabled={fixed ? true : undefined}
+                      aria-label={
+                        fixed
+                          ? `${weekdayName(day, locale, 'long')}, ${t('items.newTodo.repeat.dueDay')}`
+                          : weekdayName(day, locale, 'long')
+                      }
+                      title={fixed ? t('items.newTodo.repeat.dueDay') : undefined}
                       data-weekday={day}
+                      data-due-day={fixed ? '' : undefined}
                       className={cn(
                         'inline-flex size-9 items-center justify-center rounded-full border text-[13px] font-medium transition-colors duration-150 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background max-md:size-11',
                         on
