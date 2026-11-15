@@ -12,17 +12,18 @@ It is updated every phase.
 - **Built** (exists in the code): green, solid border.
 - **Planned**: grey, dashed border, with the phase that builds it.
 
-| Phase | What it builds                                                                                                                                                                                                               | State     |
-| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test                 | **built** |
-| 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry`             | **built** |
-| 2a    | The one `static definition` per provider (`IntegrationDefinition`), headers from the auth strategy to the adapters, `OAuthFlow` (Google merged), `ResourcePicker`, capabilities to the client, `Integration`'s collaborators | **built** |
-| 2W    | Write-back (phase 2b): `TaskProvider.updateTask` and each definition's `writableFields`, `CalendarProvider` update/delete event, create calendar, recurrence (`RecurrenceRule`); `BoardProvider` stays planned               | **built** |
-| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects, the cascade template; `User` calls `Workspace.deleteAccountCascade`                                                                                 | **built** |
-| 4     | `Item` hierarchy, `Container`, `ItemQuery`, `CreateQuota`                                                                                                                                                                    | planned   |
-| 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                                    | planned   |
-| 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                                          | planned   |
-| 7     | The legacy list emptied, dead services deleted                                                                                                                                                                               | planned   |
+| Phase | What it builds                                                                                                                                                                                                                                                                         | State     |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test                                                                           | **built** |
+| 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry`                                                                       | **built** |
+| 2a    | The one `static definition` per provider (`IntegrationDefinition`), headers from the auth strategy to the adapters, `OAuthFlow` (Google merged), `ResourcePicker`, capabilities to the client, `Integration`'s collaborators                                                           | **built** |
+| 2W    | Write-back (phase 2b): `TaskProvider.updateTask` and each definition's `writableFields`, `CalendarProvider` update/delete event, create calendar, recurrence (`RecurrenceRule`); `BoardProvider` stays planned                                                                         | **built** |
+| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects, the cascade template; `User` calls `Workspace.deleteAccountCascade`                                                                                                                                           | **built** |
+| PC    | The calendar phase: the workspace's `PrimaryCalendar` (value object in `WorkspaceSettings`, `PrimaryCalendarStatus`), the fixed push rule, `PlannedAt`, a pushed event deleted with its to-do, "Also remove everything TodoList added" (`AddedContentRemover`), block connector scopes | **built** |
+| 4     | `Item` hierarchy, `Container`, `ItemQuery`, `CreateQuota`                                                                                                                                                                                                                              | planned   |
+| 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                                                                                              | planned   |
+| 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                                                                                                    | planned   |
+| 7     | The legacy list emptied, dead services deleted                                                                                                                                                                                                                                         | planned   |
 
 **How the boundary is held.** `server/legacy-db-importers.mjs` names:
 
@@ -596,8 +597,13 @@ classDiagram
     +deleteEvent(caller, item, notice?)
     +deleteLinkedEvent(caller, link)
     +createCalendar(caller, name) GoogleCalendarEntry
+    +primaryCandidate(caller, calendarId) GoogleCalendarEntry
     +dryRun(caller, narrowing, now)
     +push(caller, request)
+  }
+  class AddedContentRemover {
+    <<interface>>
+    +removeAdded(caller) AddedRemoval
   }
   class TaskEdit {
     <<value object>>
@@ -930,10 +936,10 @@ recurrence)` with one RRULE line parsed by `RecurrenceRule`.
 
 **The seams left open:**
 
-- No route calls `updateTask`, `updateEvent`, `deleteEvent`, `deleteLinkedEvent` or
-  `createCalendar` yet: the item REST route, MCP (item ids only) and the ItemSheet UI arrive in
-  phase 4; the primary calendar, its Share dialog and the push rule in the post-phase-3 calendar
-  phase.
+- No route calls `updateTask`, `updateEvent` or `deleteEvent` yet: the item REST route, MCP
+  (item ids only) and the ItemSheet UI arrive in phase 4. (`deleteLinkedEvent` and
+  `createCalendar` are wired by the calendar phase: an item's delete, the primary calendar, the
+  disconnect clean-up.)
 - A field the provider lacks (Jira's or Linear's start date, GitHub's priority) is refused by
   `updateTask`, not kept on the synced columns (the sync would rewrite them). Phase 4 keeps such
   values truly local as overlay overrides, merged on read, beside `overlay.plannedAt`.
@@ -1180,7 +1186,23 @@ classDiagram
     +allowAgentPublish
     +topicRules: TopicRules
     +attributes: AttributeDefinitions
+    +primaryCalendar: PrimaryCalendar
     +patchOf(input)$
+  }
+  class PrimaryCalendar {
+    <<value object>>
+    +integrationId
+    +calendarId
+    +of(integrationId, calendarId)$
+    +from(stored)$
+    +isOn(integrationId)
+  }
+  class PrimaryCalendarStatus {
+    <<value object>>
+    +state
+    +reason
+    +isActive
+    +viewFor(userId)
   }
   class JoinLink {
     <<value object>>
@@ -1213,6 +1235,8 @@ classDiagram
   Workspace ..> JoinLink : stores sealed
   WorkspaceSettings *-- TopicRules
   WorkspaceSettings *-- AttributeDefinitions
+  WorkspaceSettings *-- PrimaryCalendar
+  PrimaryCalendarStatus *-- PrimaryCalendar
   AttributeDefinitions *-- AttributeDefinition
   AttributeDefinition <|-- RatingAttribute
   AttributeDefinition <|-- NumberAttribute
@@ -1310,6 +1334,8 @@ classDiagram
   class Integration:::built
   class Workspace:::built
   class WorkspaceSettings:::built
+  class PrimaryCalendar:::built
+  class PrimaryCalendarStatus:::built
   class JoinLink:::built
   class TopicRules:::built
   class AttributeDefinitions:::built
@@ -1596,6 +1622,72 @@ classDiagram
 
 The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
 SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
+
+## What the calendar phase (PC) built
+
+The rulings are in `.superpowers/sdd/2026-11-14-oop-redesign/progress.md` (the calendar phase).
+
+- **The primary calendar.** `WorkspaceSettings.primaryCalendar` is a `PrimaryCalendar` value
+  object (`{integrationId, calendarId}`), changed only by `Workspace#setPrimaryCalendar` /
+  `clearPrimaryCalendar` (workspace owner only; never a settings patch, never MCP). The integration
+  must be the caller's own (`Integration.findOwn`: 404 for another member's), read & write, and
+  the calendar one its account can write (`GoogleCalendarIntegration#primaryCandidate`), or a new
+  one (`createCalendar`, which now reads it and records it in `config.appCreatedCalendars`).
+  `PrimaryCalendarStatus` is unset, active, or suspended (`read_only`, `disconnected`), read from
+  the integration as it is now; `viewFor(userId)` shows the ids to the integration's owner only.
+  Routes: `GET/PUT/DELETE …/primary-calendar`; audited as `workspace.primary_calendar`
+  (`{integrationId, created}` or `{cleared}`, never a calendar's id or name).
+- **The push** (`gcal/plan.ts`, `commit.ts`, `scheduledSync.ts`): only the integration the primary
+  calendar is on is planned (`CalendarNotPrimaryError`, 409 `calendar_not_primary`), into that
+  calendar, with a fixed rule: every item with a planned, start or due date that the
+  integration's owner may see (`ItemPolicy.for`), Google Calendar's own items and
+  `calendarSync === false` aside. The scheduled run takes only an active primary. A link on
+  another calendar (the primary moved) is deleted there and created in the primary, in one run
+  (never one without the other); the link keeps its row (`ICalendarLinkRepository.upsert` keys
+  on the item now).
+- **`PlannedAt`** (`classes/item/PlannedAt.ts`): `overlay.plannedAt`, a local date or date and
+  time, validated, never synced or written to a provider; a builder field
+  (`overlay.plannedAt`); the push places the event there (a day: all-day; a time: 15 minutes, the
+  same as every projected event without an end).
+- **A deleted to-do's events** go at once: `GoogleCalendarIntegration.deleteEventsOfDeletedItem`
+  runs each live `to_google` link's `deleteLinkedEvent` as that integration's owner, through the
+  write session; read-only, gone or a Google failure leaves the link for the next push.
+  `deleteLinkedEvent` takes a link only when it is live, `to_google` and carries the event id
+  TodoList gives that item (`eventIdFor`), on whichever calendar; an item id that is not a string
+  is 404.
+- **"Also remove everything TodoList added"**: `Integration#disconnect(caller, {removeAdded})`
+  asks an `AddedContentRemover` (Google Calendar; 400 for others) first. `removeAdded` needs read &
+  write, deletes every own live link's event, then each `appCreatedCalendars` calendar that holds no
+  event TodoList did not add (a read first), then the links; audited as `integration.cleanup`
+  (counts only), each Google write as `integration.write`. A failure stops before anything is
+  disconnected.
+- **The calendar writer** deletes a calendar (`DELETE /calendars/{id}`) only for an exact id it
+  was made with (`deletableCalendars`: the integration's `appCreatedCalendars`, kept by the server:
+  a settings change can't set them); a segment that decodes to `/`, `\` or a control character is
+  refused. `writePaths` pins `.removeCalendar(` to one call inside `withWriteSession`, and MCP
+  names none of `setPrimaryCalendar`, `clearPrimaryCalendar`, `removeAdded`.
+- **Block connector scopes**: `connectorScopes?: Record<integrationId, containerExternalId[]>`
+  beside `connectors`; `ItemPolicy#scopeOf` resolves the containers, `compile.ts`'s
+  `connectorFilter` applies them (Google events by `props.calendarId`, any other provider's items
+  by their container).
+- **Minors from the 2W re-review**: an older event's guests fall back to `attendeesCount >= 1`;
+  a write with no answer is audited with `outcome: 'unknown'` (`ProviderNoAnswerError` for
+  trackers); a partial write whose last step got no answer reads "may or may not have taken"
+  (`uncertain`).
+
+## Where the calendar phase left the old modules
+
+| Module                                        | State after PC                                                                                                                        |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `gcal/plan.ts`                                | no `targetCalendarId` / `pushFilter`: the primary calendar from the workspace, the fixed push rule, `ItemPolicy.for` as the owner     |
+| `gcal/commit.ts`                              | a create goes to the primary calendar (from the workspace), an update to its link's calendar                                          |
+| `gcal/diff.ts`                                | `PushItem.plannedAt`; a link on another calendar moves (delete + create); skip reason `not_moved`                                     |
+| `gcal/scheduledSync.ts`                       | eligible = stored rules + the workspace's active primary calendar is on the integration (`Workspace.primaryCalendarStatusOf`)         |
+| `services/items.ts`                           | `deleteItem` deletes the to-do's pushed events at once; facets' containers name their integration and external id; `plannedAt`        |
+| `services/workspaceQuery.ts`, `dashboards.ts` | a block's (or draft's) `connectorScopes` through `ItemPolicy#scopeOf`                                                                 |
+| `models/*/CalendarLink.ts`                    | `upsert` keyed on the item; `listLiveForItem`, `removeForIntegration`                                                                 |
+| `models/*/Workspace.ts`                       | `settings.primaryCalendar`; `setPrimaryCalendar` (never through `update`)                                                             |
+| `migrations/primaryCalendar.ts`               | a stored push target becomes the primary calendar when the owner rules allow it; every config loses `targetCalendarId` / `pushFilter` |
 
 ## Where phase 3 left the old modules
 
