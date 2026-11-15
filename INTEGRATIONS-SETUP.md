@@ -97,7 +97,7 @@ With any method, the app never edits, closes or comments on anything at the prov
 
 ## 1. Google Calendar
 
-Scopes the code requests (`GOOGLE_CALENDAR_OAUTH_SCOPES` in `server/src/services/googleOAuthClient.ts`): `openid`, `email`, `https://www.googleapis.com/auth/calendar.events`, `https://www.googleapis.com/auth/calendar.calendarlist.readonly`. The last two are required: if the user unticks one, the connection fails with `oauth_scope_missing`. Also sent: `access_type=offline`, `prompt=consent`, PKCE S256.
+Scopes the code requests (`GOOGLE_CALENDAR_OAUTH_SCOPES` in `server/src/classes/integration/definitions/googleCalendarAuth.ts`): `openid`, `email`, `https://www.googleapis.com/auth/calendar.events`, `https://www.googleapis.com/auth/calendar.calendarlist.readonly`, and (since commit c0c407d) `https://www.googleapis.com/auth/calendar.app.created`, asked but never required, so TodoList can create and manage calendars of its own. `calendar.events` and `calendar.calendarlist.readonly` are required: if the user unticks one, the connection fails with `oauth_scope_missing`. Also sent: `access_type=offline`, `prompt=consent`, PKCE S256.
 
 **Setup.** Google Cloud Console: <https://console.cloud.google.com/>. App type: **Web application** OAuth client. **Three Google Cloud projects**, because the consent screen (name, publishing status) belongs to the project. dev and qa stay in **Testing**; prod is published and verified.
 
@@ -117,7 +117,7 @@ Per stage:
 2. **Google Auth Platform** (<https://console.cloud.google.com/auth/overview>), then:
    - **Branding**: app name ("ToDoList-Dev", "ToDoList-QA"; prod: "TodoList", spelled like the site), support email, privacy policy `https://<stage domain>/en/legal/privacy`, terms `https://<stage domain>/en/legal/terms`, prod also the homepage `https://todolist.shalev396.com`. The authorized domain `shalev396.com` is added by itself when you add the redirect URI (step 3). No logo on dev/qa: a logo makes Google ask for verification.
    - **Audience**: **External**. dev/qa: leave **Testing** and add your test users. prod: **Publish app** only as part of verification (below).
-   - **Data access**: add the four scopes above. Google labels `calendar.events` sensitive; the other three are non-sensitive.
+   - **Data access**: add the five scopes above. Google labels `calendar.events` sensitive; the other four (including `calendar.app.created`) are non-sensitive. **Whenever the code's scope list changes, update Data access on all three projects**: verification rejects scopes that are not declared.
 3. **Clients, Create client, Web application**, name as the project. Authorized redirect URI (exactly one):
 
    | Stage | Authorized redirect URI                                                        |
@@ -139,15 +139,16 @@ Everything but the video and the submission is done (2026-11-15). Until it passe
 
 - [x] Search Console: `shalev396.com` is a verified Domain property of the project owner's account (2026-11-15). The `google-site-verification` TXT record at the apex in Route 53 does it: never delete that record.
 - [x] Branding on prod: app name "TodoList" (the site's spelling, `APP_DISPLAY_NAME`), support and developer email, homepage, privacy and terms links, authorized domain `shalev396.com`. dev and qa have their own privacy and terms links.
-- [x] Data access on prod: the four scopes.
+- [x] Data access on all three projects: the five scopes (`calendar.app.created` added 2026-11-15).
 
 **Code and content**
 
 - [x] **Prod is live and public**: `https://todolist.shalev396.com`, `/en/legal/privacy` and `/en/legal/terms` answer 200 with no login or basic-auth prompt.
 - [x] **Homepage** says what the app does (the hero names Google Calendar), links to the privacy policy in the footer, and its FAQ answers "What does TodoList do with my Google Calendar?" (`faq.googleCalendar`).
+- [ ] **Re-check before submitting** if these ship first: TodoList creating its own calendars (`calendar.app.created`) and editing events it did not create (write-back). The privacy policy's "Google user data" section and the `calendar.events` justification must then say so, and the demo video must show it.
 - [x] **Same name everywhere**: "TodoList" on the consent screen and the site. Keep it that way; renaming either starts a new review.
 - [x] **Privacy policy** (`client/src/i18n/translations/{en,he}/legal.ts`): section "Google user data" (what is read and why, when the app writes, storage, no sale, ads or AI training, who sees it, revoke and delete) and section "Google API Services User Data Policy" with Google's Limited Use statement word for word, linked to the policy.
-- [x] Logo on the prod consent screen (2026-11-15): 120x120 PNG made from `client/public/icon-512.png`. dev and qa have none (a logo is reviewed; they stay in Testing). Changing it later starts a new review.
+- [x] Logo on the prod consent screen (2026-11-15): 120x120 PNG made from `client/public/icon-512.png`. dev and qa have the same logo (no review in Testing). Changing it later starts a new review.
 - [ ] Before submitting, re-read the "Google user data" section against the code: it promises disconnect revokes at Google (it does: `gcal/oauthCalendar.ts`) and that purged copies follow "How long we keep things", whose 30-day purge needs the `purge` action to actually run (no schedule exists yet).
 
 **Submit (Google Cloud console, project `todolist-prod-514721`)**
