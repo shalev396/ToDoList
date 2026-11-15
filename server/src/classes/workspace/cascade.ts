@@ -32,9 +32,13 @@ import { Integration } from '../integration/index.js';
 import { Invite } from './Invite.js';
 import { Member } from './Member.js';
 
+/** Removes a workspace's dashboards (with their histories) and its saved views. */
+type DashboardRemoval = (workspaceId: string) => Promise<void>;
+
 export abstract class WorkspaceTeardown {
   readonly #workspaceId: string;
   readonly #actor: Actor;
+  #dashboardRemoval: DashboardRemoval | null = null;
 
   constructor(workspaceId: string, actor: Actor) {
     this.#workspaceId = workspaceId;
@@ -52,8 +56,9 @@ export abstract class WorkspaceTeardown {
   /** The audit entry's meta: why the workspace ended. */
   protected abstract auditMeta(): Record<string, unknown>;
 
-  /** The steps, in their order. */
+  /** The steps, in their order; what they need is loaded before the first destructive one. */
   async run(): Promise<void> {
+    await this.prepare();
     const workspaceName = await this.nameOfWorkspace();
     await this.removeIntegrations();
     await this.retireWorkspace();
@@ -87,16 +92,29 @@ export abstract class WorkspaceTeardown {
   }
 
   /**
-   * The dashboards (with their histories) and the saved views. Imported on first use: dashboards
-   * bring the whole builder, which deleting a workspace otherwise never needs.
+   * Loads the dashboard classes (they bring the whole builder, which a workspace's other steps
+   * never need) before anything is deleted: a failed load stops the run with nothing removed, so
+   * the owner can try again (once the workspace is retired, requireWorkspace answers 404).
    */
-  protected async removeDashboards(): Promise<void> {
+  protected async prepare(): Promise<void> {
+    this.#dashboardRemoval = await WorkspaceTeardown.#loadDashboardRemoval();
+  }
+
+  static async #loadDashboardRemoval(): Promise<DashboardRemoval> {
     const [{ Dashboard }, { View }] = await Promise.all([
       import('../dashboard/Dashboard.js'),
       import('../dashboard/View.js'),
     ]);
-    await Dashboard.removeAllIn(this.#workspaceId);
-    await View.removeAllIn(this.#workspaceId);
+    return async (workspaceId) => {
+      await Dashboard.removeAllIn(workspaceId);
+      await View.removeAllIn(workspaceId);
+    };
+  }
+
+  /** The dashboards (with their histories) and the saved views, hard-deleted. */
+  protected async removeDashboards(): Promise<void> {
+    const removal = this.#dashboardRemoval ?? (await WorkspaceTeardown.#loadDashboardRemoval());
+    await removal(this.#workspaceId);
   }
 
   protected async endMemberships(): Promise<void> {

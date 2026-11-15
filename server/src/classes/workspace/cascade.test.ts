@@ -12,6 +12,11 @@ class Recording extends WorkspaceTeardown {
     return {};
   }
 
+  protected override prepare(): Promise<void> {
+    this.steps.push('prepare');
+    return Promise.resolve();
+  }
+
   protected override nameOfWorkspace(): Promise<string> {
     this.steps.push('name');
     return Promise.resolve('Name');
@@ -59,10 +64,22 @@ class Recording extends WorkspaceTeardown {
 }
 
 describe('WorkspaceTeardown', () => {
+  it('loads what it needs before the first destructive step: a failed load removes nothing', async () => {
+    class FailingLoad extends Recording {
+      protected override prepare(): Promise<void> {
+        return Promise.reject(new Error('the builder could not be loaded'));
+      }
+    }
+    const teardown = new FailingLoad('w-1', Actor.user('u-1'));
+    await assert.rejects(teardown.run(), /could not be loaded/);
+    assert.deepEqual(teardown.steps, []);
+  });
+
   it('runs the steps in the plan’s order: integrations, items, dashboards, members, audit', async () => {
     const teardown = new Recording('w-1', Actor.user('u-1'));
     await teardown.run();
     assert.deepEqual(teardown.steps, [
+      'prepare',
       'name',
       'integrations',
       'workspace',
@@ -83,6 +100,6 @@ describe('WorkspaceTeardown', () => {
     }
     const teardown = new Failing('w-1', Actor.user('u-1'));
     await assert.rejects(teardown.run(), /credential behind/);
-    assert.deepEqual(teardown.steps, ['name']);
+    assert.deepEqual(teardown.steps, ['prepare', 'name']);
   });
 });
