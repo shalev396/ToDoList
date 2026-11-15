@@ -384,7 +384,7 @@ function LocalEditor({ item, timeZone }: { item: ItemDetail; timeZone: string })
         ? 'saved'
         : 'idle';
   return editing ? (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2" data-item-local-edit="">
       <EditForm
         item={item}
         timeZone={timeZone}
@@ -396,7 +396,7 @@ function LocalEditor({ item, timeZone }: { item: ItemDetail; timeZone: string })
       <SaveStatus className="self-start" state={state} />
     </div>
   ) : (
-    <div className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-wrap items-center gap-3" data-item-local-edit="">
       <Button
         variant="outline"
         size="sm"

@@ -1,5 +1,5 @@
 """
-The control blocks (filter, action, note) and the item Sheet (`?item=`).
+The control blocks (filter, action, note), the item Sheet (`?item=`) and New to-do's Repeat.
 
 Each test owns a fresh workspace. The mirrored-item test loads the demo data (`loadDemoData`,
 dev and qa) into its own workspace.
@@ -112,9 +112,11 @@ def test_item_sheet_opens_edits_and_back_closes(page: Page, base_url: str, api_b
     sheet.get_by_role("button", name="Save changes").click()
     expect(sheet.locator("[data-item-title]")).to_have_text("Write the final report")
 
-    # Overlay: pin it; the change is saved.
+    expect(sheet.locator("[data-item-local-edit] [data-save-status=saved]")).to_have_count(1)
+
+    # Overlay: pin it; the change is saved (its own status, beside the overlay controls).
     sheet.get_by_role("switch", name="Pin this item").click()
-    expect(sheet.get_by_text("Saved", exact=True)).to_be_visible()
+    expect(sheet.locator("section[aria-labelledby=item-overlay] [data-save-status=saved]")).to_be_visible()
 
     # The browser's back button closes the Sheet.
     page.go_back()
@@ -122,9 +124,11 @@ def test_item_sheet_opens_edits_and_back_closes(page: Page, base_url: str, api_b
     expect(page).not_to_have_url(re.compile(r"item="))
 
 
-def test_mirrored_item_has_no_edit_controls(
+def test_mirrored_item_edits_follow_its_connection(
     page: Page, base_url: str, api_base_url: str, new_workspace
 ):
+    """Demo data stays read-only and can't be switched: Jira's own fields are locked under one
+    hint (no "switch it"), while a start date Jira lacks is kept in TodoList by any editor."""
     owner = pooled_user(api_base_url, "demo")
     demo = new_workspace(owner, "Demo workspace", timezone="Asia/Jerusalem", loadDemoData=True)
     items = list_items(api_base_url, owner, demo["id"], provider="jira")
@@ -135,12 +139,81 @@ def test_mirrored_item_has_no_edit_controls(
     open_as(page, base_url, owner, f"/en/dashboard?item={item['id']}", workspace_id=demo["id"])
     sheet = page.locator("[data-item-sheet]")
     expect(sheet.locator("[data-item-title]")).to_have_text(item["title"], timeout=NORMAL_TIMEOUT)
-    expect(sheet.locator("[data-mirrored-note]")).to_contain_text("edited in Jira")
-    expect(sheet.get_by_role("button", name="Edit", exact=True)).to_have_count(0)
-    expect(sheet.get_by_label("Title")).to_have_count(0)
+    expect(sheet.locator("[data-read-only-marker]")).to_contain_text("Read-only")
+    lock = sheet.locator("[data-provider-lock]")
+    expect(lock).to_have_attribute("data-provider-lock", "writes_off", timeout=NORMAL_TIMEOUT)
+    expect(lock).to_have_text("TodoList can’t send changes to Jira from this connection.")
     link = sheet.locator("a[data-source-link]")
     expect(link).to_have_attribute("href", item["source"]["url"])
+
+    # The provider's fields are shown, disabled under that hint; the start date is TodoList's own.
+    edit = sheet.locator("[data-item-edit]")
+    edit.get_by_role("button", name="Edit", exact=True).click()
+    form = sheet.locator("[data-item-edit-form]")
+    title = form.get_by_label("Title", exact=True)
+    expect(title).to_be_disabled()
+    expect(title).to_have_attribute("aria-describedby", re.compile(".+"))
+    start = form.locator("[data-edit-field=startAt]")
+    expect(start).to_have_attribute("data-origin", "override")
+    expect(start.locator("[data-only-here]")).to_contain_text("Only in TodoList")
+    start.locator("input[type=date]").fill("2027-01-04")
+    form.locator("[data-item-edit-save]").click()
+    expect(edit.locator("[data-save-status=saved]")).to_be_visible(timeout=NORMAL_TIMEOUT)
+    stored = next(i for i in list_items(api_base_url, owner, demo["id"], provider="jira") if i["id"] == item["id"])
+    assert stored["overlay"]["overrides"]["startAt"], "the start is kept as an override"
+
+    # Use Jira's value: Jira has no start date, so the override goes.
+    edit.get_by_role("button", name="Edit", exact=True).click()
+    sheet.locator("[data-use-source=startAt]").click()
+    expect(sheet.locator("[data-use-source=startAt]")).to_have_count(0, timeout=NORMAL_TIMEOUT)
+
     # The overlay still works: it never writes to Jira.
     sheet.get_by_role("switch", name="Hide from my dashboards").click()
-    expect(sheet.get_by_text("Saved", exact=True)).to_be_visible()
+    overlay = sheet.locator("section[aria-labelledby=item-overlay]")
+    expect(overlay.locator("[data-save-status=saved]")).to_be_visible()
     sheet.get_by_role("switch", name="Hide from my dashboards").click()
+
+
+def test_new_todo_repeat_needs_the_workspace_calendar(
+    page: Page, base_url: str, api_base_url: str, fresh_owner
+):
+    """Repeat is like Google Calendar's; a repeating to-do goes to the workspace calendar only, so
+    without one it says so, links to its settings, and can't be saved."""
+    user, workspace = fresh_owner
+    create_dashboard(api_base_url, user, workspace["id"])
+    page.set_viewport_size(DESKTOP_VIEWPORT)
+    open_as(page, base_url, user, "/en/dashboard")
+    page.locator("[data-new-todo-open]").first.click()
+    sheet = page.locator("[data-new-todo]")
+    expect(sheet).to_be_visible(timeout=NORMAL_TIMEOUT)
+    sheet.get_by_label("Title").fill("Water the plants")
+    sheet.get_by_label("Due", exact=True).fill("2026-12-01")
+
+    sheet.get_by_label("Repeat", exact=True).click()
+    page.get_by_role("option", name=re.compile(r"^Weekly")).click()
+    # 1 Dec 2026 is a Tuesday: the rule starts on its day; another day can be added.
+    expect(sheet.locator("[data-weekday]")).to_have_count(7)
+    expect(sheet.locator("[data-weekday=TU]")).to_have_attribute("aria-pressed", "true")
+    sheet.locator("[data-weekday=TH]").click()
+    expect(sheet.get_by_label("Repeat", exact=True)).to_have_text("Weekly on Tuesday and Thursday")
+
+    expect(sheet.locator("[data-calendar-only]")).to_have_text(
+        "Repeating to-dos are created in Google Calendar only"
+    )
+    blocked = sheet.locator("[data-repeat-blocked=unset]")
+    expect(blocked).to_be_visible(timeout=NORMAL_TIMEOUT)
+    expect(blocked.get_by_role("link", name="Open the workspace calendar settings")).to_have_attribute(
+        "href", "/en/integrations"
+    )
+    expect(sheet.locator("[data-new-todo-save]")).to_be_disabled()
+
+    # Ends after N times: a count out of range says so.
+    sheet.get_by_role("radio", name="After").click()
+    sheet.get_by_label("Number of times").fill("0")
+    expect(sheet.locator("[data-repeat-problem]")).to_have_text("End after 1 to 999 times.")
+
+    # Does not repeat: a plain to-do again.
+    sheet.get_by_label("Repeat", exact=True).click()
+    page.get_by_role("option", name="Does not repeat").click()
+    expect(sheet.locator("[data-calendar-only]")).to_have_count(0)
+    expect(sheet.locator("[data-new-todo-save]")).to_be_enabled()
