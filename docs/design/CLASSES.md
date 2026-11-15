@@ -18,7 +18,7 @@ It is updated every phase.
 | 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry`             | **built** |
 | 2a    | The one `static definition` per provider (`IntegrationDefinition`), headers from the auth strategy to the adapters, `OAuthFlow` (Google merged), `ResourcePicker`, capabilities to the client, `Integration`'s collaborators | **built** |
 | 2W    | Write-back (phase 2b): `TaskProvider.updateTask` and each definition's `writableFields`, `CalendarProvider` update/delete event, create calendar, recurrence (`RecurrenceRule`); `BoardProvider` stays planned               | **built** |
-| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects; `User` reworked                                                                                                                                     | planned   |
+| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects, the cascade template; `User` calls `Workspace.deleteAccountCascade`                                                                                 | **built** |
 | 4     | `Item` hierarchy, `Container`, `ItemQuery`, `CreateQuota`                                                                                                                                                                    | planned   |
 | 5     | `SyncRun` state machine, `Integration.sync()`, `Calendar`                                                                                                                                                                    | planned   |
 | 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                                          | planned   |
@@ -34,7 +34,7 @@ It is updated every phase.
   `local.ts`, `stageMaintenance.ts`);
 - the test helpers production code never loads (`src/testing/**`, `__tests__/**`);
 - `LEGACY_DB_IMPORTERS`, the modules that still reach the database until their phase moves them
-  (24 after phase 1; 35 after phase 0, down from 42).
+  (20 after phase 3; 23 after phase 2a; 24 after phase 1; 35 after phase 0, down from 42).
 
 ESLint (`@typescript-eslint/no-restricted-imports`, type imports allowed) and
 `src/classes/classBoundary.test.ts` (which also resolves paths, sees dynamic imports and names
@@ -219,7 +219,7 @@ classDiagram
   AuditLog ..> Auditable
 
   class User {
-    existing, reworked in phase 3
+    existing; deleteAccount calls Workspace.deleteAccountCascade (phase 3)
     +findById(id)$ User
     +findByCognitoSub(sub)$ User
     +upsertFromLogin()$ User
@@ -1123,7 +1123,12 @@ classDiagram
 for a `CalendarProvider`, so it gets the read-only gate for free. Changing a source field of a
 `MirroredItem` throws `MirroredItemError`.
 
-## 5. Workspace and people (phase 3)
+## 5. Workspace and people (phase 3, built)
+
+`classes/workspace/`. Callers pass their `Caller`; its actor (user or agent key, with the request's
+address and user agent) is the one recorded in the audit log, so every workspace entry now carries
+the real ip and user agent. `Workspace` is the aggregate root: `Member`, `Invite` and `Topic` are
+entities of their own that point at it by workspace id.
 
 ```mermaid
 classDiagram
@@ -1136,12 +1141,22 @@ classDiagram
   }
   class Workspace {
     <<aggregate root>>
-    +create()$
-    +listFor(user)$
-    +load(caller)$
-    +update(caller, patch)
-    +delete(caller)
-    +deleteAccountCascade(user)$
+    +settings: WorkspaceSettings
+    +create(user, input, deps, actor)$ Workspace
+    +listFor(userId)$ MyWorkspace[]
+    +statusFor(user)$ WorkspaceStatus
+    +load(caller)$ Workspace
+    +setDefault(userId, workspaceId)$ string
+    +acceptJoinLink(token, user, actor)$ workspaceId
+    +deleteAccountCascade(userId, actor)$ void
+    +update(caller, input) Workspace
+    +delete(caller) void
+    +getJoinLink(caller) JoinLinkState
+    +setJoinLink(caller, input) JoinLinkState
+    +resetJoinLink(caller) JoinLinkState
+    +createAttribute(caller, input) AttributeDef
+    +updateAttribute(caller, key, patch) AttributeDef
+    +deleteAttribute(caller, key) items
   }
   Entity <|-- Workspace
   class Auditable {
@@ -1160,38 +1175,85 @@ classDiagram
   SoftDeletable <|.. Workspace
   class WorkspaceSettings {
     <<value object>>
+    +timezone
+    +weekStart
+    +allowAgentPublish
+    +topicRules: TopicRules
+    +attributes: AttributeDefinitions
+    +patchOf(input)$
   }
   class JoinLink {
     <<value object>>
+    +role
+    +issue(workspaceId, role)$
+    +state(workspaceId)
+    +withRole(role)
+    +matches(tokenHash)
   }
   class TopicRules {
     <<value object>>
+    +normalize(rules)$
+    +matches(pattern, key)$
+    +classify(input)
   }
   class AttributeDefinitions {
     <<value object>>
+    +of(settings)$
+    +find(key)
+    +prepare(values)
   }
   class AttributeDefinition {
-    <<value object>>
+    <<abstract value object>>
+    +of(data)$
+    +check(value)
+    +store(value)
+    #valueError(value)*
   }
   Workspace *-- WorkspaceSettings
-  Workspace *-- JoinLink
-  Workspace *-- TopicRules
-  Workspace *-- AttributeDefinitions
+  Workspace ..> JoinLink : stores sealed
+  WorkspaceSettings *-- TopicRules
+  WorkspaceSettings *-- AttributeDefinitions
   AttributeDefinitions *-- AttributeDefinition
+  AttributeDefinition <|-- RatingAttribute
+  AttributeDefinition <|-- NumberAttribute
+  AttributeDefinition <|-- TextAttribute
+  AttributeDefinition <|-- CheckboxAttribute
+  AttributeDefinition <|-- DateAttribute
+  AttributeDefinition <|-- SelectAttribute
+  AttributeDefinition <|-- MultiSelectAttribute
 
   class Member {
     +role: Role
-    +update(caller, patch)
-    +remove(caller)
-    +leave(caller)
+    +name, email
+    +list(caller)$
+    +find(caller, userId)$
+    +update(caller, userId, input)$
+    +remove(caller, userId)$
+    +leave(caller)$
+    +endMembership(workspaceId, userId, actor)$
+    -assertNotLastOwner()
   }
   class Invite {
+    +role: Role
+    +isExpired(now)
+    +revoke(caller)
+    +deliver(caller, url, extras)
     +create(caller, input)$
-    +accept(token, user)$
+    +list(caller)$
+    +pending(caller, id)$
+    +accept(token, user, actor)$
     +pendingFor(email)$
   }
   class Topic {
-    +bySlug(caller, slug)$
+    +list(workspaceId)$
+    +bySlug(workspaceId, slug)$
+    +assertOf(workspaceId, topicId)$
+    +defaultId(workspaceId, slug)$
+    +ensureDefaults()$
+    +create(caller, input)$
+    +createPage(caller, input)$
+    +update(caller, id, input)$
+    +delete(caller, id)$
   }
   WorkspaceEntity <|-- Member
   WorkspaceEntity <|-- Invite
@@ -1205,9 +1267,34 @@ classDiagram
     <<value object>>
   }
   Member *-- Role
+  Invite *-- Role
+
+  class WorkspaceTeardown {
+    <<abstract, template method>>
+    +run()
+    #removeIntegrations()
+    #retireWorkspace()
+    #removeItems()
+    #removeContainers()
+    #endMemberships()
+    #recordAudit()
+    #notifyConnectedMembers()
+    #auditMeta()*
+  }
+  class OwnerDeletion
+  class AccountClosingDeletion
+  WorkspaceTeardown <|-- OwnerDeletion
+  WorkspaceTeardown <|-- AccountClosingDeletion
+  Workspace ..> OwnerDeletion : delete
+  Workspace ..> AccountClosingDeletion : deleteAccountCascade
+  WorkspaceTeardown ..> Member : endAll
+  WorkspaceTeardown ..> Invite : revokeAllPending
+  WorkspaceTeardown ..> Integration : removeAllIn
+  class Integration
   class User
   class Media
   User ..> Workspace : deleteAccount calls deleteAccountCascade
+  Invite ..> Member : assertRoomFor, add
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
   classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
@@ -1220,16 +1307,46 @@ classDiagram
   class Role:::built
   class User:::built
   class Media:::built
-  class Workspace:::planned
-  class WorkspaceSettings:::planned
-  class JoinLink:::planned
-  class TopicRules:::planned
-  class AttributeDefinitions:::planned
-  class AttributeDefinition:::planned
-  class Member:::planned
-  class Invite:::planned
-  class Topic:::planned
+  class Integration:::built
+  class Workspace:::built
+  class WorkspaceSettings:::built
+  class JoinLink:::built
+  class TopicRules:::built
+  class AttributeDefinitions:::built
+  class AttributeDefinition:::built
+  class RatingAttribute:::built
+  class NumberAttribute:::built
+  class TextAttribute:::built
+  class CheckboxAttribute:::built
+  class DateAttribute:::built
+  class SelectAttribute:::built
+  class MultiSelectAttribute:::built
+  class Member:::built
+  class Invite:::built
+  class Topic:::built
+  class WorkspaceTeardown:::built
+  class OwnerDeletion:::built
+  class AccountClosingDeletion:::built
 ```
+
+How the pieces work, in short:
+
+- **Owner rule.** `assertOwner(caller)` (`ownerOnly.ts`) is the one owner check (`WorkspacePolicy`,
+  403 "Only an owner can do this"). `Member.update`, `Member.remove` and the invite and join-link
+  methods call it first, as the old services did, so a refusal still comes before any lookup.
+- **Last owner.** `Member` holds the rule (409 `last_owner`): the only owner can't be demoted,
+  removed or leave. Ending a membership revokes the agent keys and disconnects the member's
+  integrations (`Integration.disconnectAllOf`).
+- **Cascade.** `WorkspaceTeardown.run` is the template: integrations (credentials first, checked
+  gone), the workspace row, items, containers, invites and members, the `workspace.delete` audit
+  entry, then the emails. The two subclasses differ only in the audit meta (`{}` or
+  `{reason: 'account_deleted'}`). Dashboards are not a step: they go dark with the workspace and its
+  purge, as before.
+- **Join link.** `JoinLink` seals the token with the stage key, bound to the workspace (the crypto
+  of the old `joinLinkVault`, unchanged); only its hash is searchable.
+- **Attributes and topic rules.** `AttributeDefinition` is one subclass per type (what a value may
+  be and how it is stored is polymorphic); `TopicRules` classifies a container's match key and
+  validates a request's rules.
 
 ## 6. Dashboards and views (phase 6)
 
@@ -1470,6 +1587,21 @@ classDiagram
 
 The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
 SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
+
+## Where phase 3 left the old modules
+
+| Module                                                     | State after phase 3                                                                                                                                     |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `services/workspaces.ts`                                   | **removed**: `Workspace`, `Member`, `Invite`, `JoinLink` and the cascade (`workspace/cascade.ts`)                                                       |
+| `services/attributes.ts`                                   | **removed**: `Workspace#createAttribute` / `updateAttribute` / `deleteAttribute`, `AttributeDefinitions` (`attributesOf`, `prepare`)                    |
+| `services/topics.ts`, `services/topicRules.ts`             | **removed**: `Topic`, `TopicRules`                                                                                                                      |
+| `services/crypto/joinLinkVault.ts`                         | **removed**: `JoinLink` seals and opens the token (the same stage key and context)                                                                      |
+| `types/attributes.ts`                                      | `attributeValueError` is gone: each `AttributeDefinition` subclass holds its type's rule. The zod schemas, `numberRange`, `dayOf`, `noonOf` stay (pure) |
+| `services/inviteTokens.ts`                                 | stays pure (hashing and drawing a token; no database)                                                                                                   |
+| `services/inviteDelivery.ts`                               | stays: the invite email and the links; `Invite#deliver` sends it (it read the workspace and inviter, now in the class)                                  |
+| `services/workspaceSchemas.ts`, `services/topicSchemas.ts` | stay (pure zod); limits come from `TopicRules` and `workspace/workspaceRules.ts`                                                                        |
+| `classes/User.ts`                                          | `deleteAccount` calls `Workspace.deleteAccountCascade` (class to class, no service)                                                                     |
+| `classes/integration/Integration.ts`, `Credential.ts`      | `Integration.removeAllIn` / `ownersRemovedWith` and `Credential.destroyAllIn` serve the cascade                                                         |
 
 ## Where phase 2W (write-back) left the old modules
 
