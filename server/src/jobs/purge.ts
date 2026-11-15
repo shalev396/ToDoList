@@ -7,17 +7,15 @@
  *   at the source, or deleted by a user), in every workspace.
  *
  * Global maintenance on purpose: it runs from the `purge` direct-invoke action only (lambda.ts),
- * through the repositories' explicitly global purgeDeletedBefore() and
- * listRunningStartedBefore().
+ * through the classes' explicitly global reads and writes: SyncRun.reapStuck (the reaper),
+ * Item.purgeDeletedBefore and Container.purgeDeletedBefore. Dashboard versions are pruned where
+ * they always are, on each save, not here.
  */
-import {
-  getContainerRepository,
-  getIntegrationRepository,
-  getItemRepository,
-  getSyncRunRepository,
-} from '../models/index.js';
+import { Integration } from '../classes/integration/index.js';
+import { Container, Item } from '../classes/item/index.js';
+import { SyncEngine } from '../classes/sync/SyncEngine.js';
+import { SyncRun } from '../classes/sync/SyncRun.js';
 import { logger } from '../services/logger.js';
-import { SYNC_ERROR_MESSAGES } from '../sync/runSync.js';
 
 export const PURGE_AFTER_DAYS = 30;
 /** A run still `running` this long after it started is dead: a sync job's timeout is 5 min. */
@@ -37,43 +35,26 @@ export interface PurgeResult {
 }
 
 /**
- * Ends the runs still `running` STALE_RUN_AFTER_MS after they started (a conditional write, so a
- * run that finishes meanwhile keeps its own outcome). Returns how many it ended.
+ * Ends the runs still `running` STALE_RUN_AFTER_MS after they started (SyncRun.reapStuck: a
+ * conditional write, so a run that finishes meanwhile keeps its own outcome). When such a run's
+ * integration was disconnected, what the dead run wrote or revived after the disconnect is
+ * deleted again. Returns how many runs it ended.
  */
 async function endStaleRuns(now: Date): Promise<number> {
-  const runs = await getSyncRunRepository();
-  const stale = await runs.listRunningStartedBefore(
-    new Date(now.getTime() - STALE_RUN_AFTER_MS),
-    STALE_RUNS_PER_PURGE,
-  );
-  const error = { code: 'timeout', message: SYNC_ERROR_MESSAGES.timeout };
-  let ended = 0;
-  for (const run of stale) {
-    const closed = await runs.updateIfStatus(run.workspaceId, run.id, ['running'], {
-      status: 'failed',
-      finishedAt: now,
-      error,
-    });
-    if (closed === null) continue;
-    ended += 1;
-    if ((await (await getIntegrationRepository()).findByIdForWorker(run.integrationId)) !== null) {
-      continue;
-    }
+  const reaped = await SyncRun.reapStuck(now, STALE_RUN_AFTER_MS, STALE_RUNS_PER_PURGE);
+  for (const run of reaped) {
+    if ((await Integration.forWorker(run.integrationId)) !== null) continue;
     // Disconnected: what the dead run wrote or revived after the disconnect is deleted again.
-    const { workspaceId, integrationId } = run;
-    await (await getItemRepository()).softDeleteForIntegration(workspaceId, integrationId, now);
-    await (
-      await getContainerRepository()
-    ).softDeleteForIntegration(workspaceId, integrationId, now);
+    await SyncEngine.deleteWritesOf({ id: run.integrationId, workspaceId: run.workspaceId }, now);
   }
-  if (ended > 0) logger.warn('sync runs timed out', { count: ended });
-  return ended;
+  if (reaped.length > 0) logger.warn('sync runs timed out', { count: reaped.length });
+  return reaped.length;
 }
 
 export async function purgeDeleted(now: Date = new Date()): Promise<PurgeResult> {
   const timedOutRuns = await endStaleRuns(now);
   const before = new Date(now.getTime() - PURGE_AFTER_DAYS * DAY_MS);
-  const items = await (await getItemRepository()).purgeDeletedBefore(before);
-  const containers = await (await getContainerRepository()).purgeDeletedBefore(before);
+  const items = await Item.purgeDeletedBefore(before);
+  const containers = await Container.purgeDeletedBefore(before);
   return { before, items, containers, timedOutRuns };
 }

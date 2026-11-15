@@ -26,7 +26,7 @@ import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js
 import type { Provider } from '../types/domain.js';
 import type { HttpRequest, HttpResponse, Transport } from './http.js';
 import { registerAdapter } from './registry.js';
-import type { SyncRunOptions } from './runSync.js';
+import type { SyncRunOptions } from '../testing/syncCalls.js';
 import { setVaultLoaderForTests, type SyncVault } from './secrets.js';
 import {
   fixtureTransport,
@@ -83,7 +83,7 @@ afterEach(() => {
 });
 
 async function run(integrationId: string, opts: SyncRunOptions): Promise<SyncRunSummary> {
-  const { runIntegrationSync } = await import('./runSync.js');
+  const { runIntegrationSync } = await import('../testing/syncCalls.js');
   return runIntegrationSync(integrationId, opts);
 }
 

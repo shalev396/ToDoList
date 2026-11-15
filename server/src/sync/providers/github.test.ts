@@ -17,7 +17,7 @@ import { ItemMongoModel } from '../../models/mongoose/Item.js';
 import { installOutboundGuard, type OutboundGuard } from '../../testing/outboundGuard.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import type { HttpRequest, HttpResponse } from '../http.js';
-import type { SyncRunOptions } from '../runSync.js';
+import type { SyncRunOptions } from '../../testing/syncCalls.js';
 import { setVaultLoaderForTests, type SyncVault } from '../secrets.js';
 import {
   fixtureTransport,
@@ -1754,7 +1754,7 @@ describe('github: runIntegrationSync with this adapter', () => {
   });
 
   async function run(integrationId: string, opts: SyncRunOptions): Promise<SyncRunSummary> {
-    const { runIntegrationSync } = await import('../runSync.js');
+    const { runIntegrationSync } = await import('../../testing/syncCalls.js');
     return runIntegrationSync(integrationId, opts);
   }
 

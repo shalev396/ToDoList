@@ -60,15 +60,10 @@ export const AUDIT_LOG_WRITER = 'src/classes/AuditLog.ts';
 export const LEGACY_DB_IMPORTERS = [
   'src/gcal/commit.ts',
   'src/gcal/plan.ts',
-  'src/jobs/purge.ts',
   'src/mcp/tools/workspace/auditLogQuery.ts',
   'src/seed/seedWorkspace.ts',
   'src/services/connectLinks.ts',
   'src/services/dashboards.ts',
   'src/services/personas.ts',
-  'src/services/syncJobs.ts',
-  'src/services/syncRuns.ts',
   'src/services/views.ts',
-  'src/sync/dispatcher.ts',
-  'src/sync/runSync.ts',
 ];

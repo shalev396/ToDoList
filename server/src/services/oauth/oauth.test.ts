@@ -750,7 +750,7 @@ describe('refresh and rotation', () => {
     const iid = await connectThrough('linear');
     await expire('linear', iid);
     await fetch(`${mock.url}/__reset`, { method: 'POST' });
-    const { runIntegrationSync } = await import('../../sync/runSync.js');
+    const { runIntegrationSync } = await import('../../testing/syncCalls.js');
     const calls = mock.tokenCalls('linear');
     const first = await runIntegrationSync(iid, { mode: 'live', trigger: 'manual' });
     assert.equal(first.error?.code, 'auth_failed');
@@ -807,7 +807,7 @@ describe('locally, nothing reaches a real provider', () => {
   for (const provider of MOCK_OAUTH_PROVIDERS) {
     it(`${provider}: a sync and a refresh only send requests to loopback hosts`, async () => {
       const iid = await connectThrough(provider);
-      const { runIntegrationSync } = await import('../../sync/runSync.js');
+      const { runIntegrationSync } = await import('../../testing/syncCalls.js');
       const { liveTransport } = await import('../../sync/transports/live.js');
       const hosts: string[] = [];
       const live = liveTransport();

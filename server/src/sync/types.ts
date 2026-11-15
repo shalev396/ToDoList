@@ -2,7 +2,8 @@
  * The provider adapter contract (one adapter per provider, BACKEND.md §5) and the engine's result
  * types.
  *
- * An adapter only fetches and maps. The engine (runSync.ts) owns everything else: the transport
+ * An adapter only fetches and maps. The engine (classes/sync/SyncEngine.ts, behind
+ * Integration#sync) owns everything else: the transport
  * (live, fixtures or a test's), the decrypted secret, topic rules, container ids, `source.hash`,
  * natural-key upserts, the deletion sweep, cursors (SyncStates), run logs (SyncRuns), the
  * integration's status and the audit entry.

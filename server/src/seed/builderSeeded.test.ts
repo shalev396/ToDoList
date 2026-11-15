@@ -18,7 +18,7 @@ import type * as Seed from './seedWorkspace.js';
 import type * as DemoData from './demoData.js';
 import type * as FixtureSets from '../sync/fixtureSets.js';
 import type * as Registry from '../sync/registry.js';
-import type * as RunSync from '../sync/runSync.js';
+import type * as RunSync from '../testing/syncCalls.js';
 import type * as Fixtures from '../sync/transports/fixtures.js';
 import type { SeedSummary } from './seedWorkspace.js';
 import type { WorkspaceContext } from '../services/accessFilter.js';
@@ -59,7 +59,7 @@ before(async () => {
   demo = await import('./demoData.js');
   fixtureSets = await import('../sync/fixtureSets.js');
   registry = await import('../sync/registry.js');
-  runSync = await import('../sync/runSync.js');
+  runSync = await import('../testing/syncCalls.js');
   fixtures = await import('../sync/transports/fixtures.js');
   guard = installOutboundGuard();
   const owner = await newUser('builder-seeded');

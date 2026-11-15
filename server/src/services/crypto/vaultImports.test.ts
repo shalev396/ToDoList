@@ -4,7 +4,8 @@
  *   is imported only by Integration.ts (and tests), whose read and write sessions are the only way
  *   to it; no file re-exports it; outside the allow-list, non-test code may not even name it;
  * - sync/secrets.ts, the sync's one door to a credential (through the integration's read
- *   session), is imported only by sync/runSync.ts (and tests), and only they name its exports;
+ *   session), is imported only by the sync engine, classes/sync/SyncEngine.ts (and tests), and
+ *   only they name its exports;
  * - `Integration.withSyncSecret`, that read session (it opens any integration's credential by
  *   id, for the sync engine), is named only by Integration.ts and sync/secrets.ts;
  * - nothing under src/mcp/ names the credential, the sync's read session or the Credential
@@ -40,7 +41,8 @@ const VAULT = 'classes/integration/Credential.ts';
 const INTEGRATION = 'classes/integration/Integration.ts';
 const INTEGRATIONS = 'classes/integration/index.ts';
 const SECRETS = 'sync/secrets.ts';
-const RUN_SYNC = 'sync/runSync.ts';
+/** The sync engine, behind Integration#sync: the one module that opens the sync's secret door. */
+const SYNC_ENGINE = 'classes/sync/SyncEngine.ts';
 const MODELS = 'models/index.ts';
 const ENVELOPE = 'services/crypto/envelope.ts';
 const KEY_PROVIDERS = 'services/crypto/keyProviders.ts';
@@ -68,8 +70,8 @@ const FIND_SEALED_USERS = new Set([VAULT, ...CREDENTIAL_MODULES]);
 /** Besides tests, only these name `stageKeyProvider` (the key that opens every credential). */
 const STAGE_KEY_PROVIDER_USERS = new Set([VAULT, STAGE_KEY_PROVIDER, JOIN_LINK_VAULT]);
 
-/** secrets.ts hands out decrypted secrets: besides tests, only runSync.ts imports it. */
-const SECRETS_IMPORTERS = new Set([RUN_SYNC]);
+/** secrets.ts hands out decrypted secrets: besides tests, only the sync engine imports it. */
+const SECRETS_IMPORTERS = new Set([SYNC_ENGINE]);
 
 /** secrets.ts's exports, and the files (besides tests) whose code may name them. */
 const SECRETS_EXPORTS: readonly { name: string; pattern: RegExp; allowed: ReadonlySet<string> }[] =
@@ -77,7 +79,7 @@ const SECRETS_EXPORTS: readonly { name: string; pattern: RegExp; allowed: Readon
     {
       name: 'withProviderSecret',
       pattern: /\bwithProviderSecret\b/,
-      allowed: new Set([SECRETS, RUN_SYNC]),
+      allowed: new Set([SECRETS, SYNC_ENGINE]),
     },
     {
       // The sync's read session on the integration class: any integration's secret, by id.
@@ -186,7 +188,7 @@ const STUBS: Record<string, string> = {
   [VAULT]: '',
   [INTEGRATIONS]: '',
   [SECRETS]: '',
-  [RUN_SYNC]: '',
+  [SYNC_ENGINE]: '',
   [MODELS]: '',
   [ENVELOPE]: '',
   [STAGE_KEY_PROVIDER]: '',
@@ -370,7 +372,7 @@ describe('the import rules, on synthetic trees (one per known bypass)', () => {
       flagged({
         // An allow-listed file may import the credential, but never hand it on.
         'classes/integration/Integration.ts': `export * from './Credential.js';`,
-        'sync/runSync.ts': `export { withProviderSecret } from './secrets.js';`,
+        'classes/sync/SyncEngine.ts': `export { withProviderSecret } from '../../sync/secrets.js';`,
         'routes/types.ts': `export type { SealInput } from '../classes/integration/Credential.js';`,
         'mcp/tools/barrel.ts': `export * from '../../models/index.js';`,
         'mcp/tools/index.ts': `export * from './fine.js';`,
@@ -379,9 +381,9 @@ describe('the import rules, on synthetic trees (one per known bypass)', () => {
       }),
       [
         'classes/integration/Integration.ts',
+        'classes/sync/SyncEngine.ts',
         'mcp/tools/barrel.ts',
         'routes/types.ts',
-        'sync/runSync.ts',
       ],
     );
   });
@@ -406,14 +408,14 @@ describe('the import rules, on synthetic trees (one per known bypass)', () => {
     );
   });
 
-  it('secrets.ts: only runSync.ts (and tests) import it or name its exports', () => {
+  it('secrets.ts: only the sync engine (and tests) import it or name its exports', () => {
     assert.deepEqual(
       flagged({
-        'sync/runSync.ts': `import { withProviderSecret } from './secrets.js';`,
+        'classes/sync/SyncEngine.ts': `import { withProviderSecret } from '../../sync/secrets.js';`,
         'sync/secrets.test.ts': `import { setVaultLoaderForTests, withProviderSecret } from './secrets.js';`,
         'sync/worker.test.ts': `import { setVaultLoaderForTests } from './secrets.js';`,
         'sync/worker.ts': `import { withProviderSecret } from './secrets.js';`,
-        'jobs/relay.ts': `import { withProviderSecret } from '../sync/runSync.js';`,
+        'jobs/relay.ts': `import { withProviderSecret } from '../classes/sync/SyncEngine.js';`,
         'devtools/stub.ts': `const { setVaultLoaderForTests } = await import('../sync/secrets.js');`,
       }),
       ['devtools/stub.ts', 'jobs/relay.ts', 'sync/worker.ts'],
@@ -511,7 +513,7 @@ describe('server/src import graph', () => {
     assert.ok(has(VAULT, ENVELOPE));
     assert.ok(has(INTEGRATION, VAULT));
     assert.ok(has('app.ts', 'routes/index.ts'));
-    assert.ok(has(RUN_SYNC, SECRETS));
+    assert.ok(has(SYNC_ENGINE, SECRETS));
     // A literal specifier: esbuild bundles the integration classes into the Lambda layer.
     assert.ok(has(SECRETS, INTEGRATIONS));
   });

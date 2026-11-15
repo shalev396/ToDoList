@@ -9,7 +9,7 @@ import { installOutboundGuard, type OutboundGuard } from '../testing/outboundGua
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import { runJobInProcess } from '../testing/testSeams.js';
 import { registerAdapter } from './registry.js';
-import type { SyncRunOptions } from './runSync.js';
+import type { SyncRunOptions } from '../testing/syncCalls.js';
 import { setVaultLoaderForTests } from './secrets.js';
 import type { SyncRunSummary } from './types.js';
 import { forceSyncModeForTests } from '../config/testSwitches.js';
@@ -60,7 +60,7 @@ async function queuedJob(accountId: string): Promise<SyncRunJob> {
     authMethod: 'none',
     topicId: 'work',
   });
-  const { enqueueSync } = await import('../services/syncJobs.js');
+  const { enqueueSync } = await import('../testing/syncCalls.js');
   await enqueueSync(integration.id, 'schedule');
   const job = started.at(-1);
   assert.ok(job?.action === 'sync-run');

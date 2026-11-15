@@ -17,7 +17,7 @@ import type { Clock, Transport } from '../sync/http.js';
 import { registerAdapter, unregisterAdapter } from '../sync/registry.js';
 import type { Provider } from '../types/domain.js';
 import { fixtureSetDir } from '../sync/fixtureSets.js';
-import type { SyncRunOptions } from '../sync/runSync.js';
+import type { SyncRunOptions } from '../classes/sync/SyncEngine.js';
 import {
   fixtureTransport,
   loadFixtureSet,
@@ -91,7 +91,7 @@ export async function startKit(dbName: string): Promise<Kit> {
       return { workspaceId: workspace.id, integration };
     },
     async run(s, adapter, options = {}) {
-      const { runIntegrationSync } = await import('../sync/runSync.js');
+      const { runIntegrationSync } = await import('./syncCalls.js');
       const transport: Transport =
         options.transport ??
         fixtureTransport(await loadFixtureSet(fixtureSetDir(adapter, options.set ?? 'v1')), {

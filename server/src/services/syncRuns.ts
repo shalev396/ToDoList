@@ -1,7 +1,8 @@
 /**
- * "Sync now" and the sync-run history (BACKEND.md §4, DATA.md §3.9). Pure services: no Express.
+ * "Sync now" and the sync-run history (BACKEND.md §4, DATA.md §3.9). Thin functions over the
+ * classes (Integration, SyncRun): no Express, no database.
  *
- * - A manual sync goes through enqueueSync (202 with the run id; the engine runs it).
+ * - A manual sync goes through SyncRun.request (202 with the run id; the engine runs it).
  * - It is refused (409) for an integration that waits for its owner, like the dispatcher skips
  *   it: paused, expired, or failed auth (a reconnect: save the credential again); and in live
  *   mode, one without a credential.
@@ -17,18 +18,11 @@ import { z } from 'zod';
 import { Actor } from '../classes/base/Actor.js';
 import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
 import { Integration, type SyncRequestOutcome } from '../classes/integration/index.js';
-import { NotFoundError } from '../errors/NotFoundError.js';
-import type { ErrorInfo } from '../models/definitions/common.js';
-import type { SyncRunData } from '../models/definitions/SyncRun.js';
-import { getSyncRunRepository } from '../models/index.js';
-import { SYNC_ERROR_MESSAGES } from '../sync/runSync.js';
+import { SyncRun } from '../classes/sync/SyncRun.js';
 import type { SyncRunView } from '../types/integrations.js';
 
 export const SYNC_RUNS_DEFAULT_LIMIT = 20;
 export const SYNC_RUNS_MAX_LIMIT = 100;
-
-const ERROR_CODE = /^[a-z][a-z0-9_]{0,63}$/;
-const COUNT_NAME = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 
 /** `GET …/sync-runs?integrationId&limit`. */
 export const SyncRunsQuery = z.strictObject({
@@ -64,36 +58,8 @@ export async function requestWorkspaceSync(
   return Integration.requestSyncAll(Caller.fromContext(ctx, Actor.user(userId)));
 }
 
-// ─── History ────────────────────────────────────────────────────────────────
-
-/** A code and its fixed message. A code the engine doesn't know keeps the generic message. */
-function sanitizedError(error: ErrorInfo): { code: string; message: string } {
-  if (!ERROR_CODE.test(error.code)) {
-    return { code: 'internal', message: SYNC_ERROR_MESSAGES.internal };
-  }
-  const message = Object.hasOwn(SYNC_ERROR_MESSAGES, error.code)
-    ? SYNC_ERROR_MESSAGES[error.code as keyof typeof SYNC_ERROR_MESSAGES]
-    : SYNC_ERROR_MESSAGES.internal;
-  return { code: error.code, message };
-}
-
-/** Field by field: counts are named numbers; the failed records never leave the server. */
-export function toSyncRunView(run: SyncRunData): SyncRunView {
-  const counts: Record<string, number> = {};
-  for (const [name, value] of Object.entries(run.counts)) {
-    if (COUNT_NAME.test(name) && Number.isFinite(value)) counts[name] = value;
-  }
-  return {
-    id: run.id,
-    integrationId: run.integrationId,
-    trigger: run.trigger,
-    status: run.status,
-    startedAt: run.startedAt,
-    finishedAt: run.finishedAt,
-    counts,
-    error: run.error === null ? null : sanitizedError(run.error),
-  };
-}
+// ─── History (SyncRun#toView: counts as named numbers, an error as a code and its fixed
+// message, never the failed records) ─────────────────────────────────────────
 
 export interface ListSyncRunsInput {
   integrationId?: string | undefined;
@@ -115,15 +81,7 @@ export async function listSyncRuns(
     input.integrationId === undefined
       ? await Integration.listOwn(caller)
       : [await Integration.findOwn(caller, input.integrationId)];
-  const repository = await getSyncRunRepository();
-  const runs: SyncRunData[] = [];
-  for (const integration of integrations) {
-    runs.push(...(await repository.listForIntegration(ctx.id, integration.id, limit)));
-  }
-  return runs
-    .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime() || (a.id < b.id ? -1 : 1))
-    .slice(0, limit)
-    .map(toSyncRunView);
+  return (await SyncRun.list(caller, integrations, limit)).map((run) => run.toView());
 }
 
 /**
@@ -135,8 +93,8 @@ export async function getSyncRun(
   userId: string,
   runId: string,
 ): Promise<SyncRunView> {
-  const run = await (await getSyncRunRepository()).findById(ctx.id, runId);
-  if (run === null) throw new NotFoundError();
-  await Integration.findOwn(Caller.fromContext(ctx, Actor.user(userId)), run.integrationId);
-  return toSyncRunView(run);
+  const caller = Caller.fromContext(ctx, Actor.user(userId));
+  const run = await SyncRun.get(caller, runId);
+  await Integration.findOwn(caller, run.integrationId);
+  return run.toView();
 }

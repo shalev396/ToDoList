@@ -120,7 +120,7 @@ describe('parseSyncJob', () => {
 
 describe('enqueueSync', () => {
   it('returns the run id at once; the queued run then runs (here, in this process)', async () => {
-    const { enqueueSync } = await import('./syncJobs.js');
+    const { enqueueSync } = await import('../testing/syncCalls.js');
     const integrationId = await fakeIntegration('jobs-1');
     const { runId } = await enqueueSync(integrationId, 'manual');
     const run = await finished(runId, integrationId);
@@ -136,7 +136,7 @@ describe('enqueueSync', () => {
   });
 
   it('starts one sync-run job per run: the ids and the mode only', async () => {
-    const { enqueueSync } = await import('./syncJobs.js');
+    const { enqueueSync } = await import('../testing/syncCalls.js');
     const started: SyncJob[] = [];
     await withRunner(
       (job) => {
@@ -153,7 +153,7 @@ describe('enqueueSync', () => {
   });
 
   it('marks the queued run failed when its job cannot be started, and throws', async () => {
-    const { enqueueSync } = await import('./syncJobs.js');
+    const { enqueueSync } = await import('../testing/syncCalls.js');
     await withRunner(
       () => Promise.reject(new Error('invoke refused')),
       async () => {
@@ -169,12 +169,12 @@ describe('enqueueSync', () => {
   });
 
   it('refuses an unknown integration', async () => {
-    const { enqueueSync } = await import('./syncJobs.js');
+    const { enqueueSync } = await import('../testing/syncCalls.js');
     await assert.rejects(enqueueSync('no-such-integration', 'manual'), /not found/);
   });
 
   it('never queues demo data', async () => {
-    const { enqueueSync } = await import('./syncJobs.js');
+    const { enqueueSync } = await import('../testing/syncCalls.js');
     const integrationId = await fakeIntegration('jobs-demo', true);
     await assert.rejects(enqueueSync(integrationId, 'manual'), /demo integration never syncs/);
     assert.deepEqual(await runs.listForIntegration(workspaceId, integrationId, 5), []);
@@ -200,7 +200,7 @@ describe('enqueueGcalSync', () => {
 
 describe('how a job starts by default', () => {
   it('outside Lambda (no AWS_LAMBDA_FUNCTION_NAME): inline, in this process', async () => {
-    const { enqueueSync } = await import('./syncJobs.js');
+    const { enqueueSync } = await import('../testing/syncCalls.js');
     assert.equal(process.env.AWS_LAMBDA_FUNCTION_NAME, undefined);
     await withRunner(null, async () => {
       const integrationId = await fakeIntegration('jobs-inline');
@@ -210,7 +210,7 @@ describe('how a job starts by default', () => {
   });
 
   it('on Lambda: an async invocation of the function itself, the job as its payload', async (t) => {
-    const { enqueueSync } = await import('./syncJobs.js');
+    const { enqueueSync } = await import('../testing/syncCalls.js');
     const { LambdaClient } = await import('@aws-sdk/client-lambda');
     const sent: Record<string, unknown>[] = [];
     // No AWS call: the client's send is replaced and records the command it would send.

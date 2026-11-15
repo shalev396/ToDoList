@@ -582,7 +582,7 @@ describe('moodle adapter: engine runs over fixtures', () => {
         [404, `missing ${FAKE_TOKEN}`],
         [500, `boom ${FAKE_TOKEN}`],
       ];
-      const { runIntegrationSync } = await import('../runSync.js');
+      const { runIntegrationSync } = await import('../../testing/syncCalls.js');
       const { SyncRunMongoModel } = await import('../../models/mongoose/SyncRun.js');
       const { IntegrationMongoModel } = await import('../../models/mongoose/Integration.js');
       try {

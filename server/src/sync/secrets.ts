@@ -6,7 +6,8 @@
  *   sync to a credential. The plaintext exists only for the duration of `fn`; nothing here keeps
  *   it, and no writer is ever handed out.
  *
- * Only runSync.ts (and tests) import this module; vaultImports.test.ts enforces that.
+ * Only the sync engine (classes/sync/SyncEngine.ts, behind Integration#sync) and tests import
+ * this module; vaultImports.test.ts enforces that.
  */
 import type { IntegrationData } from '../models/definitions/Integration.js';
 import type { SyncMode } from '../types/env.d.ts';

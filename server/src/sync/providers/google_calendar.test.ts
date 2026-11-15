@@ -409,7 +409,7 @@ async function sync(
   mode: 'fixtures' | 'live' = 'fixtures',
   now: Date = NOW,
 ): Promise<SyncRunSummary> {
-  const { runIntegrationSync } = await import('../runSync.js');
+  const { runIntegrationSync } = await import('../../testing/syncCalls.js');
   return runIntegrationSync(s.integration.id, { trigger: 'manual', mode, now, transport });
 }
 
@@ -1215,7 +1215,7 @@ describe('google_calendar test()', () => {
 describe('google_calendar: the default fixture set', () => {
   it('a fixtures-mode run without a transport replays src/sync/fixtures/google_calendar/v1', async () => {
     const s = await setup();
-    const { runIntegrationSync } = await import('../runSync.js');
+    const { runIntegrationSync } = await import('../../testing/syncCalls.js');
     const summary = await runIntegrationSync(s.integration.id, {
       trigger: 'manual',
       mode: 'fixtures',

@@ -1,7 +1,7 @@
 /**
  * Provider adapters, by provider. An adapter module registers itself when imported
  * (`registerAdapter(jiraAdapter)` at its top level) and sync/providers/index.ts imports every
- * adapter module. runSync.ts imports that index, so whatever runs a sync sees all adapters.
+ * adapter module. Integration.ts imports that index, so whatever runs a sync sees all adapters.
  */
 import type { Provider } from '../types/domain.js';
 import type { ProviderAdapter } from './types.js';

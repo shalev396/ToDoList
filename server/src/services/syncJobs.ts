@@ -10,18 +10,17 @@
  *
  * The two jobs carry ids and the mode only: never a secret, a token or provider data.
  * - `{action: 'sync-run', integrationId, runId, mode}`: one queued run of one integration
- *   (enqueueSync: "Sync now", the sync-dispatch action, MCP);
+ *   (SyncRun.request: "Sync now", the sync-dispatch action, MCP);
  * - `{action: 'gcal-run', integrationId}`: one Google Calendar push + pull (enqueueGcalSync, the
  *   gcal-dispatch action). No run exists yet: it opens when the push starts.
+ *
+ * This module only starts jobs (the outside world the classes depend on); the runs themselves
+ * are SyncRun's.
  */
 import type { LambdaClient } from '@aws-sdk/client-lambda';
 
 import { GCAL_RUN_ACTION, SYNC_RUN_ACTION } from '../../infra/lib/constants.js';
 import { assertUnderTest } from '../config/testSwitches.js';
-import { getIntegrationRepository, getSyncRunRepository } from '../models/index.js';
-import { SYNC_ERROR_MESSAGES } from '../sync/runSync.js';
-import { syncModeFor } from '../sync/syncMode.js';
-import type { SyncTrigger } from '../types/domain.js';
 import type { SyncMode } from '../types/env.d.ts';
 import { logger } from './logger.js';
 
@@ -102,35 +101,11 @@ export function setJobRunnerForTests(replacement: JobRunner | null): void {
 }
 
 /**
- * Queues one sync and returns the queued run's id. The lookup is global (by id): the caller must
- * already have checked that the user may sync this integration. Never for a demo integration
- * (seed/seedWorkspace.ts), whose credential is FAKE. When the job cannot be started (the invoke
- * failed), the queued run ends `failed` with `enqueue_failed` and this throws.
+ * Starts one sync-run job for a run SyncRun.request just queued: an async invocation of this
+ * function on Lambda, a run in this process elsewhere. Throws when it could not be started.
  */
-export async function enqueueSync(
-  integrationId: string,
-  trigger: SyncTrigger,
-): Promise<{ runId: string }> {
-  const integration = await (await getIntegrationRepository()).findByIdForWorker(integrationId);
-  if (integration === null) throw new Error('enqueueSync: integration not found');
-  // Demo data never syncs: its credential is FAKE (the dispatcher and "Sync now" skip it first).
-  if (integration.demo) throw new Error('enqueueSync: a demo integration never syncs');
-  const runs = await getSyncRunRepository();
-  const { workspaceId } = integration;
-  const queued = await runs.create(workspaceId, { integrationId, trigger, status: 'queued' });
-  const mode = syncModeFor(integration);
-
-  try {
-    await runner({ action: SYNC_RUN_ACTION, integrationId, runId: queued.id, mode });
-  } catch (error) {
-    await runs.update(workspaceId, queued.id, {
-      status: 'failed',
-      finishedAt: new Date(),
-      error: { code: 'enqueue_failed', message: SYNC_ERROR_MESSAGES.enqueue_failed },
-    });
-    throw error;
-  }
-  return { runId: queued.id };
+export async function startSyncRunJob(job: Omit<SyncRunJob, 'action'>): Promise<void> {
+  await runner({ action: SYNC_RUN_ACTION, ...job });
 }
 
 /** Queues one Google Calendar push + pull. No run row yet: the run opens when the push starts. */

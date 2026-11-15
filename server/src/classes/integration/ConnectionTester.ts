@@ -18,7 +18,7 @@ import { getIntegrationRepository } from '../../models/index.js';
 import { ProviderHttpError } from '../../sync/errors.js';
 import { fixtureSetDir } from '../../sync/fixtureSets.js';
 import type { ReadOnlyClient, Transport } from '../../sync/http.js';
-import { SYNC_ERROR_MESSAGES } from '../../sync/runSync.js';
+import { SYNC_ERROR_MESSAGES } from '../sync/SyncRun.js';
 import { fixtureTransport, loadFixtureSet } from '../../sync/transports/fixtures.js';
 import type { AdapterAuth, AdapterContext, ProviderAdapter } from '../../sync/types.js';
 import type { IntegrationTestResult } from '../../types/integrations.js';

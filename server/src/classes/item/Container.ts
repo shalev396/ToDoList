@@ -9,7 +9,13 @@ import { AuditTarget } from '../base/AuditTarget.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import type { ItemPolicy } from '../policies/ItemPolicy.js';
 import { AppError } from '../../errors/AppError.js';
-import type { ContainerData } from '../../models/definitions/Container.js';
+import type {
+  BulkUpsertResult,
+  SourceAccount,
+  SourceDeleteResult,
+  SweepOptions,
+} from '../../models/definitions/common.js';
+import type { ContainerData, ContainerUpsert } from '../../models/definitions/Container.js';
 import { getContainerRepository } from '../../models/index.js';
 import { redactString } from '../../services/secretPatterns.js';
 import type { ContainerType, Provider } from '../../types/domain.js';
@@ -128,6 +134,93 @@ export class Container
   /** A topic was deleted: its containers become Unsorted (Topic.delete). Returns how many. */
   static async unsetTopicIn(workspaceId: string, topicId: string): Promise<number> {
     return (await getContainerRepository()).unsetTopic(workspaceId, topicId);
+  }
+
+  // ─── What a sync writes (the engine behind Integration#sync) ─────────────
+
+  /** An integration's live containers, all or only these external ids, as stored. */
+  static async listSynced(
+    workspaceId: string,
+    integrationId: string,
+    externalIds?: readonly string[],
+  ): Promise<ContainerData[]> {
+    return (await getContainerRepository()).list(workspaceId, {
+      integrationId,
+      ...(externalIds === undefined ? {} : { externalIds }),
+    });
+  }
+
+  /** One page of an integration's mapped containers, bulk-upserted on their natural key. */
+  static async upsertSynced(
+    workspaceId: string,
+    containers: readonly ContainerUpsert[],
+  ): Promise<BulkUpsertResult> {
+    return (await getContainerRepository()).bulkUpsert(workspaceId, containers);
+  }
+
+  /** Containers its provider says are deleted, by external id, soft-deleted at `at`. */
+  static async deleteSynced(
+    workspaceId: string,
+    account: SourceAccount,
+    externalIds: readonly string[],
+    at: Date,
+  ): Promise<SourceDeleteResult> {
+    return (await getContainerRepository()).softDeleteBySource(
+      workspaceId,
+      account,
+      externalIds,
+      at,
+    );
+  }
+
+  /** A full listing's sweep: the resource's containers not seen since `before`. */
+  static async sweepUnseen(
+    workspaceId: string,
+    integrationId: string,
+    resource: string,
+    before: Date,
+    options: SweepOptions,
+  ): Promise<number> {
+    return (await getContainerRepository()).sweepUnseen(
+      workspaceId,
+      integrationId,
+      resource,
+      before,
+      options,
+    );
+  }
+
+  /** The containers of resources an integration no longer lists, soft-deleted. */
+  static async sweepOrphanedResources(
+    workspaceId: string,
+    integrationId: string,
+    resources: readonly string[],
+    options: SweepOptions,
+  ): Promise<number> {
+    return (await getContainerRepository()).sweepOrphanedResources(
+      workspaceId,
+      integrationId,
+      resources,
+      options,
+    );
+  }
+
+  /** Every container of an integration, soft-deleted (a disconnect, or a run after one). */
+  static async softDeleteAllOf(
+    workspaceId: string,
+    integrationId: string,
+    at?: Date,
+  ): Promise<number> {
+    return (await getContainerRepository()).softDeleteForIntegration(
+      workspaceId,
+      integrationId,
+      at,
+    );
+  }
+
+  /** GLOBAL, every workspace (the purge only): containers soft-deleted before `before`, removed. */
+  static async purgeDeletedBefore(before: Date): Promise<number> {
+    return (await getContainerRepository()).purgeDeletedBefore(before);
   }
 
   get integrationId(): string {

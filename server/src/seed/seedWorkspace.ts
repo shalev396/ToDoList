@@ -11,7 +11,7 @@
  * 2. the demo area rules (`shalev396/*` → personal, `Braude*` → college);
  * 3. local to-dos (items.ts): overdue, today, later this week and undated;
  * 4. the template dashboards (dashboards.ts), published;
- * 5. one fixture sync per integration (runIntegrationSync, trigger `seed`), all at once: the items
+ * 5. one fixture sync per integration (Integration.runSync, trigger `seed`), all at once: the items
  *    are the adapters' recorded fixtures, their relative dates resolved against `now` in the
  *    workspace's time zone, so they look exactly like a real sync's. Records without a URL are
  *    counted as the run's failures and never stored, as in any sync.
@@ -56,7 +56,6 @@ import { fixtureSetDir } from '../sync/fixtureSets.js';
 import type { Transport } from '../sync/http.js';
 import { getAdapter } from '../sync/registry.js';
 import type { Clock } from '../sync/http.js';
-import { runIntegrationSync } from '../sync/runSync.js';
 import { resolveOffset } from '../sync/transports/fixtureDates.js';
 import { fixtureTransport, loadFixtureSet } from '../sync/transports/fixtures.js';
 import type { SyncRunSummary } from '../sync/types.js';
@@ -407,7 +406,7 @@ async function syncAll(
   const settled = await Promise.allSettled(
     connected.map(async ({ spec, integration }) => {
       const transport = await fixtureReplay(integration.provider, spec.fixtureSet, now, timeZone);
-      return runIntegrationSync(integration.id, {
+      return Integration.runSync(integration.id, {
         trigger: 'seed',
         mode: 'fixtures',
         fixtureSet: spec.fixtureSet,

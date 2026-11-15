@@ -270,6 +270,11 @@ export class Member extends WorkspaceEntity<MembershipData> implements Auditable
     return deleted;
   }
 
+  /** The user ids of the workspace's active members (the sync dispatchers' owner check). */
+  static async userIdsIn(workspaceId: string): Promise<string[]> {
+    return Member.#ids(workspaceId);
+  }
+
   /** The user ids of the workspace's active members. */
   static async #ids(workspaceId: string): Promise<string[]> {
     return (await (await getMembershipRepository()).listMembers(workspaceId)).map(

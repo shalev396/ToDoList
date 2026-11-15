@@ -20,11 +20,12 @@
  * the error thrown for a retry carries no more, so nothing else reaches Lambda's own log line.
  */
 import { GCAL_RUN_ACTION } from '../../infra/lib/constants.js';
+import { Integration } from '../classes/integration/index.js';
+import type { SyncRunOptions } from '../classes/sync/SyncEngine.js';
 import { runScheduledGcalSync } from '../gcal/scheduledSync.js';
 import { logger } from '../services/logger.js';
 import type { SyncJob } from '../services/syncJobs.js';
-import { runIntegrationSync } from './runSync.js';
-import type { SyncErrorCode } from './types.js';
+import type { SyncErrorCode, SyncRunSummary } from './types.js';
 
 const RETRYABLE: ReadonlySet<string> = new Set<SyncErrorCode>([
   'network',
@@ -41,9 +42,18 @@ export class RetrySyncJob extends Error {
   }
 }
 
+/** One sync of one integration by id (Integration.runSync; a test's stand-in). */
+export type SyncRunner = (
+  integrationId: string,
+  options: SyncRunOptions,
+) => Promise<SyncRunSummary>;
+
+const runIntegrationSync: SyncRunner = (integrationId, options) =>
+  Integration.runSync(integrationId, options);
+
 export async function runSyncJob(
   job: SyncJob,
-  run: typeof runIntegrationSync = runIntegrationSync,
+  run: SyncRunner = runIntegrationSync,
   runGcal: typeof runScheduledGcalSync = runScheduledGcalSync,
 ): Promise<void> {
   const ids = { action: job.action, integrationId: job.integrationId };

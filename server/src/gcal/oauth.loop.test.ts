@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 
 import type * as Models from '../models/index.js';
-import type * as RunSync from '../sync/runSync.js';
+import type * as RunSync from '../testing/syncCalls.js';
 import { startApiHarness, type ApiHarness } from '../testing/apiHarness.js';
 import { logsDuring } from '../testing/gcalFixture.js';
 import {
@@ -56,7 +56,7 @@ before(async () => {
     api.baseUrl,
   );
   models = await import('../models/index.js');
-  runSync = await import('../sync/runSync.js');
+  runSync = await import('../testing/syncCalls.js');
   const login = await api.login('gcal-oauth-owner@example.test');
   token = login.token;
   const me = await api.call('GET', '/api/private/me', { token });
