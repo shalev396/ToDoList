@@ -79,6 +79,9 @@ describe('SyncRun: the transitions table', () => {
     const run = await runIn('queued');
     await run.start(AT);
     assert.equal(run.status, 'running');
+    // What it holds is the run as stored now, not as loaded.
+    assert.equal(run.toJSON().status, 'running');
+    assert.equal(run.toJSON().startedAt.getTime(), AT.getTime());
     const row = await runs.findById(WS, run.id);
     assert.equal(row?.status, 'running');
     assert.equal(row.startedAt.getTime(), AT.getTime());

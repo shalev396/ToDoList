@@ -401,8 +401,16 @@ export class SyncRun
     return AuditTarget.of('sync_run', this.id);
   }
 
+  /**
+   * The run as stored now (the last write's answer, its status as the machine holds it), not as
+   * it was loaded: what every base-class read sees.
+   */
+  protected override get data(): Readonly<SyncRunData> {
+    return Object.freeze({ ...this.#current, status: this.#state });
+  }
+
   override toJSON(): SyncRunData {
-    return structuredClone({ ...this.#current, status: this.#state });
+    return structuredClone(this.data);
   }
 
   /**
