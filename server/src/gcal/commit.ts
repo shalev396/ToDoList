@@ -42,6 +42,7 @@ import {
 } from '../models/index.js';
 import { redactString } from '../services/secretPatterns.js';
 import { PlannedAt } from '../classes/item/PlannedAt.js';
+import { Overrides } from '../classes/item/Overrides.js';
 import { WorkspaceSettings } from '../classes/workspace/WorkspaceSettings.js';
 import { eventIdFor, hashEvent, parseOpId, projectEvent, type PushItem } from './diff.js';
 
@@ -88,15 +89,20 @@ export interface CommitCounts {
   conflicts: number;
 }
 
+/**
+ * The item as the push reads it: its effective values (a mirrored item's overrides, Overrides),
+ * exactly as plan.ts projects them, so what was pushed and what is compared agree.
+ */
 export function toPushItem(item: ItemData): PushItem {
   const edits = [item.updatedAt, item.overlay.editedAt].filter((d): d is Date => d !== null);
+  const effective = Overrides.from(item.overlay.overrides).effective(item);
   return {
     id: item.id,
-    title: item.title,
-    startAt: item.startAt,
-    dueAt: item.dueAt,
+    title: effective.title,
+    startAt: effective.startAt,
+    dueAt: effective.dueAt,
     endAt: item.endAt,
-    allDay: item.allDay,
+    allDay: effective.allDay,
     source: { provider: item.source.provider, url: item.source.url },
     calendarSync: item.overlay.calendarSync,
     plannedAt: item.overlay.plannedAt,

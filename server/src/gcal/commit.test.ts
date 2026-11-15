@@ -335,6 +335,85 @@ describe('commit: a move in Google becomes the plan, never a due or start date (
   });
 });
 
+describe('commit: a mirrored item’s overrides are what was pushed (Phase 4a, I3)', () => {
+  it('a Google change of its overridden event settles; its plan is not pinned to the override', async () => {
+    const { projectEvent, hashEvent } = await import('./diff.js');
+    const { toPushItem } = await import('./commit.js');
+    const items = await fx.models.getItemRepository();
+    await items.bulkUpsert(fx.workspaceId, [
+      {
+        integrationId: fx.integrationId,
+        kind: 'issue',
+        topicId: 'personal',
+        title: 'Undated at GitHub',
+        status: 'open',
+        source: {
+          provider: 'github',
+          accountId: 'acct',
+          externalId: 'GH-OVR-1',
+          key: null,
+          url: 'https://github.com/octo/hello/issues/1',
+          updatedAtSource: null,
+          etag: null,
+          hash: 'h-ovr',
+        },
+      },
+    ]);
+    const [doc] = await items.aggregate<{ _id: string }>(fx.workspaceId, [
+      { $match: { 'source.externalId': 'GH-OVR-1' } },
+    ]);
+    assert.ok(doc);
+    // Its due date and title are TodoList's own (GitHub lacks a due date): pushed as such.
+    const due = new Date(T0 + 5 * 86_400_000);
+    const stored = await items.setOverlay(fx.workspaceId, doc._id, {
+      overrides: { dueAt: due, title: 'My name for it' },
+    });
+    assert.ok(stored);
+    const pushed = projectEvent(toPushItem(stored), fx.workspaceId, 'Asia/Jerusalem');
+    assert.ok(pushed !== null);
+    assert.equal(pushed.summary, 'My name for it');
+    await (
+      await fx.models.getCalendarLinkRepository()
+    ).upsert(
+      fx.workspaceId,
+      fx.integrationId,
+      { calendarId: 'primary', googleEventId: eventIdFor(doc._id) },
+      {
+        itemId: doc._id,
+        direction: 'to_google',
+        lastEtag: '"g1"',
+        lastItemUpdatedAt: stored.updatedAt,
+        pushedHash: 'x',
+      },
+    );
+    // Google changes something else of it (its description): a new etag, the same time and title.
+    await commit({
+      calendars: [
+        {
+          id: 'primary',
+          events: [
+            slim(doc._id, {
+              summary: pushed.summary,
+              description: 'Edited in Google',
+              start: pushed.start,
+              end: pushed.end,
+              updated: new Date(Date.now() + 60_000).toISOString(),
+            }),
+          ],
+        },
+      ],
+    });
+    const after = await items.findById(fx.workspaceId, doc._id);
+    assert.equal(after?.overlay.plannedAt, null, 'not moved: no plan pinned');
+    assert.deepEqual(
+      [after.overlay.overrides.dueAt?.getTime(), after.overlay.overrides.title],
+      [due.getTime(), 'My name for it'],
+    );
+    // What Google shows is what the overrides project: settled, nothing to push back.
+    assert.equal((await linkOf(doc._id)).pushedHash, hashEvent(pushed));
+  });
+});
+
 describe('commit: another member’s shared item never changes from Google (I6)', () => {
   async function theirs(title: string): Promise<ItemData> {
     const created = await fx.item(title, 3, { ownerUserId: 'u-another-member' });
