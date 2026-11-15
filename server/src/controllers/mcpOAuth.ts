@@ -91,13 +91,17 @@ const token: RequestHandler = async (req, res): Promise<void> => {
   if (grantType === undefined) throw new OAuthError('invalid_request', 'grant_type is required');
   let issued: IssuedTokens;
   if (grantType === 'authorization_code') {
-    issued = await McpAuthorization.exchange({
-      code: required(form.code),
-      codeVerifier: required(form.code_verifier),
-      clientId: required(form.client_id),
-      redirectUri: required(form.redirect_uri),
-      resource: form.resource,
-    });
+    issued = await McpAuthorization.exchange(
+      {
+        code: required(form.code),
+        codeVerifier: required(form.code_verifier),
+        clientId: required(form.client_id),
+        redirectUri: required(form.redirect_uri),
+        resource: form.resource,
+      },
+      new Date(),
+      Actor.originOf(req),
+    );
   } else if (grantType === 'refresh_token') {
     issued = await AgentKey.refresh(required(form.refresh_token), required(form.client_id));
   } else {

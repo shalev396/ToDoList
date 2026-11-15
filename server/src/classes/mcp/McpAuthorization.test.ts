@@ -11,6 +11,7 @@ import { pkceChallenge } from '../../services/crypto/hashing.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import type { AgentKey as AgentKeyClass } from '../AgentKey.js';
 import { Actor } from '../base/Actor.js';
+import { AuditLog } from '../AuditLog.js';
 import type * as UrlsModule from '../../mcp/oauth/urls.js';
 import type { McpAuthorization as McpAuthorizationClass } from './McpAuthorization.js';
 import type { McpClient as McpClientClass } from './McpClient.js';
@@ -369,6 +370,27 @@ describe('McpAuthorization', () => {
     assert.ok((await AgentKey.authenticate(first.accessToken, new Date(), {})) !== null);
     assert.equal(await oauthCode(McpAuthorization.exchange(input)), 'invalid_grant');
     assert.equal(await AgentKey.authenticate(first.accessToken, new Date(), {}), null);
+    const rows = (await AuditLog.list(team.workspace.id, {}, 50)).filter(
+      (e) => e.action === 'agent_key.oauth_code_reuse',
+    );
+    assert.equal(rows.length, 1);
+    assert.doesNotMatch(JSON.stringify(rows.at(0)?.meta), /el[kocr]_|hash/i);
+  });
+
+  it('the grant audit carries the token request origin', async () => {
+    const team = await newTeam('mcpauth-origin');
+    const a = await approved(team);
+    await McpAuthorization.exchange(
+      { code: a.code, codeVerifier: a.verifier, clientId: a.clientId, redirectUri: REDIRECT },
+      new Date(),
+      { ip: '203.0.113.9', userAgent: 'claude-test' },
+    );
+    const rows = (await AuditLog.list(team.workspace.id, {}, 50)).filter(
+      (e) => e.action === 'agent_key.oauth_grant',
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows.at(0)?.ip, '203.0.113.9');
+    assert.equal(rows.at(0)?.userAgent, 'claude-test');
   });
 
   it('two concurrent exchanges of one code: exactly one succeeds', async () => {

@@ -124,6 +124,7 @@ function ConsentForm({
         <SelectField
           aria-labelledby="agent-auth-workspace"
           value={choice.workspaceId}
+          disabled={busy}
           options={view.workspaces.map((entry) => ({ value: entry.id, label: entry.name }))}
           onValueChange={(workspaceId) => {
             setChoice((prev) => ({
@@ -141,6 +142,7 @@ function ConsentForm({
         <Input
           id="agent-auth-name"
           value={choice.name}
+          disabled={busy}
           maxLength={NAME_MAX}
           autoComplete="off"
           onChange={(event) => {
@@ -159,6 +161,7 @@ function ConsentForm({
               <Checkbox
                 id={id}
                 checked={choice.scopes.includes(scope)}
+                disabled={busy}
                 className="mt-0.5"
                 onCheckedChange={(checked) => {
                   setChoice((prev) => ({

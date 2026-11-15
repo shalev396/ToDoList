@@ -214,5 +214,6 @@ describe('agent keys', () => {
     }
     const over = await call('owner', 'POST', '/agent-keys', { name: 'over', scopes: ['read'] });
     assert.equal(over.status, 409);
+    assert.equal((over.body as { code?: string }).code, 'agent_key_cap');
   });
 });

@@ -200,6 +200,7 @@ export class AgentKey
       throw new AppError(
         409,
         `You can hold at most ${String(LIMITS.agentKeysPerUser)} agent keys: revoke one first`,
+        { code: 'agent_key_cap' },
       );
     }
     const raw = KEY_PREFIX + randomBytes(32).toString('base64url');
@@ -398,7 +399,14 @@ export class AgentKey
   static async revokeBySource(requestId: string): Promise<void> {
     const keys = await getAgentKeyRepository();
     const data = await keys.findBySourceRequest(requestId);
-    if (data !== null) await keys.revoke(data.workspaceId, data.id);
+    if (data === null) return;
+    await keys.revoke(data.workspaceId, data.id);
+    await AuditLog.record(
+      { workspaceId: data.workspaceId, actor: Actor.agent(data.userId, data.id) },
+      'agent_key.oauth_code_reuse',
+      new AgentKey(data).auditTarget(),
+      { clientName: data.clientName },
+    );
   }
 
   /**
@@ -416,5 +424,11 @@ export class AgentKey
     }
     if (data?.kind !== 'oauth' || data.clientId !== clientId) return;
     await keys.revoke(data.workspaceId, data.id);
+    await AuditLog.record(
+      { workspaceId: data.workspaceId, actor: Actor.agent(data.userId, data.id) },
+      'agent_key.oauth_revoke',
+      new AgentKey(data).auditTarget(),
+      { clientName: data.clientName },
+    );
   }
 }

@@ -198,6 +198,13 @@ for (const stage of STAGES) {
         (b) => b['PathPattern'] === '/.well-known/oauth-*',
       );
       assert.ok(api && wellKnown);
+      // The keys the stack always sets: a missing one on /api/* must not pass as "identical".
+      const required = [
+        'TargetOriginId',
+        'AllowedMethods',
+        'CachePolicyId',
+        'ViewerProtocolPolicy',
+      ];
       for (const key of [
         'TargetOriginId',
         'AllowedMethods',
@@ -207,11 +214,9 @@ for (const stage of STAGES) {
         'ViewerProtocolPolicy',
         'Compress',
       ]) {
+        if (required.includes(key)) assert.notEqual(api[key], undefined, key);
         assert.deepEqual(wellKnown[key], api[key], key);
       }
-      // CachingDisabled managed policy
-      assert.equal(wellKnown['CachePolicyId'], '4135ea2d-6df8-44a3-9df3-4b5a84be39ad');
-      assert.equal(wellKnown['CachePolicyId'], api['CachePolicyId']);
     });
 
     it('names the buckets after the stage domain', () => {

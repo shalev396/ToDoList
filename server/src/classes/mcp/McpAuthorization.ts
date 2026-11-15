@@ -23,7 +23,7 @@ import { getAgentKeyRepository, getMcpAuthRequestRepository } from '../../models
 import { pkceChallenge, sha256Hex } from '../../services/crypto/hashing.js';
 import { AGENT_SCOPES, type AgentScope, type Role } from '../../types/domain.js';
 import { AgentKey, type IssuedTokens } from '../AgentKey.js';
-import { Actor, type ActorRef } from '../base/Actor.js';
+import { Actor, type ActorOrigin, type ActorRef } from '../base/Actor.js';
 import { Caller } from '../base/Caller.js';
 import { Workspace } from '../workspace/Workspace.js';
 import { McpClient } from './McpClient.js';
@@ -262,7 +262,11 @@ export class McpAuthorization {
    * The token endpoint's `authorization_code` grant. Every failure is `invalid_grant` and says
    * nothing of which check failed. `now` is for tests.
    */
-  static async exchange(input: ExchangeInput, now: Date = new Date()): Promise<IssuedTokens> {
+  static async exchange(
+    input: ExchangeInput,
+    now: Date = new Date(),
+    origin: ActorOrigin = {},
+  ): Promise<IssuedTokens> {
     if (!input.code.startsWith(CODE_PREFIX)) throw invalidGrant();
     const requests = await getMcpAuthRequestRepository();
     const request = await requests.findByCodeHash(sha256Hex(input.code));
@@ -312,7 +316,7 @@ export class McpAuthorization {
         resource: request.resource,
         sourceRequestId: request.id,
       },
-      Actor.user(request.userId),
+      Actor.user(request.userId, origin),
       now,
     );
   }

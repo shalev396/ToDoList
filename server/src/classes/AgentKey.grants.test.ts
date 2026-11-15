@@ -333,6 +333,25 @@ describe('AgentKey grants', () => {
     assert.doesNotMatch(text, /el[kor]_|hash/i);
   });
 
+  it('audits an RFC 7009 revoke and a code reuse once each, with the client name only', async () => {
+    const team = await newTeam('grants-audit-revoke');
+    const tokens = await issue(team);
+    await AgentKey.revokeByToken(tokens.refreshToken, 'client-b'); // another client: no row
+    await AgentKey.revokeByToken(tokens.refreshToken, CLIENT);
+    const { source } = await issueWithSource(team);
+    await AgentKey.revokeBySource(source);
+    await AgentKey.revokeBySource('unknown-request');
+    const entries = await AuditLog.list(team.workspace.id, {}, 50);
+    for (const action of ['agent_key.oauth_revoke', 'agent_key.oauth_code_reuse']) {
+      const rows = entries.filter((e) => e.action === action);
+      assert.equal(rows.length, 1, action);
+      const row = rows.at(0);
+      assert.ok(row !== undefined);
+      assert.deepEqual(row.meta, { clientName: 'Claude Desktop' });
+      assert.doesNotMatch(JSON.stringify(row.meta), /el[kocr]_|hash/i);
+    }
+  });
+
   it('list shows a grant with kind oauth and its client name, never a hash', async () => {
     const team = await newTeam('grants-list');
     await issue(team);

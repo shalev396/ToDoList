@@ -476,6 +476,14 @@ describe('rate limits', () => {
   });
 
   it('token and revoke are not limited by register traffic', async () => {
+    let limited = false;
+    for (let attempt = 0; attempt < 60 && !limited; attempt += 1) {
+      const res = await request('POST', '/api/mcp/oauth/register', {
+        json: { client_name: 'Spam', redirect_uris: [REDIRECT] },
+      });
+      limited = res.status === 429;
+    }
+    assert.ok(limited, 'register must be at its limit before token and revoke are checked');
     const token = await request('POST', '/api/mcp/oauth/token', {
       form: { grant_type: 'password', client_id: 'x' },
     });
