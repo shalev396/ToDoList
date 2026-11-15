@@ -119,6 +119,12 @@ export function NewTodoSheet({
       if (code === 'created_not_stored') {
         setUncertain(false);
         setRecurring({ kind: 'notStored' });
+      } else if (code === 'provider_item_missing') {
+        // Made, then deleted at Google before it was stored here: a new save is a new series.
+        recurringKey.current = null;
+        setUncertain(false);
+        setRecurring(null);
+        setError(t('items.newTodo.repeat.deletedThere'));
       } else if (
         code === 'provider_no_answer' ||
         status === undefined ||
