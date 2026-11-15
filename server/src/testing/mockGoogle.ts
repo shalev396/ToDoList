@@ -103,8 +103,8 @@ export interface MockGoogle {
   deleteEvent(calendarId: string, eventId: string): boolean;
   /** Refresh grants issued, revoked, still live. */
   grants(): { issued: number; revoked: number; live: number };
-  /** Every request the stand-in received, in order: its method and path (no query, no body). */
-  requests(): readonly { method: string; path: string }[];
+  /** Every request the stand-in received, in order: its method, path and query (no body). */
+  requests(): readonly { method: string; path: string; query: string }[];
   reset(): void;
   close(): Promise<void>;
 }
@@ -597,11 +597,13 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     apiError(res, 404, 'Not Found');
   }
 
-  const received: { method: string; path: string }[] = [];
+  const received: { method: string; path: string; query: string }[] = [];
   const server: Server = createServer((req, res) => {
+    const requested = new URL(req.url ?? '/', 'http://127.0.0.1');
     received.push({
       method: req.method ?? 'GET',
-      path: new URL(req.url ?? '/', 'http://127.0.0.1').pathname,
+      path: requested.pathname,
+      query: requested.search,
     });
     handle(req, res).catch(() => {
       if (!res.headersSent) apiError(res, 500, 'Backend Error');
@@ -665,7 +667,7 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
       const revoked = grants.filter((grant) => grant.revoked).length;
       return { issued: grants.length, revoked, live: grants.length - revoked };
     },
-    requests: (): readonly { method: string; path: string }[] => [...received],
+    requests: (): readonly { method: string; path: string; query: string }[] => [...received],
     reset,
     close: () =>
       new Promise<void>((resolve) => {

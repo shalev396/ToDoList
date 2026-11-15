@@ -112,6 +112,7 @@ describe('mapCalendarEvent', () => {
         recurrence: null,
         originalStartAt: null,
         attendeesCount: 0,
+        guestsCount: 0,
         transparency: 'opaque',
       },
       source: {
@@ -255,7 +256,7 @@ describe('mapCalendarEvent', () => {
     );
   });
 
-  it('meet link from conferenceData, rooms are not guests, free time stays transparent', () => {
+  it('meet link from conferenceData, rooms and the owner are not guests, free time stays transparent', () => {
     const mapped = mapLive(
       event({
         transparency: 'transparent',
@@ -276,9 +277,10 @@ describe('mapCalendarEvent', () => {
       [
         mapped.props?.['meetLink'],
         mapped.props?.['attendeesCount'],
+        mapped.props?.['guestsCount'],
         mapped.props?.['transparency'],
       ],
-      ['https://example.invalid/meet/FAKE-xyz', 2, 'transparent'],
+      ['https://example.invalid/meet/FAKE-xyz', 2, 1, 'transparent'],
     );
     const hangout = mapLive(event({ hangoutLink: 'https://example.invalid/meet/FAKE-abc' }));
     assert.equal(hangout.props?.['meetLink'], 'https://example.invalid/meet/FAKE-abc');

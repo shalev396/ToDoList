@@ -5,8 +5,11 @@
  *
  * - the calendar picker: calendarList, as `{id, summary, primary, accessRole}`;
  * - an event created from a to-do (insertEvent, a recurring one with one strictly parsed RRULE
- *   line), an event's edit (updateEvent) or delete (deleteEvent), a calendar of TodoList's own
- *   (createCalendar, which needs the `calendar.app.created` scope), and the push: the diff's ops
+ *   line); a pulled event's edit (updateEvent) or delete (deleteEvent), by its item of this
+ *   integration on a calendar it reads, an event with other guests only when the caller says
+ *   whether to notify them; a pushed event's delete by its CalendarLink (deleteLinkedEvent); a
+ *   calendar of TodoList's own (createCalendar, which needs the `calendar.app.created` scope);
+ *   and the push: the diff's ops
  *   applied through the Calendar API (writers/calendarOps.ts); all only inside the write session,
  *   so a read-only integration never writes; a dry run writes nothing and is always allowed;
  * - the pull after a push: Google-side edits and deletes of what was pushed;
@@ -17,13 +20,18 @@ import { z } from 'zod';
 
 import type { Caller } from '../../base/Caller.js';
 import { AppError } from '../../../errors/AppError.js';
+import { EventHasGuestsError } from '../../../errors/EventHasGuestsError.js';
+import { NotFoundError } from '../../../errors/NotFoundError.js';
+import { ProviderItemMissingError } from '../../../errors/ProviderItemMissingError.js';
 import { ScopeMissingError } from '../../../errors/ScopeMissingError.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
 import { applyCommit } from '../../../gcal/commit.js';
 import { ORIGIN, PAST_WINDOW_DAYS } from '../../../gcal/diff.js';
 import { loadPlan, readGcalConfig, type PlanNarrowing } from '../../../gcal/plan.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
+import type { ItemData } from '../../../models/definitions/Item.js';
 import {
+  getCalendarLinkRepository,
   getIntegrationRepository,
   getItemRepository,
   getSyncRunRepository,
@@ -36,6 +44,7 @@ import {
   calendarEventExternalId,
   mapCalendarEvent,
 } from '../../../sync/providers/google_calendar.js';
+import { asString } from '../../../sync/providers/trackerCommon.js';
 import { googleEndpoints } from '../../../sync/providers/googleEndpoints.js';
 import { parseOr400 } from '../../../utils/validation.js';
 import type { AdapterContext } from '../../../sync/types.js';
@@ -52,6 +61,9 @@ import type {
   CalendarPushRequest,
   EventPatch,
   GoogleCalendarEntry,
+  GuestNotice,
+  ItemRef,
+  LinkedItemRef,
   ResourcePicker,
   Revocable,
   SupportsOAuth,
@@ -72,6 +84,7 @@ import {
   calendarWriter,
   type CalendarReader,
   type CalendarWriter,
+  type GuestUpdates,
   type PlainEventBody,
   type RecurringEventBody,
   type WrittenEvent,
@@ -114,6 +127,23 @@ const CalendarName = z
   });
 
 /**
+ * Whether a pulled event has guests beyond the calendar's owner: its `guestsCount`, or (an item
+ * pulled before that was kept) two or more attendees.
+ */
+function hasGuests(item: ItemData): boolean {
+  const { guestsCount, attendeesCount } = item.props;
+  if (typeof guestsCount === 'number') return guestsCount > 0;
+  return typeof attendeesCount === 'number' && attendeesCount >= 2;
+}
+
+/** One pulled event of this integration: its item, and where it is at Google. */
+interface OwnEvent {
+  stored: ItemData;
+  calendarId: string;
+  eventId: string;
+}
+
+/**
  * A write that failed, as the caller answers it: Google's status (never its text), or a grant
  * Google refused to refresh (reconnect).
  */
@@ -130,9 +160,7 @@ function calendarFailure(error: unknown): Error {
   }
   if (status === 401) return new AppError(409, RECONNECT);
   if (status === 403) return new AppError(409, 'Google refused this change for this account');
-  if (status === 404 || status === 410) {
-    return new AppError(404, 'That event or calendar no longer exists in Google Calendar');
-  }
+  if (status === 404 || status === 410) return new ProviderItemMissingError('google_calendar');
   if (status === 429) return new AppError(429, 'Google Calendar is busy. Try again in a moment.');
   return new AppError(422, 'Google Calendar rejected this change');
 }
@@ -359,45 +387,75 @@ export class GoogleCalendarIntegration
   }
 
   /**
-   * Its owner changes one event (a pulled one, or one TodoList made): its title, its time (given
-   * whole) or its description (EventEdit: 400 naming the field), through the write session. The
-   * event's item here, when it has one, takes what Google answered (and the next sync rewrites
-   * it). Audited as `integration.write` (`event.update`, the field names).
+   * Its owner changes one pulled event, by its item: this integration's event item, on one of the
+   * calendars it reads (404 otherwise: another integration's, another workspace's, a raw id, an
+   * unselected calendar). Its title, its time (given whole) or its description (EventEdit: 400
+   * naming the field). An event with other guests needs `notifyGuests` (409 `event_has_guests`
+   * otherwise), sent as Google's `sendUpdates`. Audited as `integration.write` (`event.update`,
+   * the field names) right after Google takes it; then the item takes what Google answered (its
+   * hash cleared for the next sync).
    */
   async updateEvent(
     caller: Caller,
-    calendarId: string,
-    eventId: string,
+    item: ItemRef,
     patch: EventPatch,
+    notice: GuestNotice = {},
   ): Promise<WrittenEvent> {
     this.assertOwner(caller);
-    const calendar = checkedId('calendarId', calendarId, 'calendarId');
-    const event = checkedId('eventId', eventId, 'eventId');
     const timeZone = caller.settings.timezone;
     const edit = EventEdit.parse(patch, timeZone);
+    const event = await this.#ownEvent(item.id);
+    this.assertWritable(caller);
+    const sendUpdates = GoogleCalendarIntegration.#guestUpdates(event.stored, notice);
     const updated = await this.#calendarWrite(caller, (writer) =>
-      writer.update(calendar, event, edit.changes),
+      writer.update(event.calendarId, event.eventId, edit.changes, sendUpdates),
     );
-    await this.#refreshItem(calendar, event, updated.record, timeZone);
-    await this.recordWrite(caller, { operation: 'event.update', fields: [...edit.fields] });
+    await this.recordWrite(caller, {
+      operation: 'event.update',
+      itemId: event.stored.id,
+      fields: [...edit.fields],
+    });
+    await this.#refreshItem(event, updated.record, timeZone);
     return { id: updated.id, etag: updated.etag, updated: updated.updated };
   }
 
   /**
-   * Its owner deletes one event, through the write session (one already gone is done); the
-   * event's item here goes too. Audited as `integration.write` (`event.delete`).
+   * Its owner deletes one pulled event, by its item (the same checks as updateEvent; one already
+   * gone is done); the item goes too. Audited as `integration.write` (`event.delete`) right after
+   * Google takes it.
    */
-  async deleteEvent(caller: Caller, calendarId: string, eventId: string): Promise<void> {
+  async deleteEvent(caller: Caller, item: ItemRef, notice: GuestNotice = {}): Promise<void> {
     this.assertOwner(caller);
-    const calendar = checkedId('calendarId', calendarId, 'calendarId');
-    const event = checkedId('eventId', eventId, 'eventId');
-    await this.#calendarWrite(caller, (writer) => writer.remove(calendar, event));
+    const event = await this.#ownEvent(item.id);
+    this.assertWritable(caller);
+    const sendUpdates = GoogleCalendarIntegration.#guestUpdates(event.stored, notice);
+    await this.#calendarWrite(caller, (writer) =>
+      writer.remove(event.calendarId, event.eventId, sendUpdates),
+    );
+    await this.recordWrite(caller, { operation: 'event.delete', itemId: event.stored.id });
     await (
       await getItemRepository()
-    ).softDeleteBySource(this.workspaceId, this.#account, [
-      calendarEventExternalId(calendar, event),
-    ]);
-    await this.recordWrite(caller, { operation: 'event.delete' });
+    ).softDeleteBySource(this.workspaceId, this.#account, [event.stored.source.externalId]);
+  }
+
+  /**
+   * An event TodoList pushed, deleted by its CalendarLink: this integration's live link for the
+   * item, in this workspace, on the push target (404 otherwise). A pushed event has no guests.
+   * Audited as `integration.write` (`event.delete`) right after Google takes it; then the link is
+   * tombstoned (deleted from TodoList's side), so no push makes it again.
+   */
+  async deleteLinkedEvent(caller: Caller, link: LinkedItemRef): Promise<void> {
+    this.assertOwner(caller);
+    const links = await getCalendarLinkRepository();
+    const found = await links.findByItem(this.workspaceId, this.id, link.itemId);
+    const target = this.config.targetCalendarId;
+    if (found?.tombstonedAt !== null || found.calendarId !== target) throw new NotFoundError();
+    const calendarId = checkedId('calendarId', found.calendarId, 'link');
+    const eventId = checkedId('eventId', found.googleEventId, 'link');
+    this.assertWritable(caller);
+    await this.#calendarWrite(caller, (writer) => writer.remove(calendarId, eventId));
+    await this.recordWrite(caller, { operation: 'event.delete', itemId: link.itemId });
+    await links.tombstone(this.workspaceId, found.id, 'dashboard');
   }
 
   /**
@@ -537,26 +595,59 @@ export class GoogleCalendarIntegration
   }
 
   /**
-   * The event's item here (this integration's, when it has one) takes the event as Google
-   * answered it; its source hash is cleared, so the next sync rewrites it whatever it holds.
+   * This integration's live event item `id`, on a calendar it reads, with where it is at Google
+   * (from the item's own calendar and event ids, which must agree with its natural key): 404 for
+   * anything else. The ids pass their patterns too (400), a second line of defence.
+   */
+  async #ownEvent(id: string): Promise<OwnEvent> {
+    const stored = await (await getItemRepository()).findById(this.workspaceId, id);
+    if (
+      stored?.integrationId !== this.id ||
+      stored.kind !== 'event' ||
+      stored.source.provider !== 'google_calendar'
+    ) {
+      throw new NotFoundError();
+    }
+    const calendarId = asString(stored.props['calendarId']);
+    const eventId = asString(stored.props['eventId']);
+    if (
+      calendarId === null ||
+      eventId === null ||
+      calendarEventExternalId(calendarId, eventId) !== stored.source.externalId ||
+      !this.config.calendars.some((calendar) => calendar.id === calendarId)
+    ) {
+      throw new NotFoundError();
+    }
+    return {
+      stored,
+      calendarId: checkedId('calendarId', calendarId, 'item'),
+      eventId: checkedId('eventId', eventId, 'item'),
+    };
+  }
+
+  /**
+   * Google's `sendUpdates` for a change to this event: as the caller said; for an event with
+   * other guests the caller must say (EventHasGuestsError otherwise); none otherwise.
+   */
+  static #guestUpdates(stored: ItemData, notice: GuestNotice): GuestUpdates | undefined {
+    if (notice.notifyGuests !== undefined) return notice.notifyGuests ? 'all' : 'none';
+    if (hasGuests(stored)) throw new EventHasGuestsError();
+    return undefined;
+  }
+
+  /**
+   * The event's item takes the event as Google answered it; its source hash is cleared, so the
+   * next sync rewrites it whatever it holds.
    */
   async #refreshItem(
-    calendarId: string,
-    eventId: string,
+    event: OwnEvent,
     record: Record<string, unknown>,
     timeZone: string,
   ): Promise<void> {
-    const items = await getItemRepository();
-    const stored = await items.findBySource(
-      this.workspaceId,
-      this.#account,
-      calendarEventExternalId(calendarId, eventId),
-    );
-    if (stored === null) return;
     let mapped: ReturnType<typeof mapCalendarEvent> | null;
     try {
       mapped = mapCalendarEvent(record, {
-        calendarId,
+        calendarId: event.calendarId,
         accountId: this.accountId,
         timeZone,
       });
@@ -575,7 +666,9 @@ export class GoogleCalendarIntegration
             allDay: mapped.allDay ?? false,
             closedAt: mapped.closedAt ?? null,
           };
-    await items.updateMirrored(this.workspaceId, this.id, stored.id, fields, { resync: true });
+    await (
+      await getItemRepository()
+    ).updateMirrored(this.workspaceId, this.id, event.stored.id, fields, { resync: true });
   }
 
   /** The event with its one recurrence line (400 for anything RecurrenceRule doesn't take). */

@@ -1,10 +1,17 @@
 /**
- * Google Calendar's new writes (CalendarProvider: updateEvent, deleteEvent, createCalendar, and
- * insertEvent with a recurrence), end to end against the mock Google with a real OAuth grant:
- * while read-only each is refused with zero non-GET requests; once read & write, each sends its one
- * allow-listed call and the event's item here follows; a recurrence is checked by the strict RRULE
- * parser before anything is sent; and a grant from before TodoList asked for
- * `calendar.app.created` answers `scope_missing` to createCalendar, before anything is opened.
+ * Google Calendar's new writes (CalendarProvider: updateEvent and deleteEvent by item,
+ * deleteLinkedEvent by link, createCalendar, and insertEvent with a recurrence), end to end against
+ * the mock Google with a real OAuth grant:
+ * - an event is reached only through an item of THIS integration, in this workspace, on a calendar
+ *   it reads, or through its own CalendarLink on the push target: another integration's event,
+ *   another workspace's, a raw event id or an unselected calendar is 404 with zero non-GET
+ *   requests;
+ * - while read-only each write is refused with zero non-GET requests; once read & write, each
+ *   sends its one allow-listed call, is audited, and the event's item follows;
+ * - an event with other guests needs `notifyGuests` (409 `event_has_guests` otherwise), sent as
+ *   `sendUpdates`;
+ * - a recurrence is checked by the strict RRULE parser before anything is sent;
+ * - a grant from before `calendar.app.created` answers `scope_missing` to createCalendar.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -146,14 +153,25 @@ const event = (id: string, over: Partial<PlainEventBody> = {}): PlainEventBody =
   ...over,
 });
 
-/** The event's item here, as a sync of the calendar writes it (its source hash set). */
-async function mirrorEvent(eventId: string): Promise<ItemData> {
+/** The event's item here, as a sync of `calendarId` writes it (its source hash set). */
+async function mirrorEvent(
+  eventId: string,
+  options: {
+    integration?: GoogleCalendarIntegration;
+    calendarId?: string;
+    workspaceId?: string;
+    props?: Record<string, unknown>;
+  } = {},
+): Promise<ItemData> {
+  const integration = options.integration ?? alice;
+  const calendarId = options.calendarId ?? ALICE.email;
+  const workspaceId = options.workspaceId ?? wid;
   const items = await models.getItemRepository();
-  const account = { provider: 'google_calendar' as const, accountId: alice.accountId };
-  const externalId = `${ALICE.email}:${eventId}`;
-  await items.bulkUpsert(wid, [
+  const account = { provider: 'google_calendar' as const, accountId: integration.accountId };
+  const externalId = `${calendarId}:${eventId}`;
+  await items.bulkUpsert(workspaceId, [
     {
-      integrationId: alice.id,
+      integrationId: integration.id,
       kind: 'event',
       topicId: null,
       title: 'Dentist',
@@ -162,7 +180,7 @@ async function mirrorEvent(eventId: string): Promise<ItemData> {
       startAt: new Date('2026-11-24T07:00:00Z'),
       endAt: new Date('2026-11-24T07:30:00Z'),
       allDay: false,
-      props: { calendarId: ALICE.email, eventId },
+      props: { calendarId, eventId, attendeesCount: 0, guestsCount: 0, ...options.props },
       source: {
         ...account,
         externalId,
@@ -174,10 +192,37 @@ async function mirrorEvent(eventId: string): Promise<ItemData> {
       },
     },
   ]);
-  const stored = await items.findBySource(wid, { ...account, integrationId: alice.id }, externalId);
+  const stored = await items.findBySource(
+    workspaceId,
+    { ...account, integrationId: integration.id },
+    externalId,
+  );
   assert.ok(stored !== null);
   return stored;
 }
+
+/** An event "in Google" on Alice's primary calendar, and its item here. */
+async function pulled(
+  summary: string,
+  props: Record<string, unknown> = {},
+): Promise<{ eventId: string; item: ItemData }> {
+  const added = mock.addEvent(ALICE.email, {
+    summary,
+    start: { dateTime: '2026-11-24T07:00:00Z' },
+    end: { dateTime: '2026-11-24T07:30:00Z' },
+  });
+  return { eventId: added.id, item: await mirrorEvent(added.id, { props }) };
+}
+
+const eventPath = (eventId: string): string =>
+  `/calendar/v3/calendars/${encodeURIComponent(ALICE.email)}/events/${eventId}`;
+
+/** The query of the last request to `path`. */
+const queryOf = (path: string): string | undefined =>
+  mock
+    .requests()
+    .filter((request) => request.path === path)
+    .at(-1)?.query;
 
 const audits = async (): Promise<unknown[]> =>
   (await (await models.getAuditLogRepository()).list(wid, { action: 'integration.write' }, 50)).map(
@@ -186,17 +231,15 @@ const audits = async (): Promise<unknown[]> =>
 
 describe('Google Calendar writes while read-only', () => {
   it('each new write is 409 integration_read_only, with zero non-GET requests', async () => {
+    const { item } = await pulled('Read-only dentist');
     const before = writes();
     const readOnly = (error: unknown): boolean => hasCode(409, 'integration_read_only')(error);
     await assert.rejects(
       alice.insertEvent(caller, ALICE.email, event('h5rrule0001'), ['RRULE:FREQ=DAILY;COUNT=3']),
       readOnly,
     );
-    await assert.rejects(
-      alice.updateEvent(caller, ALICE.email, 'evt00001', { title: 'Renamed' }),
-      readOnly,
-    );
-    await assert.rejects(alice.deleteEvent(caller, ALICE.email, 'evt00001'), readOnly);
+    await assert.rejects(alice.updateEvent(caller, item, { title: 'Renamed' }), readOnly);
+    await assert.rejects(alice.deleteEvent(caller, item), readOnly);
     await assert.rejects(alice.createCalendar(caller, 'TodoList'), readOnly);
     assert.deepEqual(since(before), []);
     assert.deepEqual(mock.createdCalendars(), []);
@@ -219,6 +262,7 @@ describe('Google Calendar writes once read & write', () => {
     for (const recurrence of [
       ['RRULE:FREQ=HOURLY'],
       ['RRULE:FREQ=DAILY;BYSETPOS=1'],
+      ['RRULE:FREQ=YEARLY;BYMONTHDAY=15'],
       ['EXDATE:20261124T050000Z'],
       ['RRULE:FREQ=DAILY', 'RRULE:FREQ=WEEKLY'],
       [],
@@ -243,26 +287,57 @@ describe('Google Calendar writes once read & write', () => {
     assert.deepEqual(since(before), []);
   });
 
-  it('updateEvent: one PATCH; the event and its item here take the new title and time', async () => {
-    const added = mock.addEvent(ALICE.email, {
-      summary: 'Dentist',
-      start: { dateTime: '2026-11-24T07:00:00Z' },
-      end: { dateTime: '2026-11-24T07:30:00Z' },
+  it('only this integration’s event items on a calendar it reads: anything else is 404, nothing sent', async () => {
+    mock.nextAuthorize('no_app_calendars');
+    const bob = await switchToReadWrite(await connect(BOB));
+    const bobs = await mirrorEvent('bobevent001', { integration: bob, calendarId: BOB.email });
+    const { eventId } = await pulled('Mine');
+    // The same event under another workspace (another tenant), on an unselected calendar.
+    const otherWorkspace = (
+      await (
+        await models.getWorkspaceRepository()
+      ).create({ name: 'Elsewhere', slug: `gwb-x-${randomUUID().slice(0, 8)}`, ownerId })
+    ).id;
+    const elsewhere = await mirrorEvent(eventId, { workspaceId: otherWorkspace });
+    const unselected = await mirrorEvent('hiddencal01', {
+      calendarId: 'work@group.calendar.example',
     });
-    const item = await mirrorEvent(added.id);
+    const local = await (
+      await models.getItemRepository()
+    ).createLocal(wid, { ownerUserId: ownerId, title: 'A to-do', topicId: null });
     const before = writes();
-    const written = await alice.updateEvent(caller, ALICE.email, added.id, {
+    for (const ref of [
+      bobs,
+      elsewhere,
+      unselected,
+      local,
+      // A raw Google event id is not an item.
+      { id: eventId },
+      { id: 'missing' },
+    ]) {
+      await assert.rejects(alice.updateEvent(caller, ref, { title: 'x' }), hasStatus(404));
+      await assert.rejects(alice.deleteEvent(caller, ref), hasStatus(404));
+    }
+    assert.deepEqual(since(before), []);
+    assert.ok(
+      mock.events(ALICE.email).some((entry) => entry.id === eventId),
+      'untouched',
+    );
+  });
+
+  it('updateEvent: one PATCH; the event and its item take the new title and time; audited at once', async () => {
+    const { eventId, item } = await pulled('Dentist');
+    const before = writes();
+    const written = await alice.updateEvent(caller, item, {
       title: 'Dentist (moved)',
       description: 'Bring the forms',
-      start: new Date('2026-11-25T08:00:00Z'),
-      end: new Date('2026-11-25T09:00:00Z'),
+      startAt: new Date('2026-11-25T08:00:00Z'),
+      endAt: new Date('2026-11-25T09:00:00Z'),
     });
-    assert.deepEqual(since(before), [
-      'POST /token',
-      `PATCH /calendar/v3/calendars/${encodeURIComponent(ALICE.email)}/events/${added.id}`,
-    ]);
-    assert.equal(written.id, added.id);
-    const atGoogle = mock.events(ALICE.email).find((entry) => entry.id === added.id);
+    assert.deepEqual(since(before), ['POST /token', `PATCH ${eventPath(eventId)}`]);
+    assert.equal(queryOf(eventPath(eventId)), '', 'no guests: no sendUpdates');
+    assert.equal(written.id, eventId);
+    const atGoogle = mock.events(ALICE.email).find((entry) => entry.id === eventId);
     assert.equal(atGoogle?.summary, 'Dentist (moved)');
     assert.equal(atGoogle.description, 'Bring the forms');
     assert.deepEqual(atGoogle.start, {
@@ -277,60 +352,117 @@ describe('Google Calendar writes once read & write', () => {
     assert.equal(after.source.hash, null);
     assert.deepEqual((await audits()).at(0), {
       operation: 'event.update',
-      fields: ['title', 'description', 'time'],
+      itemId: item.id,
+      fields: ['title', 'description', 'startAt', 'endAt'],
     });
   });
 
-  it('updateEvent: all day (the other form cleared); an invalid edit 400 and a gone event 404', async () => {
-    const added = mock.addEvent(ALICE.email, {
-      summary: 'Trip',
-      start: { dateTime: '2026-12-01T07:00:00Z' },
-      end: { dateTime: '2026-12-01T08:00:00Z' },
-    });
-    await alice.updateEvent(caller, ALICE.email, added.id, {
-      start: new Date('2026-12-01T10:00:00Z'),
-      end: new Date('2026-12-03T10:00:00Z'),
+  it('updateEvent: all day (the other form cleared); an invalid edit 400; a gone event 404', async () => {
+    const { eventId, item } = await pulled('Trip');
+    await alice.updateEvent(caller, item, {
+      startAt: new Date('2026-12-01T10:00:00Z'),
+      endAt: new Date('2026-12-03T10:00:00Z'),
       allDay: true,
     });
-    const atGoogle = mock.events(ALICE.email).find((entry) => entry.id === added.id);
+    const atGoogle = mock.events(ALICE.email).find((entry) => entry.id === eventId);
     assert.deepEqual(atGoogle?.start, { date: '2026-12-01', dateTime: null, timeZone: null });
     assert.deepEqual(atGoogle.end, { date: '2026-12-03', dateTime: null, timeZone: null });
     const before = writes();
-    await assert.rejects(
-      alice.updateEvent(caller, ALICE.email, added.id, { start: new Date() }),
-      hasStatus(400),
-    );
-    await assert.rejects(
-      alice.updateEvent(caller, ALICE.email, 'bad/id', { title: 'x' }),
-      hasStatus(400),
-    );
+    await assert.rejects(alice.updateEvent(caller, item, { startAt: new Date() }), hasStatus(400));
     assert.deepEqual(since(before), []);
+    // An item whose event Google no longer has.
+    const gone = await mirrorEvent('nosuchevent9');
     await assert.rejects(
-      alice.updateEvent(caller, ALICE.email, 'nosuchevent1', { title: 'x' }),
-      hasStatus(404),
+      alice.updateEvent(caller, gone, { title: 'x' }),
+      hasCode(404, 'provider_item_missing'),
     );
   });
 
-  it('deleteEvent: one DELETE, the item here goes too, and a second delete is done', async () => {
-    const added = mock.addEvent(ALICE.email, {
-      summary: 'Cancelled lunch',
-      start: { dateTime: '2026-11-26T10:00:00Z' },
-      end: { dateTime: '2026-11-26T11:00:00Z' },
-    });
-    const item = await mirrorEvent(added.id);
+  it('an event with other guests: 409 event_has_guests unless notifyGuests, sent as sendUpdates', async () => {
+    const meeting = await pulled('Team sync', { attendeesCount: 3, guestsCount: 2 });
+    // Pulled before guestsCount was kept: two attendees or more read as guests.
+    const older = await pulled('Old review', { attendeesCount: 2, guestsCount: undefined });
     const before = writes();
-    await alice.deleteEvent(caller, ALICE.email, added.id);
-    assert.deepEqual(since(before), [
-      'POST /token',
-      `DELETE /calendar/v3/calendars/${encodeURIComponent(ALICE.email)}/events/${added.id}`,
-    ]);
+    for (const { item } of [meeting, older]) {
+      await assert.rejects(
+        alice.updateEvent(caller, item, { title: 'Moved' }),
+        hasCode(409, 'event_has_guests'),
+      );
+      await assert.rejects(alice.deleteEvent(caller, item), hasCode(409, 'event_has_guests'));
+    }
+    assert.deepEqual(since(before), []);
+    await alice.updateEvent(
+      caller,
+      meeting.item,
+      { title: 'Team sync (moved)' },
+      { notifyGuests: true },
+    );
+    assert.equal(queryOf(eventPath(meeting.eventId)), '?sendUpdates=all');
+    await alice.deleteEvent(caller, older.item, { notifyGuests: false });
+    assert.equal(queryOf(eventPath(older.eventId)), '?sendUpdates=none');
     assert.equal(
-      mock.events(ALICE.email).some((entry) => entry.id === added.id),
+      mock.events(ALICE.email).some((entry) => entry.id === older.eventId),
+      false,
+    );
+  });
+
+  it('deleteEvent: one DELETE, the item goes too, audited; a second delete finds no item', async () => {
+    const { eventId, item } = await pulled('Cancelled lunch');
+    const before = writes();
+    await alice.deleteEvent(caller, item);
+    assert.deepEqual(since(before), ['POST /token', `DELETE ${eventPath(eventId)}`]);
+    assert.equal(
+      mock.events(ALICE.email).some((entry) => entry.id === eventId),
       false,
     );
     assert.equal(await (await models.getItemRepository()).findById(wid, item.id), null);
-    await alice.deleteEvent(caller, ALICE.email, added.id);
-    assert.deepEqual((await audits()).at(0), { operation: 'event.delete' });
+    assert.deepEqual((await audits()).at(0), { operation: 'event.delete', itemId: item.id });
+    await assert.rejects(alice.deleteEvent(caller, item), hasStatus(404));
+  });
+
+  it('deleteLinkedEvent: only this integration’s live link on the push target; the link is tombstoned', async () => {
+    const links = await models.getCalendarLinkRepository();
+    const pushed = mock.addEvent(ALICE.email, {
+      id: 'h5pushed0001',
+      summary: 'Pushed to-do',
+      start: { date: '2026-11-28' },
+      end: { date: '2026-11-29' },
+    });
+    const link = await links.upsert(
+      wid,
+      alice.id,
+      { calendarId: ALICE.email, googleEventId: pushed.id },
+      { itemId: 'todo-pushed-1', direction: 'to_google' },
+    );
+    await links.upsert(
+      wid,
+      alice.id,
+      { calendarId: 'other@group.calendar.example', googleEventId: 'h5elsewhere1' },
+      { itemId: 'todo-elsewhere-1', direction: 'to_google' },
+    );
+    const before = writes();
+    for (const itemId of ['todo-elsewhere-1', 'no-such-item']) {
+      await assert.rejects(alice.deleteLinkedEvent(caller, { itemId }), hasStatus(404));
+    }
+    assert.deepEqual(since(before), []);
+    await alice.deleteLinkedEvent(caller, { itemId: 'todo-pushed-1' });
+    assert.deepEqual(since(before), ['POST /token', `DELETE ${eventPath(pushed.id)}`]);
+    assert.equal(
+      mock.events(ALICE.email).some((entry) => entry.id === pushed.id),
+      false,
+    );
+    const tombstoned = await links.findByItem(wid, alice.id, 'todo-pushed-1');
+    assert.equal(tombstoned?.id, link.id);
+    assert.ok(tombstoned.tombstonedAt instanceof Date);
+    assert.equal(tombstoned.deletedBy, 'dashboard');
+    assert.deepEqual((await audits()).at(0), {
+      operation: 'event.delete',
+      itemId: 'todo-pushed-1',
+    });
+    await assert.rejects(
+      alice.deleteLinkedEvent(caller, { itemId: 'todo-pushed-1' }),
+      hasStatus(404),
+    );
   });
 
   it('createCalendar: one calendars.insert in the workspace’s zone; it takes events', async () => {
@@ -341,9 +473,10 @@ describe('Google Calendar writes once read & write', () => {
       { ...created, id: created.id.endsWith('@group.calendar.google.com') },
       { id: true, summary: 'TodoList', primary: false, accessRole: 'owner' },
     );
-    assert.deepEqual(mock.createdCalendars(), [
-      { id: created.id, summary: 'TodoList', timeZone: TZ },
-    ]);
+    assert.deepEqual(
+      mock.createdCalendars().filter((calendar) => calendar.id === created.id),
+      [{ id: created.id, summary: 'TodoList', timeZone: TZ }],
+    );
     assert.deepEqual((await audits()).at(0), { operation: 'calendar.create' });
     const inserted = await alice.insertEvent(caller, created.id, event('h5mine00001'));
     assert.equal(inserted.kind, 'created');
@@ -352,8 +485,9 @@ describe('Google Calendar writes once read & write', () => {
   });
 
   it('a grant from before calendar.app.created: createCalendar is 409 scope_missing, nothing sent', async () => {
-    mock.nextAuthorize('no_app_calendars');
-    const bob = await switchToReadWrite(await connect(BOB));
+    const bob = await load(
+      (await Integration()).find((integration) => integration.accountId === BOB.sub)?.id ?? '',
+    );
     const before = writes();
     await assert.rejects(
       bob.createCalendar(caller, 'TodoList'),
@@ -371,3 +505,11 @@ describe('Google Calendar writes once read & write', () => {
     assert.deepEqual(guard.externalHosts(), []);
   });
 });
+
+/** The caller's Google Calendar integrations here. */
+async function Integration(): Promise<GoogleCalendarIntegration[]> {
+  const { Integration: Base, GoogleCalendarIntegration: Google } = await import('./index.js');
+  return (await Base.listOwn(caller)).filter(
+    (integration): integration is GoogleCalendarIntegration => integration instanceof Google,
+  );
+}

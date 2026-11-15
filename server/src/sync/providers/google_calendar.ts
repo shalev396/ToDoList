@@ -250,6 +250,10 @@ export function mapCalendarEvent(
       recurrence,
       originalStartAt: originalStart?.at.toISOString() ?? null,
       attendeesCount: attendees.filter((attendee) => attendee.resource !== true).length,
+      // Guests beyond the calendar's owner: moving or deleting such an event changes it for them.
+      guestsCount: attendees.filter(
+        (attendee) => attendee.resource !== true && attendee.self !== true,
+      ).length,
       transparency: text(raw.transparency) ?? 'opaque',
     },
     source: {

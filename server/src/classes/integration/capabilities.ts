@@ -102,19 +102,32 @@ export interface CalendarDryRun {
 }
 
 /**
- * An edit of one event (a pulled one, or one TodoList made): what changes, each optional, at least
- * one. Its time is given whole: `start` and `end` together, with `allDay` (default: a timed
- * event). An all-day event runs from the day `start` falls on in the workspace's zone up to the
- * day `end` falls on, that day excluded (as Google and a pulled event's item keep it); an `end` on
- * the start's day is that one day.
+ * An edit of one pulled event, in the item's own names: what changes, each optional, at least
+ * one. Its time is given whole: `startAt` and `endAt` together, with `allDay` (default: a timed
+ * event). An all-day event runs from the day `startAt` falls on in the workspace's zone up to the
+ * day `endAt` falls on, that day excluded (as Google and the event's item keep it); an `endAt` on
+ * the start's day is that one day. `description` is written to Google; an item keeps none.
  */
 export interface EventPatch {
   title?: string;
   /** Plain text; null clears it. */
   description?: string | null;
-  start?: Date;
-  end?: Date;
+  startAt?: Date;
+  endAt?: Date;
   allDay?: boolean;
+}
+
+/**
+ * Whether Google tells an event's other guests about a change (`sendUpdates`): required for an
+ * event that has guests (409 `event_has_guests` without it), optional otherwise.
+ */
+export interface GuestNotice {
+  readonly notifyGuests?: boolean;
+}
+
+/** An event TodoList pushed, by the item it was pushed for (its CalendarLink of this integration). */
+export interface LinkedItemRef {
+  readonly itemId: string;
 }
 
 /** A push: the plan's ops, as of `now`. */
@@ -140,15 +153,25 @@ export interface CalendarProvider extends CreateFunnel {
     event: PlainEventBody,
     recurrence?: readonly string[],
   ): Promise<WriteResult>;
-  /** One event's title, time or description changed (its mirrored item follows). */
+  /**
+   * A pulled event's title, time or description changed, by its item (this integration's event
+   * item, on one of the calendars it reads: 404 otherwise); the item follows. Never a raw calendar
+   * or event id from a caller.
+   */
   updateEvent(
     caller: Caller,
-    calendarId: string,
-    eventId: string,
+    item: ItemRef,
     patch: EventPatch,
+    notice?: GuestNotice,
   ): Promise<WrittenEvent>;
-  /** One event deleted (already gone is done; its mirrored item goes too). */
-  deleteEvent(caller: Caller, calendarId: string, eventId: string): Promise<void>;
+  /** A pulled event deleted, by its item (already gone is done); the item goes too. */
+  deleteEvent(caller: Caller, item: ItemRef, notice?: GuestNotice): Promise<void>;
+  /**
+   * An event TodoList pushed, deleted by its CalendarLink of this integration (looked up by the
+   * item it was pushed for, on the push target: 404 otherwise); the link is tombstoned. For the
+   * push's clean-up (an item deleted, a disconnect).
+   */
+  deleteLinkedEvent(caller: Caller, link: LinkedItemRef): Promise<void>;
   /**
    * A calendar of TodoList's own, named `name` (Google's `calendars.insert`, which needs the
    * `calendar.app.created` scope: a grant without it is 409 `scope_missing`).
@@ -211,9 +234,14 @@ export function isTaskProvider(
 export function isCalendarProvider(
   integration: Integration,
 ): integration is Integration & CalendarProvider {
-  return ['insertEvent', 'push', 'updateEvent', 'deleteEvent', 'createCalendar'].every((name) =>
-    hasMethod(integration, name),
-  );
+  return [
+    'insertEvent',
+    'push',
+    'updateEvent',
+    'deleteEvent',
+    'deleteLinkedEvent',
+    'createCalendar',
+  ].every((name) => hasMethod(integration, name));
 }
 
 /** Can create one item from a to-do: a task or a calendar event. */

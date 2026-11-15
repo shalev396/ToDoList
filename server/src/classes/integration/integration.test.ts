@@ -2,8 +2,10 @@
  * The integration classes without a database: the Mode value object, the polymorphic factory
  * (IntegrationRegistry), the capability contracts each provider class implements, the auth
  * strategies' headers, and the write gate's order (demo data, then read-only) and ownership: every
- * write a class can make, write-back included, is refused while read-only before anything is
- * read or sent.
+ * write a class can make without reading an item first is refused while read-only before anything
+ * is sent. The writes keyed by an item (updateTask, updateEvent, deleteEvent, deleteLinkedEvent)
+ * read it first, so the gate waits for what the item says changes: writeBack.trackers.test.ts and
+ * writeBack.calendar.test.ts hold them with a database.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -364,8 +366,6 @@ describe('every provider class, read-only: refused before anything is sent', () 
           readOnly,
         );
         assert.deepEqual(settled, []);
-        // updateTask reads its item first (the gate waits for what changes): the write-back
-        // tests hold it with a database.
       } else if (isCalendarProvider(integration)) {
         await assert.rejects(integration.createOptions(caller(), { step: 'calendar' }), readOnly);
         await assert.rejects(
@@ -396,11 +396,6 @@ describe('every provider class, read-only: refused before anything is sent', () 
           ),
           readOnly,
         );
-        await assert.rejects(
-          integration.updateEvent(caller(), 'primary', 'h5abc', { title: 'Dentist at 9' }),
-          readOnly,
-        );
-        await assert.rejects(integration.deleteEvent(caller(), 'primary', 'h5abc'), readOnly);
         await assert.rejects(integration.createCalendar(caller(), 'TodoList'), readOnly);
       } else {
         // Nothing it could write: no to-do or calendar capability at all.
