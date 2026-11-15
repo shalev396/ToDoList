@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CircleAlert, KeyRound, Plus } from 'lucide-react';
 import { errorMessage } from '@/api/errors';
+import { baseURL } from '@/api/instance';
 import { useAgentKeys, useRefreshAgentKeys, useRevokeAgentKey } from '@/api/queries/agentKeys';
 import { createAgentKey } from '@/api/services/agentKeyService';
 import { FormError } from '@/components/auth/auth-ui';
@@ -37,6 +38,13 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { SettingsFrame, SettingsSection } from '@/pages/settings/SettingsLayout';
 import type { AgentKeyView, WorkspaceView } from '@api-types/api-contracts';
 import { AGENT_SCOPES, type AgentScope } from '@api-types/domain';
+
+/**
+ * This stage's MCP endpoints (MCP.md §12): the API the app itself calls, so dev, QA, prod and a
+ * local server each show their own address with nothing configured.
+ */
+const MCP_URL = `${baseURL}/mcp`;
+const MCP_READONLY_URL = `${MCP_URL}/readonly`;
 
 /** i18n keys can't hold the scope's colon. */
 const scopeKey = (scope: AgentScope) => scope.replace(':', '_');
@@ -421,6 +429,27 @@ function Keys({ workspace, isOwner }: { workspace: WorkspaceView; isOwner: boole
   );
 }
 
+/** Where an agent connects: the address the TodoList plugin and other MCP clients ask for. */
+function ConnectAgent() {
+  const { t } = useTranslation();
+  return (
+    <SettingsSection
+      id="agent-connect-title"
+      title={t('settings.mcp.title')}
+      hint={t('settings.mcp.hint')}
+      layout="stacked"
+    >
+      <CopyField name="mcpUrl" label={t('settings.mcp.address')} value={MCP_URL} />
+      <CopyField
+        name="mcpReadonlyUrl"
+        label={t('settings.mcp.readonly')}
+        value={MCP_READONLY_URL}
+      />
+      <p className="text-[13px] text-muted-foreground">{t('settings.mcp.howTo')}</p>
+    </SettingsSection>
+  );
+}
+
 /** Keys for AI agents (MCP.md §4): the owner creates and revokes; members see their own. */
 export default function AgentKeysPage() {
   const { t } = useTranslation();
@@ -432,6 +461,7 @@ export default function AgentKeysPage() {
     <SettingsFrame>
       <PageMetadata title={pageTitle(t('agentKeys.title'))} noIndex />
       <Keys key={workspace.id} workspace={workspace} isOwner={isOwner} />
+      <ConnectAgent />
     </SettingsFrame>
   );
 }

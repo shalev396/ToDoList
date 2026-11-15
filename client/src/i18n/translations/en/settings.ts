@@ -17,6 +17,14 @@ export const settings = {
       'When on, an agent key with the publish access can make dashboard changes visible to everyone. When off, agents can only edit drafts.',
     failed: 'The setting couldn’t be saved. Try again.',
   },
+  mcp: {
+    title: 'Connect an agent',
+    hint: 'Give your AI assistant this address and one of the keys above.',
+    address: 'MCP address',
+    readonly: 'Read-only address (tools that only read)',
+    howTo:
+      'Claude Code: install the TodoList plugin and paste the address and the key when it asks. Claude, Cursor and other MCP clients: add a remote MCP server with this address and the header Authorization: Bearer <your key>.',
+  },
   sections: {
     agents: 'AI agents',
     agentsHint: 'What assistants connected through agent keys may do here.',
