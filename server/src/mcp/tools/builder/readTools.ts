@@ -6,13 +6,7 @@ import { tryPatch } from '../../../builder/history.js';
 import { listPersonas } from '../../../builder/personas.js';
 import { listTemplates } from '../../../builder/templates.js';
 import { listViewTemplates } from '../../../builder/viewTemplates.js';
-import {
-  applyDashboardOps,
-  getDashboard,
-  listDashboards,
-  listDashboardVersions,
-  validateDashboardDraft,
-} from '../../../services/dashboards.js';
+import { Dashboard } from '../../../classes/dashboard/index.js';
 import { AttributeDefinitions } from '../../../classes/workspace/index.js';
 import { ProviderFields } from '../../../classes/item/ProviderFields.js';
 import { OpSchema } from '../../../types/builder.js';
@@ -20,7 +14,8 @@ import { DASHBOARD_PAGES } from '../../../types/domain.js';
 import { TopicRef, topicIdOf } from '../itemViews.js';
 import { defineTool, type ToolAnnotations } from '../../tool.js';
 import {
-  actorOf,
+  builderCaller,
+  dashboardFor,
   DashboardId,
   DashboardScope,
   DashboardView,
@@ -79,7 +74,7 @@ export const builderListDashboards = defineTool({
   minRole: 'viewer',
   async handler(ctx, input) {
     const { topic, ...filter } = input;
-    const dashboards = await listDashboards(ctx.workspace, actorOf(ctx), {
+    const dashboards = await Dashboard.list(builderCaller(ctx), {
       ...filter,
       ...(topic === undefined ? {} : { topicId: await topicIdOf(ctx.workspace, topic) }),
     });
@@ -102,7 +97,9 @@ export const builderGetDashboard = defineTool({
   scopes: ['read'],
   minRole: 'viewer',
   async handler(ctx, input) {
-    const view = await getDashboard(ctx.workspace, actorOf(ctx), input.dashboardId, {
+    const view = await (
+      await dashboardFor(ctx, input.dashboardId)
+    ).view(builderCaller(ctx), {
       as: input.as,
     });
     return { output: json(DashboardView, view), target: { type: 'dashboard', id: view.id } };
@@ -269,12 +266,14 @@ export const builderValidate = defineTool({
   minRole: 'viewer',
   async handler(ctx, input) {
     if (input.draft !== undefined) {
-      return { output: await validateDashboardDraft(ctx.workspace, input.draft, 'mcp') };
+      return { output: await Dashboard.validateDraft(ctx.workspace.id, input.draft, 'mcp') };
     }
     const dashboardId = input.dashboardId ?? '';
-    const actor = actorOf(ctx);
-    const current = await getDashboard(ctx.workspace, actor, dashboardId, { as: 'draft' });
-    const result = await applyDashboardOps(ctx.workspace, actor, dashboardId, {
+    const caller = builderCaller(ctx);
+    const current = await (await dashboardFor(ctx, dashboardId)).view(caller, { as: 'draft' });
+    const result = await (
+      await dashboardFor(ctx, dashboardId, Dashboard.Operation.edit)
+    ).applyOps(caller, {
       expectedVersion: current.version,
       ops: input.ops ?? [],
       dryRun: true,
@@ -339,7 +338,9 @@ export const builderPreview = defineTool({
   scopes: ['read'],
   minRole: 'editor',
   async handler(ctx, input) {
-    const view = await getDashboard(ctx.workspace, actorOf(ctx), input.dashboardId, {
+    const view = await (
+      await dashboardFor(ctx, input.dashboardId)
+    ).view(builderCaller(ctx), {
       as: 'draft',
     });
     // The version previewed against, which D12 binds the preview to: the current draft's unless given.
@@ -403,9 +404,9 @@ export const builderListVersions = defineTool({
   scopes: ['read'],
   minRole: 'editor',
   async handler(ctx, input) {
-    const versions = await listDashboardVersions(ctx.workspace, actorOf(ctx), input.dashboardId, {
-      limit: input.limit,
-    });
+    const versions = await (
+      await dashboardFor(ctx, input.dashboardId, Dashboard.Operation.history)
+    ).versions(builderCaller(ctx), { limit: input.limit });
     return {
       output: { versions: json(z.array(Version), versions) },
       target: { type: 'dashboard', id: input.dashboardId },

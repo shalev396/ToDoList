@@ -244,12 +244,12 @@ async function createFirstPage(
   language: 'en' | 'he',
   actor: Actor,
 ): Promise<void> {
-  const { createDashboard } = await import('../../services/dashboards.js');
-  const ctx = (await Caller.enter(workspaceId, actor))?.context ?? null;
-  if (ctx === null) return;
+  const { Dashboard } = await import('../dashboard/Dashboard.js');
+  const caller = await Caller.enter(workspaceId, actor);
+  if (caller === null) return;
   const [personal] = await Topic.ensureDefaults(workspaceId, ['personal'], language);
   if (personal === undefined) return;
-  await createDashboard(ctx, actor, {
+  await Dashboard.create(caller, {
     title: personal.name,
     scope: { topicId: personal.id, page: 'topic' },
     language,
@@ -306,6 +306,14 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
   }
 
   // ─── Reads ───────────────────────────────────────────────────────────────
+
+  /**
+   * Who owns a workspace, live or deleted; null when there is no such workspace. A job's read,
+   * without a caller: the demo data acts as the owner it finds here.
+   */
+  static async ownerOf(workspaceId: string): Promise<string | null> {
+    return (await (await getWorkspaceRepository()).findById(workspaceId))?.ownerId ?? null;
+  }
 
   /** The workspace the caller acts in. */
   static async load(caller: Caller): Promise<Workspace> {

@@ -22,13 +22,8 @@ import {
   TemplateSharesBody,
   ValidateBody,
 } from '../services/dashboardSchemas.js';
-import { instantiatePersona } from '../services/personas.js';
+import { Dashboard, Persona } from '../classes/dashboard/index.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
-import {
-  instantiateDashboard,
-  templateShares as listTemplateShares,
-  validateDashboardDraft,
-} from '../services/dashboards.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import { withBuilderErrors } from './builderErrors.js';
 
@@ -46,31 +41,27 @@ const catalog: RequestHandler = async (req, res): Promise<void> => {
 const validate: RequestHandler = async (req, res): Promise<void> => {
   const { draft } = parseOr400(ValidateBody, req.body);
   const { workspace } = req as WorkspaceRequest;
-  const data: ValidateDraftResponseData = await validateDashboardDraft(workspace, draft, 'ui');
+  const data: ValidateDraftResponseData = await Dashboard.validateDraft(workspace.id, draft, 'ui');
   res.success(data);
 };
 
 const instantiate: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(InstantiateBody, req.body);
-  const { workspace, caller } = req as WorkspaceRequest;
-  const data: InstantiateTemplateResponseData = await instantiateDashboard(
-    workspace,
-    caller.actor,
-    {
-      templateKey: body.templateKey,
-      language: body.language ?? 'en',
-      scope: body.scope,
-      shareIntegrations: body.shareIntegrations,
-    },
-  );
+  const { caller } = req as WorkspaceRequest;
+  const data: InstantiateTemplateResponseData = await Dashboard.instantiate(caller, {
+    templateKey: body.templateKey,
+    language: body.language ?? 'en',
+    scope: body.scope,
+    shareIntegrations: body.shareIntegrations,
+  });
   res.success(data, 201);
 };
 
 const templateShares: RequestHandler = async (req, res): Promise<void> => {
   const { templateKeys } = parseOr400(TemplateSharesBody, req.body);
-  const { workspace, caller } = req as WorkspaceRequest;
+  const { caller } = req as WorkspaceRequest;
   const data: TemplateSharesResponseData = {
-    shares: await listTemplateShares(workspace, caller.actor, templateKeys),
+    shares: await Dashboard.templateShares(caller, templateKeys),
   };
   res.success(data);
 };
@@ -92,8 +83,8 @@ const personas: RequestHandler = (_req, res): void => {
 
 const instantiatePersonaTemplate: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(InstantiatePersonaBody, req.body);
-  const { workspace, caller } = req as WorkspaceRequest;
-  const data: InstantiatePersonaResponseData = await instantiatePersona(workspace, caller.actor, {
+  const { caller } = req as WorkspaceRequest;
+  const data: InstantiatePersonaResponseData = await Persona.instantiate(caller, {
     personaKey: routeParam(req, 'key'),
     language: body.language ?? 'en',
     shareIntegrations: body.shareIntegrations,

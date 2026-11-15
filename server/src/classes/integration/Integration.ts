@@ -45,7 +45,6 @@ import {
   type IntegrationStatusView,
 } from '../../models/definitions/Integration.js';
 import { getIntegrationRepository, getWorkspaceRepository } from '../../models/index.js';
-import { removeConnectorEverywhere } from '../../services/dashboards.js';
 import { EMPTY_UPDATE_MESSAGE } from '../../services/integrationConfig.js';
 import { logger } from '../../services/logger.js';
 import { writeModeFor } from '../../services/providerCreate/mode.js';
@@ -56,6 +55,7 @@ import type { SyncRunOptions } from '../sync/SyncOptions.js';
 import { skippedRun, zeroCounts } from '../sync/syncRecords.js';
 import { SyncRun } from '../sync/SyncRun.js';
 import { Topic } from '../workspace/Topic.js';
+import { Dashboard } from '../dashboard/Dashboard.js';
 import '../../sync/providers/index.js';
 import { getAdapter } from '../../sync/registry.js';
 import { syncModeFor } from '../../sync/syncMode.js';
@@ -667,6 +667,19 @@ export abstract class Integration<
   }
 
   /**
+   * The demo data's stand-in for a first connection test (seed/seedWorkspace.ts): a `pending:`
+   * placeholder account becomes `accountId`, once, so a later run finds the integration again.
+   * Null when it already has its account (or is gone); an account already connected here throws
+   * E11000, as a connection test's would.
+   */
+  async pinAccount(accountId: string): Promise<Integration | null> {
+    const pinned = await (
+      await getIntegrationRepository()
+    ).replacePendingAccount(this.workspaceId, this.id, accountId);
+    return pinned === null ? null : Integration.from(pinned);
+  }
+
+  /**
    * Saves the credential (any role: a reconnect is not a new integration, ruling 10). `body` is
    * the secret JSON as received; a shape that doesn't fit the auth method is a 400 with one fixed
    * message. Saving a credential (again) is how an owner (re)connects: the integration becomes
@@ -875,7 +888,7 @@ export abstract class Integration<
    */
   async stopSharing(caller: Caller): Promise<{ dashboards: number }> {
     this.assertOwner(caller);
-    const dashboards = await removeConnectorEverywhere(caller.context, caller.actor, this.id);
+    const dashboards = await Dashboard.removeConnectorEverywhere(caller, this.id);
     await AuditLog.record(caller, Integration.Audit.stopSharing, this, {
       provider: this.provider,
       dashboards,
@@ -1141,7 +1154,7 @@ export abstract class Integration<
       defaultLabel: this.definition?.defaultLabel(this.toJSON().config) ?? null,
       learnedCapabilities: this.learnedCapabilities,
       learnedLabel: (accountLabel) => this.learnedLabel(accountLabel),
-      hasCredential: () => this.#hasCredential(),
+      hasCredential: () => this.hasCredential(),
       withSecret: (fn) => this.withReadSession(({ secret }) => fn(secret)),
       transport: (inner) => this.auth.transport(inner),
       auth: (secret, client, now) => this.auth.bind({ secret: secret as TSecret, client, now }),
@@ -1157,7 +1170,7 @@ export abstract class Integration<
       requestRun: async (caller): Promise<string> =>
         (await Integration.requestRun(this.id, 'manual', caller)).id,
       usesFixtures: this.usesFixtures,
-      hasCredential: () => this.#hasCredential(),
+      hasCredential: () => this.hasCredential(),
     };
   }
 
@@ -1175,7 +1188,7 @@ export abstract class Integration<
   }
 
   /** Whether a credential is saved (its metadata: nothing is opened). */
-  async #hasCredential(): Promise<boolean> {
+  async hasCredential(): Promise<boolean> {
     return (await Credential.meta(this.workspaceId, this.id)) !== null;
   }
 }

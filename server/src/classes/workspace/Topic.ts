@@ -278,8 +278,8 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
   ): Promise<{ topic: Topic; dashboardId: string }> {
     assertEditor(caller, 'add pages');
     // Imported on first use: dashboards bring the whole builder.
-    const [{ createDashboard }, { listTemplates, resolveTemplateKey }] = await Promise.all([
-      import('../../services/dashboards.js'),
+    const [{ Dashboard }, { listTemplates, resolveTemplateKey }] = await Promise.all([
+      import('../dashboard/Dashboard.js'),
       import('../../builder/templates.js'),
     ]);
     let templateKey: string | null = null;
@@ -292,7 +292,7 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
     }
     const topic = await Topic.create(caller, input);
     try {
-      const dashboard = await createDashboard(caller.context, caller.actor, {
+      const dashboard = await Dashboard.create(caller, {
         title: topic.name,
         scope: { topicId: topic.id, containerId: null, page: 'topic', groupVar: null },
         language: input.language,

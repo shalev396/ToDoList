@@ -4,22 +4,16 @@
  */
 import { z } from 'zod';
 
+import { Dashboard, History, Persona } from '../../../classes/dashboard/index.js';
 import { AppError } from '../../../errors/AppError.js';
-import {
-  createDashboard,
-  previewCreateDashboard,
-  previewUndo,
-  MAX_UNDO_STEPS,
-  publishDashboard,
-  undoDashboard,
-} from '../../../services/dashboards.js';
 import { VarNameSchema } from '../../../types/builder.js';
-import { instantiatePersona, planPersona } from '../../../services/personas.js';
 import { DASHBOARD_PAGES } from '../../../types/domain.js';
 import { TopicRef, topicIdOf } from '../itemViews.js';
 import { defineTool } from '../../tool.js';
 import {
   actorOf,
+  builderCaller,
+  dashboardFor,
   DashboardId,
   DashboardView,
   Diff,
@@ -96,7 +90,7 @@ export const builderCreateDashboard = defineTool({
           }),
     };
     if (input.dryRun) {
-      const planned = await previewCreateDashboard(ctx.workspace, actor, input);
+      const planned = await Dashboard.previewCreate(builderCaller(ctx), input);
       const { title, scope, vars, layouts, blocks } = planned.draft;
       const output = json(CreateOutput, {
         id: null,
@@ -120,7 +114,7 @@ export const builderCreateDashboard = defineTool({
       });
       return { output, preview: true };
     }
-    const view = await createDashboard(ctx.workspace, actor, input);
+    const view = await Dashboard.create(builderCaller(ctx), input);
     const output = json(CreateOutput, {
       ...view,
       applied: true,
@@ -177,14 +171,14 @@ export const builderInstantiatePersona = defineTool({
   scopes: ['builder:write'],
   minRole: 'editor',
   async handler(ctx, input) {
-    const actor = actorOf(ctx);
+    const caller = builderCaller(ctx);
     const request = {
       personaKey: input.personaKey,
       language: input.language,
       shareIntegrations: input.shareIntegrations,
     };
     if (input.dryRun) {
-      const plan = await planPersona(ctx.workspace, actor, request);
+      const plan = await Persona.plan(caller, request);
       return {
         output: json(PersonaOutput, {
           applied: false,
@@ -195,7 +189,7 @@ export const builderInstantiatePersona = defineTool({
         preview: true,
       };
     }
-    const result = await instantiatePersona(ctx.workspace, actor, request);
+    const result = await Persona.instantiate(caller, request);
     return {
       output: json(PersonaOutput, {
         applied: true,
@@ -216,12 +210,12 @@ export const builderInstantiatePersona = defineTool({
 export const builderUndo = defineTool({
   name: 'builder_undo',
   title: 'Undo',
-  description: `Reverts this agent's own last changes to the draft (steps, 1 to ${String(MAX_UNDO_STEPS)}), past anyone else's, as one new version. Refused when a later change edited the same blocks, or when there is nothing of this agent's to undo.`,
+  description: `Reverts this agent's own last changes to the draft (steps, 1 to ${String(History.MAX_UNDO_STEPS)}), past anyone else's, as one new version. Refused when a later change edited the same blocks, or when there is nothing of this agent's to undo.`,
   toolset: 'builder',
   inputSchema: z.strictObject({
     dashboardId: DashboardId,
     expectedVersion: ExpectedVersion,
-    steps: z.number().int().min(1).max(MAX_UNDO_STEPS).default(1),
+    steps: z.number().int().min(1).max(History.MAX_UNDO_STEPS).default(1),
     dryRun: DryRun,
   }),
   outputSchema: WriteOutput,
@@ -237,7 +231,9 @@ export const builderUndo = defineTool({
     const target = { type: 'dashboard', id: input.dashboardId };
     const undo = { expectedVersion: input.expectedVersion, steps: input.steps };
     if (input.dryRun) {
-      const result = await previewUndo(ctx.workspace, actorOf(ctx), input.dashboardId, undo);
+      const result = await (
+        await dashboardFor(ctx, input.dashboardId, Dashboard.Operation.undo)
+      ).previewUndo(builderCaller(ctx), undo);
       return {
         output: {
           applied: false,
@@ -255,7 +251,9 @@ export const builderUndo = defineTool({
         target,
       };
     }
-    const { version } = await undoDashboard(ctx.workspace, actorOf(ctx), input.dashboardId, undo);
+    const { version } = await (
+      await dashboardFor(ctx, input.dashboardId, Dashboard.Operation.undo)
+    ).undo(builderCaller(ctx), undo);
     return {
       output: {
         applied: true,
@@ -305,7 +303,9 @@ export const builderPublish = defineTool({
         'Agents may not publish in this workspace: an owner can turn on allowAgentPublish in its settings. The draft is saved; an owner can publish it in the app.',
       );
     }
-    const result = await publishDashboard(ctx.workspace, actorOf(ctx), input.dashboardId, {
+    const result = await (
+      await dashboardFor(ctx, input.dashboardId, Dashboard.Operation.publish)
+    ).publish(builderCaller(ctx), {
       expectedVersion: input.expectedVersion,
       allowAgentPublish: true,
       dryRun: input.dryRun,

@@ -18,15 +18,13 @@ import type { TemplateLanguage } from '../../../builder/templates.js';
 import { TEMPLATE_LANGUAGES } from '../../../builder/templates.js';
 import { AppError } from '../../../errors/AppError.js';
 import { AuditLog } from '../../../classes/AuditLog.js';
+import type { Actor } from '../../../classes/base/Actor.js';
+import { Caller } from '../../../classes/base/Caller.js';
 import {
-  applyDashboardOps,
-  applyDashboardPatch,
-  getDashboard,
-  previewRevert,
-  revertDashboard,
-  type BuilderActor,
+  Dashboard,
   type DashboardOpsResult,
-} from '../../../services/dashboards.js';
+  type Operation,
+} from '../../../classes/dashboard/index.js';
 import type { Op } from '../../../types/builder.js';
 import type {
   DashboardDryRunResult,
@@ -171,8 +169,22 @@ export function json<S extends z.ZodType>(schema: S, value: unknown): z.output<S
 }
 
 /** The agent key as the builder's actor, with this request's origin for the audit log. */
-export function actorOf(ctx: ToolContext): BuilderActor {
+export function actorOf(ctx: ToolContext): Actor {
   return toolCaller(ctx).actor;
+}
+
+/** The agent key in the tool's workspace, as the builder classes take it. */
+export function builderCaller(ctx: ToolContext): Caller {
+  return Caller.fromContext(ctx.workspace, actorOf(ctx));
+}
+
+/** The dashboard, as the agent key may see it (the operation's role is checked first). */
+export function dashboardFor(
+  ctx: ToolContext,
+  dashboardId: string,
+  operation?: Operation,
+): Promise<Dashboard> {
+  return Dashboard.load(builderCaller(ctx), dashboardId, operation);
 }
 
 // ─── D12 ────────────────────────────────────────────────────────────────────
@@ -240,12 +252,14 @@ export async function dryRunChange(
   change: Change,
   previewRows?: number,
 ): Promise<DashboardDryRunResult> {
-  const actor = actorOf(ctx);
+  const caller = builderCaller(ctx);
   const { dashboardId, expectedVersion } = change;
   switch (change.kind) {
     case 'ops':
       return dryRunOf(
-        await applyDashboardOps(ctx.workspace, actor, dashboardId, {
+        await (
+          await Dashboard.load(caller, dashboardId, Dashboard.Operation.edit)
+        ).applyOps(caller, {
           expectedVersion,
           ops: change.ops,
           dryRun: true,
@@ -255,7 +269,9 @@ export async function dryRunChange(
       );
     case 'patch':
       return dryRunOf(
-        await applyDashboardPatch(ctx.workspace, actor, dashboardId, {
+        await (
+          await Dashboard.load(caller, dashboardId, Dashboard.Operation.edit)
+        ).applyPatch(caller, {
           expectedVersion,
           patch: change.patch,
           dryRun: true,
@@ -263,11 +279,14 @@ export async function dryRunChange(
         }),
       );
     case 'revert':
-      return previewRevert(ctx.workspace, actor, dashboardId, {
-        expectedVersion,
-        toVersion: change.toVersion,
-        previewRows,
-      });
+      return (await Dashboard.load(caller, dashboardId, Dashboard.Operation.revert)).previewRevert(
+        caller,
+        {
+          expectedVersion,
+          toVersion: change.toVersion,
+          previewRows,
+        },
+      );
   }
 }
 
@@ -302,7 +321,9 @@ export async function previewOutcome(
 }
 
 async function blockIds(ctx: ToolContext, dashboardId: string): Promise<string[]> {
-  const view = await getDashboard(ctx.workspace, actorOf(ctx), dashboardId, { as: 'draft' });
+  const view = await (
+    await dashboardFor(ctx, dashboardId)
+  ).view(builderCaller(ctx), { as: 'draft' });
   return view.blocks.map((block) => block.id);
 }
 
@@ -312,14 +333,16 @@ export async function writeOutcome(
   change: Change,
 ): Promise<ToolOutcome<WriteOutput>> {
   await requirePreview(ctx, change);
-  const actor = actorOf(ctx);
+  const caller = builderCaller(ctx);
   const { dashboardId, expectedVersion } = change;
   const before = await blockIds(ctx, dashboardId);
   let result: DashboardWriteResult;
   switch (change.kind) {
     case 'ops':
       result = writeOf(
-        await applyDashboardOps(ctx.workspace, actor, dashboardId, {
+        await (
+          await Dashboard.load(caller, dashboardId, Dashboard.Operation.edit)
+        ).applyOps(caller, {
           expectedVersion,
           ops: change.ops,
           language: change.language,
@@ -328,14 +351,18 @@ export async function writeOutcome(
       break;
     case 'patch':
       result = writeOf(
-        await applyDashboardPatch(ctx.workspace, actor, dashboardId, {
+        await (
+          await Dashboard.load(caller, dashboardId, Dashboard.Operation.edit)
+        ).applyPatch(caller, {
           expectedVersion,
           patch: change.patch,
         }),
       );
       break;
     case 'revert':
-      result = await revertDashboard(ctx.workspace, actor, dashboardId, {
+      result = await (
+        await Dashboard.load(caller, dashboardId, Dashboard.Operation.revert)
+      ).revert(caller, {
         expectedVersion,
         toVersion: change.toVersion,
       });

@@ -15,9 +15,9 @@ import {
 import { describeCatalog } from '../builder/catalog.js';
 import { listTemplates, localizeTemplate, resolveTemplateKey } from '../builder/templates.js';
 import { AppError } from '../errors/AppError.js';
-import { getDashboard, listDashboards, listDashboardVersions } from '../services/dashboards.js';
+import { Caller } from '../classes/base/Caller.js';
+import { Dashboard } from '../classes/dashboard/index.js';
 import type { AgentScope, Role } from '../types/domain.js';
-import type { Actor } from '../classes/base/Actor.js';
 import { toolCaller } from './auth/principal.js';
 import { canCall } from './auth/scopes.js';
 import { blockSecrets } from './middleware/redact.js';
@@ -68,8 +68,9 @@ function variable(variables: Variables, name: string): string {
   return ((Array.isArray(value) ? value[0] : value) ?? '').split('?')[0] ?? '';
 }
 
-function actorOf(ctx: ToolContext): Actor {
-  return toolCaller(ctx).actor;
+/** The agent key in the resource's workspace, as the builder classes take it. */
+function builderCaller(ctx: ToolContext): Caller {
+  return Caller.fromContext(ctx.workspace, toolCaller(ctx).actor);
 }
 
 const plain = (value: unknown): unknown => JSON.parse(JSON.stringify(value)) as unknown;
@@ -100,13 +101,14 @@ export const RESOURCES: readonly ResourceDef[] = [
     minRole: 'viewer',
     cache: LIVE,
     async read(ctx, uri, variables): Promise<ResourceRead> {
-      const view = await getDashboard(ctx.workspace, actorOf(ctx), variable(variables, 'id'), {
-        as: uri.searchParams.get('draft') === '1' ? 'draft' : 'published',
-      });
+      const caller = builderCaller(ctx);
+      const view = await (
+        await Dashboard.load(caller, variable(variables, 'id'))
+      ).view(caller, { as: uri.searchParams.get('draft') === '1' ? 'draft' : 'published' });
       return { value: plain(view), target: { type: 'dashboard', id: view.id } };
     },
     async list(ctx): Promise<Listed[]> {
-      const dashboards = await listDashboards(ctx.workspace, actorOf(ctx), {});
+      const dashboards = await Dashboard.list(builderCaller(ctx), {});
       return dashboards.map((dashboard) => ({
         uri: `todolist://dashboard/${dashboard.id}`,
         name: dashboard.title,
@@ -124,7 +126,10 @@ export const RESOURCES: readonly ResourceDef[] = [
     cache: LIVE,
     async read(ctx, _uri, variables): Promise<ResourceRead> {
       const id = variable(variables, 'id');
-      const versions = await listDashboardVersions(ctx.workspace, actorOf(ctx), id, {});
+      const caller = builderCaller(ctx);
+      const versions = await (
+        await Dashboard.load(caller, id, Dashboard.Operation.history)
+      ).versions(caller, {});
       return { value: { versions: plain(versions) }, target: { type: 'dashboard', id } };
     },
   },
