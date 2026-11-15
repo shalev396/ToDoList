@@ -32,6 +32,7 @@ import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ProviderItemMissingError } from '../../errors/ProviderItemMissingError.js';
 import { ProviderNoAnswerError } from '../../errors/ProviderNoAnswerError.js';
 import { ProviderPartialWriteError } from '../../errors/ProviderPartialWriteError.js';
+import { ScopeMissingError } from '../../errors/ScopeMissingError.js';
 import { StatusNotAvailableError } from '../../errors/StatusNotAvailableError.js';
 import { fixtureSetDir } from '../../sync/fixtureSets.js';
 import {
@@ -51,6 +52,7 @@ import type {
 import type { ItemStatus } from '../../types/domain.js';
 import type { WritableField } from '../../types/integrations.js';
 import type { AuthKind, SecretJson } from './auth/AuthStrategy.js';
+import { OAuthAuth } from './auth/OAuthAuth.js';
 import type {
   CreatedTask,
   CreateTaskRequest,
@@ -226,8 +228,9 @@ export abstract class TrackerIntegration<
    * 2. split against the item: a field set to what the item has is dropped (an edit that changes
    *    nothing returns the item: no write, no write gate); a changed field the provider doesn't
    *    take for the item's kind is 422 `field_not_writable`; then `checkUpdate`, the provider's
-   *    static rules (a status it can't set: 422 `status_not_available`), and the write gate's
-   *    checks (read-only: 409), all before anything is opened;
+   *    static rules (a status it can't set: 422 `status_not_available`), the write gate's checks
+   *    (read-only: 409) and an OAuth grant's write scope (409 `scope_missing`), all before
+   *    anything is opened;
    * 3. the write session;
    * 4. `applyUpdate`: the provider class looks up what it needs, then sends; each call that goes
    *    through is confirmed to the WriteLedger, which audits it at once (`integration.write`);
@@ -251,6 +254,15 @@ export abstract class TrackerIntegration<
     if (changes === null) return stored;
     this.checkUpdate(stored, changes.patch);
     this.assertWritable(caller);
+    // An OAuth grant from before its owner allowed writes (Jira `write:jira-work`, Linear `write`):
+    // nothing is opened or sent; connecting again with writes on grants it.
+    if (await this.needsWriteConsent()) {
+      throw new ScopeMissingError(
+        this.id,
+        this.#writeScopes.join(' '),
+        `${this.provider} needs a new permission to change items there: connect it again with Read & write on`,
+      );
+    }
     // 3 and 4. The provider's part, inside the write session; each call audited as it lands.
     const ledger = new WriteLedger((fields) =>
       this.recordWrite(caller, {
@@ -361,6 +373,12 @@ export abstract class TrackerIntegration<
     return unknown
       ? new ProviderPartialWriteError(this.provider, written, [], rest)
       : new ProviderPartialWriteError(this.provider, written, rest);
+  }
+
+  /** The scopes its OAuth grant needs to write (none for a key or token). */
+  get #writeScopes(): readonly string[] {
+    const auth = this.auth;
+    return auth instanceof OAuthAuth ? auth.writeScopes : [];
   }
 
   /** This integration's live mirrored item (404 for any other, a local one included). */

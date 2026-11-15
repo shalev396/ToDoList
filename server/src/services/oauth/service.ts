@@ -45,7 +45,7 @@ export const StartProviderOAuthBody = z.strictObject({
   integrationId: z.string().min(1).max(100).optional(),
   lng: z.enum(OAUTH_LANGUAGES).optional(),
   /**
-   * H5: also ask for the provider's write scope (Jira `write:jira-work`, Linear `issues:create`),
+   * H5: also ask for the provider's write scope (Jira `write:jira-work`, Linear `write`),
    * so the user can create to-dos there. Used for the consent a create asked for; read stays the
    * default of every connection.
    */

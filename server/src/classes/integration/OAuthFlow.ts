@@ -60,7 +60,7 @@ export interface OAuthStartInput {
   integrationId?: string | undefined;
   lng?: string | undefined;
   /**
-   * H5: also ask for the provider's write scope (Jira `write:jira-work`, Linear `issues:create`),
+   * H5: also ask for the provider's write scope (Jira `write:jira-work`, Linear `write`),
    * for the consent a create asked for; read stays the default of every connection.
    */
   includeWrite?: boolean | undefined;

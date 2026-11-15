@@ -149,6 +149,15 @@ async function connect(
   return integration;
 }
 
+/** The integration, once loaded, as the tracker it is. */
+async function asTracker(
+  pending: Promise<Classes.Integration>,
+): Promise<Classes.TrackerIntegration> {
+  const integration = await pending;
+  assert.ok(integration instanceof classes.TrackerIntegration);
+  return integration;
+}
+
 /** One mirrored item of `integration`, as a sync writes it (its source hash set). */
 async function mirror(
   integration: Classes.TrackerIntegration,
@@ -561,6 +570,34 @@ describe('ClickUp', () => {
 });
 
 describe('Linear', () => {
+  it('an OAuth grant without `write` (from before writes were on): 409 scope_missing, nothing opened', async () => {
+    const { integration } = await classes.Integration.connectOAuth(caller, {
+      provider: 'linear',
+      accountId: 'wb-linear-oauth',
+      label: 'Linear (OAuth)',
+      config: {},
+      topicSlug: 'personal',
+      secret: { accessToken: 'FAKE-linear-access', refreshToken: 'FAKE-linear-refresh' },
+      scopes: ['read', 'issues:create'],
+    });
+    const linear = await asTracker(
+      (await classes.Integration.findOwn(caller, integration.id)).setMode(caller, 'read_write'),
+    );
+    const item = await mirror(linear, {
+      kind: 'issue',
+      title: 'Granted before writes',
+      status: 'open',
+      externalId: '4a1b2c3d-0000-4000-8000-0000000000c1',
+    });
+    const opened = await lastOpened(linear);
+    await assert.rejects(
+      linear.updateTask(caller, item, { title: 'Renamed' }),
+      hasCode(409, 'scope_missing'),
+    );
+    assert.deepEqual(lines(), []);
+    assert.equal(await lastOpened(linear), opened);
+  });
+
   it('status, title and priority: the team’s states read, then the one issueUpdate mutation', async () => {
     const linear = await connect('linear');
     const item = await mirror(linear, {

@@ -45,7 +45,9 @@ const linearApp: OAuthAppOptions = {
   },
   callbackPath: '/api/public/oauth/linear/callback',
   scopes: ['read'],
-  writeScopes: ['issues:create'],
+  // `write` (asked when its owner turns writes on): creating an issue and writing one back
+  // (issueUpdate), which `issues:create` alone does not cover.
+  writeScopes: ['write'],
   scopeSeparator: ',',
   pkce: true,
   sendResponseType: true,

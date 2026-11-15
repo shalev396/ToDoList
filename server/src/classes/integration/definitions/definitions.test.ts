@@ -147,7 +147,7 @@ describe('the definitions', () => {
         golden('https://linear.app/oauth/authorize', [
           ...base('linear'),
           ['response_type', 'code'],
-          ['scope', includeWrite ? 'read,issues:create' : 'read'],
+          ['scope', includeWrite ? 'read,write' : 'read'],
           ...pkce,
         ]),
       );
@@ -207,7 +207,7 @@ describe('the definitions', () => {
       ['read:jira-work', 'read:jira-user', 'read:me', 'offline_access'],
       ['write:jira-work'],
     ]);
-    assert.deepEqual(scopes('linear'), [['read'], ['issues:create']]);
+    assert.deepEqual(scopes('linear'), [['read'], ['write']]);
     assert.deepEqual(scopes('github'), [[], []]);
     assert.deepEqual(scopes('clickup'), [[], []]);
     assert.deepEqual(scopes('google_calendar'), [

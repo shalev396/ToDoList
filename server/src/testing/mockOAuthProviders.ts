@@ -494,7 +494,7 @@ export async function startMockOAuth(options: MockOAuthOptions = {}): Promise<Mo
     const variables = (body['variables'] ?? {}) as Record<string, unknown>;
     if (query.includes('issueCreate')) {
       if (injected(provider, req, res)) return true;
-      if (!scopes.includes('issues:create')) {
+      if (!scopes.includes('issues:create') && !scopes.includes('write')) {
         send(res, 200, { errors: [{ message: 'forbidden', extensions: { code: 'FORBIDDEN' } }] });
         return true;
       }
