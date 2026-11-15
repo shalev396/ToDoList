@@ -9,7 +9,8 @@
  *   push (its link tombstoned `dashboard` since the run was created, less CLAIM_MARGIN_MS for a
  *   delete still in flight then; EventClaim tombstones before every DELETE), the event may be gone:
  *   this link goes too, so no later pull reads that delete as the user's, and the next push makes
- *   or adopts the event again. A delete gets its tombstone (already claimed before it was sent); a create went to the workspace's primary calendar (its link moves there when the
+ *   or adopts the event again. A delete gets its tombstone (already claimed before it was
+ *   sent); a create went to the workspace's primary calendar (its link moves there when the
  *   primary calendar changed), an update to its link's calendar; every write is audited
  *   (`gcal.write`); a 412 is a conflict, settled by the next pull;
  * - echoes (`etag == link.lastEtag`) are our own writes and are skipped;
