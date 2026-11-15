@@ -248,7 +248,7 @@ export class History<TDoc> {
   }
 
   /** Every workspace id a history names (the purge's orphan sweep). Global. */
-  static async workspaceIds(): Promise<string[]> {
+  static async referencedWorkspaceIds(): Promise<string[]> {
     return (await getDashboardVersionRepository()).listWorkspaceIds();
   }
 

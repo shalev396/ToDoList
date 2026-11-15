@@ -994,8 +994,8 @@ export class Dashboard
     const referenced = [
       ...new Set([
         ...(await (await getDashboardRepository()).listWorkspaceIds()),
-        ...(await History.workspaceIds()),
-        ...(await View.workspaceIds()),
+        ...(await History.referencedWorkspaceIds()),
+        ...(await View.referencedWorkspaceIds()),
       ]),
     ];
     const live = await Workspace.liveAmong(referenced);

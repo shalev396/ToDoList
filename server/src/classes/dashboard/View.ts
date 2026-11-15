@@ -232,7 +232,7 @@ export class View
   }
 
   /** Every workspace id a view names (the purge's orphan sweep). Global. */
-  static async workspaceIds(): Promise<string[]> {
+  static async referencedWorkspaceIds(): Promise<string[]> {
     return (await getViewRepository()).listWorkspaceIds();
   }
 }
