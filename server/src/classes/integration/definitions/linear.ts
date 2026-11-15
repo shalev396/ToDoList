@@ -97,6 +97,8 @@ const linear: DefinitionSpec<
     forbiddenWithOAuth: 'rejected',
     readOptions: linearOptions,
   },
+  // An issue's title, workflow state (of its team), due date (a date) and priority.
+  write: { fields: ['title', 'status', 'dueAt', 'priority'], kinds: ['issue'] },
   revokePage: 'https://linear.app/settings/account/security',
   fixtures: { createOptions: 'create-options' },
 };

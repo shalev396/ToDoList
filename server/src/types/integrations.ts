@@ -217,6 +217,10 @@ export interface ProviderCapabilities {
   revokePage: string | null;
   /** An item can be created there from a to-do ("Also create in"). */
   canCreate: boolean;
+  /** A mirrored item's edits can be written back there (when the integration is read & write). */
+  canUpdate: boolean;
+  /** The item fields written back there; the rest of an edit stays in TodoList. Empty: none. */
+  writableFields: WritableField[];
   /** Listed, but not open to connect yet. */
   comingSoon: boolean;
 }

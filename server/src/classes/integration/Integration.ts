@@ -64,13 +64,24 @@ import {
   PROVIDERS,
   type AuthMethod,
   type IntegrationMode,
+  type ItemKind,
   type Provider,
 } from '../../types/domain.js';
-import type { IntegrationTestResult, ProviderCapabilities } from '../../types/integrations.js';
+import type {
+  IntegrationTestResult,
+  ProviderCapabilities,
+  WritableField,
+} from '../../types/integrations.js';
 import type { AuthKind, AuthStrategy, SecretJson } from './auth/AuthStrategy.js';
 import { OAuthAuth } from './auth/OAuthAuth.js';
 import { UnofferedAuth } from './auth/UnofferedAuth.js';
-import { isCreateFunnel, isResourcePicker, isRevocable } from './capabilities.js';
+import {
+  isCalendarProvider,
+  isCreateFunnel,
+  isResourcePicker,
+  isRevocable,
+  isTaskProvider,
+} from './capabilities.js';
 import type { TestableAdapter, TestRateLimited } from './connectionTest.js';
 import { ConnectionTester, type LearnedSetting, type TestSubject } from './ConnectionTester.js';
 import { Credential } from './Credential.js';
@@ -137,6 +148,8 @@ export abstract class Integration<
     test: 'integration.test',
     disconnect: 'integration.disconnect',
     stopSharing: 'integration.stop_sharing',
+    /** A change made at the provider for an item or a calendar (write-back): field names only. */
+    write: 'integration.write',
   });
 
   readonly #credential: Credential<TSecret>;
@@ -243,8 +256,9 @@ export abstract class Integration<
 
   /**
    * What each connectable provider can do and how it connects, read from its class: its
-   * definition (auth methods, picker, revoke page, coming soon) and the contracts its class
-   * implements (ResourcePicker, Revocable, CreateFunnel). In the order of CONNECTABLE_PROVIDERS.
+   * definition (auth methods, picker, revoke page, coming soon, the fields a write-back sends) and
+   * the contracts its class implements (ResourcePicker, Revocable, CreateFunnel, TaskProvider or
+   * CalendarProvider for a write-back). In the order of CONNECTABLE_PROVIDERS.
    */
   static capabilitiesOf(): ProviderCapabilities[] {
     return DEFINITIONS.flatMap((definition) => {
@@ -253,6 +267,8 @@ export abstract class Integration<
       if (cls === null)
         throw new Error(`No integration class is registered for ${definition.provider}`);
       const can = cls.prototype;
+      const canUpdate =
+        (isTaskProvider(can) || isCalendarProvider(can)) && definition.writableFields.length > 0;
       return [
         {
           provider: definition.provider,
@@ -261,6 +277,8 @@ export abstract class Integration<
           revokesOnDisconnect: isRevocable(can),
           revokePage: definition.revokePage,
           canCreate: isCreateFunnel(can) && definition.create !== null,
+          canUpdate,
+          writableFields: canUpdate ? [...definition.writableFields] : [],
           comingSoon: definition.comingSoon,
         },
       ];
@@ -487,11 +505,7 @@ export abstract class Integration<
   async needsWriteConsent(): Promise<boolean> {
     const auth = this.auth;
     if (!(auth instanceof OAuthAuth)) return false;
-    const needed = auth.writeScopes;
-    if (needed.length === 0) return false;
-    const meta = await Credential.meta(this.workspaceId, this.id);
-    const granted = new Set(meta?.scopes ?? []);
-    return needed.some((scope) => !granted.has(scope));
+    return this.lacksScopes(auth.writeScopes);
   }
 
   // ─── Its owner's operations ──────────────────────────────────────────────
@@ -839,6 +853,30 @@ export abstract class Integration<
         other.accountId === this.accountId &&
         Integration.from(other).auth.kind === 'oauth',
     );
+  }
+
+  /**
+   * Whether the stored grant lacks any of `scopes` (its credential's metadata: nothing is opened,
+   * nothing is sent). None asked: false.
+   */
+  protected async lacksScopes(scopes: readonly string[]): Promise<boolean> {
+    if (scopes.length === 0) return false;
+    const meta = await Credential.meta(this.workspaceId, this.id);
+    const granted = new Set(meta?.scopes ?? []);
+    return scopes.some((scope) => !granted.has(scope));
+  }
+
+  /** The item fields an item of `kind` writes back to this provider (its definition's). */
+  protected writableFieldsFor(kind: ItemKind): readonly WritableField[] {
+    return this.definition?.writableFieldsFor(kind) ?? [];
+  }
+
+  /**
+   * Records a change made at the provider (`integration.write`): what kind of change and the
+   * names of what it changed, never a value.
+   */
+  protected async recordWrite(caller: Caller, meta: Record<string, unknown>): Promise<void> {
+    await AuditLog.record(caller, Integration.Audit.write, this, meta);
   }
 
   /**

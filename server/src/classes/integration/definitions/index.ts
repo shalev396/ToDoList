@@ -34,6 +34,7 @@ export {
   type DefinitionSpec,
   type FixtureRules,
   type PickerKind,
+  type WriteRules,
 } from './IntegrationDefinition.js';
 
 /** The definitions, in the order of CONNECTABLE_PROVIDERS. */

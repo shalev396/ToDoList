@@ -2,9 +2,9 @@
  * What a provider is, as data and strategy objects (one per provider class: its `static
  * definition`): how it connects (its auth strategies), the settings it takes (its config schema),
  * what a new connection starts with (topic, account key, label), how it is read (the sync
- * adapter), what can be created there (the funnel's steps and readers, links, refusals), what its
- * grant lets its owner pick, and its fixtures (the demo's FAKE credentials, the funnel's recorded
- * set).
+ * adapter), what can be created there (the funnel's steps and readers, links, refusals), which of
+ * an item's fields a write-back sends there (`writableFields`), what its grant lets its owner pick,
+ * and its fixtures (the demo's FAKE credentials, the funnel's recorded set).
  *
  * A definition is immutable and touches neither the database nor a secret, so code that must not
  * load the integration classes (the sync engine in fixtures mode, the seed's credential shapes)
@@ -20,8 +20,8 @@ import {
 } from '../../../models/definitions/Integration.js';
 import { findSecrets } from '../../../services/secretPatterns.js';
 import type { AdapterAuth, ProviderAdapter } from '../../../sync/types.js';
-import type { AuthMethod } from '../../../types/domain.js';
-import type { ConnectableProvider } from '../../../types/integrations.js';
+import type { AuthMethod, ItemKind } from '../../../types/domain.js';
+import type { ConnectableProvider, WritableField } from '../../../types/integrations.js';
 import type {
   CreateFailure,
   CreateOptionsQuery,
@@ -121,6 +121,19 @@ export interface CreateRules {
   ) => Promise<CreateOptionsResponseData>;
 }
 
+/**
+ * What a mirrored item writes back to the provider when its integration is read & write (plan
+ * Addendum A1): the item fields its API really has. Every other field of an edit stays in
+ * TodoList (TodoList's own: note, pin, hidden, topic, custom attributes; and the item fields the
+ * provider lacks).
+ */
+export interface WriteRules {
+  /** The item fields the provider holds and takes: what `writableFields` answers. */
+  readonly fields: readonly WritableField[];
+  /** The item kinds that take a write-back (GitHub: issues; never a pull request or a draft card). */
+  readonly kinds: readonly ItemKind[];
+}
+
 /** The recorded fixtures a provider is exercised with (tests, the demo). */
 export interface FixtureRules {
   /** The funnel's recorded set, read in the fixtures sync mode. */
@@ -138,6 +151,8 @@ export interface DefinitionSpec<TSecret extends SecretJson, TAuth extends AuthSe
   /** The sync's strategy object for this provider (sync/providers/*). */
   adapter: ProviderAdapter;
   create?: CreateRules;
+  /** What a write-back sends there; absent: nothing (every edit stays in TodoList). */
+  write?: WriteRules;
   picker?: PickerKind;
   /** Where a user revokes the app themselves, when TodoList doesn't on disconnect. */
   revokePage?: string;
@@ -178,6 +193,10 @@ export class IntegrationDefinition<
   readonly connection: ConnectionRules;
   readonly adapter: ProviderAdapter;
   readonly create: CreateRules | null;
+  /** The item fields a write-back sends to the provider (its API's own); empty: none. */
+  readonly writableFields: readonly WritableField[];
+  /** The item kinds that take a write-back; empty: none. */
+  readonly writableKinds: readonly ItemKind[];
   readonly picker: PickerKind | null;
   readonly revokePage: string | null;
   readonly comingSoon: boolean;
@@ -199,6 +218,8 @@ export class IntegrationDefinition<
     this.connection = Object.freeze({ ...spec.connection });
     this.adapter = spec.adapter;
     this.create = spec.create === undefined ? null : Object.freeze({ ...spec.create });
+    this.writableFields = Object.freeze([...(spec.write?.fields ?? [])]);
+    this.writableKinds = Object.freeze([...(spec.write?.kinds ?? [])]);
     this.picker = spec.picker ?? null;
     this.revokePage = spec.revokePage ?? null;
     this.comingSoon = spec.comingSoon === true;
@@ -320,6 +341,13 @@ export class IntegrationDefinition<
         `config.${field}: the account can't change; connect a new integration`,
       );
     }
+  }
+
+  // ─── Write-back ───────────────────────────────────────────────────────────
+
+  /** The fields an item of this kind writes back here: none for a kind that takes no write-back. */
+  writableFieldsFor(kind: ItemKind): readonly WritableField[] {
+    return this.writableKinds.includes(kind) ? this.writableFields : [];
   }
 
   // ─── Fixtures ─────────────────────────────────────────────────────────────

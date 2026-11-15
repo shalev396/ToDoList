@@ -158,6 +158,10 @@ const github: DefinitionSpec<
     forbiddenWithOAuth: 'needs_permission',
     readOptions: githubOptions,
   },
+  // An issue's title and state (open; closed as completed or not planned). Its due date comes from
+  // a board or a milestone, and "in progress" from a board column: neither is the issue's own.
+  // Pull requests and board drafts take no write-back.
+  write: { fields: ['title', 'status'], kinds: ['issue'] },
   revokePage: 'https://github.com/settings/apps/authorizations',
   fixtures: { createOptions: 'create-options' },
 };

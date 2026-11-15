@@ -18,6 +18,7 @@ import { GOOGLE_CALENDAR_AUTH, type GoogleCalendarSecret } from './googleCalenda
 import { IntegrationDefinition, type DefinitionSpec } from './IntegrationDefinition.js';
 
 export {
+  CALENDAR_APP_CREATED_SCOPE,
   CALENDAR_EVENTS_SCOPE,
   CALENDAR_LIST_READONLY_SCOPE,
   GOOGLE_CALENDAR_AUTH,
@@ -79,6 +80,9 @@ const googleCalendar: DefinitionSpec<
     linkAllowed: (host) => host === 'google.com' || host.endsWith('.google.com'),
     forbiddenWithOAuth: 'rejected',
   },
+  // A pulled event's title and time (start, end, all day): updateEvent. Its description is
+  // written there too, but an item keeps none.
+  write: { fields: ['title', 'startAt', 'endAt'], kinds: ['event'] },
   picker: 'calendars',
 };
 

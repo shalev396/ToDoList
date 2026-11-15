@@ -122,6 +122,8 @@ const clickup: DefinitionSpec<
     forbiddenWithOAuth: 'rejected',
     readOptions: clickupOptions,
   },
+  // A task's name, status (by name, in its list), due and start dates and priority.
+  write: { fields: ['title', 'status', 'dueAt', 'startAt', 'priority'], kinds: ['task'] },
   picker: 'workspaces',
   revokePage: 'https://app.clickup.com/settings/apps',
   fixtures: { createOptions: 'create-options' },

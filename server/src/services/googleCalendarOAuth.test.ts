@@ -130,7 +130,7 @@ describe('POST …/integrations/google-calendar/oauth/start', () => {
     assert.equal(params['code_challenge_method'], 'S256');
     assert.equal(
       params['scope'],
-      'openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+      'openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.app.created',
     );
     // The stage's own domain (the harness runs as dev on DOMAIN_NAME=localhost).
     assert.equal(

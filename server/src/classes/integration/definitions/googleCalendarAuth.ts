@@ -29,11 +29,18 @@ export type GoogleCalendarSecret = Readonly<{
 export const CALENDAR_EVENTS_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
 export const CALENDAR_LIST_READONLY_SCOPE =
   'https://www.googleapis.com/auth/calendar.calendarlist.readonly';
+/**
+ * Lets TodoList create calendars of its own and manage only those (the workspace's primary
+ * calendar, plan Addendum A2). Asked on every connection, never required: a grant from before
+ * it was asked still works, and only `createCalendar` refuses it (409 `scope_missing`).
+ */
+export const CALENDAR_APP_CREATED_SCOPE = 'https://www.googleapis.com/auth/calendar.app.created';
 export const GOOGLE_CALENDAR_OAUTH_SCOPES = [
   'openid',
   'email',
   CALENDAR_EVENTS_SCOPE,
   CALENDAR_LIST_READONLY_SCOPE,
+  CALENDAR_APP_CREATED_SCOPE,
 ] as const;
 /** What the integration needs to work: reading and writing events, and the calendar list. */
 export const REQUIRED_CALENDAR_SCOPES = [CALENDAR_EVENTS_SCOPE, CALENDAR_LIST_READONLY_SCOPE];

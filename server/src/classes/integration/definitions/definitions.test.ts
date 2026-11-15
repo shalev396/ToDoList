@@ -12,8 +12,19 @@ import type { ReadOnlyClient, TokenGrant } from '../../../sync/http.js';
 import { GOOGLE_REVOKE_URL, GOOGLE_TOKEN_URL, OAUTH_TOKEN_ENDPOINTS } from '../../../sync/http.js';
 import { setAppSecretsForTests } from '../../../services/appSecrets.js';
 import { isOAuthProviderId } from '../../../sync/providers/oauthEndpoints.js';
-import { COMING_SOON_PROVIDERS, CONNECTABLE_PROVIDERS } from '../../../types/integrations.js';
-import { Integration, IntegrationRegistry, isCreateFunnel, isResourcePicker } from '../index.js';
+import {
+  COMING_SOON_PROVIDERS,
+  CONNECTABLE_PROVIDERS,
+  WRITABLE_FIELDS,
+} from '../../../types/integrations.js';
+import {
+  Integration,
+  IntegrationRegistry,
+  isCalendarProvider,
+  isCreateFunnel,
+  isResourcePicker,
+  isTaskProvider,
+} from '../index.js';
 import { GITHUB_TOKEN } from './github.js';
 import { GOOGLE_CALENDAR_OAUTH, GOOGLE_SERVICE_ACCOUNT } from './googleCalendar.js';
 import { DEFINITIONS, definitionOf, sessionAuth, strategyForMethod } from './index.js';
@@ -161,8 +172,9 @@ describe('the definitions', () => {
       client_id: CLIENT_ID,
       redirect_uri: 'https://todolist.example.test/api/public/oauth/google-calendar/callback',
       response_type: 'code',
+      // calendar.app.created (phase 2b): TodoList may create a calendar of its own.
       scope:
-        'openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+        'openid email https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly https://www.googleapis.com/auth/calendar.app.created',
       access_type: 'offline',
       prompt: 'consent',
       include_granted_scopes: 'true',
@@ -185,7 +197,7 @@ describe('the definitions', () => {
     );
   });
 
-  it('ask for the same scopes as before: read-only, writes by re-consent', () => {
+  it('ask for the same scopes as before (Google: also its own calendars), writes by re-consent', () => {
     const scopes = (provider: string): [readonly string[], readonly string[]] => {
       const oauth = definitionOf(provider)?.auth.oauth;
       assert.ok(oauth !== undefined, provider);
@@ -204,9 +216,18 @@ describe('the definitions', () => {
         'email',
         'https://www.googleapis.com/auth/calendar.events',
         'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+        'https://www.googleapis.com/auth/calendar.app.created',
       ],
       [],
     ]);
+    // Asked, never required: a grant from before still connects (createCalendar asks for it).
+    assert.deepEqual(
+      definitionOf('google_calendar')?.auth.oauth?.lacksRequiredScope([
+        'https://www.googleapis.com/auth/calendar.events',
+        'https://www.googleapis.com/auth/calendar.calendarlist.readonly',
+      ]),
+      false,
+    );
   });
 
   it('start a key connection as before, and list coming soon what the API types do', () => {
@@ -307,7 +328,37 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
       const can = cls.prototype;
       assert.equal(isResourcePicker(can), definition.picker !== null, `${cls.name}: picker`);
       assert.equal(isCreateFunnel(can), definition.create !== null, `${cls.name}: create`);
+      // A write-back is declared exactly where the class implements one (TaskProvider#updateTask,
+      // CalendarProvider#updateEvent), and each writable field is one the Item model has.
+      assert.equal(
+        isTaskProvider(can) || isCalendarProvider(can),
+        definition.writableFields.length > 0,
+        `${cls.name}: write-back`,
+      );
+      for (const field of definition.writableFields) {
+        assert.ok((WRITABLE_FIELDS as readonly string[]).includes(field), `${cls.name}: ${field}`);
+      }
     }
+  });
+
+  it('declares each provider’s writable fields: what its API has of an item, nothing more', () => {
+    assert.deepEqual(
+      Object.fromEntries(
+        DEFINITIONS.map((d) => [d.provider, [[...d.writableFields], [...d.writableKinds]]]),
+      ),
+      {
+        jira: [['title', 'status', 'dueAt', 'priority'], ['issue']],
+        clickup: [['title', 'status', 'dueAt', 'startAt', 'priority'], ['task']],
+        linear: [['title', 'status', 'dueAt', 'priority'], ['issue']],
+        moodle: [[], []],
+        google_calendar: [['title', 'startAt', 'endAt'], ['event']],
+        github: [['title', 'status'], ['issue']],
+      },
+    );
+    // A GitHub pull request or board draft takes none.
+    assert.deepEqual(definitionOf('github')?.writableFieldsFor('pr'), []);
+    assert.deepEqual(definitionOf('github')?.writableFieldsFor('task'), []);
+    assert.deepEqual(definitionOf('github')?.writableFieldsFor('issue'), ['title', 'status']);
   });
 
   it('answers the matrix the cards used to hard-code', () => {
@@ -319,6 +370,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         revokesOnDisconnect: false,
         revokePage: 'https://id.atlassian.com/manage-profile/apps',
         canCreate: true,
+        canUpdate: true,
+        writableFields: ['title', 'status', 'dueAt', 'priority'],
         comingSoon: false,
       },
       {
@@ -328,6 +381,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         revokesOnDisconnect: false,
         revokePage: 'https://app.clickup.com/settings/apps',
         canCreate: true,
+        canUpdate: true,
+        writableFields: ['title', 'status', 'dueAt', 'startAt', 'priority'],
         comingSoon: false,
       },
       {
@@ -337,6 +392,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         revokesOnDisconnect: true,
         revokePage: 'https://linear.app/settings/account/security',
         canCreate: true,
+        canUpdate: true,
+        writableFields: ['title', 'status', 'dueAt', 'priority'],
         comingSoon: false,
       },
       {
@@ -346,6 +403,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         revokesOnDisconnect: false,
         revokePage: null,
         canCreate: false,
+        canUpdate: false,
+        writableFields: [],
         comingSoon: true,
       },
       {
@@ -355,6 +414,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         revokesOnDisconnect: true,
         revokePage: null,
         canCreate: true,
+        canUpdate: true,
+        writableFields: ['title', 'startAt', 'endAt'],
         comingSoon: false,
       },
       {
@@ -364,6 +425,8 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
         revokesOnDisconnect: false,
         revokePage: 'https://github.com/settings/apps/authorizations',
         canCreate: true,
+        canUpdate: true,
+        writableFields: ['title', 'status'],
         comingSoon: false,
       },
     ]);
