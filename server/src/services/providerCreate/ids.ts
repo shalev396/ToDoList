@@ -16,6 +16,12 @@ const PATTERNS = {
   opaque: /^[A-Za-z0-9:_-]{1,128}$/,
   /** ClickUp ids in a path: lists, spaces, folders, workspaces. */
   clickupId: /^\d{1,20}$/,
+  /** A ClickUp task's own id (letters and digits, never a custom task id). */
+  clickupTask: /^[A-Za-z0-9]{1,32}$/,
+  /** A GitHub issue number. */
+  githubNumber: /^[1-9]\d{0,9}$/,
+  /** A Google Calendar event id (base32hex, or an occurrence's `<id>_<start>`). */
+  eventId: /^[A-Za-z0-9_-]{1,1024}$/,
   /** Linear ids (UUIDs). */
   linearId: /^[0-9a-fA-F-]{36}$/,
   /** GitHub owner (user or organization). */

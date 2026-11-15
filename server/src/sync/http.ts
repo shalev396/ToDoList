@@ -163,7 +163,11 @@ function onTokenHost(url: string): boolean {
 }
 
 export interface HttpRequest {
-  method: 'GET' | 'POST';
+  /**
+   * The read client sends only GET and POST (a GraphQL query, the token exchange); PUT and PATCH
+   * are the write client's, for its allow-listed update endpoints (classes/integration/writers).
+   */
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH';
   url: string;
   headers: Record<string, string>;
   body?: string;

@@ -1,23 +1,31 @@
 /**
- * The write client (H5, D19): the ONLY code that sends a tracker anything but a read, and the
- * only thing it can send is the request that CREATES one item. It is not the read-only sync
- * client (sync/http.ts), which stays read-only. Only the integration classes reach it, inside
- * their write session (Integration#withWriteSession: never for demo data or a read-only
- * integration); writePaths.test.ts holds that.
+ * The write client (H5, D19; write-back, plan Addendum A1): the ONLY code that sends a tracker
+ * anything but a read, and the only things it can send are the request that CREATES one item and
+ * the requests that UPDATE one item's own fields. It is not the read-only sync client
+ * (sync/http.ts), which stays read-only. Only the integration classes reach it, inside their write
+ * session (Integration#withWriteSession: never for demo data or a read-only integration);
+ * writePaths.test.ts holds that.
  *
- * - There is no generic request method. Each create is a typed function; the request is built
- *   here from typed fields (title ≤ 255 characters, plain-text description, due date, optional
- *   priority) and path ids that passed a strict pattern (ids.ts). Nothing the user typed becomes
- *   a URL, a header or a GraphQL document.
- * - Every request still passes `guardedTransport`, whose allow-list is the exact create endpoints:
- *     Jira     POST …/rest/api/3/issue (api.atlassian.com/ex/jira/<cloudId>, or the site)
- *     ClickUp  POST /api/v2/list/{listId}/task
- *     Linear   POST /graphql carrying exactly the named `issueCreate` document
- *     GitHub   POST /repos/{owner}/{repo}/issues
- *   Anything else, a GET included, is refused before it reaches the network.
- * - The transport is the live one (netGuard: public https only, no redirect followed on a POST;
+ * - There is no generic request method. Each create and each update is a typed function; the
+ *   request is built here from typed fields (title ≤ 255 characters, plain-text description, due
+ *   date, optional priority, a status the provider named) and path ids that passed a strict
+ *   pattern (ids.ts). Nothing the user typed becomes a URL, a header or a GraphQL document.
+ * - Every request still passes `guardedTransport`, whose allow-list is the exact write endpoints:
+ *     Jira     POST …/rest/api/3/issue                     (create)
+ *              PUT  …/rest/api/3/issue/{issueId}           (summary, due date, priority)
+ *              POST …/rest/api/3/issue/{issueId}/transitions (status)
+ *              (api.atlassian.com/ex/jira/<cloudId>, or the site: the integration's own only)
+ *     ClickUp  POST /api/v2/list/{listId}/task             (create)
+ *              PUT  /api/v2/task/{taskId}                  (name, status, dates, priority)
+ *     Linear   POST /graphql carrying exactly the named `issueCreate` or `issueUpdate` document
+ *     GitHub   POST  /repos/{owner}/{repo}/issues          (create)
+ *              PATCH /repos/{owner}/{repo}/issues/{number} (title, state)
+ *   Anything else, a GET included, is refused before it reaches the network. The lookups an
+ *   update needs (Jira transitions, a ClickUp list's statuses, a Linear team's states) are reads,
+ *   through the read client.
+ * - The transport is the live one (netGuard: public https only, no redirect followed on a write;
  *   in a test it may be rewritten to the provider stand-in). One try, never retried:
- *   a request that was sent and got no answer is `unknown` (it may exist), never repeated.
+ *   a request that was sent and got no answer is `unknown` (it may have happened), never repeated.
  * - Failures carry a kind only: never a URL, a header, a token or provider text.
  */
 import {
@@ -34,7 +42,7 @@ import type { JiraSiteBase } from '../../../services/providerCreate/jiraSites.js
 export { cleanTitle, TITLE_MAX };
 const DESCRIPTION_MAX = 5000;
 
-/** The one Linear mutation the write client can send. */
+/** The Linear mutations the write client can send: this one (a create) and the update below. */
 export const LINEAR_ISSUE_CREATE_DOCUMENT = `mutation IssueCreate($input: IssueCreateInput!) {
   issueCreate(input: $input) {
     success
@@ -42,6 +50,15 @@ export const LINEAR_ISSUE_CREATE_DOCUMENT = `mutation IssueCreate($input: IssueC
   }
 }`;
 export const LINEAR_ISSUE_CREATE_OPERATION = 'IssueCreate';
+
+/** The one Linear update: an issue's title, state, due date and priority, and what it now is. */
+export const LINEAR_ISSUE_UPDATE_DOCUMENT = `mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
+  issueUpdate(id: $id, input: $input) {
+    success
+    issue { id title dueDate priority state { id name type } }
+  }
+}`;
+export const LINEAR_ISSUE_UPDATE_OPERATION = 'IssueUpdate';
 
 /** What every provider's create is built from. */
 export interface CreateFields {
@@ -63,17 +80,30 @@ export interface CreatedRecord {
   url: string | null;
 }
 
-export type WriteResult =
-  | { kind: 'created'; record: CreatedRecord }
-  /** Definitely not created: the provider refused (or the request never left). */
-  | { kind: 'refused'; reason: 'auth' | 'forbidden' | 'rate_limited' | 'rejected' | 'unreachable' }
-  /** Sent, and no usable answer: it may exist. */
+/** Why a provider said no (or the request never left). */
+export type RefusalReason = 'auth' | 'forbidden' | 'rate_limited' | 'rejected' | 'unreachable';
+
+/** A write that did not happen, or may have: what a create and an update share. */
+export type WriteFailure =
+  /** Definitely not written: the provider refused (or the request never left). */
+  | { kind: 'refused'; reason: RefusalReason }
+  /** Sent, and no usable answer: it may have happened. */
   | { kind: 'unknown' };
+
+export type WriteResult = { kind: 'created'; record: CreatedRecord } | WriteFailure;
+
+/**
+ * An update's answer: done, with the record as the provider now has it when its answer carries
+ * one (ClickUp, Linear, GitHub; Jira answers 204, null), or a failure.
+ */
+export type UpdateResult =
+  | { kind: 'updated'; record: Record<string, unknown> | null }
+  | WriteFailure;
 
 /** A request the allow-list does not name. A bug in our code, never a user input. */
 export class WriteRefusedError extends Error {
   constructor() {
-    super('Refused: not a create request this client may send');
+    super('Refused: not a write request this client may send');
     this.name = 'WriteRefusedError';
   }
 }
@@ -81,22 +111,24 @@ export class WriteRefusedError extends Error {
 // ─── the allow-list ─────────────────────────────────────────────────────────
 
 const CLICKUP_CREATE = /^https:\/\/api\.clickup\.com\/api\/v2\/list\/\d{1,20}\/task$/;
+const CLICKUP_TASK_UPDATE = /^https:\/\/api\.clickup\.com\/api\/v2\/task\/[A-Za-z0-9]{1,32}$/;
 const LINEAR_GRAPHQL = 'https://api.linear.app/graphql';
 const GITHUB_CREATE =
   /^https:\/\/api\.github\.com\/repos\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}\/issues$/;
+const GITHUB_ISSUE_UPDATE =
+  /^https:\/\/api\.github\.com\/repos\/[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}\/issues\/[1-9]\d{0,9}$/;
+/** Under a Jira site's base: an issue (its fields), and its transitions (its status). */
+const JIRA_ISSUE = /^\/rest\/api\/3\/issue\/\d{1,20}$/;
+const JIRA_TRANSITIONS = /^\/rest\/api\/3\/issue\/\d{1,20}\/transitions$/;
 
-function isLinearIssueCreate(request: HttpRequest): boolean {
-  if (
-    request.url !== LINEAR_GRAPHQL ||
-    request.graphqlOperation !== LINEAR_ISSUE_CREATE_OPERATION
-  ) {
-    return false;
-  }
+/** Exactly one named Linear document, as {query, variables}, at Linear's GraphQL endpoint. */
+function isLinearDocument(request: HttpRequest, document: string, operation: string): boolean {
+  if (request.url !== LINEAR_GRAPHQL || request.graphqlOperation !== operation) return false;
   try {
     const body = JSON.parse(request.body ?? '') as Record<string, unknown>;
     // Exactly {query, variables}: nothing else rides along with the document.
     return (
-      body['query'] === LINEAR_ISSUE_CREATE_DOCUMENT &&
+      body['query'] === document &&
       Object.keys(body).every((key) => key === 'query' || key === 'variables')
     );
   } catch {
@@ -104,11 +136,18 @@ function isLinearIssueCreate(request: HttpRequest): boolean {
   }
 }
 
-/** A GitHub create URL with a real repository segment (never `.` or `..`). */
-function isGithubCreate(url: string): boolean {
-  if (!GITHUB_CREATE.test(url)) return false;
+/** A GitHub URL whose repository segment is real (never `.` or `..`). */
+function isRealRepo(url: string): boolean {
   const repo = url.split('/')[5];
   return repo !== '.' && repo !== '..';
+}
+
+/** `path` (one of the patterns above) under one of the integration's own Jira site bases. */
+function isJiraPath(url: string, jiraBases: readonly string[], path: RegExp): boolean {
+  return jiraBases.some((base) => {
+    const root = base.replace(/\/+$/, '');
+    return url.startsWith(`${root}/`) && path.test(url.slice(root.length));
+  });
 }
 
 /**
@@ -122,18 +161,46 @@ export function isAllowedCreate(request: HttpRequest, jiraBases: readonly string
   return (
     jiraBases.some((base) => url === `${base.replace(/\/+$/, '')}/rest/api/3/issue`) ||
     CLICKUP_CREATE.test(url) ||
-    isGithubCreate(url) ||
-    isLinearIssueCreate(request)
+    (GITHUB_CREATE.test(url) && isRealRepo(url)) ||
+    isLinearDocument(request, LINEAR_ISSUE_CREATE_DOCUMENT, LINEAR_ISSUE_CREATE_OPERATION)
   );
 }
 
-/** The transport the write client sends through: the create allow-list in front of `inner`. */
+/**
+ * Whether the request is exactly one of the update requests (everything else is refused), each
+ * with its own method: a Jira issue's fields (PUT) or transition (POST) at one of `jiraBases`, a
+ * ClickUp task (PUT), a GitHub issue (PATCH), or the named Linear `issueUpdate` document (POST).
+ */
+export function isAllowedUpdate(request: HttpRequest, jiraBases: readonly string[] = []): boolean {
+  const { method, url } = request;
+  if (url.includes('?') || url.includes('#')) return false;
+  switch (method) {
+    case 'PUT':
+      return isJiraPath(url, jiraBases, JIRA_ISSUE) || CLICKUP_TASK_UPDATE.test(url);
+    case 'PATCH':
+      return GITHUB_ISSUE_UPDATE.test(url) && isRealRepo(url);
+    case 'POST':
+      return (
+        isJiraPath(url, jiraBases, JIRA_TRANSITIONS) ||
+        isLinearDocument(request, LINEAR_ISSUE_UPDATE_DOCUMENT, LINEAR_ISSUE_UPDATE_OPERATION)
+      );
+    default:
+      return false;
+  }
+}
+
+/** One of the creates or one of the updates: the whole allow-list. */
+export function isAllowedWrite(request: HttpRequest, jiraBases: readonly string[] = []): boolean {
+  return isAllowedCreate(request, jiraBases) || isAllowedUpdate(request, jiraBases);
+}
+
+/** The transport the write client sends through: the write allow-list in front of `inner`. */
 export function guardedTransport(inner: Transport, jiraBases: readonly string[] = []): Transport {
   return {
-    // One try: a retry of a create could create twice.
+    // One try: a retry of a create could create twice, and an update is never repeated blind.
     maxRetries: 0,
     async send(request: HttpRequest): Promise<HttpResponse> {
-      if (!isAllowedCreate(request, jiraBases)) throw new WriteRefusedError();
+      if (!isAllowedWrite(request, jiraBases)) throw new WriteRefusedError();
       return inner.send(request);
     },
   };
@@ -271,6 +338,133 @@ export function githubIssueBody(
   };
 }
 
+// ─── update bodies (typed fields only; write-back, plan Addendum A1) ─────────
+
+/** A due date as a write-back sends it: the instant, and whether it has no time of day. */
+export interface DueChange {
+  readonly at: Date;
+  readonly allDay: boolean;
+}
+
+/**
+ * The fields of one write-back the update bodies are built from (each present only when it
+ * changes); the status travels apart, as what the provider named (a transition, a status, a state).
+ */
+export interface UpdateFields {
+  readonly title?: string;
+  /** null clears it. */
+  readonly due?: DueChange | null;
+  /** null clears it. */
+  readonly startAt?: Date | null;
+  /** 0 (lowest) … 4 (highest) on the dashboard's scale; null for none. */
+  readonly priority?: number | null;
+  /** The workspace's: a date-only due date is the day the instant falls on there. */
+  readonly timeZone: string;
+}
+
+const titleOf = (fields: UpdateFields): string | undefined => {
+  if (fields.title === undefined) return undefined;
+  const title = cleanTitle(fields.title);
+  if (title === null) throw new WriteRefusedError();
+  return title;
+};
+
+const dueDateOf = (fields: UpdateFields): string | null =>
+  fields.due === null || fields.due === undefined
+    ? null
+    : localDateString(fields.due.at, fields.timeZone);
+
+/** The dashboard's 0 (lowest) … 4 (highest) as Jira's default scheme names them. */
+const JIRA_PRIORITY_NAMES = ['Lowest', 'Low', 'Medium', 'High', 'Highest'] as const;
+
+/** Jira's default priority name for the dashboard's 0 … 4; null for none (Jira has no "none"). */
+export function jiraPriorityName(priority: number | null): string | null {
+  return priority === null ? null : (JIRA_PRIORITY_NAMES[priority] ?? null);
+}
+
+/** `PUT …/issue/{id}`: `{fields: {summary, duedate, priority}}`; null when none of them changes. */
+export function jiraUpdateBody(fields: UpdateFields): Record<string, unknown> | null {
+  const issue: Record<string, unknown> = {};
+  const title = titleOf(fields);
+  if (title !== undefined) issue['summary'] = title;
+  if (fields.due !== undefined) issue['duedate'] = dueDateOf(fields);
+  if (fields.priority !== undefined) {
+    const name = jiraPriorityName(fields.priority);
+    if (name === null) throw new WriteRefusedError();
+    issue['priority'] = { name };
+  }
+  return Object.keys(issue).length === 0 ? null : { fields: issue };
+}
+
+/** `POST …/issue/{id}/transitions`: the one transition, by the id Jira listed. */
+export function jiraTransitionBody(transitionId: string): Record<string, unknown> {
+  return { transition: { id: checkedId('jiraId', transitionId, 'transition') } };
+}
+
+/** `PUT /task/{id}`: name, the status by its name in the task's list, the dates, the priority. */
+export function clickupUpdateBody(fields: UpdateFields, status?: string): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  const title = titleOf(fields);
+  if (title !== undefined) body['name'] = title;
+  if (status !== undefined) {
+    if (status.trim() === '' || status.length > 100 || hasControlCharacter(status)) {
+      throw new WriteRefusedError();
+    }
+    body['status'] = status;
+  }
+  if (fields.due !== undefined) {
+    body['due_date'] = fields.due === null ? null : fields.due.at.getTime();
+    if (fields.due !== null) body['due_date_time'] = !fields.due.allDay;
+  }
+  if (fields.startAt !== undefined) {
+    body['start_date'] = fields.startAt === null ? null : fields.startAt.getTime();
+    if (fields.startAt !== null) body['start_date_time'] = true;
+  }
+  if (fields.priority !== undefined) {
+    const priority = clickupPriority(fields.priority);
+    // ClickUp has no lowest (0): only none (null) or 1 (urgent) … 4 (low).
+    if (fields.priority !== null && priority === null) throw new WriteRefusedError();
+    body['priority'] = priority;
+  }
+  return body;
+}
+
+/** `issueUpdate`'s input: title, the state Linear listed, the due date, the priority (0: none). */
+export function linearUpdateInput(fields: UpdateFields, stateId?: string): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  const title = titleOf(fields);
+  if (title !== undefined) input['title'] = title;
+  if (stateId !== undefined) input['stateId'] = checkedId('linearId', stateId, 'stateId');
+  if (fields.due !== undefined) input['dueDate'] = dueDateOf(fields);
+  if (fields.priority !== undefined) {
+    const priority = linearPriority(fields.priority);
+    // Linear has no lowest (0): its 0 is "no priority", which is our null.
+    if (fields.priority !== null && priority === null) throw new WriteRefusedError();
+    input['priority'] = priority ?? 0;
+  }
+  return input;
+}
+
+/** A GitHub issue's state as a write-back sets it: open, or closed as completed or not planned. */
+export type GithubIssueState =
+  | { state: 'open' }
+  | { state: 'closed'; stateReason: 'completed' | 'not_planned' };
+
+/** `PATCH /issues/{n}`: the title and the state (with why it closed). */
+export function githubUpdateBody(
+  fields: UpdateFields,
+  state?: GithubIssueState,
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  const title = titleOf(fields);
+  if (title !== undefined) body['title'] = title;
+  if (state !== undefined) {
+    body['state'] = state.state;
+    if (state.state === 'closed') body['state_reason'] = state.stateReason;
+  }
+  return body;
+}
+
 // ─── sending ────────────────────────────────────────────────────────────────
 
 function parseJson(response: HttpResponse): unknown {
@@ -284,8 +478,8 @@ function parseJson(response: HttpResponse): unknown {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** A non-2xx answer: what it says about whether anything was created. */
-function failureOf(response: HttpResponse): WriteResult {
+/** A non-2xx answer: what it says about whether anything was written. */
+function failureOf(response: HttpResponse): WriteFailure {
   const { status } = response;
   if (status === 401) return { kind: 'refused', reason: 'auth' };
   if (status === 429) return { kind: 'refused', reason: 'rate_limited' };
@@ -295,16 +489,16 @@ function failureOf(response: HttpResponse): WriteResult {
       (response.headers['retry-after'] ?? '').trim() !== '';
     return { kind: 'refused', reason: limited ? 'rate_limited' : 'forbidden' };
   }
-  // A 5xx may have created the item before it failed; only a 4xx is a clear "no".
+  // A 5xx may have written before it failed; only a 4xx is a clear "no".
   if (status >= 500) return { kind: 'unknown' };
   return { kind: 'refused', reason: 'rejected' };
 }
 
-async function post(
+async function sendOnce(
   transport: Transport,
   request: HttpRequest,
   jiraBases: readonly string[],
-): Promise<HttpResponse | WriteResult> {
+): Promise<HttpResponse | WriteFailure> {
   try {
     return await guardedTransport(transport, jiraBases).send(request);
   } catch (error) {
@@ -317,7 +511,14 @@ async function post(
   }
 }
 
-const isResult = (value: HttpResponse | WriteResult): value is WriteResult => 'kind' in value;
+const isResult = (value: HttpResponse | WriteFailure): value is WriteFailure => 'kind' in value;
+
+/** An update's 2xx answer: done, with the record when the answer is a JSON object. */
+function updated(response: HttpResponse): UpdateResult {
+  if (response.body.trim() === '') return { kind: 'updated', record: null };
+  const data = parseJson(response);
+  return { kind: 'updated', record: isRecord(data) ? data : null };
+}
 
 /** The write endpoints. One instance per transport; holds no credential. */
 export interface WriteClient {
@@ -340,6 +541,39 @@ export interface WriteClient {
     headers: Record<string, string>,
     body: Record<string, unknown>,
   ): Promise<WriteResult>;
+  /** A Jira issue's fields (summary, due date, priority): 204, no record. */
+  updateJiraIssue(
+    site: JiraSiteBase,
+    issueId: string,
+    headers: Record<string, string>,
+    body: Record<string, unknown>,
+  ): Promise<UpdateResult>;
+  /** A Jira issue moved through one of its transitions: 204, no record. */
+  transitionJiraIssue(
+    site: JiraSiteBase,
+    issueId: string,
+    headers: Record<string, string>,
+    body: Record<string, unknown>,
+  ): Promise<UpdateResult>;
+  /** A ClickUp task's fields: the task as it now is. */
+  updateClickupTask(
+    taskId: string,
+    headers: Record<string, string>,
+    body: Record<string, unknown>,
+  ): Promise<UpdateResult>;
+  /** A Linear issue through `issueUpdate`: the issue as it now is. */
+  updateLinearIssue(
+    headers: Record<string, string>,
+    issueId: string,
+    input: Record<string, unknown>,
+  ): Promise<UpdateResult>;
+  /** A GitHub issue's title and state: the issue as it now is. */
+  updateGithubIssue(
+    repo: string,
+    issueNumber: string,
+    headers: Record<string, string>,
+    body: Record<string, unknown>,
+  ): Promise<UpdateResult>;
 }
 
 export function createWriteClient(
@@ -349,7 +583,7 @@ export function createWriteClient(
   const json = { 'content-type': 'application/json', accept: 'application/json' };
   return {
     async createJiraIssue(site, headers, body): Promise<WriteResult> {
-      const answer = await post(
+      const answer = await sendOnce(
         transport,
         {
           method: 'POST',
@@ -374,7 +608,7 @@ export function createWriteClient(
     },
 
     async createClickupTask(listId, headers, body): Promise<WriteResult> {
-      const answer = await post(
+      const answer = await sendOnce(
         transport,
         {
           method: 'POST',
@@ -397,7 +631,7 @@ export function createWriteClient(
     },
 
     async createLinearIssue(headers, input): Promise<WriteResult> {
-      const answer = await post(
+      const answer = await sendOnce(
         transport,
         {
           method: 'POST',
@@ -437,7 +671,7 @@ export function createWriteClient(
 
     async createGithubIssue(repo, headers, body): Promise<WriteResult> {
       const { owner, name } = splitRepo(repo);
-      const answer = await post(
+      const answer = await sendOnce(
         transport,
         {
           method: 'POST',
@@ -463,6 +697,103 @@ export function createWriteClient(
           url: typeof url === 'string' ? url : null,
         },
       };
+    },
+
+    async updateJiraIssue(site, issueId, headers, body): Promise<UpdateResult> {
+      const id = checkedId('jiraId', issueId, 'issue');
+      const answer = await sendOnce(
+        transport,
+        {
+          method: 'PUT',
+          url: `${site.base.replace(/\/+$/, '')}/rest/api/3/issue/${id}`,
+          headers: { ...json, ...headers },
+          body: JSON.stringify(body),
+        },
+        jiraBases,
+      );
+      if (isResult(answer)) return answer;
+      return answer.status === 204 || answer.status === 200
+        ? { kind: 'updated', record: null }
+        : failureOf(answer);
+    },
+
+    async transitionJiraIssue(site, issueId, headers, body): Promise<UpdateResult> {
+      const id = checkedId('jiraId', issueId, 'issue');
+      const answer = await sendOnce(
+        transport,
+        {
+          method: 'POST',
+          url: `${site.base.replace(/\/+$/, '')}/rest/api/3/issue/${id}/transitions`,
+          headers: { ...json, ...headers },
+          body: JSON.stringify(body),
+        },
+        jiraBases,
+      );
+      if (isResult(answer)) return answer;
+      return answer.status === 204 || answer.status === 200
+        ? { kind: 'updated', record: null }
+        : failureOf(answer);
+    },
+
+    async updateClickupTask(taskId, headers, body): Promise<UpdateResult> {
+      const id = checkedId('clickupTask', taskId, 'task');
+      const answer = await sendOnce(
+        transport,
+        {
+          method: 'PUT',
+          url: `https://api.clickup.com/api/v2/task/${id}`,
+          headers: { ...json, ...headers },
+          body: JSON.stringify(body),
+        },
+        jiraBases,
+      );
+      if (isResult(answer)) return answer;
+      return answer.status === 200 ? updated(answer) : failureOf(answer);
+    },
+
+    async updateLinearIssue(headers, issueId, input): Promise<UpdateResult> {
+      const variables = { id: checkedId('linearId', issueId, 'issue'), input };
+      const answer = await sendOnce(
+        transport,
+        {
+          method: 'POST',
+          url: LINEAR_GRAPHQL,
+          headers: { ...json, ...headers },
+          body: JSON.stringify({ query: LINEAR_ISSUE_UPDATE_DOCUMENT, variables }),
+          graphqlOperation: LINEAR_ISSUE_UPDATE_OPERATION,
+          variables,
+        },
+        jiraBases,
+      );
+      if (isResult(answer)) return answer;
+      if (answer.status !== 200) return failureOf(answer);
+      const data = parseJson(answer);
+      if (!isRecord(data)) return { kind: 'unknown' };
+      const result = isRecord(data['data']) ? data['data']['issueUpdate'] : undefined;
+      if (!isRecord(result) || result['success'] !== true) {
+        // A GraphQL error answer: Linear refused the mutation, nothing changed.
+        return Array.isArray(data['errors']) && !isRecord(data['data'])
+          ? { kind: 'refused', reason: 'rejected' }
+          : { kind: 'unknown' };
+      }
+      return { kind: 'updated', record: isRecord(result['issue']) ? result['issue'] : null };
+    },
+
+    async updateGithubIssue(repo, issueNumber, headers, body): Promise<UpdateResult> {
+      const { owner, name } = splitRepo(repo);
+      const number = checkedId('githubNumber', issueNumber, 'issue');
+      const answer = await sendOnce(
+        transport,
+        {
+          method: 'PATCH',
+          url: `https://api.github.com/repos/${owner}/${name}/issues/${number}`,
+          headers: { ...json, accept: 'application/vnd.github+json', ...headers },
+          body: JSON.stringify(body),
+        },
+        jiraBases,
+      );
+      if (isResult(answer)) return answer;
+      return answer.status === 200 ? updated(answer) : failureOf(answer);
     },
   };
 }
