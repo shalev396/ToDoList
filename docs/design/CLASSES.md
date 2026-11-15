@@ -12,19 +12,20 @@ It is updated every phase.
 - **Built** (exists in the code): green, solid border.
 - **Planned**: grey, dashed border, with the phase that builds it.
 
-| Phase | What it builds                                                                                                                                                                                                                                                                         | State     |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test                                                                           | **built** |
-| 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry`                                                                       | **built** |
-| 2a    | The one `static definition` per provider (`IntegrationDefinition`), headers from the auth strategy to the adapters, `OAuthFlow` (Google merged), `ResourcePicker`, capabilities to the client, `Integration`'s collaborators                                                           | **built** |
-| 2W    | Write-back (phase 2b): `TaskProvider.updateTask` and each definition's `writableFields`, `CalendarProvider` update/delete event, create calendar, recurrence (`RecurrenceRule`); `BoardProvider` stays planned                                                                         | **built** |
-| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects, the cascade template; `User` calls `Workspace.deleteAccountCascade`                                                                                                                                           | **built** |
-| PC    | The calendar phase: the workspace's `PrimaryCalendar` (value object in `WorkspaceSettings`, `PrimaryCalendarStatus`), the fixed push rule, `PlannedAt`, a pushed event deleted with its to-do, "Also remove everything TodoList added" (`AddedContentRemover`), block connector scopes | **built** |
-| 4a    | Server: the `Item` hierarchy (`Todo`, `MirroredItem`, `TaskItem`, `PullRequest`, `CalendarEvent`), `Container`, `ItemQuery`, `QueryTarget`, `ProviderFields`, `CreateQuota`, `TodoCopy`; overlay overrides and effective values; the split edit; recurring to-dos                      | **built** |
-| 4b    | Client: the item sheet's editing and hints, the Repeat control, copy fixes; server: the primary calendar is always read, `ItemDetail.sourceValues`                                                                                                                                     | **built** |
-| 5     | `SyncRun` state machine, `SyncCursor`/`SyncCursors`, `Integration.sync()` (template method) with `SyncEngine`, `Calendar` + `PushPlan` + `PushCommit`; the dispatcher, worker and purge on the classes                                                                                 | **built** |
-| 6     | `Dashboard`, `History<T>`, the `Block` hierarchy, `View`, `AgentKey`, `ConnectLink`                                                                                                                                                                                                    | planned   |
-| 7     | The legacy list emptied, dead services deleted                                                                                                                                                                                                                                         | planned   |
+| Phase | What it builds                                                                                                                                                                                                                                                                                  | State     |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test                                                                                    | **built** |
+| 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry`                                                                                | **built** |
+| 2a    | The one `static definition` per provider (`IntegrationDefinition`), headers from the auth strategy to the adapters, `OAuthFlow` (Google merged), `ResourcePicker`, capabilities to the client, `Integration`'s collaborators                                                                    | **built** |
+| 2W    | Write-back (phase 2b): `TaskProvider.updateTask` and each definition's `writableFields`, `CalendarProvider` update/delete event, create calendar, recurrence (`RecurrenceRule`); `BoardProvider` stays planned                                                                                  | **built** |
+| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects, the cascade template; `User` calls `Workspace.deleteAccountCascade`                                                                                                                                                    | **built** |
+| PC    | The calendar phase: the workspace's `PrimaryCalendar` (value object in `WorkspaceSettings`, `PrimaryCalendarStatus`), the fixed push rule, `PlannedAt`, a pushed event deleted with its to-do, "Also remove everything TodoList added" (`AddedContentRemover`), block connector scopes          | **built** |
+| 4a    | Server: the `Item` hierarchy (`Todo`, `MirroredItem`, `TaskItem`, `PullRequest`, `CalendarEvent`), `Container`, `ItemQuery`, `QueryTarget`, `ProviderFields`, `CreateQuota`, `TodoCopy`; overlay overrides and effective values; the split edit; recurring to-dos                               | **built** |
+| 4b    | Client: the item sheet's editing and hints, the Repeat control, copy fixes; server: the primary calendar is always read, `ItemDetail.sourceValues`                                                                                                                                              | **built** |
+| 5     | `SyncRun` state machine, `SyncCursor`/`SyncCursors`, `Integration.sync()` (template method) with `SyncEngine`, `Calendar` + `PushPlan` + `PushCommit`; the dispatcher, worker and purge on the classes                                                                                          | **built** |
+| 6a    | `Dashboard` (`History<T>`, `HistoryTrail`, `Layout`, `DocCheck`, `DashboardConnectors`, `BlockPreviews`), `View` + `Query`, `Persona`, `Operation`, `ConnectLink`, `AuditLog.page`; the seed through classes; the cascade removes dashboards and views; `AgentKey` (built with the MCP sign-in) | **built** |
+| 6b    | The `Block` hierarchy (14 types) behind `DocCheck`                                                                                                                                                                                                                                              | planned   |
+| 7     | The legacy list emptied, dead services deleted                                                                                                                                                                                                                                                  | planned   |
 
 **How the boundary is held.** `server/legacy-db-importers.mjs` names:
 
@@ -35,9 +36,10 @@ It is updated every phase.
 - the entry points and jobs that may open the connection and nothing else (`lambda.ts`,
   `local.ts`, `stageMaintenance.ts`);
 - the test helpers production code never loads (`src/testing/**`, `__tests__/**`);
-- `LEGACY_DB_IMPORTERS`, the modules that still reach the database until their phase moves them
-  (6 after phase 5; 15 after phase 4a; 20 after phase 3; 23 after phase 2a; 24 after phase 1; 35
-  after phase 0, down from 42).
+- `LEGACY_DB_IMPORTERS`, the modules that still reach the database until their phase moves them:
+  **empty since phase 6a** (6 after phase 5; 15 after phase 4a; 20 after phase 3; 23 after phase
+  2a; 24 after phase 1; 35 after phase 0, down from 42). The empty list stays until phase 7
+  deletes it, because ESLint and the boundary test read it.
 
 ESLint (`@typescript-eslint/no-restricted-imports`, type imports allowed) and
 `src/classes/classBoundary.test.ts` (which also resolves paths, sees dynamic imports and names
@@ -213,9 +215,18 @@ classDiagram
     +meta: Record
     +at: Date
     +record(scope, action, target, meta)$ Promise~AuditLog~
+    +integrationId: string
     +list(workspaceId, filter, limit)$ Promise
     +findRecent(workspaceId, query)$ Promise
+    +page(workspaceId, query)$ AuditPage
   }
+  class AuditPage {
+    <<value object>>
+    +entries: AuditLog[]
+    +nextCursor: string
+    +integrationOf(entry) AuditedIntegration
+  }
+  AuditLog ..> AuditPage : page
   WorkspaceEntity <|-- AuditLog
   AuditLog ..> AuditTarget
   AuditLog ..> Actor
@@ -256,6 +267,7 @@ classDiagram
   class ItemPolicy:::built
   class ItemAccessFilter:::built
   class AuditLog:::built
+  class AuditPage:::built
   class User:::built
   class Media:::built
 ```
@@ -1474,6 +1486,7 @@ classDiagram
     #retireWorkspace()
     #removeItems()
     #removeContainers()
+    #removeDashboards()
     #endMemberships()
     #recordAudit()
     #notifyConnectedMembers()
@@ -1488,7 +1501,11 @@ classDiagram
   WorkspaceTeardown ..> Member : endAll
   WorkspaceTeardown ..> Invite : revokeAllPending
   WorkspaceTeardown ..> Integration : removeAllIn
+  WorkspaceTeardown ..> Dashboard : removeAllIn
+  WorkspaceTeardown ..> View : removeAllIn
   class Integration
+  class Dashboard
+  class View
   class User
   class Media
   User ..> Workspace : deleteAccount calls deleteAccountCascade
@@ -1506,6 +1523,8 @@ classDiagram
   class User:::built
   class Media:::built
   class Integration:::built
+  class Dashboard:::built
+  class View:::built
   class Workspace:::built
   class WorkspaceSettings:::built
   class PrimaryCalendar:::built
@@ -1538,11 +1557,12 @@ How the pieces work, in short:
   removed or leave. Ending a membership revokes the agent keys and disconnects the member's
   integrations (`Integration.disconnectAllOf`).
 - **Cascade.** `WorkspaceTeardown.run` is the template: integrations (credentials first, checked
-  gone), the workspace row, items, containers, invites and members, the `workspace.delete` audit
-  entry, then the emails. The two subclasses differ only in the audit meta (`{}` or
-  `{reason: 'account_deleted'}`). The plan's "dashboards" step is held back for the owner's decision
-  in Phase 6: the old cascade never deleted dashboards, and the purge job removes only items and
-  containers, so a deleted workspace's dashboards stay orphaned in the database, exactly as before.
+  gone), the workspace row, items, containers, the dashboards with their histories and the saved
+  views (`Dashboard.removeAllIn`, `View.removeAllIn`: hard deletes, phase 6a), invites and members,
+  the `workspace.delete` audit entry, then the emails. The two subclasses differ only in the audit
+  meta (`{}` or `{reason: 'account_deleted'}`), so an account's end removes them too. The
+  `2026-11-15-orphaned-dashboards` migration removes, once, what workspaces deleted before phase 6a
+  left behind.
 - **Registry.** `Member` and the cascade import `Integration` from `integration/index.js`, which
   registers every provider class; `IntegrationRegistry.create` throws for a connectable provider
   without a class instead of using the fallback. `registry.test.ts` holds it in fresh processes.
@@ -1557,7 +1577,11 @@ How the pieces work, in short:
   be and how it is stored is polymorphic); `TopicRules` classifies a container's match key and
   validates a request's rules.
 
-## 6. Dashboards and views (phase 6)
+## 6. Dashboards and views (phase 6a built; the Block classes are phase 6b)
+
+`classes/dashboard/`. A dashboard's blocks are still plain JSON: `DocCheck` is the one place they
+are checked (`checkDraft`) and linted (`lintDashboard`), and phase 6b replaces its two bodies with
+the `Block` hierarchy (`Block.from(json).check()`) without changing a caller.
 
 ```mermaid
 classDiagram
@@ -1566,12 +1590,37 @@ classDiagram
     <<abstract>>
   }
   class Dashboard {
-    +save(caller, doc, ifVersion)
-    +undo(caller)
-    +redo(caller)
-    +revert(caller, version)
-    +publish(caller)
+    +Audit$
+    +Operation$
+    +version: number
+    +publishedVersion: number
+    +layout: Layout
+    +history: History~DashboardDraft~
+    +load(caller, id, operation?)$ Dashboard
+    +list(caller, filter)$ DashboardSummary[]
+    +listAll(caller, filter)$ Dashboard[]
+    +create(caller, input)$ DashboardView
+    +previewCreate(caller, input)$ CreatePreview
+    +instantiate(caller, input)$ DashboardView
+    +templateShares(caller, keys)$ IntegrationShare[]
+    +validateDraft(workspaceId, draft, mode)$ DashboardValidation
+    +removeConnectorEverywhere(caller, integrationId)$ number
+    +removeAllIn(workspaceId)$ counts
+    +view(caller, options) DashboardView
+    +versions(caller, options) DashboardVersionView[]
+    +save(caller, doc, ifVersion, change) number
+    +applyOps(caller, input) DashboardOpsResult
+    +applyPatch(caller, input) DashboardOpsResult
+    +undo(caller, input)
+    +previewUndo(caller, input)
+    +redo(caller, input)
+    +revert(caller, input)
+    +previewRevert(caller, input)
+    +publish(caller, input)
     +delete(caller)
+    +toView(as) DashboardView
+    +summary(as) DashboardSummary
+    -commit(caller, doc, ifVersion, change)
   }
   WorkspaceEntity <|-- Dashboard
   class Versioned {
@@ -1586,23 +1635,87 @@ classDiagram
   class Owned {
     <<interface>>
   }
+  class Viewable~TView~ {
+    <<interface>>
+  }
   Versioned <|.. Dashboard
   Auditable <|.. Dashboard
   SoftDeletable <|.. Dashboard
+  Owned <|.. Dashboard
   class History~TDoc~ {
-    +patch()
-    +inverse()
-    +snapshots()
-    +prune()
+    +KEEP_VERSIONS$ = 50
+    +SNAPSHOT_EVERY$ = 10
+    +MAX_UNDO_STEPS$ = 20
+    +of(workspaceId, dashboardId)$ History
+    +diff(before, next)$ HistoryDiff
+    +patchOf(before, next)$ patch
+    +removeAllIn(workspaceId)$ number
+    +read() HistoryTrail
+    +page(limit) entries
+    +start(version, doc, author, summary)
+    +append(write)
+    +prune(keepVersions)
   }
+  class HistoryTrail~TDoc~ {
+    <<immutable read>>
+    +newest: number
+    +latest: entry
+    +stateAt(version, extra, head) TDoc
+    +undo(head, steps, agentId, extra) HistoryRestore
+    +redo(head, agentId) HistoryRestore
+  }
+  History ..> HistoryTrail : read
   class Layout {
     <<value object>>
+    +EMPTY$
+    +of(layouts)$ Layout
+    +at(breakpoint) placements
+    +bottom(breakpoint) number
+    +toJSON() DashboardLayouts
+    +equals(other) boolean
+  }
+  class Operation {
+    <<value object>>
+    +of(role, verb)$ Operation
+    +assert(caller) void
+    +equals(other) boolean
+  }
+  class DocCheck {
+    the one block check (6b: Block.from)
+    +instance$
+    +check(input) DraftCheck
+    +lint(doc, mode, topicIds) LintIssue[]
+  }
+  class DashboardConnectors {
+    connector rules, one member
+    +of(caller)$
+    +infoFor(blocks)
+    +check(before, next)
+    +assert(before, next)
+    +issues(before, next)
+    +bindable(shareNew)
+    +sharesOf(before, next)
+    +templateShares(drafts)
+  }
+  class BlockPreviews {
+    dry-run rows
+    +for(caller)$
+    +of(draft, limit)
+  }
+  class Persona {
+    +Operation$
+    +plan(caller, input)$ PersonaPlan
+    +instantiate(caller, input)$ PersonaInstantiateResult
   }
   Dashboard *-- History
   Dashboard *-- Layout
-  Dashboard *-- Block
+  Dashboard ..> Operation
+  Dashboard ..> DocCheck
+  Dashboard ..> DashboardConnectors
+  Dashboard ..> BlockPreviews
+  Persona ..> Dashboard : create, applyOps
   class DashboardPolicy
-  Dashboard ..> DashboardPolicy
+  Dashboard ..> DashboardPolicy : read
 
   class Block {
     <<abstract>>
@@ -1637,6 +1750,7 @@ classDiagram
   class FilterBlock
   class ActionBlock
   class NoteBlock
+  DocCheck ..> Block : phase 6b
   Block <|-- ListBlock
   Block <|-- TableBlock
   Block <|-- KanbanBlock
@@ -1666,12 +1780,30 @@ classDiagram
   ControlBlock <|.. FilterBlock
   ControlBlock <|.. ActionBlock
 
-  class View
+  class View {
+    +Audit$
+    +Operation$
+    +query: Query
+    +list(caller)$ View[]
+    +load(caller, id, operation?)$ View
+    +create(caller, input)$ View
+    +removeAllIn(workspaceId)$ number
+    +isVisibleTo(userId) boolean
+    +update(caller, input) View
+    +delete(caller)
+    +toView() SavedView
+  }
   WorkspaceEntity <|-- View
   Owned <|.. View
   Auditable <|.. View
+  Viewable <|.. View
+  View ..> Operation
   class Query {
     <<value object>>
+    +parse(input)$ Query
+    +from(stored)$ Query
+    +toJSON() QueryJson
+    +equals(other) boolean
   }
   View *-- Query
 
@@ -1682,10 +1814,19 @@ classDiagram
   class Auditable:::built
   class SoftDeletable:::built
   class Owned:::built
+  class Viewable:::built
   class DashboardPolicy:::built
-  class Dashboard:::planned
-  class History:::planned
-  class Layout:::planned
+  class Dashboard:::built
+  class History:::built
+  class HistoryTrail:::built
+  class Layout:::built
+  class Operation:::built
+  class DocCheck:::built
+  class DashboardConnectors:::built
+  class BlockPreviews:::built
+  class Persona:::built
+  class View:::built
+  class Query:::built
   class Block:::planned
   class DataBlock:::planned
   class TimeBlock:::planned
@@ -1704,8 +1845,6 @@ classDiagram
   class FilterBlock:::planned
   class ActionBlock:::planned
   class NoteBlock:::planned
-  class View:::planned
-  class Query:::planned
 ```
 
 ## 7. Sync, agent keys and the outside world (phases 5 and 6)
@@ -1813,13 +1952,11 @@ classDiagram
   SyncEngine ..> SyncedRows : upserts, sweeps
   ContainerCache ..> SyncedRows
   class AgentKey {
+    built with the MCP sign-in
     +authenticate(raw)$ AgentKey
     +scopes: ScopeSet
   }
   WorkspaceEntity <|-- AgentKey
-  class Owned {
-    <<interface>>
-  }
   class Expirable {
     <<interface>>
   }
@@ -1829,7 +1966,6 @@ classDiagram
   class Auditable {
     <<interface>>
   }
-  Owned <|.. AgentKey
   Expirable <|.. AgentKey
   Revocable <|.. AgentKey
   Auditable <|.. AgentKey
@@ -1839,9 +1975,18 @@ classDiagram
   }
   AgentKey *-- ScopeSet
   class ConnectLink {
-    +create(caller, provider)$
-    +consume(caller, raw)$
+    a ReplayNonce, once
+    +TTL_MS$ = 10 min
+    +Audit$
+    +hash(raw)$ string
+    +urlOf(workspaceId, provider, raw)$ string
+    +create(caller, provider, now)$ ConnectLink
+    +consume(caller, raw, now)$ UsedConnectLink
+    +isExpired(now) boolean
+    +toView() ConnectLinkView
   }
+  Expirable <|.. ConnectLink
+  Viewable <|.. ConnectLink
   class KeyProvider {
     <<interface>>
   }
@@ -1861,7 +2006,6 @@ classDiagram
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
   classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
   class WorkspaceEntity:::built
-  class Owned:::built
   class Expirable:::built
   class Revocable:::built
   class Auditable:::built
@@ -1875,9 +2019,9 @@ classDiagram
   class ContainerCache:::built
   class SyncedRows:::built
   class Integration:::built
-  class AgentKey:::planned
+  class AgentKey:::built
   class ScopeSet:::planned
-  class ConnectLink:::planned
+  class ConnectLink:::built
   class KeyProvider:::planned
   class Transport:::planned
   class Mailer:::planned
@@ -1887,6 +2031,69 @@ classDiagram
 
 The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
 SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
+
+## What phase 6a built (dashboards, views, connect links, the audit page; the list emptied)
+
+- **`Dashboard`** (`classes/dashboard/Dashboard.ts`) `extends WorkspaceEntity<DashboardData>
+implements Versioned, Auditable, SoftDeletable, Owned`: the only code that reads or writes
+  Dashboards (the old `services/dashboards.ts`, moved behind it). Each operation's role is an
+  `Operation` value object (`Dashboard.Operation.edit`, `.undo`, `.publish`…) checked by
+  `Dashboard.load(caller, id, operation)` before the read, so the 403 still comes before any 404;
+  every instance method checks it again (and the `DashboardPolicy` read), so it is safe on any
+  loaded dashboard. `save(caller, doc, ifVersion, change)` is the old `commit` (the
+  `replaceIfVersion` compare-and-set, the connector check and audit, the history append and prune,
+  the `dashboard.update` audit) moved verbatim; a change without a patch is diffed from the draft
+  (the old `commitState`). "Stop sharing" writes through the private `#commit` (it strips the
+  owner's connector from pages they may not open, as before). Audit names in `Dashboard.Audit`.
+- **`History<TDoc>`** (generic, over DashboardVersions): `diff` (patch and inverse from plain JSON),
+  `start`, `append` (a snapshot every 10th version), `prune` (the last 50 plus the published one),
+  `read` → **`HistoryTrail<TDoc>`** (an immutable read: `stateAt`, `undo`, `redo`, the old undo
+  loop and redo check, verbatim). The pure `builder/history.ts` is unchanged.
+- **`Layout`** (value object: the stored grid, `bottom(breakpoint)`), **`DocCheck`** (the one
+  place a document's blocks are checked and linted; the phase 6b seam), **`DashboardConnectors`**
+  (the connector rules for one member, ruling 3, 16, 23d), **`BlockPreviews`** (a dry run's rows).
+- **`View`** (`classes/dashboard/View.ts`) `extends WorkspaceEntity<ViewData> implements Owned,
+Auditable, Viewable<SavedView>`, composing a **`Query`** value object (parsed and compiled against
+  the whitelist, `/query…` pointers). `View.load(caller, id, View.Operation.edit)` keeps the role
+  before the read; `view.*` audit names in `View.Audit`.
+- **`Persona`** (`classes/dashboard/Persona.ts`): `plan` / `instantiate` (role, then the key, then
+  topics, pages through `Dashboard.create`, views through `applyOps`), idempotent per topic slug as
+  before; a page is found with `Dashboard.listAll` (every live dashboard, as the old repository
+  read).
+- **`ConnectLink`** (`classes/ConnectLink.ts`) `implements Expirable, Viewable<ConnectLinkView>`:
+  `create` (an editor; the id's sha256 in the `integration.connect_link` entry) and `consume` (the
+  member it was made for, once through ReplayNonces: 404 unknown or expired, 403 another member,
+  410 used), 10 minutes, unchanged.
+- **`AuditLog.page(workspaceId, query)`** → **`AuditPage`** (value object: entries newest first,
+  the opaque cursor, the integrations its entries are about); `AuditLog#integrationId`.
+  `audit_log_query` keeps only its output shape and the visibility rule (ruling 15).
+- **The seed** (`seed/seedWorkspace.ts`) goes through classes only: `Workspace.ownerOf`,
+  `Integration.listOwn` / `connectWithKey` / `#pinAccount` / `#hasCredential`, `Todo.existsWithKey`
+  / `countLiveWithKeys`, `Item.countLiveOf`, `Container.countLiveOf`, `Dashboard.listAll` /
+  `instantiate` / `applyOps` / `publish` / `delete`. Its suites pass unchanged.
+- **The cascade** (`WorkspaceTeardown`) gains `removeDashboards` after the containers: the
+  dashboards (deleted ones too), their versions and the saved views, hard-deleted, for an owner's
+  deletion and an account's end alike (the owner's ruling). The `2026-11-15-orphaned-dashboards`
+  migration (sync-db) removes, once, those of workspaces that are gone or soft-deleted; it answers
+  counts only.
+- **Legacy list: 6 → 0.** `LEGACY_DB_IMPORTERS` is an empty array (ESLint and the boundary test
+  still read it; phase 7 deletes it).
+
+## Where phase 6a left the old modules
+
+| Module                                                                                   | Now                                                                                                     |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `services/dashboards.ts`                                                                 | **removed**: `Dashboard`, `History`, `HistoryTrail`, `DocCheck`, `DashboardConnectors`, `BlockPreviews` |
+| `services/views.ts`                                                                      | **removed**: `View`, `Query`                                                                            |
+| `services/personas.ts`                                                                   | **removed**: `Persona`                                                                                  |
+| `services/connectLinks.ts`                                                               | **removed**: `ConnectLink`                                                                              |
+| `mcp/tools/workspace/auditLogQuery.ts`                                                   | thin over `AuditLog.page`; off the legacy list                                                          |
+| `seed/seedWorkspace.ts`                                                                  | through classes only; off the legacy list                                                               |
+| controllers (dashboards, builder, views, connect links), MCP builder tools and resources | `Dashboard.load(caller, id, operation)` then the method; `View`, `Persona`, `ConnectLink`               |
+| `services/dashboardSchemas.ts`                                                           | `History.MAX_UNDO_STEPS`                                                                                |
+
+Tests that called the removed modules import the same call shapes from `src/testing/dashboardCalls.ts`
+(one line each over the classes); their assertions are unchanged.
 
 ## What phase 5 built (sync, the dispatchers and the calendar push)
 
@@ -2293,8 +2500,8 @@ their caller's actor. Jobs and the sync write as the system, without an origin.
 
 Rules that still live in a service until their phase moves them into a class:
 
-| Rule                                                        | Where                                                                           | Moves with              |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------- | ----------------------- |
-| A private saved view is its owner's alone                   | `services/views.ts` (`visibleTo`), `services/workspaceQuery.ts` (the view path) | `View` (phase 6)        |
-| Only your own local to-do is copied to a provider           | `services/providerCreate/service.ts` (`loadTodo`)                               | `Todo.copyTo` (phase 4) |
-| Agent-key visibility and revoking (owner or the key's user) | `services/agentKeys.ts`, through `WorkspacePolicy`                              | `AgentKey` (phase 6)    |
+| Rule                                                        | Where                                                                   | Moves with              |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------- |
+| A private saved view is its owner's alone                   | `View#isVisibleTo` (phase 6a); `QueryTarget` (the view path) repeats it | done (phase 6a)         |
+| Only your own local to-do is copied to a provider           | `services/providerCreate/service.ts` (`loadTodo`)                       | `Todo.copyTo` (phase 4) |
+| Agent-key visibility and revoking (owner or the key's user) | `services/agentKeys.ts`, through `WorkspacePolicy`                      | `AgentKey` (phase 6)    |
