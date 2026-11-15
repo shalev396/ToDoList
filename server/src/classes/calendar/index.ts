@@ -3,7 +3,13 @@
  * links (CalendarLink, CalendarLinks), what a push would do (PushPlan) and a push's commit
  * (PushCommit).
  */
-export { Calendar, DAILY_CREATE_CAP, WRITE_RESERVE_MS, type CalendarData } from './Calendar.js';
+export {
+  Calendar,
+  DAILY_CREATE_CAP,
+  PushCalendar,
+  WRITE_RESERVE_MS,
+  type CalendarData,
+} from './Calendar.js';
 export { CalendarLink } from './CalendarLink.js';
 export { CalendarLinks } from './CalendarLinks.js';
 export { EventClaim } from './EventClaim.js';

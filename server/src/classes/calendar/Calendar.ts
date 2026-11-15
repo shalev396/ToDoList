@@ -257,40 +257,36 @@ async function pushItems(
 
 export class Calendar extends WorkspaceEntity<CalendarData> {
   readonly #integration: IntegrationData;
-  /** The integration's owner, as whom the push set is read (a primary calendar only). */
-  readonly #owner: Caller | null;
 
-  private constructor(integration: IntegrationData, calendarId: string, owner: Caller | null) {
+  protected constructor(integration: IntegrationData, calendarId: string) {
     super({ id: calendarId, workspaceId: integration.workspaceId, integrationId: integration.id });
     this.#integration = integration;
-    this.#owner = owner;
   }
 
   /**
    * The calendar a push of `integration` wrote to (its commit's calendar): no check, the push
-   * already planned it as the primary calendar.
+   * already planned it as the primary calendar. It commits and pulls; it does not plan.
    */
   static of(integration: IntegrationData, calendarId: string): Calendar {
-    return new Calendar(integration, calendarId, null);
+    return new Calendar(integration, calendarId);
   }
 
   /**
-   * The workspace's primary calendar, as `integration` pushes to it: 409 `calendar_not_primary`
-   * unless the primary calendar is on this integration; 409 when its member is gone. With the
-   * owner's caller, as whom its push set is read.
+   * The workspace's primary calendar, as `integration` pushes to it (PushCalendar, the one kind
+   * that plans): 409 `calendar_not_primary` unless the primary calendar is on this integration;
+   * 409 when its member is gone.
    */
-  static async primaryFor(integration: IntegrationData): Promise<Calendar> {
-    const owner = await Caller.enter(integration.workspaceId, Actor.user(integration.ownerUserId));
-    if (owner === null) {
-      throw new AppError(409, 'The member who connected this integration is gone');
-    }
-    const primary = WorkspaceSettings.from(owner.settings).primaryCalendar;
-    if (primary?.isOn(integration.id) !== true) throw new CalendarNotPrimaryError(integration.id);
-    return new Calendar(integration, primary.calendarId, owner);
+  static primaryFor(integration: IntegrationData): Promise<PushCalendar> {
+    return PushCalendar.primaryFor(integration);
   }
 
   get integrationId(): string {
     return this.data.integrationId;
+  }
+
+  /** The integration that pushes to it. */
+  protected get integration(): IntegrationData {
+    return this.#integration;
   }
 
   /** Where the pull after a push stands on this calendar (`gcal:<id>`, apart from the sync's). */
@@ -299,8 +295,44 @@ export class Calendar extends WorkspaceEntity<CalendarData> {
   }
 
   /**
-   * Items to push → ops, at `now`, into this primary calendar (Calendar.primaryFor), as its
-   * integration's owner sees them. A narrowing (the MCP dry run) plans some items and deletes
+   * One push's commit into this calendar (PushCommit): the op results (links, audit), the pull's
+   * Google changes, and the run's end. Throws 409 for a run that is not open.
+   */
+  commit(input: unknown, now: Date = new Date()): Promise<CommitCounts> {
+    return PushCommit.apply(this.#integration, input, now, this.id);
+  }
+}
+
+/**
+ * The workspace's primary calendar as the integration it is on pushes to it: a Calendar that also
+ * plans, as that integration's owner (whose caller it holds, so a plan can never run for nobody).
+ */
+export class PushCalendar extends Calendar {
+  /** The integration's owner, as whom the push set is read. */
+  readonly #owner: Caller;
+
+  private constructor(integration: IntegrationData, calendarId: string, owner: Caller) {
+    super(integration, calendarId);
+    this.#owner = owner;
+  }
+
+  /**
+   * The workspace's primary calendar, as `integration` pushes to it: 409 `calendar_not_primary`
+   * unless the primary calendar is on this integration; 409 when its member is gone.
+   */
+  static override async primaryFor(integration: IntegrationData): Promise<PushCalendar> {
+    const owner = await Caller.enter(integration.workspaceId, Actor.user(integration.ownerUserId));
+    if (owner === null) {
+      throw new AppError(409, 'The member who connected this integration is gone');
+    }
+    const primary = WorkspaceSettings.from(owner.settings).primaryCalendar;
+    if (primary?.isOn(integration.id) !== true) throw new CalendarNotPrimaryError(integration.id);
+    return new PushCalendar(integration, primary.calendarId, owner);
+  }
+
+  /**
+   * Items to push → ops, at `now`, into this primary calendar, as its integration's owner sees
+   * them. A narrowing (the MCP dry run) plans some items and deletes
    * nothing. The plan spends part of `budget`, which the writes and the pull then share.
    */
   async plan(
@@ -308,11 +340,10 @@ export class Calendar extends WorkspaceEntity<CalendarData> {
     narrowing?: PlanNarrowing,
     budget: TimeBudget = TimeBudget.start(WRITE_BUDGET_MS),
   ): Promise<PushPlan> {
-    const integration = this.#integration;
+    const integration = this.integration;
     const { workspaceId } = integration;
     const config = readGcalConfig(integration);
     const caller = this.#owner;
-    if (caller === null) throw new Error('Calendar#plan plans a calendar from primaryFor only');
     const timeZone = caller.settings.timezone;
 
     const linkRepo = await getCalendarLinkRepository();
@@ -361,17 +392,9 @@ export class Calendar extends WorkspaceEntity<CalendarData> {
     return PushPlan.of({ ...buildOps(items, links, cfg, now), cfg, config });
   }
 
-  /**
-   * One push's commit into this calendar (PushCommit): the op results (links, audit), the pull's
-   * Google changes, and the run's end. Throws 409 for a run that is not open.
-   */
-  commit(input: unknown, now: Date = new Date()): Promise<CommitCounts> {
-    return PushCommit.apply(this.#integration, input, now, this.id);
-  }
-
   /** Creations still allowed today: the cap minus what runs of the last 24 hours created. */
   async #remainingCreates(now: Date): Promise<number> {
-    const runs = await SyncRun.listFor(this.#integration, 100);
+    const runs = await SyncRun.listFor(this.integration, 100);
     let used = 0;
     for (const run of runs) {
       const push = run.trigger === 'calendar_push';
