@@ -89,6 +89,7 @@ import { DashboardConnectors } from './DashboardConnectors.js';
 import { DocCheck } from './DocCheck.js';
 import { History, type HistoryDiff } from './History.js';
 import { DashboardDryRun } from './DashboardDryRun.js';
+import { DashboardOutline } from './DashboardOutline.js';
 import {
   autoPublishes,
   DASHBOARD_AUDIT,
@@ -322,12 +323,18 @@ export class Dashboard
   }
 
   /**
-   * Every live dashboard of the caller's workspace, oldest first, private ones of other members
-   * too: what a natural-key lookup (the demo data, a persona's pages) checks before making one.
-   * Never shown as it is: `list` and `load` are what a member sees.
+   * The outline of every live dashboard of the caller's workspace, oldest first, private ones of
+   * other members too: what a natural-key lookup (the demo data, a persona's pages) checks before
+   * making one, as the old unfiltered read did. Outlines only (which page, the shape of what it
+   * holds): `list` and `load` are what a member sees.
    */
-  static async listAll(caller: Caller, filter: DashboardListFilter = {}): Promise<Dashboard[]> {
-    return Dashboard.#listAll(caller.workspaceId, filter);
+  static async listOutlines(
+    caller: Caller,
+    filter: DashboardListFilter = {},
+  ): Promise<DashboardOutline[]> {
+    return (await Dashboard.#listAll(caller.workspaceId, filter)).map((dashboard) =>
+      DashboardOutline.of(dashboard.data),
+    );
   }
 
   static async #listAll(workspaceId: string, filter: DashboardListFilter): Promise<Dashboard[]> {

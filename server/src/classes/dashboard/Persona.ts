@@ -14,6 +14,7 @@ import type { IntegrationShare, PersonaInstantiateResult } from '../../types/das
 import type { Caller } from '../base/Caller.js';
 import { Topic, type TopicLanguage } from '../workspace/Topic.js';
 import { Dashboard } from './Dashboard.js';
+import type { DashboardOutline } from './DashboardOutline.js';
 import { Operation } from './Operation.js';
 
 export interface InstantiatePersonaInput {
@@ -40,13 +41,8 @@ export interface PersonaPlan {
 }
 
 /** The view templates a page already has a view from. */
-function viewTemplatesOf(page: Dashboard | undefined): Set<string> {
-  return new Set(
-    (page?.views ?? []).flatMap((view) => {
-      const key = (view as { templateKey?: unknown }).templateKey;
-      return typeof key === 'string' ? [key] : [];
-    }),
-  );
+function viewTemplatesOf(page: DashboardOutline | undefined): Set<string> {
+  return new Set(page?.viewTemplateKeys ?? []);
 }
 
 export class Persona {
@@ -72,8 +68,8 @@ export class Persona {
   }
 
   /** The topic's page, as any dashboard of the workspace (a natural-key lookup). */
-  static async #pageOf(caller: Caller, topicId: string): Promise<Dashboard | undefined> {
-    const [page] = await Dashboard.listAll(caller, { topicId, page: 'topic' });
+  static async #pageOf(caller: Caller, topicId: string): Promise<DashboardOutline | undefined> {
+    const [page] = await Dashboard.listOutlines(caller, { topicId, page: 'topic' });
     return page;
   }
 

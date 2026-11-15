@@ -11,7 +11,8 @@
  *    (Integration#saveCredential: sealed like any other, never stored in plaintext);
  * 2. the demo area rules (`shalev396/*` → personal, `Braude*` → college);
  * 3. local to-dos (Todo.create): overdue, today, later this week and undated;
- * 4. the template dashboards (Dashboard.instantiate), published;
+ * 4. the template dashboards (Dashboard.instantiate), published; what exists is found by its
+ *    outline (Dashboard.listOutlines);
  * 5. one fixture sync per integration (Integration.runSync, trigger `seed`), all at once: the items
  *    are the adapters' recorded fixtures, their relative dates resolved against `now` in the
  *    workspace's time zone, so they look exactly like a real sync's. Records without a URL are
@@ -21,7 +22,6 @@
  * syncs leave unchanged items untouched (same hash: no `updatedAt` bump). A to-do its owner
  * deleted stays deleted. Nothing here prints, logs or returns a secret.
  */
-import { connectorsOf } from '../builder/connectors.js';
 import { listTemplates, type TemplateLanguage } from '../builder/templates.js';
 import { environment } from '../config/environment.js';
 import type { WorkspaceSettings } from '../models/definitions/Workspace.js';
@@ -219,12 +219,12 @@ async function leaveMinimalShape(caller: Caller, language: TemplateLanguage): Pr
     college: idOf('college'),
     personal: idOf('personal'),
   };
-  const empty = (await Dashboard.listAll(caller)).filter(
+  const empty = (await Dashboard.listOutlines(caller)).filter(
     (dashboard) =>
       dashboard.templateKey === null &&
       dashboard.scope.topicId === topics.personal &&
       dashboard.scope.page === 'topic' &&
-      dashboard.blocks.length === 0 &&
+      dashboard.blockCount === 0 &&
       dashboard.version === 1,
   );
   for (const dashboard of empty) {
@@ -239,7 +239,7 @@ async function ensureDashboards(
   language: TemplateLanguage,
   topics: TopicIds,
 ): Promise<number> {
-  const existing = await Dashboard.listAll(caller);
+  const existing = await Dashboard.listOutlines(caller);
   const templates = new Map(listTemplates().map((template) => [template.key, template]));
   for (const demo of DEMO_DASHBOARDS) {
     const template = templates.get(demo.templateKey);
@@ -272,7 +272,7 @@ async function ensureConnectorBlocks(
   language: TemplateLanguage,
 ): Promise<void> {
   for (const demo of DEMO_CONNECTOR_BLOCKS) {
-    const target = (await Dashboard.listAll(caller)).find(
+    const target = (await Dashboard.listOutlines(caller)).find(
       (dashboard) => dashboard.templateKey === demo.templateKey,
     );
     if (target === undefined) throw new Error(`seedWorkspace: no ${demo.templateKey} dashboard`);
@@ -282,7 +282,7 @@ async function ensureConnectorBlocks(
       return found.integration.id;
     });
     const same = JSON.stringify(ids);
-    if (target.blocks.some((block) => JSON.stringify(connectorsOf(block)) === same)) continue;
+    if (target.connectorSets.some((set) => JSON.stringify(set) === same)) continue;
     // Full width, below everything else: a task list with chips needs the room.
     const editable = await Dashboard.load(caller, target.id, Dashboard.Operation.edit);
     const result = await editable.applyOps(caller, {

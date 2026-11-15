@@ -2,7 +2,7 @@
  * The Dashboard class on a throwaway MongoDB, where the old service's suites don't reach: the
  * operation's role is checked before the dashboard is read (403 before 404), a method holds its
  * own checks on any loaded dashboard, `save` is one compare-and-set with its history entry,
- * `listAll` (a natural-key lookup) sees what `list` hides, a persona's role comes before its key,
+ * `listOutlines` (a natural-key lookup) outlines what `list` hides, a persona's role comes before its key,
  * and a workspace's end removes its dashboards, histories and views (removeAllIn).
  */
 import { after, before, describe, it } from 'node:test';
@@ -273,8 +273,8 @@ describe('History#read: the trail', () => {
   });
 });
 
-describe('Dashboard.listAll', () => {
-  it('sees another member’s private page, which list hides', async () => {
+describe('Dashboard.listOutlines', () => {
+  it('outlines another member’s private page, which list hides, and holds no content', async () => {
     const { Dashboard } = classes;
     const models = await import('../../models/index.js');
     const t = await team('dash-list-all');
@@ -285,8 +285,25 @@ describe('Dashboard.listAll', () => {
       title: 'Private',
       visibility: 'private',
     });
-    const all = await Dashboard.listAll(t.owner);
-    assert.ok(all.some((dashboard) => dashboard.id === mine.id));
+    const outline = (await Dashboard.listOutlines(t.owner)).find(
+      (dashboard) => dashboard.id === mine.id,
+    );
+    assert.ok(outline);
+    assert.deepEqual(
+      Object.keys(outline).sort(),
+      [
+        'blockCount',
+        'connectorSets',
+        'id',
+        'layout',
+        'scope',
+        'templateKey',
+        'version',
+        'viewTemplateKeys',
+      ],
+      'which page, and the shape of what it holds: never the title, blocks or a view',
+    );
+    assert.ok(Object.isFrozen(outline) && Object.isFrozen(outline.scope));
     const listed = await Dashboard.list(t.owner, {});
     assert.ok(!listed.some((dashboard) => dashboard.id === mine.id));
     await assert.rejects(Dashboard.load(t.owner, mine.id), hasStatus(404));
@@ -316,9 +333,9 @@ describe('Dashboard.removeAllIn and View.removeAllIn', () => {
     assert.deepEqual(await Dashboard.removeAllIn(t.workspaceId), { dashboards: 2, versions: 3 });
     assert.equal(await View.removeAllIn(t.workspaceId), 1);
     assert.deepEqual(await Dashboard.removeAllIn(t.workspaceId), { dashboards: 0, versions: 0 });
-    assert.deepEqual(await Dashboard.listAll(t.owner), []);
+    assert.deepEqual(await Dashboard.listOutlines(t.owner), []);
     assert.deepEqual(await View.list(t.owner), []);
-    assert.equal((await Dashboard.listAll(keep.owner)).length, 1);
+    assert.equal((await Dashboard.listOutlines(keep.owner)).length, 1);
     assert.equal((await View.list(keep.owner)).length, 1);
   });
 });

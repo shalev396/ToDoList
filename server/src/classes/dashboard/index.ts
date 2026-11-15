@@ -16,6 +16,7 @@ export {
   type SaveChange,
   type UndoInput,
 } from './Dashboard.js';
+export { DashboardOutline } from './DashboardOutline.js';
 export { Layout } from './Layout.js';
 export {
   NewDashboard,
