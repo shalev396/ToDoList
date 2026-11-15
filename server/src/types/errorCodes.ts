@@ -48,6 +48,13 @@ export const ERROR_CODES = [
   'provider_item_missing',
   /** A calendar event with other guests: the caller must say whether to notify them. */
   'event_has_guests',
+  /**
+   * A change at the provider through someone else's integration: only its owner writes there
+   * (anyone who sees the item may still keep local overrides of the fields its provider lacks).
+   */
+  'integration_not_owner',
+  /** A recurring to-do needs the workspace's primary calendar, and there is none to create it in. */
+  'primary_calendar_unset',
   /** A push for a Google Calendar integration that is not the workspace's primary calendar. */
   'calendar_not_primary',
   /**
