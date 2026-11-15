@@ -85,6 +85,8 @@ const update: RequestHandler = async (req, res): Promise<void> => {
   const { mode, ...fields } = parseOr400(UpdateIntegrationBody, req.body);
   const request = req as WorkspaceRequest;
   let integration = await Integration.findOwn(request.caller, routeParam(req, 'iid'));
+  // All or nothing: a mode that is refused (demo data) is refused before anything is saved.
+  if (mode !== undefined) integration.checkMode(request.caller, mode);
   if (Object.values(fields).some((value) => value !== undefined)) {
     integration = await integration.update(request.caller, fields);
   }

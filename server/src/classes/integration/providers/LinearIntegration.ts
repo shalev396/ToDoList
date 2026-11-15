@@ -1,3 +1,4 @@
+import type { Caller } from '../../base/Caller.js';
 import { AppError } from '../../../errors/AppError.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
 import { logger } from '../../../services/logger.js';
@@ -103,12 +104,18 @@ export class LinearIntegration
     return LinearIntegration.#apiKey;
   }
 
+  /** Its owner hands the OAuth grant back to Linear (revokeGrant). */
+  async revoke(caller: Caller): Promise<void> {
+    this.assertOwner(caller);
+    await this.revokeGrant();
+  }
+
   /**
    * Disconnect: the OAuth grant goes back to Linear (its revocation endpoint). Best effort: never
    * throws. Left in place when another live integration (any workspace) uses the same account,
    * whose grant revoking would end too.
    */
-  async revoke(): Promise<void> {
+  protected override async revokeGrant(): Promise<void> {
     if (oauthEndpoints('linear').revoke === null) return;
     try {
       if (await this.sharesGrant()) return;

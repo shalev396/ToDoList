@@ -80,6 +80,9 @@ const ExpiresAt = z
   .transform((value) => new Date(value))
   .nullable();
 
+/** The one answer to an integration change that changes nothing. */
+export const EMPTY_UPDATE_MESSAGE = 'Send a label, a topic, a config, expiresAt or a mode';
+
 /**
  * Label, topic, config, expiresAt and the mode: never the provider, the account, the status or a
  * secret. `mode` switches between read-only (`read`) and `read_write` (its owner's switch).
@@ -99,7 +102,7 @@ export const UpdateIntegrationBody = z
       body.config !== undefined ||
       body.expiresAt !== undefined ||
       body.mode !== undefined,
-    'Send a label, a topic, a config, expiresAt or a mode',
+    EMPTY_UPDATE_MESSAGE,
   );
 
 // ─── Config, per provider ───────────────────────────────────────────────────

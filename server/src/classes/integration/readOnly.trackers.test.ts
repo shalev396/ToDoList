@@ -285,7 +285,7 @@ describe('the switch', () => {
     assert.equal(mock.created('clickup').count, 2);
   });
 
-  it('demo data never becomes writable (400); it may be read-only, as it is', async () => {
+  it('demo data never becomes writable (400, and nothing of the request is saved)', async () => {
     const demo = await (
       await models.getIntegrationRepository()
     ).create(wid, {
@@ -302,6 +302,27 @@ describe('the switch', () => {
       body: { mode: 'read_write' },
     });
     assert.equal(refused.status, 400, refused.text);
+    // The view says so, so the switch is not offered (the chip's hint does not ask for it).
+    const views = (await api.call('GET', `${W()}/integrations`, { token })).body?.[
+      'data'
+    ] as Json[];
+    assert.equal(views.find((view) => view['id'] === demo.id)?.['canSwitchMode'], false);
+    assert.equal(views.find((view) => view['id'] === iid)?.['canSwitchMode'], true);
+    // All or nothing: a refused mode leaves the other fields of the same request unsaved.
+    const both = await api.call('PATCH', `${W()}/integrations/${demo.id}`, {
+      token,
+      body: { label: 'Renamed demo', mode: 'read_write' },
+    });
+    assert.equal(both.status, 400, both.text);
+    assert.equal(
+      (await (await models.getIntegrationRepository()).findById(wid, demo.id))?.label,
+      'Demo Linear',
+    );
+    assert.equal(
+      (await (await models.getAuditLogRepository()).list(wid, { action: 'integration.update' }, 5))
+        .length,
+      0,
+    );
     const same = await api.call('PATCH', `${W()}/integrations/${demo.id}`, {
       token,
       body: { mode: 'read' },

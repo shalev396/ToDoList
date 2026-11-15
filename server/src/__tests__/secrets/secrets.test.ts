@@ -442,6 +442,7 @@ describe('credential route', () => {
       assert.deepEqual(Object.keys(status).sort(), [
         'accountLabel',
         'authMethod',
+        'canSwitchMode',
         'expiresAt',
         'id',
         'lastSyncAt',

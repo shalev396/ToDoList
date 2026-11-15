@@ -34,6 +34,8 @@ export interface CreateTargetInfo {
   writable: boolean;
   /** The integration's mode: `read` (the default) or `read_write`. */
   mode: IntegrationMode;
+  /** Whether its owner may switch it to read & write (never demo data). */
+  canSwitchMode: boolean;
   /**
    * The integration is shared (a connector on some block): every member sees the items it
    * holds, so a private to-do's new copy shows among them (PERMISSIONS-V2 share-on-attach).

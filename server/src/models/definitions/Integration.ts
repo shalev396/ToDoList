@@ -207,6 +207,8 @@ export interface IntegrationStatusView {
   accountLabel: string;
   status: PublicIntegrationStatus;
   mode: IntegrationMode;
+  /** Whether its owner may switch it to read & write (never demo data: Integration#checkMode). */
+  canSwitchMode: boolean;
   expiresAt: Date | null;
   lastSyncAt: Date | null;
 }
@@ -219,7 +221,13 @@ const PUBLIC_STATUS: Readonly<Record<IntegrationStatus, PublicIntegrationStatus>
   paused: 'error',
 };
 
-export function toIntegrationStatus(data: IntegrationData): IntegrationStatusView {
+/**
+ * The status fields of the stored data. The rest of the view (`canSwitchMode`) is the
+ * integration's own rule: Integration#toView adds it.
+ */
+export function toIntegrationStatus(
+  data: IntegrationData,
+): Omit<IntegrationStatusView, 'canSwitchMode'> {
   return {
     id: data.id,
     provider: data.provider,

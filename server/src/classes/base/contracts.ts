@@ -3,7 +3,6 @@
  * auditable" or "something that expires" instead of a concrete class, and the compiler checks
  * that every implementing class provides the whole contract.
  */
-import type { AuditScope } from '../AuditLog.js';
 import type { AuditTarget } from './AuditTarget.js';
 import type { Caller } from './Caller.js';
 
@@ -40,13 +39,9 @@ export interface Expirable {
   isExpired(now: Date): boolean;
 }
 
-/**
- * Can be withdrawn. `by` is who withdraws it, as the audit log records them: a Caller is one, and
- * so is the scope a member's departure acts in (whoever ended the membership, who has no standing
- * of the member's own), e.g. an integration's grant revoked while its integrations disconnect.
- */
+/** Can be withdrawn by a caller allowed to. */
 export interface Revocable {
-  revoke(by: AuditScope): Promise<void>;
+  revoke(caller: Caller): Promise<void>;
 }
 
 /** Has a public shape, the only one the API, the UI and MCP see. */

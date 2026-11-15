@@ -278,10 +278,12 @@ export class GoogleCalendarIntegration
 
   /**
    * A push, start to commit: a `SyncRuns` row (trigger `calendar_push`), the ops through the
-   * Calendar API inside the write session (refused first for a read-only integration, before any
-   * run is recorded), the pull that follows, then the commit (gcal/commit.ts: links, audit, the
-   * run's counts). Ops left when PUSH_BUDGET_MS runs out wait for the next run. Returns the run's
-   * id. 409 to reconnect, 502 when Google is silent.
+   * Calendar API inside the write session, the pull that follows, then the commit (gcal/commit.ts:
+   * links, audit, the run's counts). A read-only integration is refused first (assertWritable),
+   * before any run is recorded; the mode is the one this integration was loaded with, so a switch
+   * made while the push runs is seen by the next one. Ops left when PUSH_BUDGET_MS runs out wait
+   * for the next run. Returns the run's id. 409 to reconnect, 502 when Google is silent (or the
+   * credential can't be opened).
    */
   async push(caller: Caller, { ops, now }: CalendarPushRequest): Promise<string> {
     this.assertWritable(caller);
@@ -300,15 +302,6 @@ export class GoogleCalendarIntegration
         applyOps(writer, ops, deadline),
       );
     } catch (error) {
-      if (error instanceof AppError) {
-        // The gate refused meanwhile (the owner switched it to read-only): nothing was written.
-        await runs.updateIfStatus(workspaceId, run.id, ['running'], {
-          status: 'failed',
-          finishedAt: new Date(),
-          error: { code: error.code ?? 'refused', message: error.message },
-        });
-        throw error;
-      }
       const authFailed = error instanceof ProviderHttpError && error.code === 'auth_failed';
       await runs.updateIfStatus(workspaceId, run.id, ['running'], {
         status: 'failed',
@@ -341,11 +334,17 @@ export class GoogleCalendarIntegration
     return run.id;
   }
 
+  /** Its owner hands the grant back to Google (revokeGrant). */
+  async revoke(caller: Caller): Promise<void> {
+    this.assertOwner(caller);
+    await this.revokeGrant();
+  }
+
   /**
    * Disconnect: hands the grant back to Google (best effort: never throws). Left in place when
    * another live integration uses the same Google account, whose grant revoking would end too.
    */
-  async revoke(): Promise<void> {
+  protected override async revokeGrant(): Promise<void> {
     try {
       if (await this.sharesGrant()) return;
       await this.withReadSession(async ({ secret }) => {

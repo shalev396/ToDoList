@@ -52,6 +52,7 @@ import { removeConnectorEverywhere } from '../../services/dashboards.js';
 import {
   assertSameAccount,
   assertUserConnectable,
+  EMPTY_UPDATE_MESSAGE,
   defaultLabel,
   isConnectableProvider,
   isPlaceholderAccountId,
@@ -645,7 +646,7 @@ export abstract class Integration<
 
   /** What the API and the UI may show, to its owner only. */
   toView(): IntegrationStatusView {
-    return toIntegrationStatus(this.toJSON());
+    return { ...toIntegrationStatus(this.toJSON()), canSwitchMode: this.canSwitchMode };
   }
 
   /** The status view (toView). */
@@ -731,7 +732,7 @@ export abstract class Integration<
     if (input.expiresAt !== undefined) patch.expiresAt = input.expiresAt;
     const changed = Object.keys(patch);
     if (changed.length === 0) {
-      throw new AppError(400, 'Send a label, a topic, a config or expiresAt');
+      throw new AppError(400, EMPTY_UPDATE_MESSAGE);
     }
     const updated = await (
       await getIntegrationRepository()
@@ -742,16 +743,31 @@ export abstract class Integration<
   }
 
   /**
+   * Whether the caller may switch it to `mode`, before anything is written (a request that also
+   * changes other fields checks this first, so it is all or nothing): its owner only (404), and
+   * never demo data to read & write (400: its credential is FAKE). The mode, as a Mode.
+   */
+  checkMode(caller: Caller, mode: Mode | IntegrationMode): Mode {
+    this.assertOwner(caller);
+    const next = Mode.of(mode);
+    if (next.allowsWrites && !this.canSwitchMode) {
+      throw new ValidationError('Demo data is never written to its provider');
+    }
+    return next;
+  }
+
+  /** Whether its owner may switch it to read & write: never demo data. */
+  get canSwitchMode(): boolean {
+    return !this.demo;
+  }
+
+  /**
    * Its owner switches the integration between read-only and read & write. Demo data refuses read
    * & write (400): its credential is FAKE. The same mode again changes nothing. Audited as
    * `integration.mode` with the modes before and after.
    */
   async setMode(caller: Caller, mode: Mode | IntegrationMode): Promise<Integration> {
-    this.assertOwner(caller);
-    const next = Mode.of(mode);
-    if (next.allowsWrites && this.demo) {
-      throw new ValidationError('Demo data is never written to its provider');
-    }
+    const next = this.checkMode(caller, mode);
     const previous = this.mode;
     if (next.equals(previous)) return this;
     const updated = await (
@@ -925,7 +941,7 @@ export abstract class Integration<
     const { workspaceId, id } = this;
     const integrations = await getIntegrationRepository();
     if (!this.isDeleted && this.authMethod === 'oauth' && isRevocable(this)) {
-      await this.revoke(by);
+      await this.revokeGrant();
     }
     // False when another request deleted it meanwhile: that one audits, this one finishes the steps.
     if (!this.isDeleted && (await integrations.softDelete(workspaceId, id))) {
@@ -1025,6 +1041,16 @@ export abstract class Integration<
   }
 
   // ─── Hooks the provider classes override ─────────────────────────────────
+
+  /**
+   * Hands the OAuth grant back to the provider (a Revocable class: Google Calendar, Linear), best
+   * effort: it never throws. The disconnect calls it before anything is deleted, whoever
+   * disconnects (its owner, or whoever ended the owner's membership); `revoke(caller)` is the
+   * same, for its owner. Nothing to hand back by default.
+   */
+  protected revokeGrant(): Promise<void> {
+    return Promise.resolve();
+  }
 
   /** Extra audit meta of a new integration, after what connecting it does (GitHub: a topic rule). */
   protected onConnected(): Promise<Record<string, unknown>> {

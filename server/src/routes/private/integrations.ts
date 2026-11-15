@@ -20,8 +20,8 @@ import type {
 /**
  * Integrations (BACKEND.md §4, DATA.md §0, §3.4–3.5, §4, §7, PERMISSIONS-V2). An integration
  * belongs to one member inside one workspace and is only ever shown to them, as
- * `IntegrationStatusView`: `{id, provider, authMethod, accountLabel, status, mode, expiresAt,
- * lastSyncAt}`. The secret goes one way, in the body of `PUT …/credential` (write-only,
+ * `IntegrationStatusView`: `{id, provider, authMethod, accountLabel, status, mode,
+ * canSwitchMode, expiresAt, lastSyncAt}`. The secret goes one way, in the body of `PUT …/credential` (write-only,
  * 204, never logged).
  *
  * Behind requireWorkspace: non-members get 404. Editors and owners connect their own

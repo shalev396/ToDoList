@@ -103,6 +103,7 @@ export async function listCreateTargets(
       needsConsent: await integration.needsWriteConsent(),
       writable: integration.allowsWrites,
       mode: integration.mode.name,
+      canSwitchMode: integration.canSwitchMode,
       shared: await ItemPolicy.isShared(integration),
     });
   }

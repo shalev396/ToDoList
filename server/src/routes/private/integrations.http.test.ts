@@ -37,6 +37,7 @@ const SECRET_VALUES = [JIRA, LINEAR, GITHUB, SERVICE_ACCOUNT]
 const STATUS_KEYS = [
   'accountLabel',
   'authMethod',
+  'canSwitchMode',
   'expiresAt',
   'id',
   'lastSyncAt',
