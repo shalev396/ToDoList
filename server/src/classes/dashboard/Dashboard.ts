@@ -1,8 +1,10 @@
 /**
- * Dashboards (BUILDER.md §5–§9, DATA.md §3.11–3.12): create, read and list; edit with builder ops
- * (validated, linted, versioned, audited); undo, redo and revert through the history; publish;
- * delete. The only code that reads or writes Dashboards; its History is the only code for
- * DashboardVersions.
+ * Dashboards (BUILDER.md §5–§9, DATA.md §3.11–3.12): the life of one dashboard. Read and list;
+ * edit with builder ops (validated, linted, versioned, audited); undo, redo and revert through the
+ * history; publish; delete. With NewDashboard (making one) the only code that reads or writes
+ * Dashboards; History is the only code for DashboardVersions. Collaborators: DashboardConnectors
+ * (the connector rules), BlockPreviews (preview rows), DashboardDryRun (a dry run's answer) and
+ * DocCheck (the one check of a document).
  *
  * - Every write names the version it read (`ifVersion`, the API's `expectedVersion`). A stale one
  *   is a ConflictError (409 with the current version), and the write itself is one atomic
@@ -30,7 +32,7 @@ import { withoutConnector } from '../../builder/connectors.js';
 import { OpValidationError } from '../../builder/errors.js';
 import type { ExtraSnapshot } from '../../builder/history.js';
 import { tryPatch } from '../../builder/history.js';
-import type { LintIssue, LintMode } from '../../builder/lint.js';
+import type { LintMode } from '../../builder/lint.js';
 import {
   applyOps,
   newBlockId,
@@ -40,13 +42,7 @@ import {
   type PatchOperation,
 } from '../../builder/ops.js';
 import { bindTemplateConnectors } from '../../builder/connectors.js';
-import { getPersona, personaTemplateKeys } from '../../builder/personas.js';
-import {
-  instantiateTemplate,
-  localizeTemplate,
-  resolveTemplateKey,
-  type TemplateLanguage,
-} from '../../builder/templates.js';
+import { localizeTemplate, type TemplateLanguage } from '../../builder/templates.js';
 import { localizeViewTemplate } from '../../builder/viewTemplates.js';
 import { AppError } from '../../errors/AppError.js';
 import { ConflictError } from '../../errors/ConflictError.js';
@@ -67,10 +63,8 @@ import {
   type PageView,
 } from '../../types/builder.js';
 import type {
-  BlockPreview,
   DashboardCopy,
   DashboardDryRunResult,
-  DashboardIssue,
   DashboardPublishResult,
   DashboardSummary,
   DashboardValidation,
@@ -94,56 +88,34 @@ import { BlockPreviews } from './BlockPreviews.js';
 import { DashboardConnectors } from './DashboardConnectors.js';
 import { DocCheck } from './DocCheck.js';
 import { History, type HistoryDiff } from './History.js';
+import { DashboardDryRun } from './DashboardDryRun.js';
+import {
+  autoPublishes,
+  DASHBOARD_AUDIT,
+  DASHBOARD_OPERATIONS,
+  issue,
+  lintIssue,
+  lintModeOf,
+  publishedCopy,
+} from './dashboardRules.js';
 import { Layout } from './Layout.js';
-import { Operation } from './Operation.js';
+import {
+  NewDashboard,
+  type CreateDashboardInput,
+  type CreatePreview,
+  type InstantiateDashboardInput,
+} from './NewDashboard.js';
+import type { Operation } from './Operation.js';
 
 const DEFAULT_HISTORY_PAGE = 50;
 const MAX_HISTORY_PAGE = 100;
 /** Compare-and-set attempts per dashboard before "stop sharing" gives up on it (409). */
 const STOP_SHARING_ATTEMPTS = 5;
 
-const MAIN_SCOPE = { topicId: null, containerId: null, page: 'topic', groupVar: null } as const;
-
-/** The page variable a topic page's blocks filter on (`topic = $page.topic`). */
-const TOPIC_VAR = 'topic';
-
 /** Only these parts of a draft take an RFC 6902 patch: the scope stays as it is. */
 const PATCHABLE_PATH = /^\/(title|vars|layouts|blocks|importance|views)(\/|$)/;
 
 // Optional inputs also accept `undefined`, so a parsed request body (zod) passes as it is.
-
-export interface CreateDashboardInput {
-  /** Required without a template; overrides the template's title otherwise. */
-  title?: string | undefined;
-  /** Overrides the template's (or the main dashboard's) scope, field by field. */
-  scope?:
-    | {
-        /** The topic (page) it belongs to; null = the main dashboard. */
-        topicId?: string | null | undefined;
-        containerId?: string | null | undefined;
-        page?: DashboardPage | undefined;
-        /** A group page's route variable (`course` → `$page.course`): required on group pages. */
-        groupVar?: string | null | undefined;
-      }
-    | undefined;
-  /** A template key (`work@1`) or name (`work`). */
-  fromTemplate?: string | undefined;
-  /** The language of the template's titles. */
-  language: TemplateLanguage;
-  /**
-   * false: a template binds only the actor's integrations that are already shared, so creating
-   * shares nothing new (the UI's "Create without them", after templateShares). Default: true.
-   */
-  shareIntegrations?: boolean | undefined;
-}
-
-export interface InstantiateDashboardInput {
-  templateKey: string;
-  language: TemplateLanguage;
-  /** Overrides the template's scope (a topic page and project@1 need a topic). */
-  scope?: CreateDashboardInput['scope'];
-  shareIntegrations?: boolean | undefined;
-}
 
 export interface DashboardOpsInput {
   expectedVersion: number;
@@ -192,14 +164,6 @@ export interface DashboardListFilter {
   page?: DashboardPage | undefined;
 }
 
-/** What createDashboard would write (builder_create_dashboard's dry run). */
-export interface CreatePreview {
-  draft: DashboardDraft;
-  templateKey: string | null;
-  preview: Record<string, BlockPreview>;
-  shares: IntegrationShare[];
-}
-
 /** What a caller's `save` says of its write: only its summary. */
 export interface SaveChange {
   readonly summary: string;
@@ -225,63 +189,8 @@ function notFound(): AppError {
   return new AppError(404, 'Not found');
 }
 
-function issue(code: string, pointer: string, message: string): DashboardIssue {
-  return { code, pointer, message };
-}
-
-function lintIssue(found: LintIssue): DashboardIssue {
-  return issue(found.code, found.pointer, found.message);
-}
-
-/** A dry run that stopped before any check could run: invalid, with the one error. */
-function refusedDryRun(error: OpValidationError): DashboardDryRunResult {
-  return {
-    valid: false,
-    errors: [issue('invalid', error.pointer, error.reason)],
-    warnings: [],
-    diff: [],
-    preview: {},
-    shares: [],
-  };
-}
-
-/** Agents are held to mcp-mode lint (hard-coded text is an error). */
-function lintModeOf(caller: Caller): LintMode {
-  return caller.actor.agentId === null ? 'ui' : 'mcp';
-}
-
-/** The owner's UI editor publishes as it saves (BUILDER.md §8). */
-function autoPublishes(caller: Caller): boolean {
-  return caller.actor.agentId === null && caller.role.equals(Role.owner);
-}
-
 function isEditor(caller: Caller): boolean {
   return caller.role.atLeast(Role.editor);
-}
-
-/** The ids of the workspace's topics: what the deleted-page lint compares filters against. */
-async function topicIdsOf(workspaceId: string): Promise<ReadonlySet<string>> {
-  return new Set((await Topic.list(workspaceId)).map((topic) => topic.id));
-}
-
-function publishedCopy(content: {
-  title: string;
-  vars: Record<string, unknown>;
-  layouts: DashboardSnapshot['layouts'];
-  blocks: unknown[];
-  importance?: unknown;
-  views?: unknown[] | undefined;
-}): DashboardSnapshot {
-  return {
-    title: content.title,
-    vars: content.vars,
-    layouts: content.layouts,
-    blocks: content.blocks,
-    ...(content.importance === undefined || content.importance === null
-      ? {}
-      : { importance: content.importance }),
-    ...(content.views === undefined || content.views.length === 0 ? {} : { views: content.views }),
-  };
 }
 
 /** Validation, then lint in the caller's mode: the draft, or OpValidationError on the first error. */
@@ -294,78 +203,15 @@ function restorable(state: DashboardDraft, action: string, caller: Caller): Dash
   return DocCheck.instance.restorable(state, action, caller.actor.agentId !== null);
 }
 
-function initialDraft(input: CreateDashboardInput): {
-  draft: DashboardDraft;
-  templateKey: string | null;
-} {
-  let base: DashboardDraft;
-  let templateKey: string | null = null;
-  if (input.fromTemplate !== undefined) {
-    templateKey = resolveTemplateKey(input.fromTemplate);
-    if (templateKey === null) {
-      throw new OpValidationError('/fromTemplate', 'no template with this key');
-    }
-    base = instantiateTemplate(templateKey, { language: input.language });
-  } else {
-    if (input.title === undefined) {
-      throw new OpValidationError('/title', 'a dashboard without a template needs a title');
-    }
-    base = {
-      title: input.title,
-      scope: { ...MAIN_SCOPE },
-      vars: {},
-      layouts: Layout.EMPTY.toJSON() as Layouts,
-      blocks: [],
-    };
-  }
-  const { scope } = input;
-  const topicId = scope?.topicId === undefined ? base.scope.topicId : scope.topicId;
-  // A page of a topic binds its `$page.topic` default to that topic (templates leave it unset).
-  const bindsTopic =
-    topicId !== null &&
-    Object.hasOwn(base.vars, TOPIC_VAR) &&
-    (base.vars[TOPIC_VAR] ?? null) === null;
-  return {
-    templateKey,
-    draft: {
-      ...base,
-      title: input.title ?? base.title,
-      vars: bindsTopic ? { ...base.vars, [TOPIC_VAR]: topicId } : base.vars,
-      scope: {
-        topicId,
-        containerId: scope?.containerId === undefined ? base.scope.containerId : scope.containerId,
-        page: scope?.page ?? base.scope.page,
-        groupVar: scope?.groupVar === undefined ? (base.scope.groupVar ?? null) : scope.groupVar,
-      },
-    },
-  };
-}
-
 export class Dashboard
   extends WorkspaceEntity<DashboardData>
   implements Versioned, Auditable, SoftDeletable, Owned
 {
   /** The audit action names a dashboard writes. */
-  static readonly Audit = Object.freeze({
-    create: 'dashboard.create',
-    update: 'dashboard.update',
-    publish: 'dashboard.publish',
-    delete: 'dashboard.delete',
-    connectorRemove: 'dashboard.connector_remove',
-  });
+  static readonly Audit = DASHBOARD_AUDIT;
 
   /** What each operation needs of the caller's role, checked before the dashboard is read. */
-  static readonly Operation = Object.freeze({
-    read: Operation.member('see dashboards'),
-    create: Operation.of('editor', 'create dashboards'),
-    edit: Operation.of('editor', 'edit dashboards'),
-    undo: Operation.of('editor', 'undo changes'),
-    redo: Operation.of('editor', 'redo changes'),
-    revert: Operation.of('editor', 'revert dashboards'),
-    history: Operation.of('editor', 'see the history'),
-    publish: Operation.of('owner', 'publish dashboards'),
-    delete: Operation.of('owner', 'delete dashboards'),
-  });
+  static readonly Operation = DASHBOARD_OPERATIONS;
 
   readonly #history: History<DashboardDraft>;
   readonly #layout: Layout;
@@ -503,54 +349,14 @@ export class Dashboard
     return current === null ? notFound() : new ConflictError(current.version);
   }
 
-  // ─── Create ────────────────────────────────────────────────────────────────
+  // ─── Create (NewDashboard plans and writes; the made dashboard answers) ─────
 
-  /**
-   * The draft a create would write, checked as the create checks it. A template's blocks are bound
-   * to the actor's own integrations that match their provider hints (ruling 16), only the shared
-   * ones with `shareIntegrations: false`.
-   */
-  static async #planned(
-    caller: Caller,
-    input: CreateDashboardInput,
-  ): Promise<{ draft: DashboardDraft; templateKey: string | null }> {
-    Dashboard.Operation.create.assert(caller);
-    const planned = initialDraft(input);
-    const { templateKey } = planned;
-    const initial =
-      templateKey === null
-        ? planned.draft
-        : bindTemplateConnectors(
-            planned.draft,
-            await DashboardConnectors.of(caller).bindable(input.shareIntegrations !== false),
-          );
-    // A group page (one course, one project) belongs to one topic; project@1 leaves it to the caller.
-    if (initial.scope.page === 'group' && initial.scope.topicId === null) {
-      throw new OpValidationError(
-        '/scope/topicId',
-        'scope.topicId required: a group page belongs to one topic',
-      );
-    }
-    return { draft: validated(initial, caller), templateKey };
-  }
-
-  /**
-   * What `create` would write, without writing (builder_create_dashboard's dry run): the draft,
-   * its template, preview rows per block (`previewRows`: 0 to CAPS.previewRows), and what creating
-   * it would share with the whole workspace (`shares`).
-   */
-  static async previewCreate(
+  /** What `create` would write, without writing (builder_create_dashboard's dry run). */
+  static previewCreate(
     caller: Caller,
     input: CreateDashboardInput & { previewRows?: number | undefined },
   ): Promise<CreatePreview> {
-    const { draft, templateKey } = await Dashboard.#planned(caller, input);
-    if (draft.scope.topicId !== null) await Topic.assertOf(caller.workspaceId, draft.scope.topicId);
-    return {
-      draft,
-      templateKey,
-      preview: await BlockPreviews.for(caller).of(draft, input.previewRows),
-      shares: await DashboardConnectors.of(caller).sharesOf([], draft.blocks),
-    };
+    return NewDashboard.for(caller).preview(input);
   }
 
   /**
@@ -558,43 +364,7 @@ export class Dashboard
    * owner creating it in the UI publishes it at once.
    */
   static async create(caller: Caller, input: CreateDashboardInput): Promise<DashboardView> {
-    const { draft, templateKey } = await Dashboard.#planned(caller, input);
-    if (draft.scope.topicId !== null) await Topic.assertOf(caller.workspaceId, draft.scope.topicId);
-    await DashboardConnectors.of(caller).assert([], draft.blocks);
-    const { actor } = caller;
-    const dashboards = await getDashboardRepository();
-    const created = await dashboards.create(caller.workspaceId, {
-      ownerUserId: actor.userId,
-      title: draft.title,
-      scope: { ...draft.scope, groupVar: draft.scope.groupVar ?? null },
-      templateKey,
-      vars: draft.vars,
-      layouts: draft.layouts,
-      blocks: draft.blocks,
-      importance: draft.importance ?? null,
-      views: draft.views ?? [],
-      updatedBy: { userId: actor.userId, agentId: actor.agentId },
-    });
-    ItemPolicy.forget(caller.workspaceId);
-    await History.of<DashboardDraft>(caller.workspaceId, created.id).start(
-      created.version,
-      draft,
-      actor,
-      templateKey === null ? 'create' : `create ${templateKey}`,
-    );
-    const result = autoPublishes(caller)
-      ? ((await dashboards.setPublished(
-          caller.workspaceId,
-          created.id,
-          created.version,
-          publishedCopy(draft),
-        )) ?? created)
-      : created;
-    await AuditLog.record(caller, Dashboard.Audit.create, AuditTarget.of('dashboard', created.id), {
-      version: created.version,
-      templateKey,
-    });
-    return new Dashboard(result).#viewAs(caller, 'draft');
+    return new Dashboard(await NewDashboard.for(caller).write(input)).#viewAs(caller, 'draft');
   }
 
   /** A new dashboard from a template (`POST …/builder/instantiate`). */
@@ -602,49 +372,18 @@ export class Dashboard
     caller: Caller,
     input: InstantiateDashboardInput,
   ): Promise<DashboardView> {
-    try {
-      return await Dashboard.create(caller, {
-        fromTemplate: input.templateKey,
-        language: input.language,
-        scope: input.scope,
-        shareIntegrations: input.shareIntegrations,
-      });
-    } catch (error) {
-      if (error instanceof OpValidationError && error.pointer === '/fromTemplate') {
-        throw new OpValidationError('/templateKey', error.reason);
-      }
-      throw error;
-    }
+    return new Dashboard(await NewDashboard.for(caller).writeFromTemplate(input)).#viewAs(
+      caller,
+      'draft',
+    );
   }
 
-  /**
-   * What instantiating these templates would share (I4: never silently): the actor's own live
-   * integrations a template block would be bound to that no block holds yet, each once, oldest
-   * first. The UI asks before creating ("Share and create" or "Create without them", the latter
-   * passing `shareIntegrations: false`); agents see the same list in a dry run's `shares`.
-   */
-  static async templateShares(
+  /** What instantiating these templates would share (NewDashboard#templateShares). */
+  static templateShares(
     caller: Caller,
     templateKeys: readonly string[],
   ): Promise<IntegrationShare[]> {
-    Dashboard.Operation.create.assert(caller);
-    // A key names a dashboard template, a view template or a persona (a set of both).
-    const drafts = templateKeys.flatMap((key, index): { blocks: Block[] }[] => {
-      const page = resolveTemplateKey(key);
-      if (page !== null) return [instantiateTemplate(page, { language: 'en' })];
-      const view = localizeViewTemplate(key, 'en');
-      if (view !== null) return [view];
-      const persona = getPersona(key);
-      if (persona === null) {
-        throw new OpValidationError(`/templateKeys/${String(index)}`, 'no template with this key');
-      }
-      const { pages, views } = personaTemplateKeys(persona);
-      return [
-        ...pages.map((name) => instantiateTemplate(name, { language: 'en' })),
-        ...views.flatMap((name) => localizeViewTemplate(name, 'en') ?? []),
-      ];
-    });
-    return DashboardConnectors.of(caller).templateShares(drafts);
+    return NewDashboard.for(caller).templateShares(templateKeys);
   }
 
   /** `{draft}` checked as a write would check it, without writing (`POST …/builder/validate`). */
@@ -653,17 +392,7 @@ export class Dashboard
     draft: unknown,
     mode: LintMode,
   ): Promise<DashboardValidation> {
-    const check = DocCheck.instance.check(draft);
-    const lint =
-      check.draft === null
-        ? []
-        : DocCheck.instance.lint(check.draft, mode, await topicIdsOf(workspaceId));
-    const errors = [
-      ...check.issues.map((found) => issue('invalid', found.pointer, found.message)),
-      ...lint.filter((found) => found.severity === 'error').map(lintIssue),
-    ];
-    const warnings = lint.filter((found) => found.severity === 'warning').map(lintIssue);
-    return { valid: errors.length === 0, errors, warnings };
+    return DocCheck.instance.validation(draft, mode, await Topic.idsIn(workspaceId));
   }
 
   // ─── Views ─────────────────────────────────────────────────────────────────
@@ -935,14 +664,14 @@ export class Dashboard
         },
       });
     } catch (error) {
-      if (dryRun && error instanceof OpValidationError) return refusedDryRun(error);
+      if (dryRun && error instanceof OpValidationError) return DashboardDryRun.refused(error);
       throw error;
     }
 
     const lint = DocCheck.instance.lint(
       result.next,
       lintModeOf(caller),
-      await topicIdsOf(this.workspaceId),
+      await Topic.idsIn(this.workspaceId),
     );
     const errors = [
       ...lint.filter((found) => found.severity === 'error').map(lintIssue),
@@ -998,59 +727,21 @@ export class Dashboard
       next = patched;
     } catch (error) {
       if (input.dryRun === true && error instanceof OpValidationError) {
-        return refusedDryRun(error);
+        return DashboardDryRun.refused(error);
       }
       throw error;
     }
-    if (input.dryRun === true) return this.#dryRun(caller, before, next, input.previewRows);
+    if (input.dryRun === true)
+      return DashboardDryRun.for(caller).of(before, next, input.previewRows);
     const draft = validated(next, caller);
     const version = await this.#commit(caller, draft, input.expectedVersion, {
       summary: `apply_patch ${String(input.patch.length)} op(s)`,
     });
     const warnings = DocCheck.instance
-      .lint(draft, lintModeOf(caller), await topicIdsOf(this.workspaceId))
+      .lint(draft, lintModeOf(caller), await Topic.idsIn(this.workspaceId))
       .filter((found) => found.severity === 'warning')
       .map(lintIssue);
     return { version, warnings };
-  }
-
-  /** A dry run of a whole next state: validation, lint in the actor's mode, diff, preview rows. */
-  async #dryRun(
-    caller: Caller,
-    before: DashboardDraft,
-    next: DashboardDraft,
-    previewRows?: number,
-  ): Promise<DashboardDryRunResult> {
-    const check = DocCheck.instance.check(next);
-    if (check.draft === null || check.issues.length > 0) {
-      return {
-        valid: false,
-        errors: check.issues.map((found) => issue('invalid', found.pointer, found.message)),
-        warnings: [],
-        diff: [],
-        preview: {},
-        shares: [],
-      };
-    }
-    const connectors = DashboardConnectors.of(caller);
-    const lint = DocCheck.instance.lint(
-      check.draft,
-      lintModeOf(caller),
-      await topicIdsOf(this.workspaceId),
-    );
-    const errors = [
-      ...lint.filter((found) => found.severity === 'error').map(lintIssue),
-      ...(await connectors.issues(before.blocks, check.draft.blocks)),
-    ];
-    const warnings = lint.filter((found) => found.severity === 'warning').map(lintIssue);
-    return {
-      valid: errors.length === 0,
-      errors,
-      warnings,
-      diff: History.patchOf(before, check.draft),
-      preview: await BlockPreviews.for(caller).of(check.draft, previewRows),
-      shares: await connectors.sharesOf(before.blocks, check.draft.blocks),
-    };
   }
 
   // ─── Undo, redo, revert ────────────────────────────────────────────────────
@@ -1114,7 +805,7 @@ export class Dashboard
     input: UndoInput & { previewRows?: number | undefined },
   ): Promise<DashboardDryRunResult> {
     const plan = await this.#undoPlan(caller, input);
-    return this.#dryRun(caller, plan.before, plan.state, input.previewRows);
+    return DashboardDryRun.for(caller).of(plan.before, plan.state, input.previewRows);
   }
 
   /**
@@ -1178,7 +869,7 @@ export class Dashboard
     this.#allow(caller, Dashboard.Operation.revert);
     this.#assertVersion(input.expectedVersion);
     const target = await this.#revertTarget(input.toVersion);
-    return this.#dryRun(caller, this.#draft(), target, input.previewRows);
+    return DashboardDryRun.for(caller).of(this.#draft(), target, input.previewRows);
   }
 
   // ─── Publish, delete ───────────────────────────────────────────────────────

@@ -160,6 +160,11 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
     return (await (await getTopicRepository()).list(workspaceId)).map((data) => new Topic(data));
   }
 
+  /** The ids of the workspace's topics: what a dashboard's deleted-page lint compares against. */
+  static async idsIn(workspaceId: string): Promise<ReadonlySet<string>> {
+    return new Set((await Topic.list(workspaceId)).map((topic) => topic.id));
+  }
+
   /** The workspace's topic with this slug; null when there is none. */
   static async bySlug(workspaceId: string, slug: string): Promise<Topic | null> {
     const data = await (await getTopicRepository()).findBySlug(workspaceId, slug);

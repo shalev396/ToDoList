@@ -35,6 +35,8 @@ import { lintDashboard, type LintIssue, type LintMode } from '../../builder/lint
 import { checkDraft, type DraftCheck } from '../../builder/validate.js';
 import { AppError } from '../../errors/AppError.js';
 import type { DashboardDraft } from '../../types/builder.js';
+import type { DashboardValidation } from '../../types/dashboards.js';
+import { issue, lintIssue } from './dashboardRules.js';
 
 export class DocCheck {
   static readonly instance = new DocCheck();
@@ -57,6 +59,21 @@ export class DocCheck {
    */
   lint(doc: DashboardDraft, mode: LintMode, topicIds?: ReadonlySet<string>): LintIssue[] {
     return lintDashboard(doc, mode, topicIds);
+  }
+
+  /**
+   * `{draft}` checked as a write would check it, every finding reported (`POST …/builder/validate`,
+   * builder_validate): the check's issues and the lint's errors, then its warnings.
+   */
+  validation(input: unknown, mode: LintMode, topicIds: ReadonlySet<string>): DashboardValidation {
+    const check = this.check(input);
+    const lint = check.draft === null ? [] : this.lint(check.draft, mode, topicIds);
+    const errors = [
+      ...check.issues.map((found) => issue('invalid', found.pointer, found.message)),
+      ...lint.filter((found) => found.severity === 'error').map(lintIssue),
+    ];
+    const warnings = lint.filter((found) => found.severity === 'warning').map(lintIssue);
+    return { valid: errors.length === 0, errors, warnings };
   }
 
   /**

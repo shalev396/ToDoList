@@ -6,13 +6,10 @@
  */
 export {
   Dashboard,
-  type CreateDashboardInput,
-  type CreatePreview,
   type DashboardListFilter,
   type DashboardOpsInput,
   type DashboardOpsResult,
   type DashboardPatchInput,
-  type InstantiateDashboardInput,
   type PublishInput,
   type RevertInput,
   type SaveChange,
@@ -28,6 +25,12 @@ export {
   type HistoryWrite,
 } from './History.js';
 export { Layout } from './Layout.js';
+export {
+  NewDashboard,
+  type CreateDashboardInput,
+  type CreatePreview,
+  type InstantiateDashboardInput,
+} from './NewDashboard.js';
 export { Operation } from './Operation.js';
 export { Persona, type InstantiatePersonaInput, type PersonaPlan } from './Persona.js';
 export { Query } from './Query.js';
