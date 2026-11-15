@@ -57,6 +57,10 @@
 - **Losing access** goes through the existing `Member.endMembership` → `AgentKey` repository `revokeForUser` + `Integration.disconnectAllOf`. Keep `revokeForUser(workspaceId, userId)` as it is, revoking both kinds.
 - **No CORS change:** the HTTP API's global CORS stays as is.
 - **i18n:** every user-facing string ships in en and he, in the existing voice (plural "you" in Hebrew, as in `settings.ts`).
+- **Shared files** (the other session edits them too): `server/src/classes/index.ts`, `server/src/types/api-contracts.ts`, `server/src/types/errorCodes.ts`, `client/src/api/errors.ts`.
+  - Edit only your lines, and commit each change promptly in its own small commit.
+  - First run `git diff <file>`. If it shows lines you didn't write, stage only your hunk (write a patch of your lines and run `git apply --cached`), then `git commit` without paths. Or wait until the other session commits, or ping it.
+  - New error codes (`scope_not_allowed`, `request_expired`, `agent_key_cap`) go in `errorCodes.ts`, with their client messages in `client/src/api/errors.ts` and the i18n `errors` files, under the same rule.
 - Commit only this plan's paths with `git commit -- <paths>`. Another session has uncommitted work in the same tree; never stage, reset or format its files.
 
 ## Review Focus
