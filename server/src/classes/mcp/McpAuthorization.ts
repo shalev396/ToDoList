@@ -199,6 +199,13 @@ export class McpAuthorization {
     input: { workspaceId: string; scopes: AgentScope[]; name: string },
   ): Promise<{ redirectTo: string }> {
     const request = await loadPending(id);
+    if (
+      !Array.isArray(input.scopes) ||
+      !input.scopes.every((scope) => typeof scope === 'string') ||
+      typeof input.workspaceId !== 'string'
+    ) {
+      throw new AppError(400, 'The scopes must be a list of names');
+    }
     const caller = await Caller.enter(input.workspaceId, actor);
     if (caller === null) throw new NotFoundError();
 
@@ -280,6 +287,14 @@ export class McpAuthorization {
     // Still a member? The grant would be dead on arrival otherwise.
     const caller = await Caller.enter(request.workspaceId, Actor.user(request.userId));
     if (caller === null) throw invalidGrant();
+    // The role may have dropped since the member approved.
+    const allowed = allowedScopes(caller.role.name, request.resource);
+    if (request.scopes.some((scope) => !allowed.includes(scope))) throw invalidGrant();
+    // The cap holds at sign-in, not only at consent (codes approved earlier count only now).
+    const keys = await getAgentKeyRepository();
+    if ((await keys.countForUser(request.workspaceId, request.userId)) >= LIMITS.agentKeysPerUser) {
+      throw new OAuthError('access_denied', 'The agent limit is reached');
+    }
 
     if (!(await requests.markUsed(request.id, 'approved'))) {
       // Lost the race to another exchange of the same code.

@@ -435,4 +435,82 @@ describe('McpAuthorization', () => {
     assert.equal(refusal.statusCode, 409);
     assert.equal(refusal.code, 'agent_key_cap');
   });
+
+  it('the cap holds at exchange: two approved codes, one slot', async () => {
+    const team = await newTeam('mcpauth-cap-exchange');
+    for (let i = 0; i < LIMITS.agentKeysPerUser - 1; i += 1) {
+      const a = await approved(team);
+      await McpAuthorization.exchange({
+        code: a.code,
+        codeVerifier: a.verifier,
+        clientId: a.clientId,
+        redirectUri: REDIRECT,
+      });
+    }
+    const first = await approved(team);
+    const second = await approved(team);
+    const asInput = (a: typeof first): Parameters<typeof McpAuthorization.exchange>[0] => ({
+      code: a.code,
+      codeVerifier: a.verifier,
+      clientId: a.clientId,
+      redirectUri: REDIRECT,
+    });
+    await McpAuthorization.exchange(asInput(first));
+    assert.equal(await oauthCode(McpAuthorization.exchange(asInput(second))), 'access_denied');
+    const { getAgentKeyRepository } = await import('../../models/index.js');
+    const keys = await getAgentKeyRepository();
+    assert.equal(
+      await keys.countForUser(team.workspace.id, team.editor.id),
+      LIMITS.agentKeysPerUser,
+    );
+  });
+
+  it('a role dropped after approval makes the exchange invalid_grant', async () => {
+    const team = await newTeam('mcpauth-demoted');
+    const a = await approved(team);
+    const { getMembershipRepository } = await import('../../models/index.js');
+    await (
+      await getMembershipRepository()
+    ).update(team.workspace.id, team.editor.id, { role: 'viewer' });
+    assert.equal(
+      await oauthCode(
+        McpAuthorization.exchange({
+          code: a.code,
+          codeVerifier: a.verifier,
+          clientId: a.clientId,
+          redirectUri: REDIRECT,
+        }),
+      ),
+      'invalid_grant',
+    );
+  });
+
+  it('approve rejects malformed scopes with 400, and answered or expired requests are 404', async () => {
+    const team = await newTeam('mcpauth-misc');
+    const actor = Actor.user(team.editor.id);
+    const input = { workspaceId: team.workspace.id, scopes: ['read' as const], name: 'ok' };
+    const { requestId } = await start();
+    for (const scopes of ['read', null, [1], undefined]) {
+      const bad = await appError(
+        McpAuthorization.approve(requestId, actor, { ...input, scopes } as never),
+      );
+      assert.equal(bad.statusCode, 400);
+    }
+    await McpAuthorization.approve(requestId, actor, input);
+    const again = await appError(McpAuthorization.approve(requestId, actor, input));
+    assert.equal(again.statusCode, 404);
+    assert.equal(again.code, 'request_expired');
+
+    const stale = await start();
+    const { McpAuthRequestMongoModel } = await import('../../models/mongoose/McpAuthRequest.js');
+    await McpAuthRequestMongoModel.updateOne(
+      { _id: stale.requestId },
+      { $set: { expiresAt: new Date(Date.now() - 1000) } },
+    );
+    const late = await appError(McpAuthorization.describe(stale.requestId, team.editor.id));
+    assert.equal(late.code, 'request_expired');
+    const lateApprove = await appError(McpAuthorization.approve(stale.requestId, actor, input));
+    assert.equal(lateApprove.statusCode, 404);
+    assert.equal(lateApprove.code, 'request_expired');
+  });
 });
