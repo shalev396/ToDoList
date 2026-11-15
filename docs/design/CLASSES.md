@@ -413,7 +413,7 @@ classDiagram
     +saveCredential(caller, body) Promise
     +testConnection(caller) Promise
     +requestSync(caller) Promise
-    +sync(workspace, options) Promise~SyncRunSummary~
+    +sync(options) Promise~SyncRunSummary~
     +stopSharing(caller) Promise
     +disconnect(caller) Promise
     +assertWritable(caller)
@@ -439,6 +439,8 @@ classDiagram
     +connectOAuth(caller, conn)$ ConnectedIntegration
     +forWorker(id)$ Integration
     +runSync(id, options)$ Promise~SyncRunSummary~
+    +requestRun(id, trigger, caller?)$ SyncRun
+    +isConnected(id)$ boolean
     +listForDispatch()$ Integration[]
     +disconnectAllOf(workspaceId, actor, member)$ number
     +withSyncSecret(id, fn)$ Promise
@@ -892,7 +894,8 @@ What the tests hold:
 - **Capabilities to the client**: `GET …/oauth/providers` adds `capabilities[]` from
   `Integration.capabilitiesOf()` (auth methods, picker, revoke on disconnect, revoke page, can
   create, coming soon); the Integrations page reads them instead of its lists.
-- **`Integration`'s collaborators**: `IntegrationConnector`, `ConnectionTester`, `SyncRequest`, and (phase 5) `SyncEngine`, the body of `Integration#sync`.
+- **`Integration`'s collaborators**: `IntegrationConnector`, `ConnectionTester`, `SyncRequest`,
+  and (phase 5) `SyncEngine`, the body of `Integration#sync`.
   They get the protected members they need as functions; the credential never leaves
   `Integration.ts`. `toStatusView` is gone (`toView`).
 
@@ -1135,13 +1138,24 @@ classDiagram
 
   class Calendar {
     one target Google calendar
-    +primaryFor(integration)$ Calendar
+    +primaryFor(integration)$ PushCalendar
     +of(integration, calendarId)$ Calendar
     +cursor() SyncCursor
-    +plan(now, narrowing?, budget?) PushPlan
     +commit(input, now) CommitCounts
   }
   WorkspaceEntity <|-- Calendar
+  class PushCalendar {
+    the primary, as its integration pushes
+    -owner: Caller
+    +plan(now, narrowing?, budget?) PushPlan
+  }
+  Calendar <|-- PushCalendar
+  class EventClaim {
+    claim before delete
+    +take(link)$ EventClaim
+    +release()
+  }
+  PushCommit ..> EventClaim : a claim drops an adopt
   class CalendarLink {
     +isOwnLive(link)$ boolean
     +isPushedByTodoList: boolean
@@ -1254,6 +1268,8 @@ classDiagram
   class CalendarLink:::built
   class CalendarLinks:::built
   class Calendar:::built
+  class PushCalendar:::built
+  class EventClaim:::built
   class SyncCursor:::built
   class PushPlan:::built
   class PushCommit:::built
@@ -1702,11 +1718,13 @@ classDiagram
     +begin(owner, trigger, at)$ SyncRun
     +skipNew(owner, trigger, at, error, counts)$ SyncRun
     +request(caller, integration, trigger)$ SyncRun
+    +openFor(owner, options, now)$ SyncRun
+    +skipFor(owner, options, now, error, counts)$ SyncRun
     +claim(owner, runId)$ SyncRun
     +list(caller, owners, limit)$ SyncRun[]
     +get(caller, runId)$ SyncRun
     +listRunningStartedBefore(before, limit)$ SyncRun[]
-    +reapStuck(now, staleAfterMs, limit)$ SyncRun[]
+    +reapStuck(now, staleAfterMs, limit, onReaped)$ SyncRun[]
     +start(at)
     +retry(at)
     +skip(at, error, counts)
@@ -1742,36 +1760,53 @@ classDiagram
   }
   SyncCursors ..> SyncCursor
   class SyncEngine {
-    method object: one run
-    +openRun(integration, options, now)$ SyncRun
-    +skipHeld(integration, options, now, code)$
-    +endRunOfGone(id, found, runId, now)$
-    +deleteWritesOf(integration, at)$
-    +execute() SyncRunSummary
-    +abandon(thrown)
+    internal method object: one run
+    -constructor()
+    +execute(target, run, workspace, options, clock)$ SyncRunSummary
   }
   class SyncTarget {
     <<interface>>
     +data
-    +adapter: ProviderAdapter
     +reload()
     +recordSyncResult(result)
   }
+  class SyncTally {
+    run accounting
+    +recordFailure(id, code)
+    +skipCode(resource, source, check)
+    +deletedIds(resource, records)
+    +counts
+    +failures
+  }
+  class ContainerCache {
+    +find(externalId)
+    +refresh(externalIds)
+    +refreshResource(resource)
+  }
+  class SyncedRows {
+    internal: what an integration's syncs wrote
+    +of(owner)$ SyncedRows
+    +purgeDeletedBefore(before)$
+    +upsertItems(rows)
+    +upsertContainers(rows)
+    +sweepItems()
+    +softDeleteAll(at?)
+  }
   class Integration {
     <<abstract>>
-    +sync(workspace, options)
+    +sync(options)
     +runSync(id, options)$
+    +requestRun(id, trigger, caller?)$
   }
   Integration ..> SyncEngine : sync() template
+  Integration ..> SyncedRows : disconnect
   SyncEngine ..> SyncTarget
   SyncEngine ..> SyncRun
   SyncEngine ..> SyncCursors
-  SyncEngine ..> Item : upsertSynced, sweeps
-  SyncEngine ..> Container : upsertSynced, sweeps
-  class Item {
-    <<abstract>>
-  }
-  class Container
+  SyncEngine *-- SyncTally
+  SyncEngine *-- ContainerCache
+  SyncEngine ..> SyncedRows : upserts, sweeps
+  ContainerCache ..> SyncedRows
   class AgentKey {
     +authenticate(raw)$ AgentKey
     +scopes: ScopeSet
@@ -1831,9 +1866,10 @@ classDiagram
   class SyncCursors:::built
   class SyncEngine:::built
   class SyncTarget:::built
+  class SyncTally:::built
+  class ContainerCache:::built
+  class SyncedRows:::built
   class Integration:::built
-  class Item:::built
-  class Container:::built
   class AgentKey:::planned
   class ScopeSet:::planned
   class ConnectLink:::planned
@@ -1869,21 +1905,32 @@ SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
 
 - **`SyncCursor`** (value object, a SyncStates row; adapters still read the row as it is) and
   **`SyncCursors`** (SyncStates' only reader and writer, `__run__` included).
-- **`Integration#sync(workspace, options)`** is the template method (held → open the run → read
-  session → `adapter.resources()` → fetch and map → `Container`/`Item` upserts → sweep → the run
-  finishes → status → `sync.run` audit). **`SyncEngine`** (a method object, one run) is its
-  collaborator: the old `sync/runSync.ts` moved behind it verbatim. `Integration.runSync(id,
-options)` is the worker's and the seed's entry (the integration and workspace loaded, a gone
-  one's run ended). The adapters stay strategies; the read session still goes through
-  `sync/secrets.ts` (the tests' vault seam).
-- **`Item` / `Container`** gain the sync's writes: `upsertSynced`, `deleteSynced`, `sweepUnseen`,
-  `sweepOrphanedResources`, `softDeleteAllOf`, `purgeDeletedBefore` (`Container.listSynced`).
+- **`Integration#sync(options)`** is the template method (its own workspace read → held → open
+  the run, `SyncRun.openFor`/`skipFor` → read session → `adapter.resources()` → fetch and map →
+  container and item upserts → sweep → the run finishes → status → `sync.run` audit).
+  **`SyncEngine`** (an internal method object, one run; a private constructor behind
+  `SyncEngine.execute`, which only `Integration` loads) is its collaborator: the old
+  `sync/runSync.ts` moved behind it verbatim, then (fix round 1) split into `SyncTally` (run
+  accounting), `ContainerCache` and `syncRecords.ts` (pure record rules). It resolves the adapter
+  from the provider itself and takes a live test transport only under node:test.
+  `Integration.runSync(id, options)` is the worker's and the seed's entry (a gone integration's run
+  ended); `Integration.requestRun(id, trigger, caller?)` queues one (read again by id). The
+  adapters stay strategies; the read session still goes through `sync/secrets.ts` (the tests'
+  vault seam).
+- **What a sync writes** (fix round 1): `SyncedRows`, internal to `classes/sync/` (no barrel):
+  upserts, deletes by id, sweeps, `softDeleteAll`, and the purge's global `purgeDeletedBefore`.
+  `syncInternals.test.ts` holds that only the engine, its container cache, `Integration` and the
+  purge load it, and only the purge names `purgeDeletedBefore` (and `reapStuck`). The `Item` /
+  `Container` pass-through statics of the first round are gone.
 - **Dispatcher, worker, purge:** thin entry functions over the classes (`Integration.listForDispatch`,
-  `Member.userIdsIn`, `SyncRun.request`, `Integration.runSync`, `SyncRun.reapStuck`,
-  `Item.purgeDeletedBefore`, `Container.purgeDeletedBefore`). `services/syncJobs.ts` only starts jobs;
+  `Member.userIdsIn`, `Integration.requestRun`, `Integration.runSync`, `SyncRun.reapStuck` (one run
+  at a time: reap, then clean up, then the next), `SyncedRows.purgeDeletedBefore`).
+  `services/syncJobs.ts` only starts jobs;
   `services/syncRuns.ts` is thin functions over `Integration` and `SyncRun`.
-- **`Calendar`** (`classes/calendar/Calendar.ts`): one target Google calendar. `primaryFor` (409
-  `calendar_not_primary`, 409 member gone), `plan` → **`PushPlan`** (value object: `ops`,
+- **`Calendar`** (`classes/calendar/Calendar.ts`): one target Google calendar; **`PushCalendar`**
+  (its subclass, the primary as its integration pushes, holding the owner's caller) alone plans.
+  `primaryFor` (409 `calendar_not_primary`, 409 member gone), `plan` → **`PushPlan`** (a deeply
+  frozen value object: `ops`,
   `calendarId`, `dailyCapReached`, `toDryRun`), `cursor` (`gcal:<id>`), `commit` → **`PushCommit`**
   (a method object; closes its `SyncRun` with `succeed`). `gcal/plan.ts` and `gcal/commit.ts` are
   gone; `gcal/diff.ts` and `calendarApi.ts` stay pure. `GoogleCalendarIntegration` keeps `push`,
@@ -1892,7 +1939,8 @@ options)` is the worker's and the seed's entry (the integration and workspace lo
   delete of a pushed event claims its own link first, `EventClaim`, so its tombstone exists while
   the DELETE is in flight; a push whose adopt is committed while another integration's claim on
   that event stands, from a minute before its run was created, drops its own link, so none of its
-  pulls reads that delete as the user's, and its next push makes the event again); a 403 without a permission reason in a clean-up says it will be retried; the
+  pulls reads that delete as the user's, and its next push makes the event again); a 403 without
+  a permission reason in a clean-up says it will be retried; the
   `CalendarLinks (workspaceId, calendarId, googleEventId)` index; MCP names `provider_no_answer`
   ("may have been made at …") and `provider_unreachable` ("nothing was changed"); a partial write's
   `details.kept` names only the edit's own local fields.
