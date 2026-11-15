@@ -25,6 +25,7 @@ import { RecurrenceRule } from '../integration/RecurrenceRule.js';
 import { Topic } from '../workspace/Topic.js';
 import { WorkspaceSettings } from '../workspace/WorkspaceSettings.js';
 import { AppError } from '../../errors/AppError.js';
+import { CreatedNotStoredError } from '../../errors/CreatedNotStoredError.js';
 import { IntegrationNotOwnerError } from '../../errors/IntegrationNotOwnerError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { PrimaryCalendarUnsetError } from '../../errors/PrimaryCalendarUnsetError.js';
@@ -32,7 +33,8 @@ import { ProviderNoAnswerError } from '../../errors/ProviderNoAnswerError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { ItemData } from '../../models/definitions/Item.js';
-import { mapCalendarEvent } from '../../sync/providers/google_calendar.js';
+import { logger } from '../../services/logger.js';
+import { calendarEventExternalId, mapCalendarEvent } from '../../sync/providers/google_calendar.js';
 import type { MappedItem } from '../../sync/types.js';
 import type { Schedulable } from './contracts.js';
 import { CreateQuota } from './CreateQuota.js';
@@ -102,6 +104,11 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
 
   protected override needsGuestNotice(): boolean {
     return eventHasGuests(this.data.props);
+  }
+
+  /** Its time is Google's: an `allDay` is never kept here for it (TimeRange keeps its form). */
+  protected override keepsOwnTime(): boolean {
+    return true;
   }
 
   /** Its time compares as a whole: an edit that lands on the same range changes nothing. */
@@ -174,7 +181,7 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
     caller: Caller,
     input: NewRecurringTodo,
     now: Date = new Date(),
-  ): Promise<CalendarEvent> {
+  ): Promise<{ event: CalendarEvent; created: boolean }> {
     caller.require('editor');
     const rule = RecurrenceRule.fromLines(input.recurrence);
     if (input.dueAt === undefined || input.dueAt === null) {
@@ -206,6 +213,16 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
         'recurrence: UNTIL must be a date for an all-day event, a UTC time for a timed one',
       );
     }
+    const data = integration.toJSON();
+    // A retry of a create that was stored: the same event, answered as it is (nothing is sent,
+    // no place is taken).
+    if (input.idempotencyKey !== undefined) {
+      const known = await MirroredItem.findStored(
+        data,
+        calendarEventExternalId(calendarId, eventId),
+      );
+      if (known instanceof CalendarEvent) return { event: known, created: false };
+    }
 
     const quota = CreateQuota.forHour(caller.userId, integration.provider, now);
     await quota.reserveOrRefuse();
@@ -217,18 +234,22 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
       await quota.release();
       throw error;
     }
-    const data = integration.toJSON();
     if (result.kind !== 'created') {
       if (result.kind === 'refused') await quota.release();
       await auditProviderCreate(caller, data, result.kind, null);
       throw createFailure(result);
     }
-    await auditProviderCreate(caller, data, 'created', result.record);
-    const mapped = CalendarEvent.#mapped(caller, data, calendarId, event, rule, result);
-    const stored = mapped === null ? null : await MirroredItem.store(data, mapped);
-    if (!(stored instanceof CalendarEvent)) {
-      throw new AppError(502, 'The recurring event was created but could not be stored');
+    const existed = result.existed === true;
+    if (existed) {
+      // Google had it already (a retry whose first answer was lost): nothing new was made.
+      await quota.release();
+    } else {
+      await auditProviderCreate(caller, data, 'created', result.record);
     }
+    // Its sync must keep this calendar's events: the workspace calendar is read from now on.
+    await integration.ensureReads(caller, calendarId);
+    const stored = await CalendarEvent.#storeCreated(caller, data, calendarId, event, rule, result);
+    if (existed) return { event: stored, created: false };
     const local = {
       ...(input.topicId === undefined || input.topicId === null
         ? {}
@@ -237,9 +258,37 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
         ? {}
         : { overrides: { priority: input.priority } }),
     };
-    if (Object.keys(local).length === 0) return stored;
+    if (Object.keys(local).length === 0) return { event: stored, created: true };
     const updated = await stored.storeOverlay({ ...local, editedAt: now });
-    return updated instanceof CalendarEvent ? updated : stored;
+    return { event: updated instanceof CalendarEvent ? updated : stored, created: true };
+  }
+
+  /**
+   * The event just created, stored as its item. A failure here leaves the event at Google: 409
+   * `created_not_stored` (written: the event), and it appears after the next sync.
+   */
+  static async #storeCreated(
+    caller: Caller,
+    data: IntegrationData,
+    calendarId: string,
+    event: PlainEventBody,
+    rule: RecurrenceRule,
+    result: Extract<WriteResult, { kind: 'created' }>,
+  ): Promise<CalendarEvent> {
+    let stored: MirroredItem | null = null;
+    try {
+      const mapped = CalendarEvent.#mapped(caller, data, calendarId, event, rule, result);
+      stored = mapped === null ? null : await MirroredItem.store(data, mapped);
+    } catch (error) {
+      logger.warn('A created recurring event could not be stored', {
+        integrationId: data.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
+    if (!(stored instanceof CalendarEvent)) {
+      throw new CreatedNotStoredError(data.provider, ['event']);
+    }
+    return stored;
   }
 
   /** The workspace's primary calendar integration, the caller's and writable now. */

@@ -58,14 +58,68 @@ describe('Overrides', () => {
   });
 
   it('projects every overridable field as `$ifNull` of its override and its own value', () => {
-    assert.deepEqual(Overrides.projection(), {
-      title: { $ifNull: ['$overlay.overrides.title', '$title'] },
-      status: { $ifNull: ['$overlay.overrides.status', '$status'] },
-      dueAt: { $ifNull: ['$overlay.overrides.dueAt', '$dueAt'] },
-      allDay: { $ifNull: ['$overlay.overrides.allDay', '$allDay'] },
-      startAt: { $ifNull: ['$overlay.overrides.startAt', '$startAt'] },
-      priority: { $ifNull: ['$overlay.overrides.priority', '$priority'] },
+    const projection = Overrides.projection();
+    assert.deepEqual(
+      { ...projection, allDay: undefined },
+      {
+        title: { $ifNull: ['$overlay.overrides.title', '$title'] },
+        status: { $ifNull: ['$overlay.overrides.status', '$status'] },
+        dueAt: { $ifNull: ['$overlay.overrides.dueAt', '$dueAt'] },
+        allDay: undefined,
+        startAt: { $ifNull: ['$overlay.overrides.startAt', '$startAt'] },
+        priority: { $ifNull: ['$overlay.overrides.priority', '$priority'] },
+      },
+    );
+    // allDay: the due date's override flag only for an item without a start.
+    assert.match(JSON.stringify(projection['allDay']), /\$cond/);
+    assert.match(JSON.stringify(projection['allDay']), /overlay\.overrides\.startAt/);
+  });
+
+  it('an allDay override is the due date’s, for an item without a start only (I2)', () => {
+    const overrides = Overrides.from({ dueAt: LATER, allDay: true });
+    assert.equal(overrides.effective(SOURCE).allDay, true, 'no start: the due date’s flag');
+    const timed = { ...SOURCE, startAt: DUE, allDay: false };
+    assert.equal(overrides.effective(timed).allDay, false, 'a start keeps its own form');
+    const startOverride = Overrides.from({ dueAt: LATER, allDay: true, startAt: DUE });
+    assert.equal(startOverride.effective(SOURCE).allDay, false);
+    // Without a due-date override the flag is never the override's.
+    assert.equal(Overrides.from({ allDay: true }).effective(SOURCE).allDay, false);
+  });
+
+  it('a prefilter on what is stored keeps every item the effective filter can match (M3)', () => {
+    assert.equal(Overrides.prefilter({ kind: 'issue' }), null, 'nothing projected: none');
+    assert.deepEqual(Overrides.prefilter({ status: 'done', kind: 'issue' }), {
+      $and: [
+        { $or: [{ status: 'done' }, { 'overlay.overrides.status': { $ne: null } }] },
+        { kind: 'issue' },
+      ],
     });
+    // $or narrows only when every branch does; negations and computed fields are left out.
+    assert.deepEqual(
+      Overrides.prefilter({
+        $or: [{ startAt: { $gte: DUE } }, { startAt: null, dueAt: { $gte: DUE } }],
+      }),
+      {
+        $or: [
+          { $or: [{ startAt: { $gte: DUE } }, { 'overlay.overrides.startAt': { $ne: null } }] },
+          {
+            $and: [
+              { $or: [{ startAt: null }, { 'overlay.overrides.startAt': { $ne: null } }] },
+              { $or: [{ dueAt: { $gte: DUE } }, { 'overlay.overrides.dueAt': { $ne: null } }] },
+            ],
+          },
+        ],
+      },
+    );
+    assert.equal(Overrides.prefilter({ $nor: [{ status: 'done' }] }), null);
+    assert.equal(
+      Overrides.prefilter({ $or: [{ status: 'done' }, { $nor: [{ kind: 'x' }] }] }),
+      null,
+    );
+    assert.deepEqual(
+      Overrides.prefilter({ status: 'open', importance: { $gte: 70 } }, (f) => f === 'importance'),
+      { $or: [{ status: 'open' }, { 'overlay.overrides.status': { $ne: null } }] },
+    );
   });
 
   it('a write-back of a field clears its override (a due date clears its allDay too)', () => {
@@ -171,7 +225,12 @@ describe('ItemEditing', () => {
     reachableStatuses: ['open', 'done', 'cancelled'] as const,
     needsGuestNotice: false,
   };
-  const integration = { ownerUserId: 'u-owner', mode: 'read_write' as const, allowsWrites: true };
+  const integration = {
+    ownerUserId: 'u-owner',
+    mode: 'read_write' as const,
+    allowsWrites: true,
+    needsReconnect: false,
+  };
 
   it('a to-do edits its own fields', () => {
     assert.deepEqual(ItemEditing.local().toView(), {
@@ -182,6 +241,7 @@ describe('ItemEditing', () => {
       ownsIntegration: false,
       mode: null,
       canWriteProvider: false,
+      needsReconnect: false,
       needsGuestNotice: false,
     });
   });
@@ -196,6 +256,7 @@ describe('ItemEditing', () => {
       ownsIntegration: true,
       mode: 'read_write',
       canWriteProvider: true,
+      needsReconnect: false,
       needsGuestNotice: false,
     });
     const other = ItemEditing.mirrored({ ...github, integration, userId: 'u-other' }).toView();
@@ -209,6 +270,15 @@ describe('ItemEditing', () => {
       userId: 'u-owner',
     }).toView();
     assert.deepEqual([readOnly.mode, readOnly.canWriteProvider], ['read', false]);
+    // A grant without the write scope: its owner reconnects; nobody else is told (M6).
+    const lacking = { ...integration, needsReconnect: true };
+    const ownerView = ItemEditing.mirrored({ ...github, integration: lacking, userId: 'u-owner' });
+    assert.deepEqual(
+      [ownerView.toView().canWriteProvider, ownerView.toView().needsReconnect],
+      [false, true],
+    );
+    const otherView = ItemEditing.mirrored({ ...github, integration: lacking, userId: 'u-other' });
+    assert.equal(otherView.toView().needsReconnect, false);
   });
 
   it('a kind without write-back (a pull request) keeps every overridable field here', () => {

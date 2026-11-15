@@ -92,6 +92,31 @@ export const ItemDetailView = ItemSummaryView.extend({
   closedAt: Iso,
   createdAt: z.string(),
   updatedAt: z.string(),
+  overrides: z
+    .object({
+      title: z.string().nullable(),
+      status: z.enum(ITEM_STATUSES).nullable(),
+      dueAt: Iso,
+      allDay: z.boolean().nullable(),
+      startAt: Iso,
+      priority: z.number().nullable(),
+    })
+    .describe('A mirrored item’s values kept in TodoList (its provider lacks them); null: none'),
+  editing: z
+    .object({
+      origin: z.enum(['local', 'provider']),
+      providerFields: z.array(z.string()),
+      overridableFields: z.array(z.string()),
+      reachableStatuses: z.array(z.enum(ITEM_STATUSES)),
+      ownsIntegration: z.boolean(),
+      mode: z.enum(['read', 'read_write']).nullable(),
+      canWriteProvider: z.boolean(),
+      needsReconnect: z.boolean(),
+      needsGuestNotice: z.boolean(),
+    })
+    .describe(
+      'How it can be edited: providerFields go to the provider (its integration’s owner, read & write), overridableFields stay in TodoList',
+    ),
 });
 export type ItemDetailView = z.infer<typeof ItemDetailView>;
 
@@ -143,6 +168,17 @@ export function toItemDetailView(item: ItemDetail): ItemDetailView {
     closedAt: iso(item.closedAt),
     createdAt: item.createdAt.toISOString(),
     updatedAt: item.updatedAt.toISOString(),
+    overrides: {
+      ...item.overlay.overrides,
+      dueAt: iso(item.overlay.overrides.dueAt),
+      startAt: iso(item.overlay.overrides.startAt),
+    },
+    editing: {
+      ...item.editing,
+      providerFields: [...item.editing.providerFields],
+      overridableFields: [...item.editing.overridableFields],
+      reachableStatuses: [...item.editing.reachableStatuses],
+    },
   };
 }
 

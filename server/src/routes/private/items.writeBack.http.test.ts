@@ -15,6 +15,9 @@
 import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import type { CallToolResult } from '@modelcontextprotocol/client';
+
 import type * as Models from '../../models/index.js';
 import type { ItemUpsert } from '../../models/definitions/Item.js';
 import type { HttpRequest, HttpResponse, Transport } from '../../sync/http.js';
@@ -226,6 +229,7 @@ describe('the provider half: its integration’s owner, read & write', () => {
       ownsIntegration: true,
       mode: 'read_write',
       canWriteProvider: true,
+      needsReconnect: false,
       needsGuestNotice: false,
     });
     // The source keeps what GitHub holds: the overrides are TodoList's only.
@@ -455,5 +459,266 @@ describe('the local half and the effective values on every read', () => {
     const item = data(back);
     assert.deepEqual([item['status'], item['dueAt']], ['open', null]);
     assert.deepEqual([overrides(item)['status'], overrides(item)['dueAt']], [null, null]);
+  });
+});
+
+describe('fix round 1: who may, what never widens, and the edges', () => {
+  const clients: Client[] = [];
+  let viewerToken = '';
+  let viewerId = '';
+  let hiddenId = '';
+  let linearItemId = '';
+  let linearId = '';
+
+  before(async () => {
+    viewerToken = (await api.login('wb-http-viewer@example.test')).token;
+    const viewer = await (
+      await models.getUserRepository()
+    ).findByEmail('wb-http-viewer@example.test');
+    assert.ok(viewer);
+    viewerId = viewer.id;
+    await (
+      await models.getMembershipRepository()
+    ).create(wid, { userId: viewerId, role: 'viewer' });
+    // Another member's integration, never attached to a block: its items are theirs alone.
+    const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+    await seedIntegration(wid, {
+      id: 'wb-unshared',
+      ownerUserId: ids.other,
+      provider: 'github',
+      accountId: 'wb-unshared-account',
+    });
+    const items = await models.getItemRepository();
+    const account = { provider: 'github' as const, accountId: 'wb-unshared-account' };
+    await items.bulkUpsert(wid, [
+      {
+        integrationId: 'wb-unshared',
+        kind: 'issue',
+        topicId: null,
+        title: 'Theirs alone',
+        status: 'open',
+        source: {
+          ...account,
+          externalId: 'I_hidden',
+          key: null,
+          url: 'https://example.test/I_hidden',
+          updatedAtSource: null,
+          etag: null,
+          hash: 'h',
+        },
+      },
+    ]);
+    const hidden = await items.findBySource(
+      wid,
+      { ...account, integrationId: 'wb-unshared' },
+      'I_hidden',
+    );
+    assert.ok(hidden);
+    hiddenId = hidden.id;
+    await items.setOverlay(wid, hiddenId, {
+      overrides: { status: 'cancelled', title: 'Quetzal secret', dueAt: new Date(LATER) },
+    });
+    // The owner's Linear, connected with OAuth before writes were asked for (issues:create only).
+    const { Integration } = await import('../../classes/integration/index.js');
+    const { callerFor } = await import('../../testing/workspaceFixtures.js');
+    const owner = await callerFor(wid, ids.owner);
+    const { integration } = await Integration.connectOAuth(owner, {
+      provider: 'linear',
+      accountId: 'wb-linear-oauth',
+      label: 'Linear',
+      config: {},
+      topicSlug: 'personal',
+      secret: { accessToken: 'FAKE-linear-access', refreshToken: 'FAKE-linear-refresh' },
+      scopes: ['read', 'issues:create'],
+    });
+    linearId = integration.id;
+    await (await Integration.findOwn(owner, linearId)).setMode(owner, 'read_write');
+    linearItemId = await mirror(linearId, 'linear', {
+      kind: 'issue',
+      title: 'Granted before writes',
+      status: 'open',
+      externalId: '4a1b2c3d-0000-4000-8000-0000000000d1',
+    });
+  });
+
+  after(async () => {
+    await Promise.allSettled(clients.map((client) => client.close()));
+  });
+
+  async function tool(raw: string, name: string, args: Json): Promise<CallToolResult> {
+    const transport = new StreamableHTTPClientTransport(new URL(`${api.baseUrl}/api/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${raw}` } },
+    });
+    const client = new Client({ name: 'todolist-write-back-test', version: '1.0.0' });
+    await client.connect(transport);
+    clients.push(client);
+    return client.callTool({ name, arguments: args });
+  }
+  const errorText = (result: CallToolResult): string =>
+    (result.content as { type: string; text?: string }[])[0]?.text ?? '';
+
+  it('a viewer keeps nothing on a mirrored item, over REST and MCP (ItemPolicy#canOverride)', async () => {
+    const before = await (await models.getItemRepository()).findById(wid, issueId);
+    const rest = await api.call('PATCH', `${W()}/items/${issueId}`, {
+      token: viewerToken,
+      body: { priority: 4 },
+    });
+    assert.equal(rest.status, 403, rest.text);
+    const overlay = await api.call('PATCH', `${W()}/items/${issueId}/overlay`, {
+      token: viewerToken,
+      body: { pinned: true },
+    });
+    assert.equal(overlay.status, 403, overlay.text);
+    const { insertAgentKey } = await import('../../mcp/__tests__/helpers/agentKeys.js');
+    const key = await insertAgentKey({
+      workspaceId: wid,
+      userId: viewerId,
+      scopes: ['read', 'items:write'],
+    });
+    // MCP refuses the call itself (the tool takes an editor): a protocol error, nothing run.
+    await assert.rejects(
+      tool(key.raw, 'update_todo', { id: issueId, priority: 4 }),
+      /needs a scope or role/,
+    );
+    const after = await (await models.getItemRepository()).findById(wid, issueId);
+    assert.deepEqual(after?.overlay, before?.overlay);
+    assert.deepEqual(lines(), []);
+  });
+
+  it('an unshared integration’s item stays unseen, whatever its overrides say', async () => {
+    assert.equal((await call('owner', 'GET', `/items/${hiddenId}`)).status, 404);
+    assert.equal((await call('owner', 'PATCH', `/items/${hiddenId}`, { priority: 1 })).status, 404);
+    const listed = data(await call('owner', 'GET', '/items?status=cancelled'));
+    assert.deepEqual(listed['items'], []);
+    const searched = data(await call('owner', 'GET', '/items?q=Quetzal'));
+    assert.deepEqual(searched['items'], []);
+    const facets = data(await call('owner', 'GET', '/facets'));
+    assert.ok(!(facets['statuses'] as string[]).includes('cancelled'));
+    const queried = data(
+      await call('owner', 'POST', '/query', {
+        draft: {
+          source: 'items',
+          where: {
+            combinator: 'and',
+            rules: [{ field: 'status', operator: '=', value: 'cancelled' }],
+          },
+        },
+      }),
+    );
+    assert.equal(queried['total'], 0);
+    // Its owner sees it, as its overrides say.
+    const theirs = data(await call('other', 'GET', '/items?status=cancelled'));
+    assert.deepEqual(
+      (theirs['items'] as Json[]).map((item) => item['title']),
+      ['Quetzal secret'],
+    );
+  });
+
+  it('a stale override of a provider field clears when the provider’s value is sent (no write)', async () => {
+    const stored = await (await models.getItemRepository()).findById(wid, issueId);
+    assert.ok(stored);
+    await (
+      await models.getItemRepository()
+    ).setOverlay(wid, issueId, { overrides: { title: 'Stale local title' } });
+    const res = await call('owner', 'PATCH', `/items/${issueId}`, { title: stored.title });
+    assert.equal(res.status, 200, res.text);
+    assert.deepEqual(lines(), []);
+    assert.equal(overrides(data(res))['title'], null);
+    assert.equal(data(res)['title'], stored.title);
+  });
+
+  it('filters stay exact with the stored-field prefilter: a source value under an override never matches', async () => {
+    const items = await models.getItemRepository();
+    await items.setOverlay(wid, issueId, { overrides: { status: 'done' } });
+    try {
+      const open = data(await call('owner', 'GET', '/items?status=open&provider=github'));
+      assert.ok(!(open['items'] as Json[]).some((item) => item['id'] === issueId));
+      const done = data(await call('owner', 'GET', '/items?status=done&provider=github'));
+      assert.ok((done['items'] as Json[]).some((item) => item['id'] === issueId));
+      const queried = data(
+        await call('owner', 'POST', '/query', {
+          draft: {
+            source: 'items',
+            where: {
+              combinator: 'and',
+              rules: [
+                { field: 'source.provider', operator: '=', value: 'github' },
+                { field: 'status', operator: '=', value: 'open' },
+              ],
+            },
+          },
+        }),
+      );
+      assert.ok(!(queried['rows'] as Json[]).some((row) => row['id'] === issueId));
+    } finally {
+      await items.setOverlay(wid, issueId, { overrides: { status: null } });
+    }
+  });
+
+  it('the item list’s text search finds a title override', async () => {
+    await (
+      await models.getItemRepository()
+    ).setOverlay(wid, prId, { overrides: { title: 'Zanzibar review' } });
+    const found = data(await call('owner', 'GET', '/items?q=Zanzibar'));
+    assert.deepEqual(
+      (found['items'] as Json[]).map((item) => item['id']),
+      [prId],
+    );
+  });
+
+  it('a grant without the write scope: creates still offered, write-back says reconnect', async () => {
+    const view = data(await call('owner', 'GET', `/items/${linearItemId}`));
+    const editing = view['editing'] as Json;
+    assert.deepEqual(
+      [editing['canWriteProvider'], editing['needsReconnect'], editing['mode']],
+      [false, true, 'read_write'],
+    );
+    const targets = data(await call('owner', 'GET', '/provider-create/targets'))[
+      'targets'
+    ] as Json[];
+    const linear = targets.find((target) => target['integrationId'] === linearId);
+    assert.equal(linear?.['needsConsent'], false, 'issues:create still creates');
+    const refused = await call('owner', 'PATCH', `/items/${linearItemId}`, { title: 'Renamed' });
+    assert.equal(refused.status, 409, refused.text);
+    assert.equal(refused.body?.['code'], 'scope_missing');
+    assert.deepEqual(lines(), []);
+  });
+
+  it('MCP update_todo writes to a provider only with providers:create and confirm', async () => {
+    const { insertAgentKey } = await import('../../mcp/__tests__/helpers/agentKeys.js');
+    const local = await insertAgentKey({
+      workspaceId: wid,
+      userId: ids.owner,
+      scopes: ['read', 'items:write'],
+    });
+    const scoped = await insertAgentKey({
+      workspaceId: wid,
+      userId: ids.owner,
+      scopes: ['read', 'items:write', 'providers:create'],
+    });
+    const unscoped = await tool(local.raw, 'update_todo', { id: issueId, title: 'By an agent' });
+    assert.equal(unscoped.isError, true);
+    assert.match(errorText(unscoped), /providers:create/);
+    const unconfirmed = await tool(scoped.raw, 'update_todo', {
+      id: issueId,
+      title: 'By an agent',
+    });
+    assert.equal(unconfirmed.isError, true);
+    assert.match(errorText(unconfirmed), /confirm: true/);
+    assert.deepEqual(lines(), [], 'nothing sent without both');
+    // A local change needs neither.
+    const kept = await tool(local.raw, 'update_todo', { id: issueId, priority: 2 });
+    assert.equal(kept.isError, undefined, errorText(kept));
+    assert.deepEqual(lines(), []);
+    on('PATCH', ISSUE_URL, json(200, { number: 12, title: 'By an agent', state: 'open' }));
+    const written = await tool(scoped.raw, 'update_todo', {
+      id: issueId,
+      title: 'By an agent',
+      confirm: true,
+    });
+    assert.equal(written.isError, undefined, errorText(written));
+    assert.deepEqual(lines(), [`PATCH ${ISSUE_URL}`]);
+    const stored = await (await models.getItemRepository()).findById(wid, issueId);
+    assert.equal(stored?.title, 'By an agent');
   });
 });

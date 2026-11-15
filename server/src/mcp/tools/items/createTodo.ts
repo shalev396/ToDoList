@@ -90,7 +90,7 @@ export const createTodo = defineTool({
         throw new AppError(400, 'containerId: a recurring to-do lives in the workspace calendar');
       }
       const caller = itemCaller(ctx);
-      const event = await CalendarEvent.createRecurring(caller, {
+      const { event, created } = await CalendarEvent.createRecurring(caller, {
         ...rest,
         dueAt: toDate(input.dueAt),
         recurrence,
@@ -98,7 +98,7 @@ export const createTodo = defineTool({
       });
       const view = await (await itemReads(ctx)).detail(event);
       return {
-        output: { item: toItemDetailView(view), created: true },
+        output: { item: toItemDetailView(view), created },
         target: { type: 'item', id: view.id },
       };
     }

@@ -11,6 +11,14 @@
  * right after the access filter's `$match` (which always stays first), so everything after it reads
  * the effective values. The rule is idempotent: applying it to effective values changes nothing.
  *
+ * `allDay` is one flag of the item for its start and end and for its due date. Its override is the
+ * due date's companion only, so it applies only to an item without a start (its time range keeps
+ * its own form); an item with a start (an event, a task with a start date) never takes one.
+ *
+ * Reads stay exact and indexed: `prefilter()` turns a filter on the effective values into a wider
+ * one on what is stored (each projected field: its stored value, or any override of it), which can
+ * run before the projection and use the indexes; the exact filter still runs after it.
+ *
  * Pure: no database, no request state (the query builder's compiler loads it).
  */
 import type { ItemOverrides } from '../../models/definitions/Item.js';
@@ -51,6 +59,71 @@ function effectiveOf(field: keyof ItemOverrides): Record<string, unknown> {
   return { $ifNull: [`$overlay.overrides.${field}`, `$${field}`] };
 }
 
+/** Whether a path's value in an aggregation is set (missing and null read alike). */
+function isSet(path: string): Record<string, unknown> {
+  return { $ne: [{ $ifNull: [path, null] }, null] };
+}
+
+/** The fields the projection rewrites: an override of any of them may change what it reads as. */
+const PROJECTED: readonly (keyof ItemOverrides)[] = [
+  'title',
+  'status',
+  'dueAt',
+  'allDay',
+  'startAt',
+  'priority',
+];
+
+type Filter = Record<string, unknown>;
+
+function isFilter(value: unknown): value is Filter {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Whether a filter reads a projected field anywhere. */
+function readsProjected(filter: unknown): boolean {
+  if (Array.isArray(filter)) return filter.some(readsProjected);
+  if (!isFilter(filter)) return false;
+  return Object.entries(filter).some(
+    ([key, value]) =>
+      (PROJECTED as readonly string[]).includes(key) ||
+      (key.startsWith('$') && readsProjected(value)),
+  );
+}
+
+/**
+ * A filter on what is stored that every item matching `filter` (on effective values) also
+ * matches; null when it narrows nothing. A leaf on a projected field becomes "that leaf on the
+ * stored field, or any override of it" (without an override the two values are the same); `$and`
+ * keeps what narrows; `$or` narrows only when every branch does; anything negated (`$nor`, `$not`)
+ * or computed (`skip`) is left out, which only widens.
+ */
+function widened(filter: unknown, skip: (field: string) => boolean): Filter | null {
+  if (!isFilter(filter)) return null;
+  const parts: Filter[] = [];
+  for (const [key, value] of Object.entries(filter)) {
+    if (key === '$and' && Array.isArray(value)) {
+      for (const part of value as unknown[]) {
+        const wide = widened(part, skip);
+        if (wide !== null) parts.push(wide);
+      }
+    } else if (key === '$or' && Array.isArray(value)) {
+      const branches = (value as unknown[]).map((branch) => widened(branch, skip));
+      if (branches.length > 0 && branches.every((branch) => branch !== null)) {
+        parts.push({ $or: branches });
+      }
+    } else if (key.startsWith('$') || skip(key)) {
+      // Negated, computed or not a field: left out (only widens).
+    } else if ((PROJECTED as readonly string[]).includes(key)) {
+      parts.push({ $or: [{ [key]: value }, { [`overlay.overrides.${key}`]: { $ne: null } }] });
+    } else {
+      parts.push({ [key]: value });
+    }
+  }
+  if (parts.length === 0) return null;
+  return parts.length === 1 ? (parts[0] ?? null) : { $and: parts };
+}
+
 export class Overrides {
   readonly #values: Readonly<ItemOverrides>;
 
@@ -85,10 +158,34 @@ export class Overrides {
       title: effectiveOf('title'),
       status: effectiveOf('status'),
       dueAt: effectiveOf('dueAt'),
-      allDay: effectiveOf('allDay'),
+      // The due date's flag, only for an item without a start (its own, or an override).
+      allDay: {
+        $cond: [
+          {
+            $and: [
+              isSet('$overlay.overrides.allDay'),
+              isSet('$overlay.overrides.dueAt'),
+              { $eq: [{ $ifNull: ['$overlay.overrides.startAt', '$startAt', null] }, null] },
+            ],
+          },
+          '$overlay.overrides.allDay',
+          '$allDay',
+        ],
+      },
       startAt: effectiveOf('startAt'),
       priority: effectiveOf('priority'),
     };
+  }
+
+  /**
+   * A filter to run BEFORE the projection, on what is stored, that keeps every item `filter`
+   * (run after it, on the effective values) can match: so the indexes still narrow, and the
+   * answer stays exact. Null when the filter reads no projected field (MongoDB moves such a filter
+   * before the projection itself) or nothing in it narrows. `skip` names computed fields (they do
+   * not exist yet before the projection).
+   */
+  static prefilter(filter: unknown, skip: (field: string) => boolean = () => false): Filter | null {
+    return readsProjected(filter) ? widened(filter, skip) : null;
   }
 
   /**
@@ -123,12 +220,17 @@ export class Overrides {
   /** What the item reads as: each override where set, else the source value. */
   effective(source: OverridableValues): OverridableValues {
     const values = this.#values;
+    const startAt = values.startAt ?? source.startAt;
     return {
       title: values.title ?? source.title,
       status: values.status ?? source.status,
       dueAt: values.dueAt ?? source.dueAt,
-      allDay: values.allDay ?? source.allDay,
-      startAt: values.startAt ?? source.startAt,
+      // The due date's flag, only for an item without a start.
+      allDay:
+        values.allDay !== null && values.dueAt !== null && startAt === null
+          ? values.allDay
+          : source.allDay,
+      startAt,
       priority: values.priority ?? source.priority,
     };
   }

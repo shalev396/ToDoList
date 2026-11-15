@@ -18,6 +18,8 @@ export interface EditingIntegration {
   readonly mode: IntegrationMode;
   /** Read & write, and writes on for it on this server. */
   readonly allowsWrites: boolean;
+  /** Its grant lacks the provider's write scope (read for its owner only). */
+  readonly needsReconnect: boolean;
 }
 
 /** A mirrored item's side of the hints. */
@@ -52,6 +54,7 @@ export class ItemEditing {
       ownsIntegration: false,
       mode: null,
       canWriteProvider: false,
+      needsReconnect: false,
       needsGuestNotice: false,
     });
   }
@@ -73,7 +76,12 @@ export class ItemEditing {
       reachableStatuses: providerFields.includes('status') ? [...input.reachableStatuses] : [],
       ownsIntegration: owns,
       mode: owns ? integration.mode : null,
-      canWriteProvider: owns && providerFields.length > 0 && integration.allowsWrites,
+      canWriteProvider:
+        owns &&
+        providerFields.length > 0 &&
+        integration.allowsWrites &&
+        !integration.needsReconnect,
+      needsReconnect: owns && integration.needsReconnect,
       needsGuestNotice: input.needsGuestNotice,
     });
   }

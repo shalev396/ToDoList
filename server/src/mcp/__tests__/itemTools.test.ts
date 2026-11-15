@@ -235,15 +235,45 @@ describe('update_todo and complete_todo', () => {
     );
   });
 
-  it('a provider field of a shared integration’s item is its owner’s to write', async () => {
-    const result = await call(editorKey, 'update_todo', { id: mirroredId, title: 'Hijacked' });
-    assert.equal(result.isError, true);
+  it('a provider field takes providers:create and confirm, then is its integration owner’s', async () => {
+    // An items:write key: refused before anything else (writing to a provider is scoped).
+    const unscoped = await call(editorKey, 'update_todo', { id: mirroredId, title: 'Hijacked' });
+    assert.equal(unscoped.isError, true);
+    assert.match(errorText(unscoped), /providers:create/);
+    const key = await insertAgentKey({
+      workspaceId: team.workspace.id,
+      userId: team.editor.id,
+      scopes: ['read', 'items:write', 'providers:create'],
+    });
+    const unconfirmed = await call(key, 'update_todo', { id: mirroredId, title: 'Hijacked' });
+    assert.equal(unconfirmed.isError, true);
+    assert.match(errorText(unconfirmed), /confirm: true/);
+    // Scoped and confirmed: still only its integration's owner writes there.
+    const notOwner = await call(key, 'update_todo', {
+      id: mirroredId,
+      title: 'Hijacked',
+      confirm: true,
+    });
+    assert.equal(notOwner.isError, true);
     assert.equal(
-      errorText(result),
+      errorText(notOwner),
       'Only the owner of this integration can change this at its provider',
     );
     const item = await (await models.getItemRepository()).findById(team.workspace.id, mirroredId);
     assert.equal(item?.title, 'Fix the login bug');
+    // What its provider lacks is a local override: items:write is enough, no confirm.
+    const local = await call(editorKey, 'update_todo', {
+      id: mirroredId,
+      startAt: '2026-11-20T08:00:00.000Z',
+    });
+    assert.equal(local.isError, undefined, errorText(local));
+    const detail = (
+      structured(local) as { item: { startAt: string; overrides: { startAt: string } } }
+    ).item;
+    assert.deepEqual(
+      [detail.startAt, detail.overrides.startAt],
+      ['2026-11-20T08:00:00.000Z', '2026-11-20T08:00:00.000Z'],
+    );
   });
 
   it('does not find another workspace’s item', async () => {

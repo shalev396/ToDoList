@@ -27,7 +27,7 @@ import { redactString } from '../../services/secretPatterns.js';
 import type { ItemKind, ItemStatus, Provider, Visibility } from '../../types/domain.js';
 import type { ItemDetail, ItemSummary } from '../../types/items.js';
 import { Copies, type LiveStatuses } from './Copies.js';
-import type { ItemEdit } from './ItemEdit.js';
+import type { ItemEdit, ProviderHalf } from './ItemEdit.js';
 import type { ItemEditing } from './ItemEditing.js';
 import { itemDataOf } from './itemRecord.js';
 import { Overlay, type OverlayEdit } from './Overlay.js';
@@ -86,7 +86,12 @@ export abstract class Item
     return factory(data);
   }
 
-  /** An aggregation's row (itemRecord.ts) as its class. */
+  /**
+   * An aggregation's row (itemRecord.ts) as its class. A row read after the effective projection
+   * (ItemQuery's lists) holds effective values in its own fields: such an item is for views only
+   * (its getters read the same), never for an edit, which compares with what the provider sent
+   * (an edit starts from `Item.find`, which reads the stored row).
+   */
   static fromDoc(doc: Readonly<Record<string, unknown>>): Item {
     return Item.from(itemDataOf(doc));
   }
@@ -297,13 +302,19 @@ export abstract class Item
   abstract edit(caller: Caller, edit: ItemEdit): Promise<Item>;
 
   /**
+   * The fields `edit` would change at the item's provider, with its checks run and nothing written
+   * (a caller asking for a confirmation first: MCP). None for a to-do.
+   */
+  abstract providerChanges(caller: Caller, edit: ItemEdit): Promise<ProviderHalf>;
+
+  /**
    * TodoList's own fields on any item the caller sees (editors): pin, note, hidden, a topic to
    * file it under (one of the workspace's: 400 otherwise), calendar sync, a planned date, custom
    * attribute values. Never written to a provider. The item as now stored.
    */
   async setOverlay(caller: Caller, edit: OverlayEdit): Promise<Item> {
     this.assertIn(caller);
-    caller.require('editor');
+    (await ItemPolicy.for(caller)).assertCanOverride(caller, this.facts);
     if (edit.topicOverride !== undefined && edit.topicOverride !== null) {
       await Topic.assertOf(this.workspaceId, edit.topicOverride);
     }

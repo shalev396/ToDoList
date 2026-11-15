@@ -266,9 +266,11 @@ async function pushItems(
   budget: TimeBudget,
 ): Promise<PushItem[]> {
   const items = await getItemRepository();
+  // A wider filter on what is stored before the projection (exact after it): the indexes narrow.
+  const wide = Overrides.prefilter({ $and: [...dated] });
   const read = (match: Filter[], extra: Record<string, unknown>[] = []): Promise<PushDoc[]> =>
     items.aggregate<PushDoc>(workspaceId, [
-      { $match: { $and: match } },
+      { $match: { $and: wide === null ? match : [...match, wide] } },
       { $addFields: Overrides.projection() },
       { $match: { $and: [...dated] } },
       ...narrowed,

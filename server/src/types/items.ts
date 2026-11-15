@@ -71,8 +71,16 @@ export interface ItemEditingView {
   ownsIntegration: boolean;
   /** The integration's mode, shown to its owner only (null for anyone else and for a to-do). */
   mode: IntegrationMode | null;
-  /** The caller can write the provider fields now: their own, read & write, writes on here. */
+  /**
+   * The caller can write the provider fields now: their own, read & write, writes on here, and its
+   * grant carries the provider's write scope.
+   */
   canWriteProvider: boolean;
+  /**
+   * Its owner's grant lacks the provider's write scope (one from before writes were on): they
+   * connect it again with Read & write on. False for anyone else.
+   */
+  needsReconnect: boolean;
   /** A calendar event with other guests: an edit says whether to notify them (`notifyGuests`). */
   needsGuestNotice: boolean;
 }
@@ -88,6 +96,31 @@ export interface ItemCopyView {
   /** The provider's own status of the copy once it is synced (open, in_progress, done…). */
   liveStatus: ItemStatus | null;
   requestId: string;
+}
+
+/**
+ * `GET …/items`, viewer. Sorted by `dueAt` (no date first), then id; status, due dates and the
+ * order read the items' effective values. `cursor` is the opaque `nextCursor` of the previous page;
+ * `limit` is 1–100 (default 50). `q` is a text search over the title (a title override too) and
+ * preview. 400 for a bad filter or cursor.
+ */
+export interface ListItemsQuery {
+  kind?: ItemKind;
+  provider?: Provider;
+  /** A topic's id. */
+  topicId?: string;
+  containerId?: string;
+  status?: ItemStatus;
+  dueFrom?: string;
+  dueTo?: string;
+  q?: string;
+  cursor?: string;
+  limit?: number;
+}
+
+export interface ListItemsResponseData {
+  items: ItemSummary[];
+  nextCursor: string | null;
 }
 
 /** MCP.md §7.6. */
@@ -138,7 +171,8 @@ export interface ItemDetail extends ItemSummary {
  *   (409 `integration_read_only`); an event with other guests needs `notifyGuests` (409
  *   `event_has_guests`);
  * - the fields its provider lacks (`editing.overridableFields`) are kept here as overrides, by any
- *   editor who sees it (null clears one);
+ *   editor who sees it (null, or the provider's own value, clears one; an `allDay` kept here is a
+ *   due date's, for an item without a start: one with a start, an event, keeps its own form: 400);
  * - anything else (`note`, `topicId`, `containerId`, an `endAt` the provider doesn't take) is
  *   edited at its source: 409 `{message, openIn}`.
  * A provider refusal answers `{message, code, details}` (`details`: `fields`, `openIn`, `written`,

@@ -870,8 +870,15 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
     source === 'items' && ctx.dedup !== undefined && ctx.dedup.length > 1
       ? dedupStages(ctx.dedup)
       : [];
+  // Before the projection, a wider filter on what is stored (exact after it), so the indexes still
+  // narrow a filter on an overridable field; computed fields don't exist yet there.
+  const prefilter =
+    source === 'items' && filter !== null
+      ? Overrides.prefilter(filter, (field) => Object.hasOwn(computed, field))
+      : null;
   const pipeline: PipelineStage[] = [
     { $match: base },
+    ...(prefilter === null ? [] : [{ $match: prefilter }]),
     // The effective values right after the access filter: everything below reads them.
     ...(source === 'items' ? [{ $addFields: Overrides.projection() }] : []),
     ...(Object.keys(computed).length === 0 ? [] : [{ $addFields: computed }]),

@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import { ItemsController } from '../../controllers/index.js';
 import { requireWorkspace } from '../../middlewares/requireWorkspace.js';
-import type { ItemKind, ItemStatus, Provider } from '../../types/domain.js';
-import type { ItemSummary, ItemDetail } from '../../types/items.js';
+import type { ItemDetail } from '../../types/items.js';
 
 export type {
+  ListItemsQuery,
+  ListItemsResponseData,
   OpenIn,
   ItemOverlayView,
   ItemSummary,
@@ -27,29 +28,7 @@ const router = Router();
 
 // ─── GET /api/private/workspaces/:wid/items ─────────────────────────────────
 
-/**
- * Viewer. Sorted by `dueAt` (no date first), then id. `cursor` is the opaque `nextCursor` of the
- * previous page; `limit` is 1–100 (default 50). `q` is a text search over title and preview.
- * 400 for a bad filter or cursor.
- */
-export interface ListItemsQuery {
-  kind?: ItemKind;
-  provider?: Provider;
-  /** A topic's id. */
-  topicId?: string;
-  containerId?: string;
-  status?: ItemStatus;
-  dueFrom?: string;
-  dueTo?: string;
-  q?: string;
-  cursor?: string;
-  limit?: number;
-}
-
-export interface ListItemsResponseData {
-  items: ItemSummary[];
-  nextCursor: string | null;
-}
+/** Viewer (types/items.ts: ListItemsQuery, ListItemsResponseData). */
 
 router.get('/workspaces/:wid/items', requireWorkspace('viewer'), ItemsController.list);
 
@@ -66,7 +45,9 @@ router.get('/workspaces/:wid/items', requireWorkspace('viewer'), ItemsController
  * without one), by that calendar integration's owner (403 `integration_not_owner`) while it is read
  * & write (409 `integration_read_only`), and answered at once as its event item (201); `dueAt` is
  * its first occurrence (400 `needs_due_date` without it); no local to-do is made, and no
- * `containerId` is taken.
+ * `containerId` is taken. The same `idempotencyKey` again answers 200 with the same event (nothing
+ * sent). An event made at Google but not stored here answers 409 `created_not_stored` with
+ * `details.written`: it appears after the next sync.
  */
 export interface CreateItemRequestBody {
   title: string;

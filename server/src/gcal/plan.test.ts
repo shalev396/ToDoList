@@ -174,4 +174,45 @@ describe('the push plan reads the effective values (Phase 4a overrides)', () => 
     assert.ok(entry, 'its override dates it');
     assert.deepEqual([entry.type, entry.title], ['create', 'My name for it']);
   });
+
+  it('another member’s unshared item stays out, whatever its overrides date it', async () => {
+    const { seedIntegration } = await import('../testing/integrationFixtures.js');
+    await seedIntegration(fx.workspaceId, {
+      id: 'plan-theirs',
+      ownerUserId: 'u-another-member',
+      provider: 'github',
+      accountId: 'plan-theirs',
+    });
+    const items = await fx.models.getItemRepository();
+    const account = { provider: 'github' as const, accountId: 'plan-theirs' };
+    await items.bulkUpsert(fx.workspaceId, [
+      {
+        integrationId: 'plan-theirs',
+        kind: 'issue',
+        topicId: null,
+        title: 'Theirs',
+        status: 'open',
+        source: {
+          ...account,
+          externalId: 'plan-theirs-1',
+          key: null,
+          url: 'https://github.com/them/x/issues/1',
+          updatedAtSource: null,
+          etag: null,
+          hash: 'h',
+        },
+      },
+    ]);
+    const theirs = await items.findBySource(
+      fx.workspaceId,
+      { ...account, integrationId: 'plan-theirs' },
+      'plan-theirs-1',
+    );
+    assert.ok(theirs);
+    await items.setOverlay(fx.workspaceId, theirs.id, {
+      overrides: { dueAt: new Date(NOW.getTime() + 2 * DAY) },
+    });
+    const plan = await loadPlan(await integration(), NOW);
+    assert.ok(!plan.entries.some((entry) => entry.itemId === theirs.id));
+  });
 });

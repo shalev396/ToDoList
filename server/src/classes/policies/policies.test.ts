@@ -207,6 +207,19 @@ describe('ItemPolicy', () => {
     assert.ok(policy.canRead(caller('viewer', 'u-me', [null]), { ...base, topicId: null }));
   });
 
+  it('editors keep TodoList’s own fields (overlay, overrides) on any item they see', () => {
+    assert.ok(policy.canOverride(caller('editor'), jira));
+    assert.ok(policy.canOverride(caller('owner'), base));
+    assert.ok(!policy.canOverride(caller('viewer'), jira));
+    assert.ok(!policy.canOverride(caller('owner'), { ...jira, integrationId: 'i-unshared' }));
+    assert.throws(() => {
+      policy.assertCanOverride(caller('viewer'), jira);
+    }, /Only an editor/);
+    assert.throws(() => {
+      policy.assertCanOverride(caller('owner'), { ...jira, integrationId: 'i-unshared' });
+    }, /Not found/);
+  });
+
   it('editors change local to-dos; a mirrored item is changed at its source (409 with the link)', () => {
     assert.ok(policy.canEdit(caller('editor'), base));
     assert.ok(policy.canManage(caller('editor'), base));

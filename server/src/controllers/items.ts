@@ -2,6 +2,7 @@ import { type RequestHandler, type Response } from 'express';
 
 import { CalendarEvent, Item, ItemEdit, ItemQuery, Todo } from '../classes/item/index.js';
 import { AppError } from '../errors/AppError.js';
+import { CreatedNotStoredError } from '../errors/CreatedNotStoredError.js';
 import { FieldNotWritableError } from '../errors/FieldNotWritableError.js';
 import { MirroredItemError } from '../errors/MirroredItemError.js';
 import { ProviderPartialWriteError } from '../errors/ProviderPartialWriteError.js';
@@ -62,6 +63,7 @@ function writeBackDetails(error: unknown): WriteBackErrorDetails | null {
       uncertain: [...error.uncertain],
     };
   }
+  if (error instanceof CreatedNotStoredError) return { written: [...error.written] };
   return null;
 }
 
@@ -100,6 +102,15 @@ const get: RequestHandler = async (req, res): Promise<void> => {
  * event item (201); no local to-do is made.
  */
 const create: RequestHandler = async (req, res): Promise<void> => {
+  try {
+    await createItem(req, res);
+  } catch (error) {
+    if (answeredWriteBack(error, res)) return;
+    throw error;
+  }
+};
+
+async function createItem(req: Parameters<RequestHandler>[0], res: Response): Promise<void> {
   const { recurrence, containerId, ...body } = parseOr400(CreateItemBody, req.body);
   const { caller } = req as WorkspaceRequest;
   const reads = await ItemQuery.for(caller);
@@ -107,13 +118,13 @@ const create: RequestHandler = async (req, res): Promise<void> => {
     if (containerId !== undefined && containerId !== null) {
       throw new AppError(400, 'containerId: a recurring to-do lives in the workspace calendar');
     }
-    const event = await CalendarEvent.createRecurring(caller, {
+    const { event, created } = await CalendarEvent.createRecurring(caller, {
       ...body,
       dueAt: toDate(body.dueAt),
       recurrence,
     });
     const data: CreateItemResponseData = await reads.detail(event);
-    res.success(data, 201);
+    res.success(data, created ? 201 : 200);
     return;
   }
   const { todo, created } = await Todo.create(caller, {
@@ -123,7 +134,7 @@ const create: RequestHandler = async (req, res): Promise<void> => {
   });
   const data: CreateItemResponseData = await reads.detail(todo);
   res.success(data, created ? 201 : 200);
-};
+}
 
 /**
  * One edit, split server-side for a mirrored item (Item#edit): its provider fields go to the

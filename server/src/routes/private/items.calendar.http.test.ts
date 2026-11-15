@@ -215,6 +215,25 @@ describe('an event’s edit, split', () => {
     assert.match(patched.at(-1)?.query ?? '', /sendUpdates=all/);
   });
 
+  it('a timed event can’t be made all day by an override: its time keeps its own form (400)', async () => {
+    const { id } = await pulled('Standup');
+    const before = writes();
+    const refused = await call('owner', 'PATCH', `/items/${id}`, {
+      dueAt: '2026-11-26T00:00:00.000Z',
+      allDay: true,
+    });
+    assert.equal(refused.status, 400, refused.text);
+    const alone = await call('owner', 'PATCH', `/items/${id}`, { allDay: true });
+    assert.equal(alone.status, 400, alone.text);
+    // A due date alone is kept (Google has none) and leaves its timed form as it is.
+    const kept = await call('owner', 'PATCH', `/items/${id}`, {
+      dueAt: '2026-11-26T00:00:00.000Z',
+    });
+    assert.equal(kept.status, 200, kept.text);
+    assert.equal(data(kept)['allDay'], false);
+    assert.deepEqual(since(before), []);
+  });
+
   it('anyone else: 403 for its time, with nothing sent; what Google lacks is still theirs to keep', async () => {
     const { id } = await pulled('Gym');
     const before = writes();
@@ -301,6 +320,71 @@ describe('a recurring to-do', () => {
     const container = await recurring('owner', { containerId: 'c-1' });
     assert.equal(container.status, 400, container.text);
     assert.deepEqual(calendarWrites(since(before)), []);
+  });
+
+  it('a retry with the same key is the same event: 200, nothing sent, no place taken', async () => {
+    const before = writes();
+    const again = await recurring('owner', { idempotencyKey: 'weekly-review', priority: 3 });
+    assert.equal(again.status, 200, again.text);
+    assert.deepEqual(calendarWrites(since(before)), []);
+    assert.equal(
+      mock.events(ALICE.email).filter((entry) => entry.summary === 'Weekly review').length,
+      1,
+    );
+    const audits = await (
+      await models.getAuditLogRepository()
+    ).list(wid, { action: 'provider.create' }, 10);
+    assert.equal(audits.length, 1, 'one create, audited once');
+  });
+
+  it('the workspace calendar is read from then on, so its next sync keeps the event', async () => {
+    // A connection whose read calendars do not hold the workspace calendar.
+    await (
+      await models.getIntegrationRepository()
+    ).update(wid, iid, {
+      config: { calendars: [] },
+    });
+    const res = await recurring('owner', { title: 'Monthly review', idempotencyKey: 'monthly' });
+    assert.equal(res.status, 201, res.text);
+    const stored = await (await models.getIntegrationRepository()).findById(wid, iid);
+    const calendars = (stored?.config as { calendars?: { id: string }[] }).calendars ?? [];
+    assert.deepEqual(
+      calendars.map((calendar) => calendar.id),
+      [ALICE.email],
+    );
+    const [entry] = await (
+      await models.getAuditLogRepository()
+    ).list(wid, { action: 'integration.update' }, 1);
+    assert.deepEqual(entry?.meta, { changed: ['config'], reason: 'workspace_calendar_read' });
+  });
+
+  it('made at Google but not stored here: 409 created_not_stored with details.written', async () => {
+    const { MirroredItem } = await import('../../classes/item/index.js');
+    const store = MirroredItem.store.bind(MirroredItem);
+    const failing: typeof MirroredItem.store = () => Promise.reject(new Error('database down'));
+    MirroredItem.store = failing;
+    try {
+      const res = await recurring('owner', { title: 'Quarterly review', idempotencyKey: 'q1' });
+      assert.equal(res.status, 409, res.text);
+      assert.equal(res.body?.['code'], 'created_not_stored');
+      assert.deepEqual(res.body['details'], { written: ['event'] });
+      assert.ok(mock.events(ALICE.email).some((entry) => entry.summary === 'Quarterly review'));
+    } finally {
+      MirroredItem.store = store;
+    }
+    // The retry with the same key is the same event (Google had it): stored now, nothing new made.
+    const before = writes();
+    const again = await recurring('owner', { title: 'Quarterly review', idempotencyKey: 'q1' });
+    assert.equal(again.status, 200, again.text);
+    assert.equal(data(again)['kind'], 'event');
+    assert.equal(
+      mock.events(ALICE.email).filter((entry) => entry.summary === 'Quarterly review').length,
+      1,
+    );
+    // The one insert, which Google answers 409 (it has the event): nothing new is made.
+    assert.deepEqual(calendarWrites(since(before)), [
+      `POST /calendar/v3/calendars/${encodeURIComponent(ALICE.email)}/events`,
+    ]);
   });
 
   it('while its integration is read-only: 409 integration_read_only, nothing sent', async () => {

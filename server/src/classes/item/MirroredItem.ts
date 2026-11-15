@@ -25,6 +25,7 @@ import { TopicRules } from '../workspace/TopicRules.js';
 import { IntegrationNotOwnerError } from '../../errors/IntegrationNotOwnerError.js';
 import { MirroredItemError } from '../../errors/MirroredItemError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
+import { ValidationError } from '../../errors/ValidationError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { ItemData, ItemOverrides, ItemUpsert } from '../../models/definitions/Item.js';
 import { getItemRepository } from '../../models/index.js';
@@ -104,6 +105,9 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
             ownerUserId: integration.ownerUserId,
             mode: integration.mode.name,
             allowsWrites: integration.allowsWrites,
+            // Its grant's scopes are its owner's to know (credential metadata: nothing opened).
+            needsReconnect:
+              integration.isOwnedBy(caller.userId) && (await integration.needsWriteConsent()),
           }
         : null;
     return this.#editing(caller.userId, facts);
@@ -126,30 +130,77 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
   // ─── The edit ─────────────────────────────────────────────────────────────
 
   async edit(caller: Caller, edit: ItemEdit): Promise<Item> {
-    // 1. The caller sees it, as an editor.
-    this.assertIn(caller);
-    if (!this.isVisibleTo(caller, await ItemPolicy.for(caller))) throw new NotFoundError();
-    caller.require('editor');
-    // 2. Split.
-    const split = edit.split(this.providerFields);
-    if (split.refused.length > 0) throw new MirroredItemError(this.provider, this.data.source.url);
-    // 3. What changes.
-    const provider = this.changedFields(split.provider);
-    const overrides: MutableOverrides = this.#effectiveOverrides(split.overrides);
+    // 1–3. Checked and split; nothing written yet.
+    const { provider, overrides } = await this.#plan(caller, edit);
     // 4. The provider's half: its owner's, through the integration's write-back.
     const written = Object.keys(provider);
     if (written.length > 0) {
       const integration = await this.#ownIntegration(caller);
       await this.writeBack(caller, integration, provider, edit.notifyGuests);
-      for (const [field, value] of Object.entries(Overrides.clearing(written))) {
-        if (this.overlay.overrides.get(field as keyof ItemOverrides) !== null) {
-          Object.assign(overrides, { [field]: value });
-        }
-      }
+      this.#clearStale(overrides, written);
     }
     // 5. The local half.
     if (Object.keys(overrides).length === 0) return this.reload();
     return this.storeOverlay({ overrides, editedAt: new Date() });
+  }
+
+  /** The provider fields the edit would change (nothing written; its checks run). */
+  async providerChanges(caller: Caller, edit: ItemEdit): Promise<ProviderHalf> {
+    return (await this.#plan(caller, edit)).provider;
+  }
+
+  /**
+   * The edit, checked and split, with nothing written: the caller keeps TodoList's own fields of
+   * an item they see (ItemPolicy#canOverride: 404, else 403); a field edited at its source only is
+   * the mirrored 409; an `allDay` kept here belongs to a due date of an item without a start (an
+   * item with a start keeps its own form: 400). Then what changes: a provider field set to what the
+   * provider has is dropped (and clears a stale override of it), an override equal to the
+   * provider's value clears it.
+   */
+  async #plan(
+    caller: Caller,
+    edit: ItemEdit,
+  ): Promise<{ provider: ProviderHalf; overrides: MutableOverrides }> {
+    this.assertIn(caller);
+    (await ItemPolicy.for(caller)).assertCanOverride(caller, this.facts);
+    const split = edit.split(this.providerFields);
+    if (split.refused.length > 0) throw new MirroredItemError(this.provider, this.data.source.url);
+    if (typeof split.overrides.allDay === 'boolean' && this.#hasStart(split.overrides)) {
+      throw new ValidationError(
+        'allDay: an item with a start keeps its own; change its time instead',
+      );
+    }
+    const provider = this.changedFields(split.provider);
+    const overrides = this.#effectiveOverrides(split.overrides);
+    this.#clearStale(
+      overrides,
+      Object.keys(split.provider).filter((field) => !(field in provider)),
+    );
+    return { provider, overrides };
+  }
+
+  /** Whether it has a start once the edit's overrides apply (an event always keeps its time). */
+  #hasStart(overrides: OverridesPatch): boolean {
+    if (this.keepsOwnTime()) return true;
+    const start =
+      overrides.startAt === undefined
+        ? (this.overlay.overrides.get('startAt') ?? this.data.startAt)
+        : (overrides.startAt ?? this.data.startAt);
+    return start !== null;
+  }
+
+  /** An item whose time is its provider's alone (a calendar event). */
+  protected keepsOwnTime(): boolean {
+    return false;
+  }
+
+  /** The overrides of `fields` cleared in `overrides`, where one is set (the provider's value wins). */
+  #clearStale(overrides: MutableOverrides, fields: readonly string[]): void {
+    for (const [field, value] of Object.entries(Overrides.clearing(fields))) {
+      if (this.overlay.overrides.get(field as keyof ItemOverrides) !== null) {
+        Object.assign(overrides, { [field]: value });
+      }
+    }
   }
 
   /**
@@ -303,6 +354,27 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
         integrationId: integration.id,
       },
       mapped.source.externalId,
+    );
+    if (stored === null) return null;
+    const item = Item.from(stored);
+    return item instanceof MirroredItem ? item : null;
+  }
+
+  /** The integration's live item with this external id (a created one, stored), or null. */
+  static async findStored(
+    integration: IntegrationData,
+    externalId: string,
+  ): Promise<MirroredItem | null> {
+    const stored = await (
+      await getItemRepository()
+    ).findBySource(
+      integration.workspaceId,
+      {
+        provider: integration.provider,
+        accountId: integration.accountId,
+        integrationId: integration.id,
+      },
+      externalId,
     );
     if (stored === null) return null;
     const item = Item.from(stored);

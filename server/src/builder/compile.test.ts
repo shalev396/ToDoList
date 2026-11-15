@@ -6,6 +6,7 @@ import {
   baseItemFilter,
   baseItemFilterUnabsorbed,
 } from '../services/accessFilter.js';
+import { Overrides } from '../classes/item/Overrides.js';
 import { BLOCK_TYPES, CAPS, type Query } from '../types/builder.js';
 import { BLOCK_CATALOG } from './catalog.js';
 import { compileQuery, parseQuery, type CompileContext, type CompiledQuery } from './compile.js';
@@ -41,9 +42,15 @@ function where(...rules: unknown[]): Query['where'] {
   return { combinator: 'and', rules } as Query['where'];
 }
 
-/** The filter stage after the base filter (and, for items, the effective values), if any. */
+/**
+ * The query's own filter stage, if any: the last `$match` before the facet (after the base filter,
+ * the stored-field prefilter and, for items, the effective values).
+ */
 function filterOf(compiled: CompiledQuery): Record<string, unknown> | undefined {
-  const stage = compiled.pipeline.slice(1, -1).find((entry) => '$match' in entry);
+  const stage = compiled.pipeline
+    .slice(1, -1)
+    .filter((entry) => '$match' in entry)
+    .at(-1);
   return stage?.['$match'] as Record<string, unknown> | undefined;
 }
 
@@ -268,16 +275,11 @@ describe('compileQuery: effective values (a mirrored item’s overrides)', () =>
       context(),
     );
     assert.ok('$match' in (compiled.pipeline[0] ?? {}), 'the access filter stays first');
+    // Then a wider filter on what is stored (indexes narrow), then the effective values.
     assert.deepEqual(compiled.pipeline[1], {
-      $addFields: {
-        title: { $ifNull: ['$overlay.overrides.title', '$title'] },
-        status: { $ifNull: ['$overlay.overrides.status', '$status'] },
-        dueAt: { $ifNull: ['$overlay.overrides.dueAt', '$dueAt'] },
-        allDay: { $ifNull: ['$overlay.overrides.allDay', '$allDay'] },
-        startAt: { $ifNull: ['$overlay.overrides.startAt', '$startAt'] },
-        priority: { $ifNull: ['$overlay.overrides.priority', '$priority'] },
-      },
+      $match: { $or: [{ status: 'done' }, { 'overlay.overrides.status': { $ne: null } }] },
     });
+    assert.deepEqual(compiled.pipeline[2], { $addFields: Overrides.projection() });
     // The filter, sort and groups come after it, so they read what the item reads as.
     assert.deepEqual(filterOf(compiled), { status: 'done' });
     const containers = compileQuery({ source: 'containers' }, context());

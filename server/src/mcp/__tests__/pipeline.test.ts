@@ -431,6 +431,25 @@ describe('conditional confirmation', () => {
 });
 
 describe('errors from the services the tools wrap', () => {
+  it('a field its provider won’t take names the fields and where to change them', async () => {
+    const { FieldNotWritableError } = await import('../../errors/FieldNotWritableError.js');
+    const result = await pipeline.runTool(
+      failing(
+        new FieldNotWritableError('jira', ['dueAt'], {
+          provider: 'jira',
+          url: 'https://example.invalid/browse/A-1',
+        }),
+      ),
+      context(),
+      { note: 'x' },
+    );
+    assert.equal(result.isError, true);
+    assert.match(
+      JSON.stringify(result.content),
+      /jira doesn't take dueAt for this item\. Open in jira: https:\/\/example\.invalid\/browse\/A-1/,
+    );
+  });
+
   it('a mirrored item (items service) answers with its Open in link', async () => {
     const { ItemMirroredResponse } = await import('../../testing/itemCalls.js');
     const result = await pipeline.runTool(

@@ -38,7 +38,8 @@ function filter(
 ): Record<string, unknown> {
   const query = { source, where: { combinator: 'and', rules: [rule] } } as Query;
   const compiled = compileQuery(query, ctx);
-  const match = compiled.pipeline.filter((stage) => '$match' in stage)[1];
+  // The query's own filter: the last $match (after the base filter and a stored-field prefilter).
+  const match = compiled.pipeline.filter((stage) => '$match' in stage).at(-1);
   return match?.['$match'] as Record<string, unknown>;
 }
 

@@ -372,6 +372,20 @@ describe('writes', () => {
     assert.equal((await call('editor', 'GET', `/items/${created.id}`)).status, 404);
   });
 
+  it('a to-do takes a start and an end, in order (400 for an end before its start)', async () => {
+    const created = data(await call('editor', 'POST', '/items', { title: 'Workshop' })) as Summary;
+    const timed = await call('editor', 'PATCH', `/items/${created.id}`, {
+      startAt: '2026-11-20T09:00:00.000Z',
+      endAt: '2026-11-20T11:00:00.000Z',
+    });
+    assert.equal(timed.status, 200, timed.text);
+    const backwards = await call('editor', 'PATCH', `/items/${created.id}`, {
+      endAt: '2026-11-20T08:00:00.000Z',
+    });
+    assert.equal(backwards.status, 400, backwards.text);
+    assert.match(String(backwards.body?.['message']), /endAt/);
+  });
+
   it('answers 409 with openIn for a mirrored item', async () => {
     for (const [method, path, body] of [
       // A field edited at its source only: neither its provider's to take nor kept as an override.

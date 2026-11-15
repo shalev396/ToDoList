@@ -201,6 +201,21 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
   }
 
   /**
+   * TodoList's own fields of an item (its overlay, and a mirrored item's overrides of the fields its
+   * provider lacks): editors change them on any item they see, mirrored ones included. Never
+   * written to a provider (that is the integration's owner's, IntegrationPolicy).
+   */
+  canOverride(caller: Caller, item: ItemFacts): boolean {
+    return this.canRead(caller, item) && caller.role.atLeast(Role.editor);
+  }
+
+  /** canOverride, or its refusal: 404 for an item the caller can't see, else the editor 403. */
+  assertCanOverride(caller: Caller, item: ItemFacts): void {
+    if (this.canOverride(caller, item)) return;
+    throw this.canRead(caller, item) ? ForbiddenError.forRole('editor') : new NotFoundError();
+  }
+
+  /**
    * 404 for an item the caller can't see; 409 with its source link for a mirrored one; otherwise
    * the editor refusal (editing and deleting both take an editor).
    */

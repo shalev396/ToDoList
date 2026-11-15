@@ -655,8 +655,8 @@ describe('connect_blocks', () => {
       });
       assert.deepEqual(result.warnings, [], id);
       return {
-        // After the base filter and the effective values' stage.
-        filter: JSON.stringify(result.pipeline[2]),
+        // The query's own filter: the last $match before the facet.
+        filter: JSON.stringify(result.pipeline.filter((stage) => '$match' in stage).at(-1)),
         applied: Object.keys(result.appliedVars).sort(),
       };
     };

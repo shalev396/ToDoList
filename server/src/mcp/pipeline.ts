@@ -12,6 +12,7 @@ import { issueText } from '../utils/validation.js';
 import { QueryValidationError } from '../builder/errors.js';
 import { AppError } from '../errors/AppError.js';
 import { ConflictError } from '../errors/ConflictError.js';
+import { FieldNotWritableError } from '../errors/FieldNotWritableError.js';
 import { MirroredItemError } from '../errors/MirroredItemError.js';
 import { MirroredItemError as StoredMirroredItemError } from '../models/errors.js';
 import { logger } from '../services/logger.js';
@@ -85,6 +86,14 @@ function failure(tool: string, error: unknown): ToolCall {
   if (error instanceof StoredMirroredItemError) return mirrored(error.provider, error.url);
   if (error instanceof MirroredItemError) {
     return mirrored(error.openIn.provider, error.openIn.url);
+  }
+  if (error instanceof FieldNotWritableError && error.openIn !== null) {
+    // Which fields, and where they are changed instead.
+    const { provider, url } = error.openIn;
+    return {
+      result: errorResult(`${redactString(error.message)}. Open in ${provider}: ${url}`),
+      status: 'error',
+    };
   }
   if (error instanceof ConflictError) {
     const current = String(error.currentVersion);

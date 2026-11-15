@@ -202,6 +202,92 @@ describe('ItemPolicy: the filter and canRead agree', () => {
     }
   });
 
+  it('the effective projection never changes who sees what (overrides on every item)', async () => {
+    const mongoose = (await import('mongoose')).default;
+    const items = mongoose.connection.collection('Items');
+    const { compileQuery } = await import('../../builder/compile.js');
+    // Every item, private and unshared ones too, says it is done, due soon and retitled.
+    await items.updateMany(
+      {},
+      {
+        $set: {
+          // What the provider says (stored): open, titled as it was.
+          status: 'open',
+          title: 'From the provider',
+          'overlay.overrides': {
+            title: 'Overridden',
+            status: 'done',
+            dueAt: new Date('2026-11-20T10:00:00Z'),
+            allDay: true,
+            startAt: null,
+            priority: 4,
+          },
+        },
+      },
+    );
+    try {
+      for (const userId of USERS) {
+        for (const role of ROLES) {
+          for (const onlyTopics of NARROWINGS) {
+            const caller = callerOf(userId, role, onlyTopics);
+            const policy = await ItemPolicy.for(caller);
+            const label = `${userId}/${role}/${JSON.stringify(onlyTopics)}`;
+            const compiled = compileQuery(
+              {
+                source: 'items',
+                where: {
+                  combinator: 'and',
+                  rules: [
+                    { field: 'status', operator: '=', value: 'done' },
+                    { field: 'title', operator: 'contains', value: 'Overridden' },
+                  ],
+                },
+              },
+              {
+                ws: caller.context,
+                userId,
+                access: policy.access,
+                vars: {},
+                now: new Date('2026-11-15T00:00:00Z'),
+                timeZone: 'UTC',
+                weekStart: caller.settings.weekStart,
+                preview: false,
+              },
+            );
+            // The pipeline up to its facet: the access filter, the prefilter, the projection, the filter.
+            const stages = compiled.pipeline.slice(0, -1);
+            const seen = (await items.aggregate([...stages, { $project: { _id: 1 } }]).toArray())
+              .map((doc) => String(doc['_id']))
+              .sort();
+            assert.deepEqual(seen, inMemory(policy, caller), label);
+          }
+        }
+      }
+      // Not vacuous: the stored status (open, or none) no longer matches anyone's view.
+      const a = callerOf('u-a', 'editor');
+      const openOnes = compileQuery(
+        {
+          source: 'items',
+          where: { combinator: 'and', rules: [{ field: 'status', operator: '=', value: 'open' }] },
+        },
+        {
+          ws: a.context,
+          userId: 'u-a',
+          access: (await ItemPolicy.for(a)).access,
+          vars: {},
+          now: new Date('2026-11-15T00:00:00Z'),
+          timeZone: 'UTC',
+          weekStart: a.settings.weekStart,
+          preview: false,
+        },
+      );
+      const open = await items.aggregate(openOnes.pipeline.slice(0, -1)).toArray();
+      assert.deepEqual(open, []);
+    } finally {
+      await items.updateMany({}, { $unset: { 'overlay.overrides': '', status: '', title: '' } });
+    }
+  });
+
   it('the matrix is not vacuous: each rule picks something and leaves something out', async () => {
     const a = callerOf('u-a', 'editor');
     const seen = inMemory(await ItemPolicy.for(a), a);

@@ -27,7 +27,7 @@ import type {
   ItemSummary,
   ListItemsQuery,
   ListItemsResponseData,
-} from '../../routes/private/items.js';
+} from '../../types/items.js';
 // Every item class registers as its module loads: a list made here is Todos, TaskItems, pull
 // requests and events whoever imported this module first.
 import './CalendarEvent.js';
@@ -175,21 +175,22 @@ export class ItemQuery {
       ...sourceFilters,
       ...effectiveFilters,
     });
+    const effectiveMatch = allOf([
+      effectiveFilters,
+      query.cursor === undefined ? {} : afterCursor(decodeCursor(query.cursor)),
+    ]);
     const rows = await this.#aggregate([
       {
         $match: allOf([
           access,
           sourceFilters,
+          // A wider filter on what is stored, so the (status, dueAt) index still narrows.
+          Overrides.prefilter(effectiveMatch) ?? {},
           query.q === undefined ? {} : { $text: { $search: query.q } },
         ]),
       },
       ItemQuery.effectiveStage(),
-      {
-        $match: allOf([
-          effectiveFilters,
-          query.cursor === undefined ? {} : afterCursor(decodeCursor(query.cursor)),
-        ]),
-      },
+      { $match: effectiveMatch },
       { $sort: { dueAt: 1, _id: 1 } },
       { $limit: limit + 1 },
     ]);

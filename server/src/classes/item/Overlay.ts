@@ -13,7 +13,7 @@ import type { WorkspaceSettings } from '../../models/definitions/Workspace.js';
 import type { ItemOverlayView, UpdateOverlayRequestBody } from '../../types/items.js';
 import { redactString } from '../../services/secretPatterns.js';
 import { AttributeDefinitions } from '../workspace/AttributeDefinitions.js';
-import { Overrides, type OverridesPatch } from './Overrides.js';
+import { Overrides } from './Overrides.js';
 import { PlannedAt } from './PlannedAt.js';
 
 /** An overlay edit as callers give it (optional keys may be present as undefined). */
@@ -49,13 +49,12 @@ export class Overlay {
   /**
    * What an overlay edit stores: only the fields given (null clears one), the planned date parsed
    * (400 for a date that isn't one), the attribute values checked against `settings` (400 for an
-   * unknown key or a mistyped value), with any override changes, and `editedAt` now. The topic
-   * override is the caller's to check (it reads the workspace's topics).
+   * unknown key or a mistyped value), and `editedAt` now. The topic override is the caller's to
+   * check (it reads the workspace's topics). Overrides are a mirrored item's edit's, not this.
    */
   static patch(
     edit: OverlayEdit,
     settings: WorkspaceSettings,
-    overrides: OverridesPatch = {},
     now: Date = new Date(),
   ): ItemOverlayPatch {
     return {
@@ -72,7 +71,6 @@ export class Overlay {
       ...(edit.attrs === undefined
         ? {}
         : { attrs: AttributeDefinitions.of(settings).prepare(edit.attrs) }),
-      ...(Object.keys(overrides).length === 0 ? {} : { overrides }),
       editedAt: now,
     };
   }
