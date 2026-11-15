@@ -78,4 +78,39 @@ describe('primary-calendar-read', () => {
 
     assert.deepEqual(await primaryCalendarRead.run(raw, NOW), { added: 0, skipped: 4 });
   });
+
+  it('leaves a deleted workspace or integration, a legacy plain-id entry and a full list alone', async () => {
+    const ws = (id: string, integrationId: string, deletedAt: Date | null = null): Doc => ({
+      _id: id,
+      deletedAt,
+      settings: { timezone: 'UTC', primaryCalendar: { integrationId, calendarId: 'cal-p' } },
+    });
+    const full = Array.from({ length: 50 }, (_, index) => ({
+      id: `c-${String(index)}`,
+      mode: 'read',
+    }));
+    await raw
+      .collection<Doc>('Workspaces')
+      .insertMany([
+        ws('w2-deleted', 'i2-deleted', new Date('2026-11-01T00:00:00Z')),
+        ws('w2-intdeleted', 'i2-intdeleted'),
+        ws('w2-legacy', 'i2-legacy'),
+        ws('w2-full', 'i2-full'),
+      ]);
+    await raw.collection<Doc>('Integrations').insertMany([
+      gcal('i2-deleted', 'w2-deleted', []),
+      {
+        ...gcal('i2-intdeleted', 'w2-intdeleted', []),
+        deletedAt: new Date('2026-11-01T00:00:00Z'),
+      },
+      gcal('i2-legacy', 'w2-legacy', ['cal-p' as unknown as Doc]),
+      gcal('i2-full', 'w2-full', full),
+    ]);
+    const result = await primaryCalendarRead.run(raw, NOW);
+    assert.equal((result as { added: number }).added, 0);
+    assert.deepEqual(await calendarsOf('i2-deleted'), []);
+    assert.deepEqual(await calendarsOf('i2-intdeleted'), []);
+    assert.deepEqual(await calendarsOf('i2-legacy'), ['cal-p']);
+    assert.equal(((await calendarsOf('i2-full')) as unknown[]).length, 50);
+  });
 });

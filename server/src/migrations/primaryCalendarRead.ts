@@ -2,7 +2,8 @@
  * The workspace's primary calendar is always a read calendar of its integration (any mode;
  * `two_way` counts). For every workspace with `settings.primaryCalendar`, its calendar is added
  * to that Google Calendar integration's `config.calendars` as `{id, mode: 'read'}` when missing.
- * A primary whose integration is missing, in another workspace or not Google Calendar is skipped.
+ * A primary whose integration is missing, deleted, in another workspace or not Google Calendar is skipped,
+ * and so is one that already lists it (an object entry, or a legacy plain id) or holds 50 calendars.
  *
  * Counts only, never a value (`skipped`: already listed, or no such Google Calendar integration). Idempotent.
  */
@@ -22,7 +23,7 @@ export const primaryCalendarRead: Migration = {
     const integrations = db.collection<Doc>(INTEGRATION_TABLE_NAME);
     const workspaces = db.collection<Doc>(WORKSPACE_TABLE_NAME);
     const withPrimary = await workspaces
-      .find({ 'settings.primaryCalendar': { $type: 'object' } })
+      .find({ 'settings.primaryCalendar': { $type: 'object' }, deletedAt: null })
       .toArray();
     let added = 0;
     let skipped = 0;
@@ -40,7 +41,11 @@ export const primaryCalendarRead: Migration = {
           _id: integrationId as never,
           workspaceId: String(workspace._id),
           provider: 'google_calendar',
-          'config.calendars.id': { $ne: calendarId },
+          deletedAt: null,
+          // Not yet read: no object entry with this id, no legacy plain-string entry of it, and
+          // room left (the definition allows 50).
+          'config.calendars': { $nin: [calendarId], $not: { $elemMatch: { id: calendarId } } },
+          'config.calendars.49': { $exists: false },
         },
         { $push: { 'config.calendars': { id: calendarId, mode: 'read' } } as never },
       );

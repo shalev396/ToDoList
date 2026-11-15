@@ -141,6 +141,16 @@ interface PulledCalendar {
 const statusOf = (error: unknown): number | null =>
   error instanceof CalendarApiError ? error.status : null;
 
+/** The most calendars one connection reads (the definition's `.max(50)`). */
+const MAX_READ_CALENDARS = 50;
+const TOO_MANY_READS =
+  'calendars: this connection reads 50 calendars, the most; untick one to read the workspace calendar';
+
+/** Whether a stored entry of `config.calendars` is `calendarId` (an object, or a legacy plain id). */
+function readsCalendar(entry: unknown, calendarId: string): boolean {
+  return entry === calendarId || (entry as { id?: unknown } | null)?.id === calendarId;
+}
+
 const RECONNECT = 'Google refused the connection: reconnect Google Calendar';
 
 /** A calendar's name as TodoList creates it: one line of text. */
@@ -212,22 +222,29 @@ interface OwnEvent {
  * A write that failed, as the caller answers it: Google's status (never its text), or a grant
  * Google refused to refresh (reconnect).
  */
-function calendarFailure(error: unknown): Error {
+function calendarFailure(error: unknown, write = false): Error {
+  const refused = write ? { code: 'provider_refused' as const } : {};
   if (error instanceof ProviderHttpError && error.code === 'auth_failed') {
-    return new AppError(409, RECONNECT);
+    return new AppError(409, RECONNECT, refused);
   }
   if (!(error instanceof CalendarApiError)) {
     return error instanceof Error ? error : new Error('A Google Calendar write failed');
   }
   const { status } = error;
   if (status === null || status >= 500) {
-    return new AppError(502, 'Google Calendar did not answer. Try again in a moment.');
+    return new AppError(
+      502,
+      'Google Calendar did not answer. Try again in a moment.',
+      write ? { code: 'provider_no_answer' } : {},
+    );
   }
-  if (status === 401) return new AppError(409, RECONNECT);
+  if (status === 401) return new AppError(409, RECONNECT, refused);
   if (rateLimited(error)) {
     return new AppError(429, 'Google Calendar is busy. Try again in a moment.');
   }
-  if (status === 403) return new AppError(409, 'Google refused this change for this account');
+  if (status === 403) {
+    return new AppError(409, 'Google refused this change for this account', refused);
+  }
   if (status === 404 || status === 410) return new ProviderItemMissingError('google_calendar');
   if (status === 429) return new AppError(429, 'Google Calendar is busy. Try again in a moment.');
   return new AppError(422, 'Google Calendar rejected this change');
@@ -751,11 +768,8 @@ export class GoogleCalendarIntegration
       workspace === null ? null : WorkspaceSettings.from(workspace.settings).primaryCalendar;
     if (primary?.integrationId !== this.id) return config;
     const calendars: unknown[] = Array.isArray(config['calendars']) ? config['calendars'] : [];
-    if (
-      calendars.some((calendar) => (calendar as { id?: unknown } | null)?.id === primary.calendarId)
-    ) {
-      return config;
-    }
+    if (calendars.some((calendar) => readsCalendar(calendar, primary.calendarId))) return config;
+    if (calendars.length >= MAX_READ_CALENDARS) throw new ValidationError(TOO_MANY_READS);
     return { ...config, calendars: [...calendars, { id: primary.calendarId, mode: 'read' }] };
   }
 
@@ -787,7 +801,7 @@ export class GoogleCalendarIntegration
       return await this.withWriteSession(caller, ({ writer }) => fn(writer));
     } catch (error) {
       if (outcomeUnknown(error)) await this.recordWrite(caller, { ...meta, outcome: 'unknown' });
-      throw calendarFailure(error);
+      throw calendarFailure(error, true);
     }
   }
 
@@ -1040,7 +1054,8 @@ export class GoogleCalendarIntegration
   async ensureReads(caller: Caller, calendarId: string): Promise<boolean> {
     this.assertOwner(caller);
     const calendars = this.config.calendars;
-    if (calendars.some((calendar) => calendar.id === calendarId)) return false;
+    if (calendars.some((calendar) => readsCalendar(calendar, calendarId))) return false;
+    if (calendars.length >= MAX_READ_CALENDARS) throw new ValidationError(TOO_MANY_READS);
     await this.#storeCalendars(
       [...calendars, { id: calendarId, mode: 'read' }],
       AppCreatedCalendars.of(this.config),
@@ -1050,6 +1065,15 @@ export class GoogleCalendarIntegration
       reason: 'primary_calendar_read',
     });
     return true;
+  }
+
+  /** One event as Google has it now, through the read session (null: gone). */
+  async readEvent(
+    _caller: Caller,
+    calendarId: string,
+    eventId: string,
+  ): Promise<Record<string, unknown> | null> {
+    return this.#withGrant((auth) => calendarReader(auth).get(calendarId, eventId));
   }
 
   /** The read calendars and the record of TodoList's own, written to the stored settings. */

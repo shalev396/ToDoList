@@ -361,7 +361,8 @@ describe('a recurring to-do', () => {
   it('made at Google but not stored here: 409 created_not_stored with details.written', async () => {
     const { MirroredItem } = await import('../../classes/item/index.js');
     const store = MirroredItem.store.bind(MirroredItem);
-    const failing: typeof MirroredItem.store = () => Promise.reject(new Error('database down'));
+    const failing: typeof MirroredItem.store = (): Promise<never> =>
+      Promise.reject(new Error('database down'));
     MirroredItem.store = failing;
     try {
       const res = await recurring('owner', {
@@ -414,6 +415,73 @@ describe('a recurring to-do', () => {
     }
   });
 
+  it('a create Google refuses or leaves unanswered carries a code, nothing stored', async () => {
+    const cases: { status: number; http: number; code: string }[] = [
+      { status: 401, http: 409, code: 'provider_refused' },
+      { status: 403, http: 409, code: 'provider_refused' },
+      { status: 503, http: 502, code: 'provider_no_answer' },
+    ];
+    for (const refusal of cases) {
+      mock.failNextWrite(refusal.status);
+      const res = await recurring('owner', {
+        title: `Refused ${String(refusal.status)}`,
+        idempotencyKey: `refused-${String(refusal.status)}`,
+      });
+      assert.equal(res.status, refusal.http, res.text);
+      assert.equal(res.body?.['code'], refusal.code, res.text);
+    }
+  });
+
+  it('a retry that finds the event at Google stores Google’s version, not the request’s', async () => {
+    const { MirroredItem } = await import('../../classes/item/index.js');
+    const store = MirroredItem.store.bind(MirroredItem);
+    MirroredItem.store = (): Promise<never> => Promise.reject(new Error('database down'));
+    try {
+      const first = await recurring('owner', { title: 'As first sent', idempotencyKey: 'i2' });
+      assert.equal(first.body?.['code'], 'created_not_stored', first.text);
+    } finally {
+      MirroredItem.store = store;
+    }
+    // Google's event changed meanwhile (its summary and its rule).
+    const atGoogle = mock.events(ALICE.email).find((entry) => entry.summary === 'As first sent');
+    assert.ok(atGoogle);
+    atGoogle.summary = 'Changed at Google';
+    atGoogle.recurrence = ['RRULE:FREQ=DAILY'];
+    const again = await recurring('owner', { title: 'As retried', idempotencyKey: 'i2' });
+    assert.equal(again.status, 200, again.text);
+    assert.equal(data(again)['title'], 'Changed at Google');
+    assert.deepEqual((data(again)['props'] as Json)['recurrence'], ['RRULE:FREQ=DAILY']);
+  });
+
+  it('a retry whose read-back fails stores nothing: 409 created_not_stored', async () => {
+    const { MirroredItem } = await import('../../classes/item/index.js');
+    const { GoogleCalendarIntegration } =
+      await import('../../classes/integration/providers/GoogleCalendarIntegration.js');
+    const store = MirroredItem.store.bind(MirroredItem);
+    MirroredItem.store = (): Promise<never> => Promise.reject(new Error('database down'));
+    try {
+      const first = await recurring('owner', { title: 'Read back', idempotencyKey: 'i2b' });
+      assert.equal(first.body?.['code'], 'created_not_stored', first.text);
+    } finally {
+      MirroredItem.store = store;
+    }
+    const proto = GoogleCalendarIntegration.prototype;
+    const original: unknown = Reflect.get(proto, 'readEvent');
+    Reflect.set(
+      proto,
+      'readEvent',
+      (): Promise<never> => Promise.reject(new Error('Google is down')),
+    );
+    try {
+      const res = await recurring('owner', { title: 'Read back', idempotencyKey: 'i2b' });
+      assert.equal(res.status, 409, res.text);
+      assert.equal(res.body?.['code'], 'created_not_stored');
+      assert.deepEqual(res.body['details'], { written: ['event'] });
+    } finally {
+      Reflect.set(proto, 'readEvent', original);
+    }
+  });
+
   it('while its integration is read-only: 409 integration_read_only, nothing sent', async () => {
     const readOnly = await call('owner', 'PATCH', `/integrations/${iid}`, { mode: 'read' });
     assert.equal(readOnly.status, 200, readOnly.text);
@@ -462,5 +530,56 @@ describe('the primary calendar is always a read calendar', () => {
     assert.deepEqual((stored?.config as { calendars?: unknown }).calendars, [
       { id: ALICE.email, mode: 'read' },
     ]);
+  });
+
+  it('a legacy plain-id entry counts as read: nothing is added or audited', async () => {
+    const integrations = await models.getIntegrationRepository();
+    await integrations.update(wid, iid, { config: { calendars: [ALICE.email] } });
+    const set = await call('owner', 'PUT', '/primary-calendar', {
+      integrationId: iid,
+      calendarId: ALICE.email,
+    });
+    assert.equal(set.status, 200, set.text);
+    const stored = await integrations.findById(wid, iid);
+    assert.deepEqual((stored?.config as { calendars?: unknown }).calendars, [ALICE.email]);
+    const kept = await call('owner', 'PATCH', `/integrations/${iid}`, {
+      config: { calendars: [] },
+    });
+    assert.equal(kept.status, 200, kept.text);
+  });
+
+  it('a connection that reads 50 calendars refuses one more: 400, nothing stored', async () => {
+    const integrations = await models.getIntegrationRepository();
+    const full = Array.from({ length: 50 }, (_, index) => ({
+      id: `full-${String(index)}@example.test`,
+      mode: 'read',
+    }));
+    await integrations.update(wid, iid, { config: { calendars: full } });
+    const before = await (await models.getWorkspaceRepository()).findById(wid);
+    const set = await call('owner', 'PUT', '/primary-calendar', {
+      integrationId: iid,
+      calendarId: ALICE.email,
+    });
+    assert.equal(set.status, 400, set.text);
+    assert.match(String(set.body?.['message']), /reads 50 calendars, the most/);
+    const after = await (await models.getWorkspaceRepository()).findById(wid);
+    assert.deepEqual(after?.settings, before?.settings, 'the primary calendar is unchanged');
+    const stored = await integrations.findById(wid, iid);
+    assert.equal((stored?.config as { calendars?: unknown[] }).calendars?.length, 50);
+    // A config update that leaves the primary out of a full list is refused the same way.
+    const patched = await call('owner', 'PATCH', `/integrations/${iid}`, {
+      config: { calendars: full },
+    });
+    assert.equal(patched.status, 400, patched.text);
+    // A recurring create there: Google made it, it is not stored (R3).
+    const created = await call('owner', 'POST', '/items', {
+      title: 'Full list',
+      dueAt: '2026-11-23T07:00:00.000Z',
+      recurrence: WEEKLY,
+      idempotencyKey: 'full-list',
+    });
+    assert.equal(created.status, 409, created.text);
+    assert.equal(created.body?.['code'], 'created_not_stored');
+    await integrations.update(wid, iid, { config: { calendars: [] } });
   });
 });
