@@ -290,6 +290,9 @@ export abstract class Item
       createdAt: data.createdAt,
       updatedAt: data.updatedAt,
       editing: (context.editing ?? this.defaultEditing).toView(),
+      sourceValues: this.isLocal
+        ? null
+        : { ...this.sourceValues, title: redactString(this.sourceValues.title) },
     };
   }
 

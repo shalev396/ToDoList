@@ -372,6 +372,12 @@ describe('the local half and the effective values on every read', () => {
       ['Fix the crash (my name for it)', 'done', LATER],
     );
     assert.deepEqual((item['editing'] as Json)['providerFields'], []);
+    // What "Use GitHub's value" goes back to: the provider's own values, under the overrides.
+    const source = item['sourceValues'] as Json;
+    assert.deepEqual(
+      [source['title'], source['status'], source['dueAt']],
+      ['Fix the crash', 'open', null],
+    );
   });
 
   it('the list filters, sorts and pages by the effective values', async () => {

@@ -85,6 +85,20 @@ export interface ItemEditingView {
   needsGuestNotice: boolean;
 }
 
+/**
+ * A mirrored item's own values at its provider, before any override: what the item sheet's "Use
+ * <provider>'s value" goes back to (a title or status override is cleared by sending the
+ * provider's value; a date or the priority by null). The title is redacted like the item's.
+ */
+export interface ItemSourceValuesView {
+  title: string;
+  status: ItemStatus;
+  dueAt: Date | null;
+  allDay: boolean;
+  startAt: Date | null;
+  priority: number | null;
+}
+
 /** A provider copy of a local to-do (H5): where it was created, and how it stands. */
 export interface ItemCopyView {
   integrationId: string;
@@ -162,6 +176,8 @@ export interface ItemDetail extends ItemSummary {
   updatedAt: Date;
   /** How the caller can edit it (the item sheet's hints). */
   editing: ItemEditingView;
+  /** A mirrored item's values at its provider, before its overrides; null for a to-do. */
+  sourceValues: ItemSourceValuesView | null;
 }
 
 /**
