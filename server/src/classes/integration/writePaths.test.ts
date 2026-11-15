@@ -14,6 +14,10 @@
  *   `calendarWriter(` in GoogleCalendarIntegration.ts, each inside a `createWriter` method body;
  *   `applyOps(` (it takes a writer) once, in GoogleCalendarIntegration.ts; `guardedTransport` is
  *   named nowhere but the writers. A writer made anywhere else (in a read session, say) fails.
+ * - no alias gets round that: inside classes/integration/ (the writers aside) the only mention of
+ *   a factory besides a plain named import is its pinned call, so `const w = calendarWriter`,
+ *   `import { x as y }`, `export { x as y }`, a destructured `await import(…)` and a re-export
+ *   all fail, as does any `as` rename of a factory or a dynamic import whose target is unknown.
  * - MCP never switches the mode: nothing under src/mcp/ names `setMode`, `checkMode` or
  *   `UpdateIntegrationBody`.
  */
@@ -88,6 +92,39 @@ function callSites(
   return sites;
 }
 
+/** Import statements with a braced clause, blanked: `import { a, type B } from`. */
+const NAMED_IMPORT = /\bimport\s*(?:type\s+)?(?:[\w$]+\s*,\s*)?\{[^}]*\}\s*from(?=\s*['"`])/g;
+
+/**
+ * Broken alias rules for the factories: in non-test code under classes/integration/ (writers
+ * aside), a factory may be named only in a plain named import and at its pinned call; never
+ * renamed with `as`, bound to another name, destructured, re-exported or passed on.
+ */
+function aliasViolations(files: ReadonlyMap<string, string>): string[] {
+  const found: string[] = [];
+  for (const [file, source] of files) {
+    if (isTest(file) || !file.startsWith(CLASSES) || file.startsWith(WRITERS)) continue;
+    const scanned = scan(source);
+    const bare = scanned.masked.replace(NAMED_IMPORT, (clause) => ' '.repeat(clause.length));
+    for (const { name } of PINNED) {
+      if (new RegExp(`\\b${name}\\s+as\\b`).test(scanned.masked)) {
+        found.push(`${file}: renames ${name} with \`as\`: a factory keeps its name`);
+      }
+      const mentions = [...bare.matchAll(new RegExp(`\\b${name}\\b`, 'g'))].length;
+      const calls = callSites(new Map([[file, source]]), name).length;
+      if (mentions > calls) {
+        found.push(`${file}: names ${name} other than at its call: no alias, re-export or binding`);
+      }
+    }
+    for (const ref of importsIn(scanned)) {
+      if (ref.kind === 'dynamic' && ref.specifier === null) {
+        found.push(`${file}: a dynamic import with no literal target could reach a writer`);
+      }
+    }
+  }
+  return found;
+}
+
 /** Every broken rule, as `<file>: <why>`. */
 function violations(files: ReadonlyMap<string, string>): string[] {
   const exists = (file: string): boolean => files.has(file);
@@ -132,6 +169,7 @@ function violations(files: ReadonlyMap<string, string>): string[] {
       }
     }
   }
+  found.push(...aliasViolations(files));
   return [...new Set(found)].sort();
 }
 
@@ -252,6 +290,82 @@ export class JiraIntegration {
 export const x = (writer: W) => applyOps(writer, [], 0);`,
       }),
       ['classes/integration/providers/LinearIntegration.ts'],
+    );
+  });
+
+  it('an alias of a factory inside the classes (binding, rename, re-export, destructuring) fails', () => {
+    const provider = (body: string): string => `${body}
+export class P {
+  protected createWriter(): Promise<never> {
+    return Promise.reject(new Error('none'));
+  }
+}`;
+    assert.deepEqual(
+      flagged({
+        'classes/integration/providers/Bound.ts': provider(
+          `import { calendarWriter } from '../writers/calendarApi.js';
+const w = calendarWriter;
+export const t = (x: string) => w(x);`,
+        ),
+        'classes/integration/providers/Renamed.ts': provider(
+          `import { calendarWriter as cw } from '../writers/calendarApi.js';
+export const t = (x: string) => cw(x);`,
+        ),
+        'classes/integration/providers/Reexported.ts': provider(
+          `import { createWriteClient } from '../writers/trackerWriter.js';
+export { createWriteClient as make };`,
+        ),
+        'classes/integration/providers/Reexported2.ts': provider(
+          `export { createWriteClient } from '../writers/trackerWriter.js';`,
+        ),
+        'classes/integration/providers/Destructured.ts': provider(
+          `export const run = async () => {
+  const { applyOps: run } = await import('../writers/calendarOps.js');
+  return run;
+};`,
+        ),
+        'classes/integration/providers/Opaque.ts': provider(
+          `export const load = (p: string) => import(p);`,
+        ),
+        'classes/integration/Plain.ts': `export const alias = guardedTransport;`,
+      }),
+      [
+        'classes/integration/Plain.ts',
+        'classes/integration/providers/Bound.ts',
+        'classes/integration/providers/Destructured.ts',
+        'classes/integration/providers/Opaque.ts',
+        'classes/integration/providers/Reexported.ts',
+        'classes/integration/providers/Reexported2.ts',
+        'classes/integration/providers/Renamed.ts',
+      ],
+    );
+  });
+
+  it('a renamed or aliased factory is flagged even in the pinned file', () => {
+    assert.deepEqual(
+      flagged({
+        [TRACKER_BASE]: GOOD_TRACKER.replace(
+          '{ createWriteClient }',
+          '{ createWriteClient as cwc }',
+        ),
+        [GOOGLE]: GOOD_GOOGLE.replace(
+          'return calendarWriter(',
+          'const w = calendarWriter;\n    return w(',
+        ),
+      }),
+      [TRACKER_BASE, GOOGLE].sort(),
+    );
+  });
+
+  it('a multi-line plain named import plus the one pinned call in createWriter is clean', () => {
+    assert.deepEqual(
+      flagged({
+        [GOOGLE]: GOOD_GOOGLE.replace(
+          'import { calendarWriter, type CalendarWriter }',
+          'import {\n  calendarWriter,\n  type CalendarWriter,\n}',
+        ),
+      }),
+      [],
     );
   });
 
