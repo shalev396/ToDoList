@@ -85,7 +85,7 @@ export class View
 
   /** What each operation needs of the caller's role, checked before the view is read. */
   static readonly Operation = Object.freeze({
-    read: Operation.of('viewer', 'see views'),
+    read: Operation.member('see views'),
     create: Operation.of('editor', 'create views'),
     edit: Operation.of('editor', 'edit views'),
     delete: Operation.of('editor', 'delete views'),

@@ -81,6 +81,21 @@ describe('Operation', () => {
     }, /Only an owner can publish dashboards/);
   });
 
+  it('a read names a member, never a role above the one it needs', () => {
+    const read = Operation.member('see dashboards');
+    assert.ok(read.role.equals(Operation.of('viewer', 'see dashboards').role));
+    read.assert(callerAs('viewer'));
+    // No role is below viewer, so the refusal is never reached; its text is still role-correct.
+    const refusal = (read as unknown as { assert: (caller: unknown) => void }).assert.bind(read);
+    assert.throws(() => {
+      refusal({
+        require: (_role: unknown, message: string) => {
+          throw new Error(message);
+        },
+      });
+    }, /^Error: Only a member can see dashboards$/);
+  });
+
   it('is a value: same role and verb, equal', () => {
     assert.ok(Operation.of('editor', 'x').equals(Operation.of('editor', 'x')));
     assert.ok(!Operation.of('editor', 'x').equals(Operation.of('owner', 'x')));

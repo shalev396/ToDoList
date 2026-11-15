@@ -356,7 +356,7 @@ export class Dashboard
 
   /** What each operation needs of the caller's role, checked before the dashboard is read. */
   static readonly Operation = Object.freeze({
-    read: Operation.of('viewer', 'see dashboards'),
+    read: Operation.member('see dashboards'),
     create: Operation.of('editor', 'create dashboards'),
     edit: Operation.of('editor', 'edit dashboards'),
     undo: Operation.of('editor', 'undo changes'),
