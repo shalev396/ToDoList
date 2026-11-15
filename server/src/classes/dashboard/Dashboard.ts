@@ -286,36 +286,12 @@ function publishedCopy(content: {
 
 /** Validation, then lint in the caller's mode: the draft, or OpValidationError on the first error. */
 function validated(input: unknown, caller: Caller): DashboardDraft {
-  const check = DocCheck.instance.check(input);
-  const [first] = check.issues;
-  if (check.draft === null || first !== undefined) {
-    throw new OpValidationError(first?.pointer ?? '', first?.message ?? 'invalid dashboard');
-  }
-  const [blocking] = DocCheck.instance
-    .lint(check.draft, lintModeOf(caller))
-    .filter((found) => found.severity === 'error');
-  if (blocking !== undefined) throw new OpValidationError(blocking.pointer, blocking.message);
-  return check.draft;
+  return DocCheck.instance.validated(input, lintModeOf(caller));
 }
 
-/**
- * A state rebuilt from history (undo, redo, revert), re-validated: the catalog may have changed
- * since it was written (409 if it no longer passes). A person's restore is not linted again (in the
- * UI, lint only warns). An agent's restore is held to mcp-mode lint like its ops, so history can't
- * bring back hard-coded text for it: OpValidationError (400) on the first lint error.
- */
+/** A state rebuilt from history, re-validated as DocCheck#restorable says (409, or an agent's 400). */
 function restorable(state: DashboardDraft, action: string, caller: Caller): DashboardDraft {
-  const check = DocCheck.instance.check(state);
-  if (check.draft === null || check.issues.length > 0) {
-    throw new AppError(409, `Cannot ${action}: the result would not be a valid dashboard`);
-  }
-  if (caller.actor.agentId !== null) {
-    const [blocking] = DocCheck.instance
-      .lint(check.draft, 'mcp')
-      .filter((found) => found.severity === 'error');
-    if (blocking !== undefined) throw new OpValidationError(blocking.pointer, blocking.message);
-  }
-  return check.draft;
+  return DocCheck.instance.restorable(state, action, caller.actor.agentId !== null);
 }
 
 function initialDraft(input: CreateDashboardInput): {

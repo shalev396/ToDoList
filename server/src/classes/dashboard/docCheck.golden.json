@@ -1,0 +1,368 @@
+{
+  "checks": {
+    "template dashboard@1 (en)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template dashboard@1 (he)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template work@1 (en)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template work@1 (he)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template personal@1 (en)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template personal@1 (he)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template college@1 (en)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template college@1 (he)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template college-course@1 (en)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template college-course@1 (he)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template project@1 (en)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "template project@1 (he)": {
+      "parsed": true,
+      "issues": [],
+      "validated": {
+        "ui": null,
+        "mcp": null
+      }
+    },
+    "a $ key anywhere": {
+      "parsed": false,
+      "issues": [
+        {
+          "pointer": "/vars/$where",
+          "message": "keys starting with \"$\" are not allowed"
+        }
+      ],
+      "validated": {
+        "ui": {
+          "pointer": "/vars/$where",
+          "message": "keys starting with \"$\" are not allowed"
+        },
+        "mcp": {
+          "pointer": "/vars/$where",
+          "message": "keys starting with \"$\" are not allowed"
+        }
+      }
+    },
+    "more blocks than a page holds": {
+      "parsed": false,
+      "issues": [
+        {
+          "pointer": "/blocks",
+          "message": "a page holds at most 800 blocks"
+        }
+      ],
+      "validated": {
+        "ui": {
+          "pointer": "/blocks",
+          "message": "a page holds at most 800 blocks"
+        },
+        "mcp": {
+          "pointer": "/blocks",
+          "message": "a page holds at most 800 blocks"
+        }
+      }
+    },
+    "schema issues, several": {
+      "parsed": false,
+      "issues": [
+        {
+          "pointer": "/title",
+          "message": "Invalid input: expected string, received undefined"
+        },
+        {
+          "pointer": "/scope/page",
+          "message": "Invalid option: expected one of \"topic\"|\"group\""
+        },
+        {
+          "pointer": "/layouts/md",
+          "message": "Invalid input: expected array, received undefined"
+        },
+        {
+          "pointer": "/layouts/sm",
+          "message": "Invalid input: expected array, received undefined"
+        },
+        {
+          "pointer": "/blocks/0/id",
+          "message": "must match ^blk_[a-z0-9_]{3,40}$"
+        },
+        {
+          "pointer": "/blocks/0/type",
+          "message": "Invalid option: expected one of \"list\"|\"table\"|\"kanban\"|\"calendar\"|\"chart\"|\"clock\"|\"counter\"|\"deadlines\"|\"note\"|\"filter\"|\"action\"|\"timeline\"|\"agenda\"|\"workload\""
+        },
+        {
+          "pointer": "/blocks/0/title",
+          "message": "Invalid input: expected string, received undefined"
+        },
+        {
+          "pointer": "/blocks/0/viz",
+          "message": "Invalid input: expected record, received undefined"
+        }
+      ],
+      "validated": {
+        "ui": {
+          "pointer": "/title",
+          "message": "Invalid input: expected string, received undefined"
+        },
+        "mcp": {
+          "pointer": "/title",
+          "message": "Invalid input: expected string, received undefined"
+        }
+      }
+    },
+    "catalog, query, variable and secret issues together": {
+      "parsed": true,
+      "issues": [
+        {
+          "pointer": "/blocks/0/viz/kind",
+          "message": "Invalid input: expected \"list\""
+        },
+        {
+          "pointer": "/blocks/1/query/where/rules/0/field",
+          "message": "not a field of items"
+        },
+        {
+          "pointer": "/blocks/2/query",
+          "message": "a counter block needs a query or a saved view"
+        },
+        {
+          "pointer": "/vars/enc",
+          "message": "this variable name is reserved"
+        },
+        {
+          "pointer": "/blocks/3/note",
+          "message": "looks like a secret: dashboards never hold secrets"
+        }
+      ],
+      "validated": {
+        "ui": {
+          "pointer": "/blocks/0/viz/kind",
+          "message": "Invalid input: expected \"list\""
+        },
+        "mcp": {
+          "pointer": "/blocks/0/viz/kind",
+          "message": "Invalid input: expected \"list\""
+        }
+      }
+    }
+  },
+  "lints": {
+    "template dashboard@1 (en)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template dashboard@1 (he)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template work@1 (en)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template work@1 (he)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template personal@1 (en)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template personal@1 (he)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template college@1 (en)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template college@1 (he)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template college-course@1 (en)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template college-course@1 (he)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template project@1 (en)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "template project@1 (he)": {
+      "ui": [],
+      "mcp": [],
+      "ui with topics": []
+    },
+    "every lint rule": {
+      "ui": [
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/0/viz/field",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        },
+        {
+          "code": "private_field",
+          "severity": "error",
+          "pointer": "/blocks/1/query/where/rules/2/field",
+          "message": "a field that may hold a credential"
+        },
+        {
+          "code": "source_link_hidden",
+          "severity": "error",
+          "pointer": "/blocks/1/viz/showSource",
+          "message": "rows always link to their source: this block cannot turn that off"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/2/viz/emptyText",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        }
+      ],
+      "mcp": [
+        {
+          "code": "hardcoded_text",
+          "severity": "error",
+          "pointer": "/blocks/0/viz/field",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        },
+        {
+          "code": "private_field",
+          "severity": "error",
+          "pointer": "/blocks/1/query/where/rules/2/field",
+          "message": "a field that may hold a credential"
+        },
+        {
+          "code": "source_link_hidden",
+          "severity": "error",
+          "pointer": "/blocks/1/viz/showSource",
+          "message": "rows always link to their source: this block cannot turn that off"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "error",
+          "pointer": "/blocks/2/viz/emptyText",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        }
+      ],
+      "ui with topics": [
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/0/viz/field",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        },
+        {
+          "code": "deleted_topic",
+          "severity": "warning",
+          "pointer": "/blocks/1/query/where/rules/0/value",
+          "message": "This filter names a deleted page: it matches nothing"
+        },
+        {
+          "code": "private_field",
+          "severity": "error",
+          "pointer": "/blocks/1/query/where/rules/2/field",
+          "message": "a field that may hold a credential"
+        },
+        {
+          "code": "source_link_hidden",
+          "severity": "error",
+          "pointer": "/blocks/1/viz/showSource",
+          "message": "rows always link to their source: this block cannot turn that off"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/2/viz/emptyText",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        }
+      ]
+    }
+  }
+}
