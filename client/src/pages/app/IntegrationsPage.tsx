@@ -39,6 +39,7 @@ import {
   hasResourcePicker,
   hasTokenFallback,
   isOAuthSignIn,
+  reconnectAsksWrite,
   oauthMode,
 } from '@/features/integrations/oauthSetup';
 import { PROVIDER_ORDER } from '@/features/integrations/providers';
@@ -400,7 +401,7 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
                   : undefined
               }
               onReconnect={(entry) =>
-                void startOAuth(provider, entry.id, entry.mode === 'read_write')
+                void startOAuth(provider, entry.id, reconnectAsksWrite(provider, entry.mode))
               }
             />
           ),

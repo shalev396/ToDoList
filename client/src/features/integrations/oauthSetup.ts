@@ -26,6 +26,18 @@ export function isOAuthSignIn(provider: string): provider is OAuthSignInProvider
   return (OAUTH_SIGN_IN_PROVIDERS as readonly string[]).includes(provider);
 }
 
+/**
+ * The sign-in providers whose grant needs an extra scope to write back (Jira `write:jira-work`,
+ * Linear `write`: their definitions' `writeScopes`). Only their reconnect asks for it
+ * (`includeWrite`); GitHub and ClickUp grant what they grant (the server ignores it for them).
+ */
+const WRITE_SCOPE_PROVIDERS: readonly string[] = ['jira', 'linear'];
+
+/** Whether a reconnect should ask for the write scope: a read & write Jira or Linear connection. */
+export function reconnectAsksWrite(provider: string, mode: 'read' | 'read_write'): boolean {
+  return mode === 'read_write' && WRITE_SCOPE_PROVIDERS.includes(provider);
+}
+
 /** Every provider that signs in with OAuth: those four, and Google Calendar (its own routes). */
 export function hasOAuthSignIn(provider: string): boolean {
   return isOAuthSignIn(provider) || provider === 'google_calendar';

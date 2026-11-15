@@ -17,6 +17,7 @@ import {
   oauthMode,
   revokePageOf,
   revokesOnDisconnect,
+  reconnectAsksWrite,
 } from './oauthSetup.ts';
 import { isComingSoon, PROVIDER_ORDER } from './providers.ts';
 
@@ -130,6 +131,20 @@ const response: OAuthProvidersResponse = {
   ],
 };
 const caps = (provider: string) => capabilitiesOf(response, provider);
+
+describe('reconnectAsksWrite: only where a write scope exists', () => {
+  it('asks for write on a read & write Jira or Linear connection', () => {
+    assert.equal(reconnectAsksWrite('jira', 'read_write'), true);
+    assert.equal(reconnectAsksWrite('linear', 'read_write'), true);
+  });
+
+  it('never for GitHub or ClickUp (nothing to ask for), nor for a read-only connection', () => {
+    assert.equal(reconnectAsksWrite('github', 'read_write'), false);
+    assert.equal(reconnectAsksWrite('clickup', 'read_write'), false);
+    assert.equal(reconnectAsksWrite('jira', 'read'), false);
+    assert.equal(reconnectAsksWrite('google_calendar', 'read_write'), false);
+  });
+});
 
 describe('capabilities from the providers answer', () => {
   it('finds a provider, and nothing before the answer has arrived', () => {
