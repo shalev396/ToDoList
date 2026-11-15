@@ -190,8 +190,8 @@ after(async () => {
 async function fixture(): Promise<Fixture> {
   const models = await import('../../models/index.js');
   const { contextFor } = await import('../../testing/workspaceFixtures.js');
-  const dashboards = await import('../../services/dashboards.js');
-  const views = await import('../../services/views.js');
+  const dashboards = await import('../../testing/dashboardCalls.js');
+  const views = await import('../../testing/dashboardCalls.js');
   fixtures += 1;
   const workspace = await (
     await models.getWorkspaceRepository()

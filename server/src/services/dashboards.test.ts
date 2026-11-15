@@ -14,7 +14,7 @@ import type {
   DashboardWriteResult,
 } from '../types/dashboards.js';
 import type { WorkspaceContext } from './accessFilter.js';
-import type * as Dashboards from './dashboards.js';
+import type * as Dashboards from '../testing/dashboardCalls.js';
 import type * as Models from '../models/index.js';
 
 let db: TestDatabase;
@@ -35,7 +35,7 @@ let workspaceId = '';
 
 before(async () => {
   db = await startTestDatabase('todolist_dashboards_service');
-  svc = await import('./dashboards.js');
+  svc = await import('../testing/dashboardCalls.js');
   models = await import('../models/index.js');
   const owner = await newUser('dash-owner');
   const editor = await newUser('dash-editor');

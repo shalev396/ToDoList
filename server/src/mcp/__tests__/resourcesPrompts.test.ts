@@ -62,7 +62,7 @@ before(async () => {
       topicId: 'work',
     })
   ).id;
-  const { createDashboard } = await import('../../services/dashboards.js');
+  const { createDashboard } = await import('../../testing/dashboardCalls.js');
   const { contextFor } = await import('../../testing/workspaceFixtures.js');
   dashboardId = (
     await createDashboard(

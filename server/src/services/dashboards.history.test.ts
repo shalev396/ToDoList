@@ -18,7 +18,7 @@ import { contextFor, newUser } from '../testing/workspaceFixtures.js';
 import type { Block, DashboardDraft, Op } from '../types/builder.js';
 import type { DashboardView } from '../types/dashboards.js';
 import type { WorkspaceContext } from './accessFilter.js';
-import type * as Dashboards from './dashboards.js';
+import type * as Dashboards from '../testing/dashboardCalls.js';
 
 const SEED = 20261112;
 const MAX_STEPS = 220;
@@ -40,7 +40,7 @@ const actors = {} as Record<'person' | 'agent', Actor>;
 
 before(async () => {
   db = await startTestDatabase('todolist_dashboards_history');
-  svc = await import('./dashboards.js');
+  svc = await import('../testing/dashboardCalls.js');
   models = await import('../models/index.js');
   history = await import('../builder/history.js');
   const owner = await newUser('history-owner');

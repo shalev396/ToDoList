@@ -11,7 +11,7 @@ import type mongoose from 'mongoose';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import { contextFor, hasStatus, newUser } from '../testing/workspaceFixtures.js';
 import type { WorkspaceContext } from '../services/accessFilter.js';
-import type * as Dashboards from '../services/dashboards.js';
+import type * as Dashboards from '../testing/dashboardCalls.js';
 import type * as Classes from '../classes/workspace/index.js';
 import type * as Migration from './introduceTopics.js';
 
@@ -80,7 +80,7 @@ async function snapshotOfCollections(): Promise<unknown[]> {
 
 before(async () => {
   db = await startTestDatabase('todolist_migration_topics_history');
-  svc = await import('../services/dashboards.js');
+  svc = await import('../testing/dashboardCalls.js');
   ({ Topic } = await import('../classes/workspace/index.js'));
   migration = await import('./introduceTopics.js');
   const models = await import('../models/index.js');

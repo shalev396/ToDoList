@@ -411,7 +411,7 @@ describe('fix round 2', () => {
       ops,
     });
     // Meanwhile a person edits the draft in the app: it moves on to the next version.
-    const { applyDashboardOps } = await import('../../services/dashboards.js');
+    const { applyDashboardOps } = await import('../../testing/dashboardCalls.js');
     const { contextFor } = await import('../../testing/workspaceFixtures.js');
     await applyDashboardOps(
       await contextFor(team.workspace.id, team.owner.id),

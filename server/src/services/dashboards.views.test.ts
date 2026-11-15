@@ -12,8 +12,8 @@ import { addDefaultTopics, contextFor, hasStatus, newUser } from '../testing/wor
 import { CAPS, type Op } from '../types/builder.js';
 import type { DashboardView } from '../types/dashboards.js';
 import type { WorkspaceContext } from './accessFilter.js';
-import type * as Dashboards from './dashboards.js';
-import type * as Personas from './personas.js';
+import type * as Dashboards from '../testing/dashboardCalls.js';
+import type * as Personas from '../testing/dashboardCalls.js';
 import type * as Models from '../models/index.js';
 
 let db: TestDatabase;
@@ -27,8 +27,8 @@ let workspaceId = '';
 
 before(async () => {
   db = await startTestDatabase('todolist_dashboards_views');
-  svc = await import('./dashboards.js');
-  personas = await import('./personas.js');
+  svc = await import('../testing/dashboardCalls.js');
+  personas = await import('../testing/dashboardCalls.js');
   models = await import('../models/index.js');
   const users = {
     owner: await newUser('views-owner'),

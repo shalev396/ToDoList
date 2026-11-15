@@ -400,14 +400,14 @@ describe('topic filters (MCP.md §6: every read tool)', () => {
     assert.ok(draft.total > 0);
     assert.ok(draft.rows.every((row) => row.topicId === personalId));
 
-    const { createDashboard } = await import('../../services/dashboards.js');
+    const { createDashboard } = await import('../../testing/dashboardCalls.js');
     const { contextFor } = await import('../../testing/workspaceFixtures.js');
     const dashboard = await createDashboard(
       await contextFor(team.workspace.id, team.owner.id),
       { userId: team.owner.id, agentId: null },
       { title: 'All areas', language: 'en' },
     );
-    const { applyDashboardOps } = await import('../../services/dashboards.js');
+    const { applyDashboardOps } = await import('../../testing/dashboardCalls.js');
     await applyDashboardOps(
       await contextFor(team.workspace.id, team.owner.id),
       { userId: team.owner.id, agentId: null },
@@ -417,7 +417,7 @@ describe('topic filters (MCP.md §6: every read tool)', () => {
         ops: [{ op: 'add_block', block: { type: 'list', query: { source: 'items' } } }],
       },
     );
-    const { getDashboard } = await import('../../services/dashboards.js');
+    const { getDashboard } = await import('../../testing/dashboardCalls.js');
     const view = await getDashboard(
       await contextFor(team.workspace.id, team.owner.id),
       { userId: team.owner.id, agentId: null },
