@@ -374,27 +374,12 @@ describe('patchOf', () => {
 });
 
 describe('clearOverrideBody', () => {
-  const source = {
-    title: 'Fix the crash',
-    status: 'open' as const,
-    dueAt: null,
-    allDay: false,
-    startAt: null,
-    priority: null,
-  };
-
-  it('sends the provider’s own title or status; null for a date or the priority', () => {
-    assert.deepEqual(clearOverrideBody('title', source), { title: 'Fix the crash' });
-    assert.deepEqual(clearOverrideBody('status', source), { status: 'open' });
-    assert.deepEqual(clearOverrideBody('dueAt', source), { dueAt: null });
-    assert.deepEqual(clearOverrideBody('startAt', null), { startAt: null });
-    assert.deepEqual(clearOverrideBody('priority', null), { priority: null });
-  });
-
-  it('offers nothing when the provider’s title is unknown or redacted', () => {
-    assert.equal(clearOverrideBody('title', null), null);
-    assert.equal(clearOverrideBody('status', null), null);
-    assert.equal(clearOverrideBody('title', { ...source, title: 'Key [REDACTED:jira]' }), null);
+  it('clears any override with null, a redacted title too', () => {
+    assert.deepEqual(clearOverrideBody('title'), { title: null });
+    assert.deepEqual(clearOverrideBody('status'), { status: null });
+    assert.deepEqual(clearOverrideBody('dueAt'), { dueAt: null });
+    assert.deepEqual(clearOverrideBody('startAt'), { startAt: null });
+    assert.deepEqual(clearOverrideBody('priority'), { priority: null });
   });
 });
 

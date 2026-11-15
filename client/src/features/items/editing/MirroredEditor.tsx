@@ -441,7 +441,7 @@ function EditForm({
     entry.origin === 'provider' && !entry.editable && plan.lock !== null ? lockId : undefined;
   const sourceAction = (entry: FieldPlan) => {
     const { field } = entry;
-    if (field === 'endAt' || clearOverrideBody(field, item.sourceValues) === null) {
+    if (field === 'endAt') {
       return undefined;
     }
     return () => {
@@ -893,10 +893,7 @@ export function MirroredEditor({
               close();
             }}
             onUseSource={(field, then) => {
-              const body = clearOverrideBody(field, item.sourceValues);
-              if (body !== null) {
-                save(body, then);
-              }
+              save(clearOverrideBody(field), then);
             }}
           />
         </>

@@ -353,21 +353,16 @@ function addStart(
 }
 
 /**
- * "Use <provider>'s value": the PATCH that clears one override. A title or status goes back by
- * sending the provider's own value; a date or the priority by null. Null when the provider's
- * value isn't known (or the title came back redacted, so sending it would keep a wrong value).
+ * "Use <provider>'s value": the PATCH that clears one override. Null clears any of them (the
+ * server takes `title: null` and `status: null` for an override), so it works even when the
+ * provider's title came back redacted.
  */
-export function clearOverrideBody(
-  field: OverridableField,
-  sourceValues: ItemDetail['sourceValues'],
-): UpdateItemRequestBody | null {
+export function clearOverrideBody(field: OverridableField): UpdateItemRequestBody {
   switch (field) {
     case 'title':
-      return sourceValues === null || sourceValues.title.includes('[REDACTED:')
-        ? null
-        : { title: sourceValues.title };
+      return { title: null };
     case 'status':
-      return sourceValues === null ? null : { status: sourceValues.status };
+      return { status: null };
     case 'dueAt':
       return { dueAt: null };
     case 'startAt':
