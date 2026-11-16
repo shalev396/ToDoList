@@ -5,7 +5,8 @@
  * refused without a token check or a database read.
  *
  * Tokens are verified by a stand-in (setTokenVerifierForTests): the token text before any ":" is
- * its `sub` (so "u:1" and "u:2" are two tokens of one user), and "bad" fails verification. Every request comes from 127.0.0.1.
+ * its `sub` (so "u:1" and "u:2" are two tokens of one user), and "bad" fails verification.
+ * Every request comes from 127.0.0.1.
  */
 import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';

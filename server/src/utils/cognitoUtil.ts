@@ -12,6 +12,7 @@ function getClient(): jwksClient.JwksClient {
     cacheMaxAge: 600000,
     cacheMaxEntries: 5,
     rateLimit: true,
+    jwksRequestsPerMinute: 10,
   });
 
   return client;
