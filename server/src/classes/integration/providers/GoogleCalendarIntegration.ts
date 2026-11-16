@@ -413,6 +413,8 @@ export class GoogleCalendarIntegration
     deletedBy: Caller = caller,
   ): Promise<void> {
     this.assertOwner(caller);
+    // The audit entry is filed under `deletedBy`'s workspace: it must be this integration's.
+    if (deletedBy.workspaceId !== this.workspaceId) throw new NotFoundError();
     const itemId = (link as { itemId?: unknown }).itemId;
     if (typeof itemId !== 'string' || itemId === '') throw new NotFoundError();
     const links = await getCalendarLinkRepository();

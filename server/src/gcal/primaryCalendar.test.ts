@@ -384,6 +384,51 @@ describe('the push goes to the primary calendar', () => {
     assert.equal(typeof entry.userAgent, 'string', 'and its user agent');
   });
 
+  it('a delete Google gives no answer to: audited as unknown, as that member, and the to-do is still deleted', async () => {
+    const made = await as(editor, 'POST', '/items', {
+      title: 'The editor’s to-do, delete unanswered',
+      dueAt: new Date(Date.now() + 6 * 86_400_000).toISOString(),
+    });
+    assert.equal(made.status, 201, made.text);
+    const mine = data(made.body)['id'] as string;
+    await push();
+    assert.ok(eventIds(created).includes(eventIdFor(mine)));
+    mock.failNextWrite(503);
+    const removed = await as(editor, 'DELETE', `/items/${mine}`);
+    assert.equal(removed.status, 204, removed.text);
+    const [entry] = await (
+      await models.getAuditLogRepository()
+    ).list(wid, { action: 'integration.write' }, 1);
+    assert.ok(entry !== undefined);
+    assert.deepEqual(entry.meta, { operation: 'event.delete', itemId: mine, outcome: 'unknown' });
+    assert.equal(entry.actorUserId, editorId, 'the member who deleted the to-do');
+    assert.equal(entry.targetId, iid);
+    assert.equal(typeof entry.ip, 'string');
+    assert.equal(typeof entry.userAgent, 'string');
+  });
+
+  it('a delete audited as a member of another workspace is refused, nothing sent', async () => {
+    const { Actor } = await import('../classes/base/Actor.js');
+    const { Caller } = await import('../classes/base/Caller.js');
+    const { Integration, isCalendarProvider } = await import('../classes/integration/index.js');
+    const caller = await Caller.enter(wid, Actor.user(ownerId));
+    assert.ok(caller);
+    const integration = await Integration.findOwn(caller, iid);
+    assert.ok(isCalendarProvider(integration));
+    // A caller of a made-up workspace: its audit entry would be filed there, not in this one.
+    const foreign = Caller.fromContext(
+      { id: 'w-elsewhere', role: caller.role.name, settings: caller.settings },
+      Actor.user(ownerId),
+    );
+    const before = writes();
+    await assert.rejects(
+      integration.deleteLinkedEvent(caller, { itemId: items['planned'] ?? '' }, foreign),
+      { statusCode: 404 },
+    );
+    assert.deepEqual(since(before), []);
+    assert.ok(eventIds(created).includes(eventIdFor(items['planned'] ?? '')));
+  });
+
   it('read-only suspends it: shown so, never pushed; read & write again resumes it', async () => {
     await setMode('read');
     const shown = await as(owner, 'GET', '/primary-calendar');
