@@ -6,7 +6,7 @@ import re
 
 from playwright.sync_api import Page, expect
 
-from tests.config import LONG_TIMEOUT, NORMAL_TIMEOUT
+from tests.config import DEMO_SEED_TIMEOUT, LONG_TIMEOUT, NORMAL_TIMEOUT
 from tests.helpers.users import pooled_user
 from tests.helpers.workspaces import create_invite, open_as, sign_in
 
@@ -69,7 +69,7 @@ def test_create_workspace_opens_its_dashboard(
     expect(page.get_by_role("button", name="Create workspace")).to_be_disabled()
     page.get_by_label("Name", exact=True).fill("Ada Lab")
     page.get_by_role("button", name="Create workspace").click()
-    expect(page).to_have_url(f"{app_url}/dashboard", timeout=LONG_TIMEOUT)
+    expect(page).to_have_url(f"{app_url}/dashboard", timeout=DEMO_SEED_TIMEOUT)
     expect(page.get_by_role("heading", level=1)).to_have_accessible_name("Dashboard")
     expect(page.get_by_role("button", name="Ada Lab, switch workspace")).to_be_visible()
 
