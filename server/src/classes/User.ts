@@ -13,9 +13,21 @@ const cognitoClient = new CognitoIdentityProviderClient({
 });
 
 /**
- * A signed-in person (Cognito's user, mirrored as a Users row): this class is the only code that
- * touches the Users collection. A user lives outside any workspace (an Entity, not a
- * WorkspaceEntity); `deleteAccount` runs the workspace cascade first (Workspace.deleteAccountCascade).
+ * A signed-in person (Cognito's user, mirrored as a Users row): this class owns the person's own
+ * reads and writes (sign-in, profile, account deletion). It is not the only code that reaches the
+ * Users collection (`getUserRepository`); the workspace classes also do, for what a workspace
+ * needs of a person:
+ *
+ * - Invite reads a user by email (is the invitee already a member?) and by id (the inviter's name
+ *   for the email);
+ * - Member reads a user by id (a member's name and email for the list);
+ * - Workspace writes the user's default workspace (`setDefaultWorkspace`: on create, and when the
+ *   user picks one) and cascade.ts reads the emails of the integration owners it notifies.
+ *
+ * Those are the workspace's reads of people and one pointer it keeps for them, not account
+ * operations, so they stay with the workspace classes. A user lives outside any workspace (an
+ * Entity, not a WorkspaceEntity); `deleteAccount` runs the workspace cascade first
+ * (Workspace.deleteAccountCascade).
  */
 export class User extends Entity<UserData> {
   private constructor(data: UserData) {
