@@ -14,6 +14,11 @@
  *   `removeAllIn` (a workspace's hard deletes) by the classes that own them and the cascade;
  *   `removeConnectorEverywhere` by Dashboard and Integration#stopSharing;
  *   `removeOrphans` and `referencedWorkspaceIds` (global sweeps) by their classes and the purge;
+ * - the dashboard document check has one composer: the steps of the document (the builder's
+ *   refusedInput, parseDraft, variableIssues, secretIssues, finalIssues) are named only by DocCheck,
+ *   and the per-block rules (vizIssues, queryRuleIssues, filterVariableIssues, actionNameIssues,
+ *   lintFields, lintSourceLink, lintText) only by the Block classes that apply them, so no write
+ *   validates a dashboard any other way (phase 6a review R1);
  * - no barrel hands History or the cascade on (`export *` included), and no module re-exports one.
  * A type-only import is erased, so it loads nothing and is allowed anywhere. Every dynamic import
  * takes one string literal (vaultImports.test.ts), so this graph sees every edge.
@@ -34,6 +39,19 @@ const WORKSPACE = 'classes/workspace/Workspace.ts';
 const INTEGRATION = 'classes/integration/Integration.ts';
 const SEED = 'seed/seedWorkspace.ts';
 const PURGE = 'jobs/purge.ts';
+const DOC_CHECK = 'classes/dashboard/DocCheck.ts';
+const VALIDATE = 'builder/validate.ts';
+const CATALOG = 'builder/catalog.ts';
+const LINT = 'builder/lint.ts';
+const BLOCK = 'classes/dashboard/blocks/Block.ts';
+const ROW_BLOCK = 'classes/dashboard/blocks/RowBlock.ts';
+const FILTER_BLOCK = 'classes/dashboard/blocks/FilterBlock.ts';
+const ACTION_BLOCK = 'classes/dashboard/blocks/ActionBlock.ts';
+
+/** The steps of the document check, composed by DocCheck alone. */
+const DOCUMENT_STEPS = /\b(refusedInput|parseDraft|variableIssues|secretIssues|finalIssues)\b/;
+/** The per-block rules the base Block applies. */
+const BLOCK_RULES = /\b(vizIssues|queryRuleIssues|lintFields|lintText)\b/;
 
 /** Who may load each internal module at run time (besides tests). */
 const LOADERS: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -60,6 +78,12 @@ const GUARDED_NAMES: readonly { pattern: RegExp; allowed: ReadonlySet<string> }[
     pattern: /\bHistory\.of\b|\bHistoryTrail\b/,
     allowed: new Set([HISTORY, DASHBOARD, NEW_DASHBOARD, DRY_RUN]),
   },
+  // The document check: one composer (DocCheck), and each per-block rule applied by its class.
+  { pattern: DOCUMENT_STEPS, allowed: new Set([VALIDATE, DOC_CHECK]) },
+  { pattern: BLOCK_RULES, allowed: new Set([CATALOG, LINT, BLOCK]) },
+  { pattern: /\blintSourceLink\b/, allowed: new Set([LINT, ROW_BLOCK]) },
+  { pattern: /\bfilterVariableIssues\b/, allowed: new Set([CATALOG, FILTER_BLOCK]) },
+  { pattern: /\bactionNameIssues\b/, allowed: new Set([CATALOG, ACTION_BLOCK]) },
 ];
 
 /** The load gate, by name: History.of is how a trail is read and written. */
@@ -114,6 +138,11 @@ describe('the dashboard internals', () => {
     for (const file of [DASHBOARD, HISTORY, VIEW]) {
       assert.ok(names(file, /\blistWorkspaceIds\b/), file);
     }
+    assert.ok(names(DOC_CHECK, /\bparseDraft\b/) && names(DOC_CHECK, /\bsecretIssues\b/));
+    assert.ok(names(BLOCK, /\bvizIssues\b/) && names(BLOCK, /\blintText\b/));
+    assert.ok(names(ROW_BLOCK, /\blintSourceLink\b/));
+    assert.ok(names(FILTER_BLOCK, /\bfilterVariableIssues\b/));
+    assert.ok(names(ACTION_BLOCK, /\bactionNameIssues\b/));
   });
 
   it('only their legitimate callers load them, and the guarded names are named only there', () => {
@@ -175,6 +204,33 @@ export const go = (t: HistoryTrail<object>) => t;`,
       `controllers/trail.ts: names ${HISTORY_NAMES.source}`,
       `routes/private/smuggled.ts: names ${HISTORY_NAMES.source}`,
       `services/ids.ts: names ${/\blistWorkspaceIds\b/.source}`,
+    ]);
+  });
+
+  it('the document check has one composer: a write that validates by itself is caught', () => {
+    const tree = new Map(files);
+    tree.set(
+      'builder/ops.ts',
+      `${files.get('builder/ops.ts') ?? ''}
+import { parseDraft } from './validate.js';
+export const own = (draft: unknown) => parseDraft(draft);`,
+    );
+    tree.set(
+      DASHBOARD,
+      `${files.get(DASHBOARD) ?? ''}
+import { vizIssues } from '../../builder/catalog.js';
+export const own = vizIssues;`,
+    );
+    tree.set(
+      'classes/dashboard/blocks/ListBlock.ts',
+      `${files.get('classes/dashboard/blocks/ListBlock.ts') ?? ''}
+import { lintSourceLink } from '../../../builder/lint.js';
+export const own = lintSourceLink;`,
+    );
+    assert.deepEqual(violations(tree), [
+      `builder/ops.ts: names ${DOCUMENT_STEPS.source}`,
+      `classes/dashboard/Dashboard.ts: names ${BLOCK_RULES.source}`,
+      `classes/dashboard/blocks/ListBlock.ts: names ${/\blintSourceLink\b/.source}`,
     ]);
   });
 
