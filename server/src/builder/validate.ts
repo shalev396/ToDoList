@@ -1,10 +1,16 @@
 /**
- * Validation of a whole dashboard draft (BUILDER.md §8, layers 1–3): the schema (with the caps),
- * the catalog (viz per type, a query or a saved view on data blocks) and the compiler (whitelisted
- * fields, operators per field type, literal values), plus two safety rules:
- * - no variable name that reads like a credential or reaches a prototype (`token`, `constructor`);
- * - no secret-shaped text anywhere, so "dashboards never hold secrets" holds by construction and the
- *   response guard never trips on a dashboard.
+ * The document-level steps of a dashboard draft's validation (BUILDER.md §8, layers 1–3), pure.
+ * DocCheck (classes/dashboard/DocCheck.ts) composes them around the per-block check of the Block
+ * classes (the catalog and the compiler, block by block), in this order:
+ * 1. `refusedInput`, before any parsing: no `$`-key and no nesting too deep anywhere, then the
+ *    block cap; either stops the check;
+ * 2. `parseDraft`: the schema (with the caps); its issues stop the check;
+ * 3. the blocks (Block#check);
+ * 4. `variableIssues`: no variable name that reads like a credential or reaches a prototype
+ *    (`token`, `constructor`);
+ * 5. `secretIssues`: no secret-shaped text anywhere, so "dashboards never hold secrets" holds by
+ *    construction and the response guard never trips on a dashboard;
+ * 6. `finalIssues`: one issue per pointer, at most 50.
  *
  * Lint (layer 4: hard-coded text, source links, private fields) is lint.ts. Issues locate the
  * problem with a JSON pointer and never repeat the value.
@@ -16,8 +22,8 @@ import {
   type BlockType,
   type DashboardDraft,
 } from '../types/builder.js';
-import { checkBlock, isRestrictedName } from './catalog.js';
-import { assertSafeInput, compileQuery, type CompileContext } from './compile.js';
+import { isRestrictedName } from './catalog.js';
+import { assertSafeInput, type CompileContext } from './compile.js';
 import { QueryValidationError, toPointer, zodIssues } from './errors.js';
 
 export interface DraftIssue {
@@ -67,7 +73,7 @@ function pathToPointer(path: string): string {
   );
 }
 
-function unique(issues: DraftIssue[]): DraftIssue[] {
+function unique(issues: readonly DraftIssue[]): DraftIssue[] {
   const seen = new Set<string>();
   return issues.filter((issue) => {
     if (seen.has(issue.pointer)) return false;
@@ -76,35 +82,16 @@ function unique(issues: DraftIssue[]): DraftIssue[] {
   });
 }
 
-/** Catalog and compiler issues of every block, located in the draft. */
-function blockIssues(draft: DashboardDraft): DraftIssue[] {
-  const issues: DraftIssue[] = [];
-  draft.blocks.forEach((block, index) => {
-    const base = `/blocks/${String(index)}`;
-    for (const issue of checkBlock(block)) {
-      issues.push({ pointer: `${base}${issue.pointer}`, message: issue.message });
-    }
-    if (block.query === undefined) return;
-    try {
-      compileQuery(block.query, validationContext(block.type));
-    } catch (error) {
-      if (!(error instanceof QueryValidationError)) throw error;
-      issues.push({ pointer: `${base}/query${error.pointer}`, message: error.reason });
-    }
-  });
-  return issues;
-}
-
 /**
- * Checks a draft (stored, sent, or produced by ops): the parsed draft and every issue found (at
- * most 50). Schema issues stop the check: the later layers need a well-formed draft.
+ * The input refused before any parsing (null: go on): a `$`-key or nesting too deep anywhere, then
+ * more blocks than a page holds.
  */
-export function checkDraft(input: unknown): DraftCheck {
+export function refusedInput(input: unknown): DraftIssue | null {
   try {
     assertSafeInput(input);
   } catch (error) {
     if (!(error instanceof QueryValidationError)) throw error;
-    return { draft: null, issues: [{ pointer: error.pointer, message: error.reason }] };
+    return { pointer: error.pointer, message: error.reason };
   }
   // The block cap first: it reads better than the per-breakpoint layout limits it also breaks.
   if (
@@ -113,38 +100,46 @@ export function checkDraft(input: unknown): DraftCheck {
     input['blocks'].length > CAPS.maxPageBlocks
   ) {
     return {
-      draft: null,
-      issues: [
-        {
-          pointer: '/blocks',
-          message: `a page holds at most ${String(CAPS.maxPageBlocks)} blocks`,
-        },
-      ],
+      pointer: '/blocks',
+      message: `a page holds at most ${String(CAPS.maxPageBlocks)} blocks`,
     };
   }
+  return null;
+}
+
+/**
+ * The draft parsed by the schema (no issues), or null with the schema's issues (one per pointer, at
+ * most 50): they stop the check, as the later steps need a well-formed draft.
+ */
+export function parseDraft(input: unknown): DraftCheck {
   const parsed = DashboardDraftSchema.safeParse(input);
-  if (!parsed.success) {
-    const issues = zodIssues(parsed.error).map(({ pointer, reason }) => ({
-      pointer,
-      message: reason,
+  if (parsed.success) return { draft: parsed.data, issues: [] };
+  const issues = zodIssues(parsed.error).map(({ pointer, reason }) => ({
+    pointer,
+    message: reason,
+  }));
+  return { draft: null, issues: finalIssues(issues) };
+}
+
+/** Variable names that are reserved (they read like a credential or reach a prototype). */
+export function variableIssues(draft: DashboardDraft): DraftIssue[] {
+  return Object.keys(draft.vars)
+    .filter((name) => isRestrictedName(name))
+    .map((name) => ({
+      pointer: `/vars${toPointer([name])}`,
+      message: 'this variable name is reserved',
     }));
-    return { draft: null, issues: unique(issues).slice(0, MAX_ISSUES) };
-  }
-  const draft = parsed.data;
-  const issues = blockIssues(draft);
-  for (const name of Object.keys(draft.vars)) {
-    if (isRestrictedName(name)) {
-      issues.push({
-        pointer: `/vars${toPointer([name])}`,
-        message: 'this variable name is reserved',
-      });
-    }
-  }
-  for (const hit of findSecrets(draft)) {
-    issues.push({
-      pointer: pathToPointer(hit.path),
-      message: 'looks like a secret: dashboards never hold secrets',
-    });
-  }
-  return { draft, issues: unique(issues).slice(0, MAX_ISSUES) };
+}
+
+/** Every string anywhere in the draft that looks like a secret. */
+export function secretIssues(draft: DashboardDraft): DraftIssue[] {
+  return findSecrets(draft).map((hit) => ({
+    pointer: pathToPointer(hit.path),
+    message: 'looks like a secret: dashboards never hold secrets',
+  }));
+}
+
+/** The issues as a check answers them: the first one per pointer, at most 50. */
+export function finalIssues(issues: readonly DraftIssue[]): DraftIssue[] {
+  return unique(issues).slice(0, MAX_ISSUES);
 }

@@ -1,9 +1,9 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { DocCheck } from '../classes/dashboard/DocCheck.js';
 import type { Block, BlockType, DashboardDraft, Query, RuleGroup } from '../types/builder.js';
 import { OpValidationError } from './errors.js';
-import { lintDashboard } from './lint.js';
 import { BREAKPOINTS } from './ops.js';
 import {
   instantiateTemplate,
@@ -12,7 +12,6 @@ import {
   resolveTemplateKey,
   TEMPLATE_LANGUAGES,
 } from './templates.js';
-import { checkDraft } from './validate.js';
 
 const KEYS = [
   'dashboard@1',
@@ -96,9 +95,9 @@ describe('templates: every one', () => {
     for (const language of TEMPLATE_LANGUAGES) {
       it(`${key} (${language}) validates and lints clean in mcp mode`, () => {
         const draft = instantiateTemplate(key, { language });
-        const check = checkDraft(draft);
+        const check = DocCheck.instance.check(draft);
         assert.deepEqual(check.issues, []);
-        assert.deepEqual(lintDashboard(draft, 'mcp'), []);
+        assert.deepEqual(DocCheck.instance.lint(draft, 'mcp'), []);
       });
     }
 

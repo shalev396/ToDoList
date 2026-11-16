@@ -4,7 +4,6 @@ import assert from 'node:assert/strict';
 import { DocCheck } from '../classes/dashboard/DocCheck.js';
 import type { DashboardDraft } from '../types/builder.js';
 import { getPersona, listPersonas, personaTemplateKeys, resolvePersonaKey } from './personas.js';
-import { lintDashboard } from './lint.js';
 import { applyOps, newBlockId } from './ops.js';
 import { instantiateTemplate, localizeTemplate } from './templates.js';
 import {
@@ -60,7 +59,9 @@ describe('view templates', () => {
         const [view] = result.next.views ?? [];
         assert.equal(view?.templateKey, key);
         assert.equal(result.next.vars['topic'], 'topic-1', key);
-        const errors = lintDashboard(result.next, 'mcp').filter((f) => f.severity === 'error');
+        const errors = DocCheck.instance
+          .lint(result.next, 'mcp')
+          .filter((f) => f.severity === 'error');
         assert.deepEqual(errors, [], key);
       }
     }

@@ -13,37 +13,53 @@
  * takes one connector off a stored draft, which passed this check when it was written.
  *
  * What is checked, and at which level (docCheck.golden.test.ts pins the output: order, pointers,
- * messages):
+ * messages, key order). The document-level steps are the builder's pure ones (validate.ts); the
+ * per-block steps are the Block classes' (`Block.from(json)`, classes/dashboard/blocks/), each
+ * block's pointers put under `/blocks/<i>`.
  *
- * `check` (checkDraft: validation layers 1–3). Issues come in this order, deduplicated by pointer,
- * at most 50; the first one decides a write's 400.
- * 1. Document level, before any parsing: no `$`-key and no nesting past the limit anywhere
- *    (assertSafeInput), then the block cap (`/blocks`). Either stops the check with that one issue.
+ * `check` (validation layers 1–3). Issues come in this order, deduplicated by pointer, at most 50;
+ * the first one decides a write's 400.
+ * 1. Document level, before any parsing: no `$`-key and no nesting past the limit anywhere, then
+ *    the block cap (`/blocks`). Either stops the check with that one issue (refusedInput).
  * 2. Document level: the schema (DashboardDraftSchema): title, scope, vars, layouts, views,
  *    importance, and each block's shape as part of the document. Schema issues stop the check
- *    (the later layers need a well-formed document); they come in the schema's order.
- * 3. Per block, in block order: the catalog rules (checkBlock: the viz fits the type, a data block
- *    has a query or a saved view, filters set a variable, actions name their action), then the
- *    block's query compiled against the whitelist (`/blocks/<i>/query…`).
+ *    (the later layers need a well-formed document); they come in the schema's order (parseDraft).
+ * 3. Per block, in block order: `Block#check`, the template method: the type's catalog entry (the
+ *    viz fits the type, a data block has a query or a saved view, any other takes none), then the
+ *    type's own rules (a filter sets a variable, an action names its action), then the block's
+ *    query compiled against the whitelist (`/blocks/<i>/query…`).
  * 4. Document level: reserved variable names (`/vars/<name>`), then the secret scan over the whole
  *    document (any string that looks like a token, wherever it sits).
  *
- * `lint` (lintDashboard: validation layer 4) is per block, in block order, each block's issues in
- * the order fields (`private_field`), source link (`source_link_hidden`), text (`hardcoded_text`),
- * with the topic filters (`deleted_topic`) found among the fields. Its document-level inputs are
- * the mode (agents: mcp, where hard-coded text is an error) and the workspace's topic ids.
- *
- * Phase 6b replaces only the per-block parts (step 3 and the lint) with the Block class hierarchy
- * (`Block.from(json).check()`), keeping the document-level steps, the order above and every
- * pointer and message.
+ * `lint` (validation layer 4) is per block, in block order: `Block#lint`, the template method:
+ * fields (`private_field`, with the topic filters' `deleted_topic` among them), then a row
+ * block's source link (`source_link_hidden`), then text (`hardcoded_text`). Its document-level
+ * inputs are the mode (agents: mcp, where hard-coded text is an error) and the workspace's topic
+ * ids.
  */
 import { OpValidationError } from '../../builder/errors.js';
-import { lintDashboard, type LintIssue, type LintMode } from '../../builder/lint.js';
-import { checkDraft, type DraftCheck } from '../../builder/validate.js';
+import type { LintIssue, LintMode, LintScope } from '../../builder/lint.js';
+import {
+  finalIssues,
+  parseDraft,
+  refusedInput,
+  secretIssues,
+  variableIssues,
+  type DraftCheck,
+} from '../../builder/validate.js';
 import { AppError } from '../../errors/AppError.js';
 import type { DashboardDraft } from '../../types/builder.js';
 import type { DashboardValidation } from '../../types/dashboards.js';
+import { Block } from './blocks/index.js';
 import { issue, lintIssue } from './dashboardRules.js';
+
+/** One block's issues, their pointers put under the block's: `/blocks/<index>…`. */
+function underBlock<TIssue extends { pointer: string }>(
+  index: number,
+  issues: readonly TIssue[],
+): TIssue[] {
+  return issues.map((found) => ({ ...found, pointer: `/blocks/${String(index)}${found.pointer}` }));
+}
 
 export class DocCheck {
   static readonly instance = new DocCheck();
@@ -57,7 +73,17 @@ export class DocCheck {
    * variable and secret issue found, in the order above. Valid means no issues.
    */
   check(input: unknown): DraftCheck {
-    return checkDraft(input);
+    const refused = refusedInput(input);
+    if (refused !== null) return { draft: null, issues: [refused] };
+    const parsed = parseDraft(input);
+    const { draft } = parsed;
+    if (draft === null) return parsed;
+    const issues = [
+      ...draft.blocks.flatMap((json, index) => underBlock(index, Block.from(json).check())),
+      ...variableIssues(draft),
+      ...secretIssues(draft),
+    ];
+    return { draft, issues: finalIssues(issues) };
   }
 
   /**
@@ -65,7 +91,8 @@ export class DocCheck {
    * workspace's topics, for the deleted-page check (skipped without them).
    */
   lint(doc: DashboardDraft, mode: LintMode, topicIds?: ReadonlySet<string>): LintIssue[] {
-    return lintDashboard(doc, mode, topicIds);
+    const scope: LintScope = { mode, topicIds };
+    return doc.blocks.flatMap((json, index) => underBlock(index, Block.from(json).lint(scope)));
   }
 
   /**

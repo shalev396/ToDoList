@@ -1,5 +1,6 @@
 /**
- * Dashboard lint (BUILDER.md §8, validation layer 4). It runs after validation, on every write:
+ * Dashboard lint (BUILDER.md §8, validation layer 4), one block at a time. It runs after validation,
+ * on every write (DocCheck#lint, through the Block classes):
  * - `hardcoded_text`: any string in a block outside its title and a note block's note that is
  *   not data, structure or a value the catalog allows. A viz option must be one of its enum values
  *   or a catalog field path; anything else (a display-rule badge, a free-string viz option, a
@@ -25,7 +26,6 @@ import {
   VIZ_SCHEMAS,
   type Block,
   type BlockType,
-  type DashboardDraft,
   type Rule,
   type RuleGroup,
   VAR_REF_PATTERN,
@@ -51,17 +51,6 @@ export interface LintScope {
   /** Without them the deleted-page check is skipped. */
   topicIds?: ReadonlySet<string> | undefined;
 }
-
-/** Blocks that render item or container rows, each with its "Open in <provider>" link. */
-const ROW_BLOCKS: ReadonlySet<BlockType> = new Set([
-  'list',
-  'table',
-  'kanban',
-  'timeline',
-  'agenda',
-  'deadlines',
-  'calendar',
-]);
 
 /** Field paths that read like a credential (BUILDER.md §8, privacy rule). */
 const PRIVATE_FIELD = /credential|\benc\b|token|secret|password|api[-_]?key/i;
@@ -274,23 +263,12 @@ class Linter {
       }
     }
   }
-
-  block(block: Block, index: number): void {
-    const base = `/blocks/${String(index)}`;
-    this.fields(block, base);
-    if (ROW_BLOCKS.has(block.type)) {
-      for (const found of lintSourceLink(block)) {
-        this.issues.push({ ...found, pointer: `${base}${found.pointer}` });
-      }
-    }
-    this.text(block, base);
-  }
 }
 
 /*
  * One block's lint, rule by rule, its pointers relative to the block. The Block classes
  * (classes/dashboard/blocks/) run them in this order: fields, then the source link of a block that
- * renders rows, then text.
+ * renders rows (RowBlock), then text; DocCheck lints a document block by block.
  */
 
 /**
@@ -332,21 +310,5 @@ export function lintSourceLink(block: Block): LintIssue[] {
 export function lintText(block: Block, scope: LintScope): LintIssue[] {
   const linter = new Linter(scope.mode, scope.topicIds);
   linter.text(block, '');
-  return linter.issues;
-}
-
-/**
- * Lint issues of a (schema-valid) draft, in block order. Errors block the write. `topicIds`: the
- * workspace's topic ids; without them the deleted-page check is skipped.
- */
-export function lintDashboard(
-  draft: DashboardDraft,
-  mode: LintMode,
-  topicIds?: ReadonlySet<string>,
-): LintIssue[] {
-  const linter = new Linter(mode, topicIds);
-  draft.blocks.forEach((block, index) => {
-    linter.block(block, index);
-  });
   return linter.issues;
 }

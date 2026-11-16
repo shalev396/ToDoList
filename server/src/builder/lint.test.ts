@@ -8,8 +8,14 @@ import {
   type BlockType,
   type DashboardDraft,
 } from '../types/builder.js';
+import { DocCheck } from '../classes/dashboard/DocCheck.js';
 import { BLOCK_CATALOG } from './catalog.js';
-import { lintDashboard, type LintIssue } from './lint.js';
+import type { LintIssue, LintMode } from './lint.js';
+
+/** A draft's lint as every write lints it: DocCheck, block by block (the Block classes). */
+function lint(draft: DashboardDraft, mode: LintMode, topicIds?: ReadonlySet<string>): LintIssue[] {
+  return DocCheck.instance.lint(draft, mode, topicIds);
+}
 
 function draftOf(...blocks: Block[]): DashboardDraft {
   return {
@@ -35,10 +41,10 @@ function summary(issues: LintIssue[]): [string, string, string][] {
   return issues.map((issue) => [issue.code, issue.severity, issue.pointer]);
 }
 
-describe('lintDashboard: a clean dashboard', () => {
+describe('lint: a clean dashboard', () => {
   it('every catalog default lints clean in mcp mode', () => {
     const draft = draftOf(...BLOCK_TYPES.map((type, index) => blockOf(type, {}, index)));
-    assert.deepEqual(lintDashboard(draft, 'mcp'), []);
+    assert.deepEqual(lint(draft, 'mcp'), []);
   });
 
   it('free text in the title, block titles, note text and query values is allowed', () => {
@@ -54,7 +60,7 @@ describe('lintDashboard: a clean dashboard', () => {
         },
       }),
     );
-    assert.deepEqual(lintDashboard(draft, 'mcp'), []);
+    assert.deepEqual(lint(draft, 'mcp'), []);
   });
 
   it('viz values the catalog allows are not text: enums, literals, catalog field paths', () => {
@@ -67,11 +73,11 @@ describe('lintDashboard: a clean dashboard', () => {
       }),
       blockOf('filter', { viz: { kind: 'select', field: 'containerId' } }),
     );
-    assert.deepEqual(lintDashboard(draft, 'mcp'), []);
+    assert.deepEqual(lint(draft, 'mcp'), []);
   });
 });
 
-describe('lintDashboard: connectors', () => {
+describe('lint: connectors', () => {
   it('an integrationId in rule is data: no lint issue in mcp mode', () => {
     const block = blockOf('list', {
       query: {
@@ -83,7 +89,7 @@ describe('lintDashboard: connectors', () => {
         sort: [{ field: 'status', dir: 'asc' }],
       },
     });
-    assert.deepEqual(lintDashboard(draftOf(block), 'mcp'), []);
+    assert.deepEqual(lint(draftOf(block), 'mcp'), []);
   });
 
   it('a block’s connectors are structure, not text: no lint issue in either mode', () => {
@@ -91,12 +97,12 @@ describe('lintDashboard: connectors', () => {
       query: { source: 'items' },
       connectors: ['8f2c1a3e-0000-4000-8000-000000000001', 'local'],
     });
-    assert.deepEqual(lintDashboard(draftOf(block), 'mcp'), []);
-    assert.deepEqual(lintDashboard(draftOf(block), 'ui'), []);
+    assert.deepEqual(lint(draftOf(block), 'mcp'), []);
+    assert.deepEqual(lint(draftOf(block), 'ui'), []);
   });
 });
 
-describe('lintDashboard: hardcoded_text', () => {
+describe('lint: hardcoded_text', () => {
   const draft = draftOf(
     blockOf('filter', { viz: { kind: 'chips', field: 'Pick a project' } }),
     blockOf('table', { viz: { kind: 'table', columns: ['dueAt', 'Due soon'] } }),
@@ -104,7 +110,7 @@ describe('lintDashboard: hardcoded_text', () => {
   );
 
   it('is a warning in ui mode', () => {
-    assert.deepEqual(summary(lintDashboard(draft, 'ui')), [
+    assert.deepEqual(summary(lint(draft, 'ui')), [
       ['hardcoded_text', 'warning', '/blocks/0/viz/field'],
       ['hardcoded_text', 'warning', '/blocks/1/viz/columns/1'],
       ['hardcoded_text', 'warning', '/blocks/2/viz/emptyText'],
@@ -113,13 +119,13 @@ describe('lintDashboard: hardcoded_text', () => {
 
   it('is an error in mcp mode', () => {
     assert.deepEqual(
-      lintDashboard(draft, 'mcp').map((issue) => issue.severity),
+      lint(draft, 'mcp').map((issue) => issue.severity),
       ['error', 'error', 'error'],
     );
   });
 
   it('never repeats the text in its message', () => {
-    for (const issue of lintDashboard(draft, 'mcp')) {
+    for (const issue of lint(draft, 'mcp')) {
       for (const text of ['Pick a project', 'Due soon', 'Nothing open']) {
         assert.ok(!issue.message.includes(text), issue.message);
       }
@@ -127,7 +133,7 @@ describe('lintDashboard: hardcoded_text', () => {
   });
 });
 
-describe('lintDashboard: hardcoded_text covers every string outside the title and the note', () => {
+describe('lint: hardcoded_text covers every string outside the title and the note', () => {
   it('an i18n key is lowercase-first letters, digits, _ and . (e.g. count, badge.overdue)', () => {
     for (const key of ['count', 'late', 'badge.overdue', 'chart.empty_state', 'a1']) {
       assert.ok(I18N_KEY_PATTERN.test(key), key);
@@ -145,15 +151,15 @@ describe('lintDashboard: hardcoded_text covers every string outside the title an
         }),
       );
     for (const key of ['count', 'badge.overdue']) {
-      assert.deepEqual(lintDashboard(badge(key), 'mcp'), [], key);
+      assert.deepEqual(lint(badge(key), 'mcp'), [], key);
     }
-    assert.deepEqual(summary(lintDashboard(badge('Late!'), 'ui')), [
+    assert.deepEqual(summary(lint(badge('Late!'), 'ui')), [
       ['hardcoded_text', 'warning', '/blocks/0/rules/0/then/badge'],
     ]);
-    assert.deepEqual(summary(lintDashboard(badge('Late!'), 'mcp')), [
+    assert.deepEqual(summary(lint(badge('Late!'), 'mcp')), [
       ['hardcoded_text', 'error', '/blocks/0/rules/0/then/badge'],
     ]);
-    assert.ok(!(lintDashboard(badge('Late!'), 'mcp')[0]?.message ?? '').includes('Late!'));
+    assert.ok(!(lint(badge('Late!'), 'mcp')[0]?.message ?? '').includes('Late!'));
   });
 
   it('a free-string viz option must be an i18n key; enum and field-path options keep their rules', () => {
@@ -163,7 +169,7 @@ describe('lintDashboard: hardcoded_text covers every string outside the title an
       blockOf('filter', { viz: { kind: 'chips', field: 'myfield' } }),
       blockOf('chart', { viz: { kind: 'donut', emptyText: 'Nothing open' } }),
     );
-    assert.deepEqual(summary(lintDashboard(draft, 'mcp')), [
+    assert.deepEqual(summary(lint(draft, 'mcp')), [
       // An enum option takes one of its values, i18n-shaped or not.
       ['hardcoded_text', 'error', '/blocks/1/viz/legend'],
       // A field-path option names a catalog field.
@@ -184,13 +190,13 @@ describe('lintDashboard: hardcoded_text covers every string outside the title an
       }),
       subtitle: 'Hello world',
     } as unknown as Block;
-    assert.deepEqual(summary(lintDashboard(draftOf(extra), 'ui')), [
+    assert.deepEqual(summary(lint(draftOf(extra), 'ui')), [
       ['hardcoded_text', 'warning', '/blocks/0/subtitle'],
     ]);
   });
 });
 
-describe('lintDashboard: source_link_hidden', () => {
+describe('lint: source_link_hidden', () => {
   it('flags row blocks whose viz turns the source link off, in both modes', () => {
     const draft = draftOf(
       blockOf('list', { viz: { kind: 'list', showSource: false } }),
@@ -203,7 +209,7 @@ describe('lintDashboard: source_link_hidden', () => {
     );
     for (const mode of ['ui', 'mcp'] as const) {
       assert.deepEqual(
-        summary(lintDashboard(draft, mode).filter((issue) => issue.code === 'source_link_hidden')),
+        summary(lint(draft, mode).filter((issue) => issue.code === 'source_link_hidden')),
         [
           ['source_link_hidden', 'error', '/blocks/0/viz/showSource'],
           ['source_link_hidden', 'error', '/blocks/1/viz/hideSourceLink'],
@@ -219,12 +225,12 @@ describe('lintDashboard: source_link_hidden', () => {
     for (const type of ['list', 'table', 'kanban', 'deadlines', 'calendar'] as const) {
       const block = blockOf(type);
       const draft = draftOf({ ...block, viz: { ...block.viz, showSource: false } });
-      assert.equal(lintDashboard(draft, 'ui')[0]?.code, 'source_link_hidden', type);
+      assert.equal(lint(draft, 'ui')[0]?.code, 'source_link_hidden', type);
     }
   });
 });
 
-describe('lintDashboard: private_field', () => {
+describe('lint: private_field', () => {
   it('flags credential-shaped field paths anywhere in a query, in both modes', () => {
     const draft = draftOf(
       blockOf('list', {
@@ -260,7 +266,7 @@ describe('lintDashboard: private_field', () => {
     );
     for (const mode of ['ui', 'mcp'] as const) {
       assert.deepEqual(
-        summary(lintDashboard(draft, mode)),
+        summary(lint(draft, mode)),
         [
           ['private_field', 'error', '/blocks/0/query/where/rules/0/field'],
           ['private_field', 'error', '/blocks/0/query/where/rules/1/rules/1/field'],
@@ -276,7 +282,7 @@ describe('lintDashboard: private_field', () => {
   });
 });
 
-describe('lintDashboard: a filter that names a deleted page (H4)', () => {
+describe('lint: a filter that names a deleted page (H4)', () => {
   const alive = new Set(['t-work', 't-college']);
   const listWith = (rules: unknown[], extra: Partial<Block> = {}): Block =>
     blockOf('list', {
@@ -287,7 +293,7 @@ describe('lintDashboard: a filter that names a deleted page (H4)', () => {
   it('warns, in both modes, on a topic id the workspace no longer has', () => {
     const draft = draftOf(listWith([{ field: 'topic', operator: '=', value: 't-gone' }]));
     for (const mode of ['ui', 'mcp'] as const) {
-      const found = lintDashboard(draft, mode, alive);
+      const found = lint(draft, mode, alive);
       assert.deepEqual(summary(found), [
         ['deleted_topic', 'warning', '/blocks/0/query/where/rules/0/value'],
       ]);
@@ -303,7 +309,7 @@ describe('lintDashboard: a filter that names a deleted page (H4)', () => {
         ],
       }),
     );
-    assert.deepEqual(summary(lintDashboard(draft, 'ui', alive)), [
+    assert.deepEqual(summary(lint(draft, 'ui', alive)), [
       ['deleted_topic', 'warning', '/blocks/0/query/where/rules/0/value'],
       ['deleted_topic', 'warning', '/blocks/0/rules/0/if/value'],
     ]);
@@ -318,8 +324,8 @@ describe('lintDashboard: a filter that names a deleted page (H4)', () => {
         { field: 'title', operator: '=', value: 't-gone' },
       ]),
     );
-    assert.deepEqual(lintDashboard(draft, 'mcp', alive), []);
+    assert.deepEqual(lint(draft, 'mcp', alive), []);
     const gone = draftOf(listWith([{ field: 'topic', operator: '=', value: 't-gone' }]));
-    assert.deepEqual(lintDashboard(gone, 'mcp'), []);
+    assert.deepEqual(lint(gone, 'mcp'), []);
   });
 });

@@ -489,16 +489,6 @@ export function actionNameIssues(block: Block): CatalogIssue[] {
     : [];
 }
 
-/** Every catalog rule of the block's type, in the order above. */
-export function checkBlock(block: Block): CatalogIssue[] {
-  return [
-    ...vizIssues(block),
-    ...queryRuleIssues(block),
-    ...(block.type === 'filter' ? filterVariableIssues(block) : []),
-    ...(block.type === 'action' ? actionNameIssues(block) : []),
-  ];
-}
-
 // ─── describeCatalog() ──────────────────────────────────────────────────────
 
 function jsonSchema(schema: z.ZodType): JsonSchema {

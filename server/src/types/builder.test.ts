@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { Ajv2020 } from 'ajv/dist/2020.js';
 import { z } from 'zod';
 
-import { BLOCK_CATALOG, checkBlock, describeCatalog } from '../builder/catalog.js';
+import { BLOCK_CATALOG, describeCatalog } from '../builder/catalog.js';
+import { Block as BlockClass } from '../classes/dashboard/blocks/index.js';
 import {
   BLOCK_TYPES,
   BlockSchema,
@@ -74,7 +75,7 @@ describe('block catalog defaults', () => {
       const block = defaultBlock(type);
       const parsed = BlockSchema.safeParse(block);
       assert.ok(parsed.success, JSON.stringify(parsed.error?.issues));
-      assert.deepEqual(checkBlock(parsed.data), []);
+      assert.deepEqual(BlockClass.from(parsed.data).check(), []);
       assert.ok(BLOCK_CATALOG[type].allowedViz.includes(String(block.viz['kind'])));
       assert.equal(block.query !== undefined, BLOCK_CATALOG[type].requiredQuery);
     });
@@ -115,21 +116,25 @@ describe('block catalog defaults', () => {
     assert.equal(VIZ_SCHEMAS.list.safeParse({ kind: 'list', linkTo: 'elsewhere' }).success, false);
   });
 
-  it('checkBlock reports a missing query, a wrong viz kind and a filter without sets', () => {
+  it('a block’s check reports a missing query, a wrong viz kind and a filter without sets', () => {
     const table = defaultBlock('table');
     delete table.query;
     assert.deepEqual(
-      checkBlock(table).map((issue) => issue.pointer),
+      BlockClass.from(table)
+        .check()
+        .map((issue) => issue.pointer),
       ['/query'],
     );
     const viaSavedView: Block = { ...table, savedViewId: 'v-1' };
-    assert.deepEqual(checkBlock(viaSavedView), []);
+    assert.deepEqual(BlockClass.from(viaSavedView).check(), []);
     const wrongViz: Block = { ...defaultBlock('chart'), viz: { kind: 'calendar', view: 'week' } };
-    assert.equal(checkBlock(wrongViz)[0]?.pointer, '/viz/kind');
+    assert.equal(BlockClass.from(wrongViz).check()[0]?.pointer, '/viz/kind');
     const filter = defaultBlock('filter');
     delete filter.sets;
     assert.deepEqual(
-      checkBlock(filter).map((issue) => issue.pointer),
+      BlockClass.from(filter)
+        .check()
+        .map((issue) => issue.pointer),
       ['/sets'],
     );
   });
