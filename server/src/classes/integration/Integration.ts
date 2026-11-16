@@ -267,10 +267,9 @@ export abstract class Integration<
   /**
    * What each connectable provider can do and how it connects, read from its class: its
    * definition (auth methods, picker, revoke page, the write scopes its OAuth grant needs, coming
-   * soon, the fields a write-back sends) and
-   * the contracts its class implements (ResourcePicker, Revocable, CreateFunnel, TaskProvider or
-   * CalendarProvider for a write-back). In the order of CONNECTABLE_PROVIDERS. The registry
-   * reads them (IntegrationRegistry#capabilities).
+   * soon, the fields a write-back sends) and the contracts its class implements (ResourcePicker,
+   * Revocable, CreateFunnel, TaskProvider or CalendarProvider for a write-back). In the order of
+   * CONNECTABLE_PROVIDERS. The registry reads them (IntegrationRegistry#capabilities).
    */
   static capabilitiesOf(): ProviderCapabilities[] {
     return IntegrationRegistry.instance.capabilities();
