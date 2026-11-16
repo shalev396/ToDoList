@@ -4,8 +4,8 @@
 
 Data model for Shalev's personal management dashboard, built on [shalev396/Elytra](https://github.com/shalev396/Elytra), with MongoDB added through Elytra's existing Mongoose path.
 
-> Status: design only. Nothing has been created, migrated or deployed.
-> Based on Elytra `main` @ `e382dc5` (2026-10-09 20:51 Asia/Jerusalem), read only.
+> Status: built and deployed (the OOP redesign finished in phase 7, 2026-11-16). This page describes the collections as the code stores them: every field and index below exists in `server/src/models`, and only a class (`server/src/classes/`) reads or writes a collection (see [CLASSES.md](../design/CLASSES.md)). The text still follows the original Elytra design in places; where a later decision changed it, this page says so, and `REPORT.md` "Spec deltas" has the history.
+> Based on Elytra `main` @ `e382dc5` (2026-10-09 20:51 Asia/Jerusalem).
 
 ---
 
@@ -42,11 +42,11 @@ How the rule is enforced, with several independent layers (details in §7):
 
 ## 2. Overview
 
-- **One-way mirror.** Providers are the sources of truth: Google Calendar for events, Jira and ClickUp for work, Linear for personal, Moodle for college. Every provider flows **one way into the app**: the dashboard reads and upserts and never writes provider data back.
-- **The one sanctioned exception:** two-way sync with the user's **Google Calendar** through Google OAuth. Pushes, Google-side edits and deletes are tracked in `CalendarLinks`, and every write to Google is recorded in `AuditLogs` (`action: "gcal.write"`). Nothing else is ever written to a provider.
-- **Optional sources (read-only):** GitHub (issues/PRs), Notion (legacy, optional import of to-dos only). **Slack is out of scope for the app**: AI agents use Slack through their own Slack MCP; the `slack` enum value is reserved only.
+- **Mirror first, write-back on request.** Providers are the sources of truth: Google Calendar for events, Jira, ClickUp, GitHub and Linear for work. Every provider flows **into the app** (the sync reads and upserts). Every connection starts `read`: while it is, nothing is ever sent to the provider (the read-only gate, DECISIONS D31). Its owner can switch it to `read_write`; then the item sheet writes a mirrored item's provider fields back (title, status, due date, priority, per provider's `writableFields`), a to-do can be copied to the provider, and the workspace's primary calendar receives the push. The rest of a mirrored item (note, pin, topic, planned date, overrides for fields the provider lacks) stays in TodoList in `overlay.*`.
+- **Google Calendar's two-way sync.** Pushes, Google-side edits and deletes are tracked in `CalendarLinks`, and every write to Google is recorded in `AuditLogs`. One calendar per workspace is the **primary calendar** (`Workspaces.settings.primaryCalendar`); the push rule is fixed (every dated item its owner may see).
+- **Optional sources:** Moodle is listed but coming soon (it cannot be connected yet). Notion (legacy import) and **Slack** (AI agents use Slack through their own Slack MCP) are not connectable; their enum values are reserved only.
 - **Local items.** Items created in the dashboard (`source.provider = "local"`) are fully editable. They are the only items the dashboard owns.
-- **Areas.** Every item and container has an `area` of `work` | `college` | `personal`. The integration sets the default (Jira/ClickUp → work, Moodle → college, Linear → personal). A container rule overrides it: projects whose name or key includes `shalev396` → personal.
+- **Topics.** Every item, container, integration and dashboard page belongs to a **topic** (`topicId`, or `null` = Unsorted): a workspace document with a free-text name and a slug (`Topics`, §3.18). Work, College and Personal are the default topics. Rules in `settings.topicRules` file a container under a topic (the first match wins). This replaced the three fixed `area` values (migration `2026-11-13-introduce-topics`).
 
 ```mermaid
 erDiagram
@@ -58,6 +58,7 @@ erDiagram
   Integrations ||--|| Credentials : "secret (1:1)"
   Integrations ||--o{ SyncStates : "cursor per resource"
   Integrations ||--o{ SyncRuns : logs
+  Workspaces ||--o{ Topics : "pages (dynamic)"
   Workspaces ||--o{ Containers : groups
   Integrations ||--o{ Containers : mirrors
   Containers ||--o{ Items : contains
@@ -67,7 +68,9 @@ erDiagram
   Workspaces ||--o{ Dashboards : has
   Dashboards ||--o{ DashboardVersions : "history"
   Workspaces ||--o{ Views : "saved query+viz"
-  Workspaces ||--o{ AgentKeys : "MCP keys (hashed)"
+  Workspaces ||--o{ AgentKeys : "MCP keys and sign-in grants (hashed)"
+  McpClients ||--o{ AgentKeys : "OAuth clients (clientId)"
+  McpClients ||--o{ McpAuthRequests : "sign-ins in flight"
   AgentKeys ||--o{ AuditLogs : "actorAgentId"
   Integrations ||--o{ CalendarLinks : "item <-> Google event"
   Items ||--o| CalendarLinks : projected
@@ -91,8 +94,11 @@ Reused from Elytra. We add one optional field: `defaultWorkspaceId: string | nul
 | `ownerId` | string → Users | Creator. Always has an `owner` membership. |
 | `settings.timezone` | string | `Asia/Jerusalem`. |
 | `settings.weekStart` | `sun`/`mon` | `sun` (Sun–Thu work week). |
-| `settings.areas` | string[] | `["work","college","personal"]`. |
-| `settings.areaRules` | `{match, area}[]` | e.g. `{ match: "shalev396/*", area: "personal" }`. |
+| `settings.topicRules` | `{match, topicId}[]` | e.g. `{ match: "shalev396/*", topicId: <the Personal topic's id> }`; the first match wins. Replaced `areas` and `areaRules`. |
+| `settings.allowAgentPublish` | boolean \| absent | Whether agent keys with `builder:publish` may publish. Off unless an owner turns it on. |
+| `settings.attributes` | `AttributeDef[]` | Custom attribute definitions, the built-in Importance first (changed only through the repository's attribute methods). |
+| `settings.primaryCalendar` | `{integrationId, calendarId}` \| null | Where the workspace's dated items are pushed: a Google Calendar integration of the workspace owner (read_write), and the calendar. null/absent: none; suspended when the integration goes read-only or is disconnected. |
+| `joinLink` | subdoc \| absent | The workspace's join link: only the token's hash is indexed, and the sealed token is stored (`JoinLink` class). |
 | `deletedAt` | Date \| null | Soft delete. |
 
 On a user's first login, a personal workspace and an `owner` membership are created. A user can belong to several workspaces: their own, plus any shared with them.
@@ -100,23 +106,24 @@ On a user's first login, a personal workspace and an `owner` membership are crea
 ### 3.3 `Memberships` (roles, sharing between two people)
 ```json
 { "_id": "8c1e…", "workspaceId": "w-1…", "userId": "u-2…", "role": "viewer",
-  "areaScope": ["college"], "invitedBy": "u-1…", "status": "active", "createdAt": "…" }
+  "invitedBy": "u-1…", "status": "active", "createdAt": "…" }
 ```
 | Field | Type | Notes |
 |---|---|---|
 | `workspaceId`, `userId` | string | Unique together. |
-| `role` | `owner` \| `editor` \| `viewer` | owner: everything, including integrations and credentials. editor: local items, notes and container mapping. viewer: read only. |
-| `areaScope` | string[] \| null | Optional. Limits what a member sees, e.g. share only `college` with a study partner. |
+| `role` | `owner` \| `editor` \| `viewer` | owner: manages the workspace, its members, topics and dashboards' publishing. editor: local items, notes, their own integrations, dashboards. viewer: read only. Nobody sees another member's credentials, whatever the role. |
 | `status` | `active` \| `revoked` | |
 
-**Invite flow** (`Invites` collection): the owner creates `{workspaceId, email, role, areaScope, tokenHash, expiresAt (7d), status}`. The invite link carries the raw token once, and only its SHA-256 hash is stored. The invitee signs in through Cognito, `POST /invites/:token/accept` checks the hash, expiry and that the email matches, and creates the membership. A TTL index removes expired invites. **No member, owner included, can ever read another member's credentials** (§0). Shared members see mirrored items, never tokens.
+`areaScope` (limiting a member to some areas) is gone: everyone sees the whole workspace (migration `2026-11-13-drop-area-scope`; PERMISSIONS-V2 migration point 17).
+
+**Invite flow** (`Invites` collection): the owner creates `{workspaceId, email, role, tokenHash, expiresAt (7d), status}`. The invite link carries the raw token once, and only its SHA-256 hash is stored. The invitee signs in through Cognito, `POST /invites/:token/accept` checks the hash, expiry and that the email matches, and creates the membership. A TTL index removes expired invites. **No member, owner included, can ever read another member's credentials** (§0). Shared members see mirrored items, never tokens.
 
 ### 3.4 `Integrations` (many-to-one connections)
 There can be many per workspace, and several accounts per provider (for example, two Jira sites or two Google accounts).
 ```json
 { "_id": "i-jira-1", "workspaceId": "w-1", "connectedBy": "u-1", "ownerUserId": "u-1",
   "provider": "jira", "accountId": "autods.atlassian.net", "label": "AutoDS Jira",
-  "authMethod": "api_token_basic", "area": "work", "mode": "read",
+  "authMethod": "api_token_basic", "topicId": "<topic id>", "mode": "read",
   "config": { "baseUrl": "https://<site>.atlassian.net", "jql": "assignee = currentUser() AND statusCategory != Done" },
   "credentialId": "c-9…", "status": "active", "expiresAt": "2027-11-01T00:00:00Z",
   "lastSyncAt": "…", "lastError": null, "deletedAt": null }
@@ -124,10 +131,11 @@ There can be many per workspace, and several accounts per provider (for example,
 | Field | Type | Notes |
 |---|---|---|
 | `ownerUserId` | string → Users | PERMISSIONS-V2: the member it belongs to (set from `connectedBy`). Only they see its details and manage it; other members see its items only once it is a connector on some block. |
-| `provider` | enum | `google_calendar` `jira` `clickup` `linear` `moodle` `slack` `github` `notion` `local`. |
+| `topicId` | string \| null | The topic the integration's items default to; null = Unsorted. |
+| `provider` | enum | `google_calendar` `jira` `clickup` `linear` `moodle` `slack` `github` `notion` `local` (connectable: Jira, ClickUp, Linear, GitHub, Google Calendar; Moodle is coming soon). |
 | `accountId` | string | Stable account key on the provider side: Jira site host, ClickUp team id, Linear org id, Moodle site URL + userid, Google email, Slack team id, GitHub login, Notion workspace id. |
 | `authMethod` | enum | See §8. |
-| `mode` | `read` \| `read_write` | Defaults to `read`. Work providers are pinned to `read`. |
+| `mode` | `read` \| `read_write` | Defaults to `read` for every provider; only the integration's owner switches it (audited as `integration.mode`). While `read`, nothing is written to the provider. Demo data never becomes `read_write`. |
 | `config` | object | Non-secret settings only: base URL, filters, calendar ids, list ids. |
 | `credentialId` | string → Credentials | Never populated into API output. |
 | `status` | `active` `expiring` `expired` `error` `paused` | Internal. `expiring` when fewer than 14 days remain before `expiresAt`. The API/UI/MCP expose only `connected` (active/expiring) \| `expired` \| `error` (error/paused), §7. |
@@ -145,15 +153,14 @@ Unique on `(workspaceId, ownerUserId, provider, accountId)` among live ones: two
 ```
 - The whole `enc` field has `select: false`. `ciphertext` holds a JSON blob of every secret the provider needs (Jira `{email, token}`). App-level OAuth client secrets are the exception: they live in Secrets Manager.
 - There is **no `hint` field** (no last-4, no prefix). `aad` binds the ciphertext to its workspace, integration and provider, so a ciphertext copied into another document fails to decrypt.
-- Only one function can read it:
-  - `CredentialVault.decryptForSync(integrationId)`: outbound provider calls (sync jobs, "test connection", calendar pushes).
-  - The plaintext lives in memory for the duration of the call and is never cached across invocations. A unit test fails if any other module imports the vault.
+- Only one class can read it: `Credential` (`classes/integration/Credential.ts`, the one encrypt and the one decrypt path), reached only through an `Integration`'s read and write sessions (outbound provider calls: sync jobs, "test connection", calendar pushes, write-back).
+  - The plaintext lives in memory for the duration of the call and is never cached across invocations. `vaultImports.test.ts` fails if any other module imports `Credential`, the sync's secret door or the repository.
 
 ### 3.6 `Items` (one polymorphic collection)
 To-dos, issues, tasks, events, assignments, deadlines, files and messages all share one collection, so the donut, deadlines and calendar views can each run as a single query.
 ```json
 { "_id": "it-…", "workspaceId": "w-1", "integrationId": "i-jira-1", "containerId": "ct-…",
-  "kind": "issue", "area": "work", "title": "Fix order sync retry", "bodyPreview": "…(≤500 chars)",
+  "kind": "issue", "topicId": "<topic id>", "title": "Fix order sync retry", "bodyPreview": "…(≤500 chars)",
   "status": "open", "statusRaw": "In Progress", "priority": 2,
   "startAt": null, "dueAt": "2026-11-15T21:59:00Z", "endAt": null, "allDay": false,
   "assignees": ["me"], "labels": ["backend"], "parentId": null,
@@ -165,14 +172,17 @@ To-dos, issues, tasks, events, assignments, deadlines, files and messages all sh
 ```
 | Core field | Type | Notes |
 |---|---|---|
-| `kind` | enum | `todo` `issue` `task` `event` `assignment` `deadline` `file` `message` `pr`. |
-| `area` | enum | Inherited from the container or integration. Can be overridden. |
+| `kind` | enum | `todo` `issue` `task` `event` `assignment` `deadline` `message` `pr` (`file` is gone with Google Drive). |
+| `topicId` | string \| null | The topic: inherited from the container (a topic rule) or the integration; null = Unsorted. A member can file an item elsewhere for themselves with `overlay.topicOverride`. |
+| `ownerUserId` | string | Local items: the member who made it. |
+| `syncResource` | string \| null | Which of the integration's resources last saw it (the per-resource deletion sweep). |
 | `title`, `bodyPreview` | string | Short preview only. The full body stays at the source, and the UI's "Open in <provider>" button uses `source.url`. |
 | `status` | `open` `in_progress` `done` `cancelled` | Normalized. `statusRaw` keeps the provider's own value. |
 | `startAt` / `dueAt` / `endAt` | Date (UTC) | Events use start/end. Tasks and assignments use `dueAt`. |
 | `source` | subdoc | `{provider, accountId, externalId, key?, url, updatedAtSource, etag?, hash}`. For local items, `provider: "local"` and `externalId` = `_id`. |
 | `props` | subdoc | Per-provider or per-kind fields (below). |
 | `visibility` | `workspace` \| `private` | Optional. `private` items are visible only to `ownerUserId`. |
+| `overlay` | subdoc | User-only fields the sync never touches: `pinned`, `note`, `hidden`, `topicOverride`, `calendarSync`, `plannedAt` (`YYYY-MM-DD` or `YYYY-MM-DDTHH:mm`, workspace local time; pushed to the primary calendar, never to a provider), `editedAt`, `attrs` (custom attribute values), `overrides` (local stand-ins for provider fields the provider lacks or a read-only integration cannot write: title, status, dueAt, allDay, startAt, priority; a null clears one; effective value = `override ?? source`), and the H5 copy fields `copyOf`, `copyOfOwner`, `copyOfShared`. |
 | `closedAt`, `deletedAt`, `lastSeenAt` | Date | See §4. |
 
 **`props` per kind or provider (examples):**
@@ -194,7 +204,8 @@ To-dos, issues, tasks, events, assignments, deadlines, files and messages all sh
 ### 3.7 `Containers` (projects, courses, lists, calendars, folders)
 | Field | Notes |
 |---|---|
-| `workspaceId`, `integrationId`, `area` | |
+| `workspaceId`, `integrationId`, `topicId` | `topicId` null = Unsorted (a topic rule or the integration's topic sets it). |
+| `syncResource` | The resource that last saw it (per-resource sweep). |
 | `type` | `project` `course` `list` `calendar` `folder` `repo`. |
 | `name`, `parentId`, `path[]` | Tree for Moodle sections. |
 | `source` | Same shape as items. Unique the same way. |
@@ -214,14 +225,14 @@ Unique on `(integrationId, resource)`. Example cursors: Google Calendar uses `sy
 ### 3.11 `Dashboards` (builder output; schema owned by BUILDER.md)
 ```json
 { "_id": "d-…", "workspaceId": "w-1", "ownerUserId": "u-1",
-  "scope": { "area": "college", "containerId": null }, "title": "College",
+  "scope": { "topicId": "<topic id>", "containerId": null }, "title": "College",
   "templateKey": "college@1", "visibility": "workspace",
   "vars": { "range": "this_week", "course": null },
   "layouts": { "lg": [{ "i": "blk_cal", "x": 0, "y": 0, "w": 8, "h": 10 }], "md": [], "sm": [] },
   "blocks": [ /* FRONTEND.md §4 block JSON */ ],
   "version": 12, "publishedVersion": 11, "updatedBy": { "userId": "u-1", "agentId": null }, "deletedAt": null }
 ```
-- `scope.area: null` = the main dashboard. `title` (and block titles) are the only free text.
+- `scope.topicId: null` = the main dashboard. `title` (and block titles) are the only free text.
 - `version` is bumped on every write (optimistic concurrency via `expectedVersion`). `publishedVersion` is what the UI shows to non-editors.
 
 ### 3.12 `DashboardVersions` (history, undo)
@@ -231,7 +242,9 @@ Unique on `(integrationId, resource)`. Example cursors: Google Calendar uses `sy
 `{workspaceId, ownerUserId, title, query (FRONTEND.md §4 query JSON), viz, visibility}`. A block references one through `savedViewId`. `POST /workspaces/:wid/query` accepts its id (BACKEND.md §4).
 
 ### 3.14 `AgentKeys` (MCP agent credentials, hashed)
-`{workspaceId, userId, name, keyHash (SHA-256 of the raw key), prefix ("elk_" + 4 chars, for the key list only), scopes[], expiresAt, lastUsedAt, revokedAt}`. The raw key (`elk_…`) is shown **once** at creation, exactly like `Invites.tokenHash`; it is never stored or returned again. These are keys *we* issue to agents, not provider tokens, so they are hashed (not encrypted) and never decryptable. Effective rights = key scopes ∩ the user's membership role (MCP.md §4).
+`{workspaceId, userId, name, kind: "key" | "oauth", keyHash (SHA-256 of the raw key or of a grant's current access token), prefix ("elk_" + 4 chars, for the key list only), scopes[], expiresAt, lastUsedAt, revokedAt}`. The raw key (`elk_…`) is shown **once** at creation, exactly like `Invites.tokenHash`; it is never stored or returned again. These are keys *we* issue to agents, not provider tokens, so they are hashed (not encrypted) and never decryptable. Effective rights = key scopes ∩ the user's membership role (MCP.md §4). Any member makes keys for themselves, up to a cap per user; an owner lists and revokes everyone's.
+
+A **sign-in grant** (`kind: "oauth"`) is the same row made by an MCP OAuth client with the member's consent (MCP.md §4): `clientId`, `clientName`, `resource` (the audience), `accessExpiresAt` (an hour; the access token is `elo_…`), `refreshHash` and `refreshExpiresAt` (the refresh token `elr_…`, 90 days from its last use), `prevRefreshHash`, `prevRotatedAt` and `altRefreshHash` (the token a refresh replaced still works for 30 seconds; shown later it is a leak and the grant is revoked), `refreshAuditedAt`, `sourceRequestId` (the authorization request that made it, to revoke a grant whose code was used twice), and `expiresAt` as the hard cap (365 days). Only hashes are stored, never a token.
 
 ### 3.15 `CalendarLinks` (two-way Google Calendar mapping)
 `{workspaceId, integrationId, calendarId, googleEventId, itemId, direction: "to_google" | "from_google", lastEtag, lastGoogleUpdated, lastItemUpdatedAt, pushedHash, tombstonedAt, deletedBy: "google" | "dashboard" | "google_kept" | null, deleteAnsweredAt}`. A `dashboard` tombstone is TodoList's claim on the event, taken before its DELETE is sent; `deleteAnsweredAt` is when Google answered that DELETE (or a read showed it made), null while it stands unanswered; `lastSweptAt` is the stuck-claim sweep's own stamp (set on each attempt, null until the first), what it sorts by, so a claim whose read keeps failing goes to the back. A move's create half re-points the item's one link, so a move's claim is erased by it and its old event, if the DELETE half got no answer or a 429, stays in Google untracked. A `dashboard` tombstone stored without the field (before it existed) reads as answered at its `tombstonedAt`; the `2026-11-15-calendar-link-delete-answered` migration stores that. One doc per item projected to (or mirrored from) the personal calendar. Used for diffing, echo detection (`lastEtag`) and tombstones: kept (nothing purges them); the push ignores one after 30 days, a `google_kept` one never.
@@ -244,6 +257,18 @@ Unique on `(integrationId, resource)`. Example cursors: Google Calendar uses `sy
 
 `Items` also carry, for H5: `copies[]` (`{integrationId, provider, externalId, key, url, status: pending|created|failed|unknown, requestId, at}`) on a local to-do, and `overlay.copyOf` / `copyOfOwner` / `copyOfShared` on its mirrored provider copy (the absorption rule, `copyAbsorptionFilter`).
 
+### 3.18 `Topics` (the workspace's pages)
+`{workspaceId, name (free text), slug (standardized, unique per workspace), icon, colour, order, createdBy}` (`_id` is a UUID; the three default topics have stable derived ids). Items, containers, integrations, topic rules and topic dashboards point at one by id. Deleting a topic deletes its pages, views, layout and filters only; its items, containers and integrations get `topicId: null` (Unsorted). Topics are **hard deleted** with their workspace (the cascade's topics step, and the purge's orphan sweep).
+
+### 3.19 `McpClients` (MCP OAuth clients)
+`{clientName, redirectUris[], source: "dcr", lastUsedAt, createdAt}` (`_id` is a UUID; no `workspaceId`). Only dynamically registered clients (RFC 7591) are stored; a client ID metadata document client (CIMD) is fetched from its own URL by the class and cached, never stored. Public clients only (no secret). A TTL on `lastUsedAt` removes a client unused for 30 days.
+
+### 3.20 `McpAuthRequests` (a sign-in in flight)
+`{clientId, clientName, redirectUri, state, codeChallenge (PKCE S256), resource, requestedScopes[], status: "pending" | "approved" | "used" | "denied", userId, workspaceId, scopes[], name, codeHash, expiresAt}` (no `workspaceId` until the member approves). The `elc_` code is single-use and stored as its SHA-256 only (`codeHash`, in the repository, never in the class's data). A TTL removes the request when `expiresAt` passes (10 minutes).
+
+### 3.21 `OAuthStates` (a provider connect in flight)
+`{stateHash, browserHash, codeVerifier, userId, workspaceId, provider, integrationId, lng, usedAt}`: one document per started "Connect with Google/Jira/…" flow, single use, removed by a TTL. Only the hashes of `state` and of the browser's binding nonce are stored.
+
 ---
 
 ## 4. Upsert, dedup and lifecycle
@@ -253,18 +278,18 @@ Unique on `(integrationId, resource)`. Example cursors: Google Calendar uses `sy
 - **Closed at source.** When the provider reports done, cancelled or archived, the sync sets `status` and `closedAt` and keeps the item, so deadline history and the donut "done" count still work.
 - **Deleted at source.** Deletion is detected through the provider's delete signal (Google `status: "cancelled"`, webhook events) or a **sweep**: after a full sync of a resource, items in that resource with `lastSeenAt < runStartedAt` get `deletedAt = now`. This is a soft delete, and a nightly job hard-deletes rows 30 days later.
 - **Disconnecting an integration** sets `Integrations.deletedAt`, deletes its `Credentials` document (a hard delete, followed by a check that it is gone), and soft-deletes its items and containers.
-- **Deleting a workspace** (by its owner, or with its last owner's account) disconnects its integrations as above, soft-deletes the workspace, its items and containers, hard-deletes its `Dashboards` (deleted ones too), then their `DashboardVersions` and its `Views`, then ends every membership. The `2026-11-15-orphaned-dashboards` migration removed, once, the dashboards, versions and views of workspaces deleted before that step existed, and the purge job applies the same rule each run (what a request in flight wrote after the cascade).
-- **Local overlays.** User-only fields on mirrored items (`pinned`, `note`, `hidden`, `areaOverride`) live in `overlay.*`, which the sync never touches.
+- **Deleting a workspace** (by its owner, or with its last owner's account; the `Workspace` class's cascade, `classes/workspace/cascade.ts`) disconnects its integrations as above, soft-deletes the workspace, its items and containers, then **hard-deletes** its `Dashboards` (deleted ones too), their `DashboardVersions` and its `Views`, and its `Topics`, then ends every membership. Dashboards and topics go with their workspace because they are unreachable without it (a deleted workspace answers 404). The `2026-11-15-orphaned-dashboards` and `2026-11-16-orphaned-topics` migrations removed, once, the documents of workspaces deleted before those steps existed, and the purge job applies the same rules each run (`Dashboard.removeOrphans`, `Topic.removeOrphans`: what a request in flight wrote after the cascade). Both decide "this workspace is gone" from reads of the primary, ids only, and a failed read deletes nothing.
+- **Local overlays.** User-only fields on mirrored items (`pinned`, `note`, `hidden`, `topicOverride`, `plannedAt`, `overrides`, …) live in `overlay.*`, which the sync never touches.
 - **Same thing in two sources** (e.g. a Moodle deadline also imported to Google Calendar): no auto-merge. An optional `linkedItemIds[]` lets the UI collapse them.
 
 ---
 
 ## 5. Access control
 
-1. Auth is Elytra's `expressAuth` (Cognito JWT → `req.user`).
-2. New middleware `requireWorkspace(minRole)` reads `:workspaceId` from the route, loads the membership for `(workspaceId, req.user.id, status: active)`, returns 404 when none is found (so a workspace's existence isn't leaked), and sets `req.workspace = { id, role, areaScope }`.
-3. **Every repository method takes `workspaceId` as its first argument** and adds it to the filter. There is no `findById(id)` without a workspace on the new models. A unit test scans the repositories for queries missing `workspaceId`.
-4. `areaScope` and `visibility: private` are applied in the same base filter: `{ workspaceId, deletedAt: null, ...(areaScope && {area: {$in: areaScope}}), $or: [{visibility: "workspace"}, {ownerUserId: me}] }`.
+1. Auth is Elytra's `expressAuth` (Cognito JWT → `req.user`), or an agent's bearer (`elk_`/`elo_`) on the MCP routes.
+2. New middleware `requireWorkspace(minRole)` reads `:workspaceId` from the route, loads the membership for `(workspaceId, req.user.id, status: active)`, returns 404 when none is found (so a workspace's existence isn't leaked), and sets `req.workspace = { id, role }`.
+3. **Every repository method takes `workspaceId` as its first argument** and adds it to the filter (the few global ones, the purge's sweeps, say so by name and read ids only). There is no `findById(id)` without a workspace on the workspace-scoped models, and only classes call repositories (`classBoundary.test.ts`).
+4. Item visibility (mine, shared connectors, visible local to-dos; `visibility: private` only to its owner) is one base filter, `ItemPolicy`'s (`classes/policies/ItemPolicy.ts`), applied before any query's own filters (PERMISSIONS-V2 ruling 23e).
 5. Role matrix:
 
 | Action | viewer | editor | owner |
@@ -279,7 +304,7 @@ Unique on `(integrationId, resource)`. Example cursors: Google Calendar uses `sy
 | Publish dashboards; create/revoke agent keys | | | ✓ |
 | See credential secrets | ✗ | ✗ | ✗ |
 
-Sharing between two people: Shalev (owner) invites the other person as a `viewer` or `editor`, optionally with `areaScope`. The other person's own workspace stays separate. Their integrations never mix with Shalev's.
+Sharing between two people: Shalev (owner) invites the other person as a `viewer` or `editor`, the whole workspace is shared; their own integrations stay theirs unless attached to a block (PERMISSIONS-V2). The other person's own workspace stays separate. Their integrations never mix with Shalev's.
 
 ---
 
@@ -289,6 +314,10 @@ Sharing between two people: Shalev (owner) invites the other person as a `viewer
 // Workspaces
 { slug: 1 }                                   unique
 { ownerId: 1 }
+{ "joinLink.tokenHash": 1 }                    unique, sparse   // the join link's lookup
+
+// Topics
+{ workspaceId: 1, slug: 1 }                   unique
 
 // Memberships
 { workspaceId: 1, userId: 1 }                 unique
@@ -311,21 +340,25 @@ Sharing between two people: Shalev (owner) invites the other person as a `viewer
 { workspaceId: 1, "source.provider": 1, "source.accountId": 1, "source.externalId": 1, integrationId: 1 }  unique   // upsert key, per integration (ruling 8)
 { workspaceId: 1, status: 1, dueAt: 1 }       partialFilterExpression: { deletedAt: null }       // deadlines, donut
 { workspaceId: 1, kind: 1, startAt: 1 }       partialFilterExpression: { deletedAt: null }       // calendar week/month
-{ workspaceId: 1, area: 1, status: 1 }        partialFilterExpression: { deletedAt: null }       // area filters
+{ workspaceId: 1, topicId: 1, status: 1 }     partialFilterExpression: { deletedAt: null }       // topic filters
 { workspaceId: 1, containerId: 1, dueAt: 1 }                                                       // per course/project
 { integrationId: 1, lastSeenAt: 1 }                                                                // deletion sweep
+{ integrationId: 1, syncResource: 1, lastSeenAt: 1 }                                               // per-resource sweep
 { deletedAt: 1 }                              partialFilterExpression: { deletedAt: { $type: "date" } }  // purge job
-{ title: "text", bodyPreview: "text" }        weights: { title: 5, bodyPreview: 1 }, default_language: "none"  // Hebrew + English
+{ title: "text", bodyPreview: "text", "overlay.overrides.title": "text" }  weights: { title: 5, bodyPreview: 1, "overlay.overrides.title": 5 }, default_language: "none"  // Hebrew + English; a title override is searched like the title
+{ workspaceId: 1, ownerUserId: 1, "props.idempotencyKey": 1 }  unique, partialFilterExpression: { "props.idempotencyKey": { $exists: true } }  // an idempotent local create: one item per owner and client key
 // On Atlas, Atlas Search ($search, with a workspaceId filter) can replace the text index later.
 
 // Containers
 { workspaceId: 1, "source.provider": 1, "source.accountId": 1, "source.externalId": 1, integrationId: 1 }  unique
-{ workspaceId: 1, type: 1, area: 1 }
+{ workspaceId: 1, type: 1, topicId: 1 }
+{ integrationId: 1, syncResource: 1, lastSeenAt: 1 }   // per-resource sweep
 
 // SyncStates
 { integrationId: 1, resource: 1 }             unique
 // SyncRuns
 { integrationId: 1, startedAt: -1 }
+{ startedAt: 1 }                              partialFilterExpression: { status: "running" }   // the stuck-run reaper
 { expireAt: 1 }                               expireAfterSeconds: 0  (TTL, 30 d)
 // AuditLogs
 { workspaceId: 1, at: -1 }
@@ -333,7 +366,7 @@ Sharing between two people: Shalev (owner) invites the other person as a `viewer
 { workspaceId: 1, actorAgentId: 1, at: -1 }   partialFilterExpression: { actorAgentId: { $type: "string" } }  // "what did agent X do"
 
 // Dashboards
-{ workspaceId: 1, "scope.area": 1, "scope.containerId": 1 }   partialFilterExpression: { deletedAt: null }
+{ workspaceId: 1, "scope.topicId": 1, "scope.containerId": 1 }   partialFilterExpression: { deletedAt: null }
 { workspaceId: 1, ownerUserId: 1 }
 { workspaceId: 1, "blocks.connectors": 1 }              partialFilterExpression: { deletedAt: null }  // "shared" (share-on-attach)
 { workspaceId: 1, "published.blocks.connectors": 1 }    partialFilterExpression: { deletedAt: null }
@@ -343,7 +376,11 @@ Sharing between two people: Shalev (owner) invites the other person as a `viewer
 // Views
 { workspaceId: 1, title: 1 }
 // AgentKeys
-{ keyHash: 1 }                                unique   // lookup on every MCP call
+{ keyHash: 1 }                                unique   // lookup on every MCP call (a key's, or a grant's current access token)
+{ refreshHash: 1 }                            unique, sparse   // a refresh
+{ prevRefreshHash: 1 }                        sparse           // a retried refresh
+{ altRefreshHash: 1 }                         sparse           // a doubled refresh's other token
+{ sourceRequestId: 1 }                        sparse           // revoking a grant by the request that made it
 { workspaceId: 1, userId: 1, revokedAt: 1 }
 { expiresAt: 1 }                              partialFilterExpression: { expiresAt: { $type: "date" } }  // expiry reminders (no TTL: keep for audit)
 // CalendarLinks
@@ -352,6 +389,16 @@ Sharing between two people: Shalev (owner) invites the other person as a `viewer
 { integrationId: 1, tombstonedAt: 1 }         partialFilterExpression: { tombstonedAt: null }   // live links for diffing
 { integrationId: 1, lastSweptAt: 1, tombstonedAt: 1 }   // partial: deletedBy 'dashboard' and deleteAnsweredAt null (an explicit null): the stuck-claim sweep's query
 { workspaceId: 1, calendarId: 1, googleEventId: 1 }   // one event across the workspace's integrations: one tracker per event, another's delete of it
+// McpClients
+{ lastUsedAt: 1 }                            expireAfterSeconds: 2592000  (TTL, 30 d unused)
+// McpAuthRequests
+{ expiresAt: 1 }                              expireAfterSeconds: 0  (TTL)
+{ codeHash: 1 }                               unique, partialFilterExpression: { codeHash: { $type: "string" } }   // the code's exchange
+// OAuthStates
+{ stateHash: 1 }                              unique
+{ createdAt: 1 }                              expireAfterSeconds: OAUTH_STATE_TTL (TTL)
+// Invites (also)
+{ email: 1, status: 1 }
 // ReplayNonces
 { expireAt: 1 }                               expireAfterSeconds: 0  (TTL, 10 min)
 // (_id = nonce gives uniqueness for free)
@@ -361,7 +408,26 @@ Sharing between two people: Shalev (owner) invites the other person as a `viewer
 // Items (H5)
 { workspaceId: 1, 'overlay.copyOf': 1 }       partialFilterExpression: { 'overlay.copyOf': { $type: 'string' } }   // a to-do's provider copies
 ```
-Elytra's `syncMongo()` is a no-op today. For these collections it should call `Model.syncIndexes()` and `collMod` (validators) per model. Keep `autoIndex: false` in prod Lambdas to avoid slowing cold starts.
+The `sync-db` action (`config/providers/mongoose.ts`) creates these indexes and validators per model, then runs the data migrations (below). `autoIndex` stays off in prod Lambdas to avoid slowing cold starts. The partial indexes (a `partialFilterExpression`) hold only the documents their query needs: live items, live links, the few unanswered claims, the running sync runs.
+
+### Migrations
+
+Data migrations (`server/src/migrations`, in this order, each recorded once in `Migrations` and idempotent; they log counts only, never a value) bring stored documents to what the code reads. They are frozen raw scripts and may touch the database directly (the class boundary exempts them).
+
+| Id | What it does |
+|---|---|
+| `2026-11-13-drop-area-scope` | Drops member `areaScope` from memberships and pending invites. |
+| `2026-11-13-introduce-topics` | Creates the three default topics per workspace and turns every `area` into a `topicId` (items, `overlay.areaOverride` → `topicOverride`, containers, integrations, `areaRules` → `topicRules`, dashboards' scope and stored queries). |
+| `2026-11-14-add-importance-attribute` | Adds the built-in Importance attribute to every workspace's `settings.attributes`. |
+| `2026-11-14-integration-owners` | Every integration gets `ownerUserId` = its `connectedBy`. |
+| `2026-11-14-orphaned-integrations` | Disconnects live integrations whose owner no longer has a membership (credential hard-deleted, items soft-deleted, audited). |
+| `2026-11-14-block-connectors` | Gives every data block its `connectors` (share-on-attach); a changed dashboard's history is reset to one snapshot. |
+| `2026-11-15-remove-google-drive` | Disconnects Google Drive integrations and removes `fileTree` blocks. |
+| `2026-11-15-primary-calendar` | The oldest eligible Google Calendar connection of each workspace becomes its primary calendar; `targetCalendarId` and `pushFilter` leave every connection's config. |
+| `2026-11-15-primary-calendar-read` | The primary calendar is added to its integration's `config.calendars` as a read calendar. |
+| `2026-11-15-calendar-link-delete-answered` | A `dashboard` tombstone written before the field existed gets `deleteAnsweredAt = tombstonedAt`. |
+| `2026-11-15-orphaned-dashboards` | Removes the dashboards, versions and views of workspaces that are gone or soft-deleted. |
+| `2026-11-16-orphaned-topics` | Removes the topics of workspaces that are gone or soft-deleted. |
 
 ---
 
@@ -398,13 +464,13 @@ Elytra's `syncMongo()` is a no-op today. For these collections it should call `M
 
 | Provider | Auth method (`authMethod`) | Secret in `Credentials` | Expiry | Default mode | Item mapping |
 |---|---|---|---|---|---|
-| Google Calendar | **Google OAuth** (`oauth`; PKCE, refresh token sealed in the vault), the only way users connect it. A `service_account` method stays in the server for the demo workspace's fixture-mode calendar only | OAuth refresh token | Until revoked | `read_write`: **the one sanctioned two-way sync** (every write audit-logged) | event → `kind: event`, `startAt/endAt/allDay`, `title=summary`, `source.externalId=event.id` (`+originalStartTime` for instances), `url=htmlLink`, `props.calendarId/location/meetLink` |
-| Jira (Atlassian) | API token + email, basic auth (`api_token_basic`) | `{email, token}` | **≤ 365 days** (set at creation). Track `expiresAt` and remind 14 days ahead | read (work) | issue → `kind: issue`, `title=summary`, `status←statusCategory`, `dueAt=duedate`, `source.externalId=id`, `key`, `url=/browse/KEY`, `props.issueType/sprint/storyPoints` |
-| ClickUp | Personal token `pk_…` (`personal_token`) | `{token}` | No expiry. Regenerating it invalidates the old one | read (work) | task → `kind: task`, `title=name`, `status←status.type`, `dueAt=due_date`, `startAt=start_date`, `url`, `props.listId/folderId/spaceId/customFields` |
-| Linear | Personal API key (`personal_api_key`) | `{apiKey}` | No expiry (until revoked) | read (one-way mirror) | issue → `kind: issue`, `status←state.type`, `dueAt=dueDate`, `priority`, `key=identifier`, `url`, `props.teamKey/cycle/estimate` |
-| Moodle (Braude) | Web-service token (`moodle_ws_token`): a user security key if Braude allows it, otherwise the mobile-app service token | `{token, siteUrl}` | Set by site admins (`validuntil`). Store it if known | read | `mod_assign_get_assignments` / calendar events → `kind: assignment` or `deadline`, `dueAt=duedate`, `props.courseId/cmid/cutoffAt`. Courses → `Containers{type: course}` |
+| Google Calendar | **Google OAuth** (`oauth`; PKCE, refresh token sealed in the vault), the only way users connect it. A `service_account` method stays in the server for the demo workspace's fixture-mode calendar only | OAuth refresh token | Until revoked | `read` until its owner switches it; then `read_write`: **two-way sync** (every write audit-logged). The primary calendar needs `read_write` | event → `kind: event`, `startAt/endAt/allDay`, `title=summary`, `source.externalId=event.id` (`+originalStartTime` for instances), `url=htmlLink`, `props.calendarId/location/meetLink` |
+| Jira (Atlassian) | API token + email, basic auth (`api_token_basic`) | `{email, token}` | **≤ 365 days** (set at creation). Track `expiresAt` and remind 14 days ahead | read; write-back when `read_write` (title, status, due date, priority) | issue → `kind: issue`, `title=summary`, `status←statusCategory`, `dueAt=duedate`, `source.externalId=id`, `key`, `url=/browse/KEY`, `props.issueType/sprint/storyPoints` |
+| ClickUp | Personal token `pk_…` (`personal_token`) | `{token}` | No expiry. Regenerating it invalidates the old one | read; write-back when `read_write` (title, status, due date, start date, priority) | task → `kind: task`, `title=name`, `status←status.type`, `dueAt=due_date`, `startAt=start_date`, `url`, `props.listId/folderId/spaceId/customFields` |
+| Linear | Personal API key (`personal_api_key`) | `{apiKey}` | No expiry (until revoked) | read; write-back when `read_write` (title, status, due date, priority) | issue → `kind: issue`, `status←state.type`, `dueAt=dueDate`, `priority`, `key=identifier`, `url`, `props.teamKey/cycle/estimate` |
+| Moodle (Braude; coming soon, not connectable yet) | Web-service token (`moodle_ws_token`): a user security key if Braude allows it, otherwise the mobile-app service token | `{token, siteUrl}` | Set by site admins (`validuntil`). Store it if known | read | `mod_assign_get_assignments` / calendar events → `kind: assignment` or `deadline`, `dueAt=duedate`, `props.courseId/cmid/cutoffAt`. Courses → `Containers{type: course}` |
 | Slack | **Out of scope for the app.** AI agents use Slack through their own Slack MCP. No integration, card or block | n/a | n/a | n/a | n/a (enum value reserved) |
-| GitHub (optional) | Fine-grained PAT, read-only (`fine_grained_pat`) | `{token}` | User-set expiry. Track `expiresAt` | read only | issues/PRs → `kind: issue` or `pr`, `props.repo/number/state`. `shalev396/*` → area `personal` |
+| GitHub (optional) | Fine-grained PAT, read-only (`fine_grained_pat`) | `{token}` | User-set expiry. Track `expiresAt` | read; issues' title and status write back when `read_write`, PRs never | issues/PRs → `kind: issue` or `pr`, `props.repo/number/state`. `shalev396/*` → topic Personal (a topic rule) |
 | Notion (legacy, optional) | Internal integration token (`internal_integration`) | `{token}` | No expiry | read only | Optional one-way import of existing Notion to-dos as `local` seeds during migration. The app never writes to Notion |
 | Local | none | none | n/a | read_write | Created in the dashboard. `source.provider: "local"` |
 
@@ -413,6 +479,7 @@ Elytra's `syncMongo()` is a no-op today. For these collections it should call `M
 ## 9. Open items
 - Whether Braude's Moodle exposes web-service tokens to students. This decides which Moodle auth path we use.
 - Which schedule returns first (nothing runs on a timer today; the `sync-dispatch` and `purge` actions run on a direct invoke), and whether to add webhooks too (Jira, ClickUp, Linear and GitHub support them; Google Calendar uses `events.watch`).
+- A calendar move whose DELETE half gets no answer leaves the old event in Google untracked (a duplicate until "Also remove" at disconnect; backlog, CLASSES.md and PERMISSIONS-V2 ruling 12).
 - Whether to enable CSFLE. That depends on the Atlas tier and the Lambda layer size.
 - `DashboardVersions` retention: last 50 per dashboard (proposed in MCP.md/BUILDER.md); confirm.
-- Whether `AgentKeys` must have an `expiresAt` (proposed default: 365 days, like Jira tokens).
+- (Decided) `AgentKeys` carry an `expiresAt`: 365 days by default; a sign-in grant is capped at 365 days too.
