@@ -18,10 +18,16 @@ def test_privacy_accessibility(page: Page, base_url: str, lng: str):
     assert violations == [], f"Accessibility violations: {violations}"
 
 
+# The policy's parts, as PrivacyPolicyPage.tsx lists them (SECTIONS): one h2 each.
+PRIVACY_SECTIONS = 12
+
+
 def test_privacy_landmarks(page: Page, app_url: str):
     """Asserts one main landmark, one h1, and a section heading per part of the policy."""
     page.goto(f"{app_url}/legal/privacy", wait_until="domcontentloaded")
     page.wait_for_load_state("networkidle")
     expect(page.get_by_role("main")).to_have_count(1)
     expect(page.get_by_role("heading", level=1)).to_have_count(1)
-    expect(page.get_by_role("main").get_by_role("heading", level=2)).to_have_count(10)
+    expect(page.get_by_role("main").get_by_role("heading", level=2)).to_have_count(
+        PRIVACY_SECTIONS
+    )
