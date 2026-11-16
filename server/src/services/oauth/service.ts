@@ -8,7 +8,7 @@
 import { z } from 'zod';
 
 import { Actor } from '../../classes/base/Actor.js';
-import { Caller } from '../../classes/base/Caller.js';
+import { Caller, type WorkspaceContext } from '../../classes/base/Caller.js';
 import {
   GoogleCalendarIntegration,
   Integration,
@@ -25,7 +25,6 @@ import type {
   OAuthProvidersResponse,
   OAuthResource,
 } from '../../types/integrations.js';
-import type { WorkspaceContext } from '../accessFilter.js';
 import { logger } from '../logger.js';
 import { OAUTH_LANGUAGES } from './common.js';
 

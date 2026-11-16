@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import type { runWorkspaceQuery as RunWorkspaceQuery } from './workspaceQuery.js';
-import type { WorkspaceContext } from './accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
 
 let db: TestDatabase;
 let runWorkspaceQuery: typeof RunWorkspaceQuery;

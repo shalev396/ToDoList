@@ -15,12 +15,11 @@ import type {
   CreateTargetsResponseData,
 } from '../../types/providerCreate.js';
 import type { ActorRef } from '../../classes/base/Actor.js';
-import { Caller } from '../../classes/base/Caller.js';
+import { Caller, type WorkspaceContext } from '../../classes/base/Caller.js';
 import { Actor } from '../../classes/base/Actor.js';
 import { Integration, isCreateFunnel } from '../../classes/integration/index.js';
 import { isCreatableProvider, Todo } from '../../classes/item/index.js';
 import { ItemPolicy } from '../../classes/policies/ItemPolicy.js';
-import type { WorkspaceContext } from '../accessFilter.js';
 import { logger } from '../logger.js';
 
 export { failureFor, isCreatableProvider, safeCopyUrl } from '../../classes/item/index.js';

@@ -1,6 +1,8 @@
 import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { Actor } from '../base/Actor.js';
+import { Caller } from '../base/Caller.js';
 import { callerFor, hasStatus, newUser } from '../../testing/workspaceFixtures.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import type * as Models from '../../models/index.js';
@@ -209,8 +211,7 @@ describe('deleteWorkspace', () => {
       await (await models.getAgentKeyRepository()).countForUser(workspace.id, viewer.id),
       0,
     );
-    const { getWorkspaceContext } = await import('../../services/workspaceContext.js');
-    assert.equal(await getWorkspaceContext(workspace.id, owner.id), null);
+    assert.equal(await Caller.enter(workspace.id, Actor.user(owner.id)), null);
     assert.deepEqual(await Workspace.listFor(viewer.id), []);
     const [entry] = await (await models.getAuditLogRepository()).list(workspace.id, {}, 1);
     assert.deepEqual([entry?.action, entry?.actorUserId], ['workspace.delete', owner.id]);

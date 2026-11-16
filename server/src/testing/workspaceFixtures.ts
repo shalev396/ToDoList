@@ -6,8 +6,7 @@ import assert from 'node:assert/strict';
 
 import type { UserData } from '../models/index.js';
 import { Actor } from '../classes/base/Actor.js';
-import { Caller } from '../classes/base/Caller.js';
-import type { WorkspaceContext } from '../services/accessFilter.js';
+import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
 
 /** A user row, as a first login creates it: `<label>@example.test`. */
 export async function newUser(label: string): Promise<UserData> {
@@ -21,10 +20,9 @@ export async function newUser(label: string): Promise<UserData> {
   });
 }
 
-/** The member's context, as requireWorkspace resolves it. Fails the test for a non-member. */
+/** The member's context, as requireWorkspace resolves it (Caller.enter). Fails the test for a non-member. */
 export async function contextFor(workspaceId: string, userId: string): Promise<WorkspaceContext> {
-  const { getWorkspaceContext } = await import('../services/workspaceContext.js');
-  const ctx = await getWorkspaceContext(workspaceId, userId);
+  const ctx = (await Caller.enter(workspaceId, Actor.user(userId)))?.context;
   assert.ok(ctx, 'expected an active membership');
   return ctx;
 }

@@ -10,7 +10,7 @@ import type mongoose from 'mongoose';
 
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import { contextFor, hasStatus, newUser } from '../testing/workspaceFixtures.js';
-import type { WorkspaceContext } from '../services/accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
 import type * as Dashboards from '../testing/dashboardCalls.js';
 import type * as Classes from '../classes/workspace/index.js';
 import type * as Migration from './introduceTopics.js';

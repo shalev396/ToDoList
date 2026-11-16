@@ -1,12 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  baseContainerFilter,
-  baseItemFilter,
-  baseItemFilterUnabsorbed,
-} from '../services/accessFilter.js';
 import { Overrides } from '../classes/item/Overrides.js';
+import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
 import { BLOCK_TYPES, CAPS, type Query } from '../types/builder.js';
 import { BLOCK_CATALOG } from './catalog.js';
 import { compileQuery, parseQuery, type CompileContext, type CompiledQuery } from './compile.js';
@@ -180,13 +176,12 @@ describe('compileQuery: base filter', () => {
           const filtersByProvider =
             query.source === 'items' &&
             JSON.stringify(compiled.pipeline).includes('source.provider');
+          const policy = ItemPolicy.of(ctx.access);
           const base =
-            query.source === 'items'
-              ? baseItemFilter(ctx.ws, ctx.access)
-              : baseContainerFilter(ctx.ws, ctx.access);
+            query.source === 'items' ? policy.itemFilter(ctx.ws) : policy.containerFilter(ctx.ws);
           const first = (compiled.pipeline[0]?.['$match'] ?? {}) as Record<string, unknown>;
           if (filtersByProvider && !('$nor' in first)) {
-            assert.deepEqual(first, baseItemFilterUnabsorbed(ctx.ws, ctx.access));
+            assert.deepEqual(first, policy.itemFilterUnabsorbed(ctx.ws));
           } else {
             assert.deepEqual(compiled.pipeline[0], { $match: base });
           }

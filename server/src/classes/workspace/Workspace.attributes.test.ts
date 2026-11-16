@@ -7,7 +7,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
-import type { WorkspaceContext } from '../../services/accessFilter.js';
+import type { WorkspaceContext } from '../base/Caller.js';
 import type * as Classes from './index.js';
 import type * as Items from '../../testing/itemCalls.js';
 import type { AttributeDef, NewAttribute, AttributePatch } from '../../types/attributes.js';

@@ -8,8 +8,7 @@ import { z } from 'zod';
 
 import { AppError } from '../../errors/AppError.js';
 import type { ItemDetail, ItemSummary } from '../../routes/private/items.js';
-import type { WorkspaceContext } from '../../services/accessFilter.js';
-import { Caller } from '../../classes/base/Caller.js';
+import { Caller, type WorkspaceContext } from '../../classes/base/Caller.js';
 import { ItemQuery } from '../../classes/item/index.js';
 import { Topic } from '../../classes/workspace/index.js';
 import { toolCaller } from '../auth/principal.js';

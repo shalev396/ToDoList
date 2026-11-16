@@ -11,7 +11,7 @@ import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 
-import type { WorkspaceContext } from '../../services/accessFilter.js';
+import type { WorkspaceContext } from '../../classes/base/Caller.js';
 import { AGENT_SCOPES, ROLE_RANK, type AgentScope, type Role } from '../../types/domain.js';
 import type { AgentPrincipal } from '../auth/principal.js';
 import { READ_ONLY_SCOPES } from '../auth/scopes.js';

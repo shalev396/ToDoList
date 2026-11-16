@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import type * as Models from '../models/index.js';
 import type { SourceRef } from '../models/definitions/common.js';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
-import type { WorkspaceContext } from './accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
 import type { runWorkspaceQuery as RunWorkspaceQuery } from './workspaceQuery.js';
 
 let db: TestDatabase;

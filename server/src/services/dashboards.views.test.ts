@@ -11,7 +11,7 @@ import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js
 import { addDefaultTopics, contextFor, hasStatus, newUser } from '../testing/workspaceFixtures.js';
 import { CAPS, type Op } from '../types/builder.js';
 import type { DashboardView } from '../types/dashboards.js';
-import type { WorkspaceContext } from './accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
 import type * as Dashboards from '../testing/dashboardCalls.js';
 import type * as Personas from '../testing/dashboardCalls.js';
 import type * as Models from '../models/index.js';

@@ -17,7 +17,7 @@ import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js
 import { contextFor, newUser } from '../testing/workspaceFixtures.js';
 import type { Block, DashboardDraft, Op } from '../types/builder.js';
 import type { DashboardView } from '../types/dashboards.js';
-import type { WorkspaceContext } from './accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
 import type * as Dashboards from '../testing/dashboardCalls.js';
 
 const SEED = 20261112;

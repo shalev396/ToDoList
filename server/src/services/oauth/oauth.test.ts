@@ -372,10 +372,9 @@ describe('ownership (PERMISSIONS-V2)', () => {
   it('connectOAuthIntegration refuses a reconnect target that is not the member’s own', async () => {
     const { connectOAuthIntegration } = await connectThroughClass();
     const { OAuthFailure } = await import('./common.js');
-    const { getWorkspaceContext } = await import('../workspaceContext.js');
+    const { contextFor } = await import('../../testing/workspaceFixtures.js');
     const owners = await connectThrough('clickup');
-    const ctx = await getWorkspaceContext(wid, editorId);
-    assert.ok(ctx);
+    const ctx = await contextFor(wid, editorId);
     await assert.rejects(
       connectOAuthIntegration(
         ctx,
@@ -399,7 +398,7 @@ describe('ownership (PERMISSIONS-V2)', () => {
     const { LIMITS } = await import('../../config/limits.js');
     const { connectOAuthIntegration } = await connectThroughClass();
     const { OAuthFailure } = await import('./common.js');
-    const { getWorkspaceContext } = await import('../workspaceContext.js');
+    const { contextFor } = await import('../../testing/workspaceFixtures.js');
     const repository = await models.getIntegrationRepository();
     const racer = await api.login('prov-racer@example.test');
     const racerMe = await api.call('GET', '/api/private/me', { token: racer.token });
@@ -416,8 +415,7 @@ describe('ownership (PERMISSIONS-V2)', () => {
         topicId: null,
       });
     }
-    const ctx = await getWorkspaceContext(wid, racerId);
-    assert.ok(ctx);
+    const ctx = await contextFor(wid, racerId);
     const outcomes = await Promise.allSettled(
       Array.from({ length: 25 }, (_unused, n) =>
         connectOAuthIntegration(

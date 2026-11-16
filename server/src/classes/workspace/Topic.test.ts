@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import type { SourceRef } from '../../models/definitions/common.js';
-import type { WorkspaceContext } from '../../services/accessFilter.js';
+import type { WorkspaceContext } from '../base/Caller.js';
 import type * as Classes from './index.js';
 import { callerOf } from '../../testing/workspaceFixtures.js';
 import type * as Models from '../../models/index.js';

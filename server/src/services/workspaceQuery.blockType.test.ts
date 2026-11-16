@@ -7,7 +7,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
-import type { WorkspaceContext } from './accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
 import type * as WorkspaceQuery from './workspaceQuery.js';
 
 const NOW = new Date('2026-11-11T08:00:00Z'); // Wednesday, 10:00 in Jerusalem

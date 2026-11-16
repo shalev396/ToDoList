@@ -21,7 +21,7 @@ import type * as Registry from '../sync/registry.js';
 import type * as RunSync from '../testing/syncCalls.js';
 import type * as Fixtures from '../sync/transports/fixtures.js';
 import type { SeedSummary } from './seedWorkspace.js';
-import type { WorkspaceContext } from '../services/accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
 import type { Clock } from '../sync/http.js';
 import { OPERATORS, type Query as BuilderQuery } from '../types/builder.js';
 

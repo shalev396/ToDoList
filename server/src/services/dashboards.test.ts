@@ -13,7 +13,7 @@ import type {
   DashboardView,
   DashboardWriteResult,
 } from '../types/dashboards.js';
-import type { WorkspaceContext } from './accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
 import type * as Dashboards from '../testing/dashboardCalls.js';
 import type * as Models from '../models/index.js';
 

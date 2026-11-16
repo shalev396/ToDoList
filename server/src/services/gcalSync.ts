@@ -15,7 +15,7 @@
 import { z } from 'zod';
 
 import { Actor } from '../classes/base/Actor.js';
-import { Caller } from '../classes/base/Caller.js';
+import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
 import {
   Integration,
   isCalendarProvider,
@@ -25,7 +25,6 @@ import { Calendar } from '../classes/calendar/Calendar.js';
 import type { PlanNarrowing } from '../classes/calendar/PushPlan.js';
 import { AppError } from '../errors/AppError.js';
 import { TimeBudget, WRITE_BUDGET_MS } from '../classes/integration/calendar/TimeBudget.js';
-import type { WorkspaceContext } from './accessFilter.js';
 
 export const GcalSyncBody = z.strictObject({
   integrationId: z.string().min(1).max(100),

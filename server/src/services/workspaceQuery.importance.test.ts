@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 
 import { contextFor, newUser } from '../testing/workspaceFixtures.js';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
-import type { WorkspaceContext } from './accessFilter.js';
+import type { WorkspaceContext } from '../classes/base/Caller.js';
 import type * as Models from '../models/index.js';
 import type * as Query from './workspaceQuery.js';
 import type * as Items from '../testing/itemCalls.js';
