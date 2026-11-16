@@ -87,6 +87,11 @@ interface Received {
 }
 
 const received: Received[] = [];
+/**
+ * `/to`'s allowlist: the Locations tests registered through `to()`, by id. A request only picks
+ * one of them, so the servers never redirect to a URL they were sent.
+ */
+const redirectTargets = new Map<string, string>();
 /** Bytes `/big/chunked` has written. */
 let bigSent = 0;
 let serverA: Server;
@@ -99,7 +104,8 @@ let baseB: string;
 /**
  * - `/redirect/<status>`: that redirect to `/target`;
  * - `/hops/<n>`: a 302 to `/hops/<n-1>`, until `/hops/0` answers;
- * - `/to?location=<url>[&status=<status>]`: a redirect (302 by default) to that Location, as is;
+ * - `/to?id=<n>[&status=<status>]`: a redirect (302 by default) to the Location `to()` registered
+ *   as `<n>`, as is (an unknown id is a 404);
  * - `/deep/dir/rel`: a 302 to `../../target?from=rel` (relative);
  * - `/no-location`: a 302 without a Location;
  * - `/echo`: the request's headers;
@@ -126,7 +132,9 @@ function handler(server: 'A' | 'B'): (request: IncomingMessage, response: Server
         response.end();
       } else if (url.pathname === '/to') {
         const status = Number(url.searchParams.get('status') ?? '302');
-        response.writeHead(status, { location: url.searchParams.get('location') ?? '' });
+        const location = redirectTargets.get(url.searchParams.get('id') ?? '');
+        if (location === undefined) response.writeHead(404);
+        else response.writeHead(status, { location });
         response.end();
       } else if (url.pathname === '/deep/dir/rel') {
         response.writeHead(302, { location: '../../target?from=rel' });
@@ -247,9 +255,12 @@ after(() => {
   }
 });
 
-/** `/to` on `base`, redirecting to `location`. */
-const to = (base: string, location: string, status = 302): string =>
-  `${base}/to?status=${String(status)}&location=${encodeURIComponent(location)}`;
+/** `/to` on `base`, redirecting to `location`, which it adds to the allowlist. */
+function to(base: string, location: string, status = 302): string {
+  const id = String(redirectTargets.size);
+  redirectTargets.set(id, location);
+  return `${base}/to?status=${String(status)}&id=${id}`;
+}
 
 const paths = (): string[] => received.map((request) => `${request.server} ${request.path}`);
 
