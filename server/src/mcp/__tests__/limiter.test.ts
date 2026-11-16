@@ -1,6 +1,7 @@
 /**
  * Rate limits (MCP.md §3): over the per-agent cap the answer is a JSON-RPC error (429), counted
- * per agent key across /api/mcp and /api/mcp/readonly, without touching other keys; failed
+ * once per request per presented key across /api/mcp and /api/mcp/readonly, before the key is
+ * looked up, without touching other keys; failed
  * authentications are limited per address (an IPv6 address by its /56), and only failed ones are
  * counted, after the key is looked up: a key that authenticates never spends the budget and is
  * never held off by it, even from an address over it (hosted assistants share addresses). The
@@ -9,10 +10,9 @@
  */
 import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import type { Request, Response } from 'express';
+import type { Request } from 'express';
 
 import { addressKey } from '../../utils/clientAddress.js';
-import type * as Principal from '../auth/principal.js';
 import type * as Limiter from '../middleware/limiter.js';
 import type { TestKey } from './helpers/agentKeys.js';
 import { insertAgentKey, newRawKey } from './helpers/agentKeys.js';
@@ -22,7 +22,6 @@ import { newTeam, type Team } from './helpers/team.js';
 let h: McpHarness;
 let team: Team;
 let limiter: typeof Limiter;
-let principal: typeof Principal;
 
 const AGENT_CAP = 4;
 const AUTH_FAILURE_CAP = 2;
@@ -67,7 +66,6 @@ before(async () => {
   });
   team = await newTeam('limiter');
   limiter = await import('../middleware/limiter.js');
-  principal = await import('../auth/principal.js');
 });
 
 after(async () => {
@@ -87,10 +85,14 @@ function post(path: string, raw: string): ReturnType<McpHarness['post']> {
 }
 
 describe('the per-agent limit', () => {
-  it('answers past the cap with a JSON-RPC error and a 429', async () => {
+  it('answers past the cap with a JSON-RPC error and a 429, counting each request once', async () => {
     const agent = await key();
-    for (let i = 0; i < AGENT_CAP; i += 1)
-      assert.equal((await post('/api/mcp', agent.raw)).status, 200);
+    for (let i = 0; i < AGENT_CAP; i += 1) {
+      const response = await post('/api/mcp', agent.raw);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('ratelimit-limit'), String(AGENT_CAP));
+      assert.equal(response.headers.get('ratelimit-remaining'), String(AGENT_CAP - 1 - i));
+    }
     const limited = await post('/api/mcp', agent.raw);
     assert.equal(limited.status, 429);
     assert.match(limited.headers.get('content-type') ?? '', /^application\/json/);
@@ -202,19 +204,21 @@ describe('the failed-authentication limit', () => {
 });
 
 describe('the per-agent key', () => {
-  const request = { ip: '203.0.113.7' } as Request;
+  const request = (authorization?: string): Request =>
+    ({ ip: '203.0.113.7', headers: { authorization } }) as Request;
 
-  it('is the authenticated agent key', () => {
-    const res = { locals: {} } as unknown as Response;
-    principal.setRequestAgent(res, {
-      principal: { agentId: 'key-1' },
-    } as Principal.AuthenticatedAgent);
-    assert.equal(limiter.agentKey(request, res), 'agent:key-1');
+  it('is the presented key, by its SHA-256, never the key itself', () => {
+    const raw = newRawKey();
+    const counted = limiter.agentKey(request(`Bearer ${raw}`));
+    assert.match(counted, /^key:[0-9a-f]{64}$/);
+    assert.ok(!counted.includes(raw.slice(4)));
+    assert.equal(limiter.agentKey(request(`bearer  ${raw}`)), counted);
+    assert.notEqual(limiter.agentKey(request(`Bearer ${newRawKey()}`)), counted);
   });
 
-  it('is the address when no agent was authenticated', () => {
-    const res = { locals: {} } as unknown as Response;
-    assert.equal(limiter.agentKey(request, res), 'ip:203.0.113.7');
+  it('is the address when no well-formed key is presented', () => {
+    assert.equal(limiter.agentKey(request()), 'ip:203.0.113.7');
+    assert.equal(limiter.agentKey(request('Bearer nope')), 'ip:203.0.113.7');
   });
 });
 
