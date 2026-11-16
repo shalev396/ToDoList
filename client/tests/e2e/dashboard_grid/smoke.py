@@ -44,10 +44,14 @@ def _is_layout_save(response) -> bool:
 def _open_dashboard(
     page: Page, base_url: str, user, path: str, blocks: int, workspace_id: Optional[str] = None
 ) -> None:
-    """Signs in on a 1440px screen (the 12-column grid) and waits for every block frame."""
+    """Signs in on a 1440px screen (the 12-column grid) and waits until every block has loaded.
+    A block first shows a stand-in frame while its code loads; swapping in its own re-mounts that
+    part of the page, which would close a menu a test opened on it, so tests start on the settled
+    dashboard."""
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, path, workspace_id=workspace_id)
     expect(page.get_by_role("article")).to_have_count(blocks, timeout=NORMAL_TIMEOUT)
+    expect(page.locator('article[aria-busy="true"]')).to_have_count(0, timeout=APP_REQUEST_TIMEOUT)
 
 
 def _box(page: Page, title: str) -> dict:
@@ -200,9 +204,12 @@ def test_block_menu_moves_with_the_keyboard_and_returns_focus(
     # Keyboard only: a mouse click on Move, then a pointer travelling to "Right", can leave the
     # submenu's grace area and close it (re-mounting its items) before the click lands.
     move_item = menu.get_by_role("menuitem", name="Move", exact=True)
-    # Radix focuses the menu once it has opened, and sometimes its first item ("Move") as well, so
-    # an ArrowDown could land on Move or on the item after it. Home always lands on the first item.
-    expect(menu).to_be_focused()
+    # Once it has opened, Radix focuses either the menu itself or its first item ("Move"), so an
+    # ArrowDown could land on Move or on the item after it. Wait until focus is anywhere inside the
+    # menu, then Home: it always lands on the first item.
+    page.wait_for_function(
+        "menu => menu.contains(document.activeElement)", arg=menu.element_handle()
+    )
     page.keyboard.press("Home")
     expect(move_item).to_be_focused()
     page.keyboard.press("ArrowRight")
