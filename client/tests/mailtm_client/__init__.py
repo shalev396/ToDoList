@@ -9,10 +9,12 @@ from .client import (
     MailTmClient,
     MailTmError,
     MailTmTimeout,
+    Quota,
     RetryPolicy,
     backoff_seconds,
     default_state_dir,
     message_text,
+    ratelimit_quota,
     retry_after_seconds,
 )
 from .ratelimit import (
@@ -33,10 +35,12 @@ __all__ = [
     "MailTmClient",
     "MailTmError",
     "MailTmTimeout",
+    "Quota",
     "RetryPolicy",
     "SharedRateLimiter",
     "backoff_seconds",
     "default_state_dir",
     "message_text",
+    "ratelimit_quota",
     "retry_after_seconds",
 ]

@@ -8,7 +8,23 @@ From [docs.mail.tm](https://docs.mail.tm/): "The general quota limit is 8 querie
 
 The docs don't describe the answer over the limit. In practice it is HTTP 429, sometimes with `Retry-After`.
 
-mail.tm also sends `RateLimit-Policy: 10; w=60` (seen on `GET /domains` in November 2026). That IETF draft header means 10 requests per 60-second window, so some endpoints probably have a stricter quota the docs don't mention. The client caches the domain list for ten minutes for every process, which keeps `/domains` far below it. A 429 from any such quota gets the same shared pause and retry.
+mail.tm also sends `RateLimit-Policy: 10; w=60` (seen on `GET /domains` in November 2026). That IETF draft header means 10 requests per 60-second window, so some endpoints probably have a stricter quota the docs don't mention. The client caches the domain list for ten minutes for every process, which keeps `/domains` far below it. If mail.tm ever reports what is left of such a quota, the client obeys it (below). A 429 from any quota gets the same shared pause and retry.
+
+## It obeys the server's RateLimit headers
+
+Every answer's IETF RateLimit headers are read, in any letter case:
+
+- `RateLimit: limit=10, remaining=0, reset=42` (draft 7), or the later `RateLimit: "name";r=0;t=42`;
+- the older `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`;
+- `RateLimit-Policy: 10; w=60`, or the later `"name";q=10;w=60`.
+
+When `remaining` is down to 1 or less, every process pauses until the quota resets: `reset` seconds, else the policy's window, else one second. The pause is at most 120 s, so a bogus `reset` can't hang a run. So the next call waits instead of drawing a 429.
+
+The pause covers the whole API host, not one endpoint. The headers don't say which requests a quota counts, so this is the simplest choice that never under-counts. Its cost: a spent quota on one endpoint also holds back the others until it resets.
+
+Malformed values (`nan`, `inf`, negative numbers, words) are skipped, never raised, and so is a malformed `Retry-After`. `ratelimit_quota(headers)` returns what the headers say, for your own use.
+
+mail.tm sends only the policy so far, with no `remaining`, so for now the headers trigger no pause there.
 
 ## How the shared limit works
 
@@ -20,18 +36,19 @@ mail.tm also sends `RateLimit-Policy: 10; w=60` (seen on `GET /domains` in Novem
 
 ## Defaults and settings
 
-| Setting                | Default                                     | Change it with                                       |
-| ---------------------- | ------------------------------------------- | ---------------------------------------------------- |
-| Rate                   | 6 requests a second                         | `MailTmClient(rate=...)`, or `MAILTM_RATE`           |
-| Burst                  | 2                                           | `MailTmClient(burst=...)`                            |
-| State directory        | `<system temp>/mailtm-ratelimit-<API host>` | `MailTmClient(state_dir=...)`, or `MAILTM_STATE_DIR` |
-| Lock timeout           | 10 s                                        | `SharedRateLimiter(lock_timeout=...)`                |
-| Longest pause          | 60 s                                        | `SharedRateLimiter(max_pause=...)`                   |
-| Attempts per call      | 7, with at most 120 s of waiting in all     | `RetryPolicy(max_attempts=..., max_total_wait=...)`  |
-| Backoff without a hint | 1-2 s, 2-4 s, 4-8 s, ..., each at most 30 s | `RetryPolicy(backoff_base=..., backoff_cap=...)`     |
-| `Retry-After`          | honoured, up to 60 s                        | `RetryPolicy(retry_after_cap=...)`                   |
-| Request timeout        | 10 s                                        | `MailTmClient(timeout=...)`                          |
-| Domain cache           | 10 minutes, shared by all processes         | `MailTmClient(domain_ttl=...)`                       |
+| Setting                | Default                                     | Change it with                                        |
+| ---------------------- | ------------------------------------------- | ----------------------------------------------------- |
+| Rate                   | 6 requests a second                         | `MailTmClient(rate=...)`, or `MAILTM_RATE`            |
+| Burst                  | 2                                           | `MailTmClient(burst=...)`                             |
+| State directory        | `<system temp>/mailtm-ratelimit-<API host>` | `MailTmClient(state_dir=...)`, or `MAILTM_STATE_DIR`  |
+| Lock timeout           | 10 s                                        | `SharedRateLimiter(lock_timeout=...)`                 |
+| Longest pause          | 120 s                                       | `SharedRateLimiter(max_pause=...)`                    |
+| RateLimit headers      | pause at `remaining` 1 or less, up to 120 s | `RetryPolicy(quota_reserve=..., quota_pause_cap=...)` |
+| Attempts per call      | 7, with at most 120 s of waiting in all     | `RetryPolicy(max_attempts=..., max_total_wait=...)`   |
+| Backoff without a hint | 1-2 s, 2-4 s, 4-8 s, ..., each at most 30 s | `RetryPolicy(backoff_base=..., backoff_cap=...)`      |
+| `Retry-After`          | honoured, up to 60 s                        | `RetryPolicy(retry_after_cap=...)`                    |
+| Request timeout        | 10 s                                        | `MailTmClient(timeout=...)`                           |
+| Domain cache           | 10 minutes, shared by all processes         | `MailTmClient(domain_ttl=...)`                        |
 
 Constructor arguments win over the environment variables. Every process that shares a state directory should use the same rate and burst. To share a limiter you built yourself, pass `MailTmClient(limiter=...)`.
 
@@ -70,11 +87,11 @@ message = mail.wait_for_message(
 Its tests need no network and never touch the real state directory:
 
 - `test_ratelimit.py`: the bucket arithmetic on a fake clock; four real processes hammering one bucket, whose slots must conform to it, with no second over the bound; the lock timing out, and recovering from a holder that was killed; the Windows and POSIX locking (each runs on its own platform).
-- `test_client.py`: 429 and `Retry-After` handling, the backoff bounds, what is retried, the shared domain cache, `wait_for_message`; three real processes calling a local HTTP endpoint with the default settings.
+- `test_client.py`: 429 and `Retry-After` handling, the backoff bounds, what is retried, the RateLimit headers in every form (and malformed ones), the pause a spent quota sets for every process, the shared domain cache, `wait_for_message`; three real processes calling a local HTTP endpoint with the default settings.
 
 ## Limits
 
 - **One machine.** It coordinates the processes that share a state directory. By default those are the processes of one user on one machine: the temp dir is per user on Windows, and the files get that user's permissions. Several machines behind one IP address (a CI fleet, an office NAT) each run their own bucket, so give each one a share of the limit. Each machine's most per second (`burst + ceil(rate) - 1`) must add up to 8 or less across them: two machines at `MAILTM_RATE=2` (3 each), or three at `MAILTM_RATE=1` (2 each).
 - **Others on your IP address.** Other users of mail.tm on the same address (a shared CI egress) are not counted. Only the 429 handling covers them.
 - **Release, not arrival.** The limiter controls when requests leave. The network or a busy CPU can still bunch them up on the way. The margin between 7 a second at most and mail.tm's 8 absorbs that. A coarse clock (`time.time` ticks every 15.6 ms on Windows before Python 3.13) never makes the limiter release early.
-- **Undocumented quotas.** Endpoint quotas like the `RateLimit-Policy: 10; w=60` above are not enforced ahead of time. If one starts to bite, give that endpoint its own `SharedRateLimiter` (its own state directory, `rate` 10/60, `burst=1`), and call its `acquire()` before those calls.
+- **Undocumented quotas.** A quota the server announces only as a policy, like mail.tm's `RateLimit-Policy: 10; w=60`, is not enforced ahead of time: the client can only obey a `remaining` count. If one starts to bite, give that endpoint its own `SharedRateLimiter` (its own state directory, `rate` 10/60, `burst=1`), and call its `acquire()` before those calls.

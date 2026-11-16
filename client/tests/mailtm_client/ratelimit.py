@@ -38,8 +38,8 @@ DEFAULT_RATE = 6.0
 DEFAULT_BURST = 2
 # The lock is held for a file read and a write: a wait this long means a stuck holder.
 DEFAULT_LOCK_TIMEOUT = 10.0
-# The longest pause `penalize` may set.
-DEFAULT_MAX_PAUSE = 60.0
+# The longest pause `penalize` may set: a bogus Retry-After or RateLimit reset can't hang anyone.
+DEFAULT_MAX_PAUSE = 120.0
 # How far past the longest pause the bucket may point (slots reserved by waiting processes).
 # Later than that, the clock went back or the file is damaged.
 QUEUE_ALLOWANCE = 60.0

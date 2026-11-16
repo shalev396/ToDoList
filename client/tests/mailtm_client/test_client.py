@@ -33,10 +33,12 @@ from .client import (
     MailTmClient,
     MailTmError,
     MailTmTimeout,
+    Quota,
     RetryPolicy,
     backoff_seconds,
     default_state_dir,
     message_text,
+    ratelimit_quota,
     retry_after_seconds,
 )
 from .ratelimit import DEFAULT_BURST, DEFAULT_RATE, SharedRateLimiter
@@ -44,12 +46,15 @@ from .ratelimit import DEFAULT_BURST, DEFAULT_RATE, SharedRateLimiter
 BASE = "https://mail.test"
 
 
-def answer(status: int = 200, body: Any = None, retry_after: Any = None) -> requests.Response:
+def answer(
+    status: int = 200, body: Any = None, retry_after: Any = None, headers: Any = None
+) -> requests.Response:
     response = requests.Response()
     response.status_code = status
     response._content = json.dumps(body if body is not None else {}).encode()
     if retry_after is not None:
         response.headers["Retry-After"] = str(retry_after)
+    response.headers.update(headers or {})
     return response
 
 
@@ -300,6 +305,110 @@ def test_retry_after_parsing(header, expected):
 def test_a_retry_after_date_in_the_past_means_now():
     response = answer(429, retry_after=formatdate(time.time() - 30, usegmt=True))
     assert retry_after_seconds(response) == 0.0
+
+
+# --- RateLimit headers ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "headers, expected",
+    [
+        ({"RateLimit": "limit=10, remaining=0, reset=42"}, Quota(10, 0, 42, None)),  # draft-7
+        (
+            {"ratelimit-limit": "10", "RATELIMIT-REMAINING": "3", "RateLimit-Reset": "7"},
+            Quota(10, 3, 7, None),
+        ),
+        ({"RateLimit-Policy": "10; w=60"}, Quota(10, None, None, 60)),  # what mail.tm sends
+        (
+            {"RateLimit": '"default";r=0;t=42', "RateLimit-Policy": '"default";q=10;w=60'},
+            Quota(10, 0, 42, 60),
+        ),
+        (  # several quotas: the strictest of each
+            {
+                "RateLimit-Policy": "10;w=1, 100;w=60",
+                "RateLimit-Remaining": "5, 0",
+                "RateLimit-Reset": "1, 30",
+            },
+            Quota(10, 0, 30, 60),
+        ),
+        ({"RateLimit-Remaining": "0", "RateLimit-Reset": "later"}, Quota(None, 0, None, None)),
+        ({"RateLimit": "limit=ten, remaining=nan, reset=-4", "RateLimit-Reset": "inf"}, None),
+        ({"RateLimit-Policy": "w=soon; q=; =5", "RateLimit": ";;,,"}, None),
+        ({"Content-Type": "application/json"}, None),
+    ],
+)
+def test_ratelimit_headers_are_read_in_every_form(headers, expected):
+    assert ratelimit_quota(headers) == expected
+    assert ratelimit_quota(answer(200, headers=headers).headers) == expected
+
+
+def test_a_spent_quota_pauses_every_process_before_the_next_call(make, clock, state_dir):
+    mail = make()
+    spent = {"RateLimit": "limit=10, remaining=0, reset=42"}
+    mail.session.answers = [answer(200, headers=spent), answer(200)]
+    mail.request("GET", "/messages")
+    other_process = SharedRateLimiter(state_dir, clock=clock, sleep=clock.sleep)
+    assert clock.since_start(other_process.acquire()) == pytest.approx(42)
+    mail.request("GET", "/messages")
+    assert mail.session.gaps()[0] >= 42  # waited before the call, no 429 needed
+    assert len(mail.session.calls) == 2
+
+
+@pytest.mark.parametrize("remaining, paused", [(0, True), (1, True), (2, False)])
+def test_the_pause_starts_at_the_reserve(make, clock, state_dir, remaining, paused):
+    mail = make()
+    quota = {"RateLimit-Remaining": str(remaining), "RateLimit-Reset": "9"}
+    mail.session.answers = [answer(200, headers=quota)]
+    mail.request("GET", "/messages")
+    slot = SharedRateLimiter(state_dir, clock=clock, sleep=clock.sleep).acquire()
+    assert (clock.since_start(slot) >= 9) is paused
+
+
+@pytest.mark.parametrize(
+    "headers, pause",
+    [
+        ({"RateLimit": "remaining=0", "RateLimit-Policy": "10; w=60"}, 60),  # the window
+        ({"RateLimit-Remaining": "0"}, 1),  # nothing else to go on: a second
+        ({"RateLimit-Remaining": "0", "RateLimit-Reset": "nan"}, 1),  # a bad reset is ignored
+        ({"RateLimit-Remaining": "0", "RateLimit-Reset": "999999"}, 120),  # capped
+    ],
+)
+def test_how_long_a_spent_quota_pauses(make, clock, state_dir, headers, pause):
+    mail = make()
+    mail.session.answers = [answer(200, headers=headers)]
+    mail.request("GET", "/messages")
+    slot = SharedRateLimiter(state_dir, clock=clock, sleep=clock.sleep).acquire()
+    assert clock.since_start(slot) == pytest.approx(pause)
+
+
+def test_the_quota_pause_cap_is_a_setting(make, clock, state_dir):
+    mail = make(retry=RetryPolicy(quota_pause_cap=30))
+    mail.session.answers = [answer(200, headers={"RateLimit": "remaining=0, reset=3600"})]
+    mail.request("GET", "/messages")
+    slot = SharedRateLimiter(state_dir, clock=clock, sleep=clock.sleep).acquire()
+    assert clock.since_start(slot) == pytest.approx(30)
+
+
+def test_malformed_rate_limit_headers_neither_raise_nor_pause(mail):
+    junk = {
+        "RateLimit": "remaining=lots, reset=soon",
+        "RateLimit-Remaining": "nan",
+        "RateLimit-Reset": "-1",
+        "RateLimit-Policy": "w=forever",
+    }
+    mail.session.answers = [answer(200, headers=junk), answer(429, retry_after="nan"), answer(200)]
+    mail.request("GET", "/messages")
+    assert mail.request("GET", "/messages").status_code == 200  # a `nan` Retry-After: backoff
+    no_pause, backoff = mail.session.gaps()
+    assert no_pause == pytest.approx(0)
+    assert 1.0 <= backoff <= 2.0
+
+
+def test_a_429_with_a_spent_quota_and_no_retry_after_waits_for_the_reset(mail):
+    spent = {"RateLimit-Remaining": "0", "RateLimit-Reset": "7"}
+    mail.session.answers = [answer(429, headers=spent), answer(200)]
+    assert mail.request("GET", "/messages").status_code == 200
+    assert mail.session.gaps() == pytest.approx([7.0])
 
 
 # --- the API -------------------------------------------------------------------------------------

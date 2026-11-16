@@ -12,6 +12,11 @@ Retries:
   error into "address already used".
 - Nothing is retried more than `max_attempts` calls in all, or past `max_total_wait` seconds of
   waiting; then the last answer is returned (or the last error raised).
+
+RateLimit headers: every answer's IETF RateLimit headers are read (`ratelimit_quota`). When they
+say the quota is spent (`remaining` at or below `quota_reserve`), every process pauses until it
+resets, so the next call waits instead of drawing a 429. The headers don't say which requests a
+quota counts, so the pause covers the whole API host: the simplest choice that never under-counts.
 """
 from __future__ import annotations
 
@@ -23,7 +28,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Mapping, NamedTuple, Optional
 from urllib.parse import quote, urlparse
 
 import requests
@@ -53,13 +58,87 @@ class MailTmTimeout(MailTmError):
 class RetryPolicy:
     """At most `max_attempts` calls and `max_total_wait` seconds of waiting per request. Waits
     are what `Retry-After` asks for (at most `retry_after_cap`), else 1-2 s, 2-4 s, 4-8 s, ...
-    (`backoff_base` doubling, each at most `backoff_cap`)."""
+    (`backoff_base` doubling, each at most `backoff_cap`).
+
+    RateLimit headers: once `remaining` is `quota_reserve` or less, every process pauses until
+    the quota resets, for at most `quota_pause_cap` seconds."""
 
     max_attempts: int = 7
     max_total_wait: float = 120.0
     backoff_base: float = 2.0
     backoff_cap: float = 30.0
     retry_after_cap: float = 60.0
+    quota_reserve: int = 1
+    quota_pause_cap: float = 120.0
+
+
+class Quota(NamedTuple):
+    """What an answer's RateLimit headers say; None where they say nothing usable."""
+
+    limit: Optional[float]  # requests in the window
+    remaining: Optional[float]  # requests left in it
+    reset: Optional[float]  # seconds until it refills
+    window: Optional[float]  # the policy's window, in seconds
+
+
+# RateLimit parameter names: draft-7 (`limit=10, remaining=0, reset=42`), and the later drafts'
+# short ones (`"name";r=0;t=42`, and `RateLimit-Policy: "name";q=10;w=60`).
+_QUOTA_KEYS = {
+    "limit": "limit",
+    "q": "limit",
+    "remaining": "remaining",
+    "r": "remaining",
+    "reset": "reset",
+    "t": "reset",
+    "w": "window",
+}
+
+
+def _quota_number(text: str) -> Optional[float]:
+    """A finite, non-negative number, or None (`nan`, `inf`, `-4`, `soon`, ...)."""
+    try:
+        value = float(text.strip().strip('"'))
+    except ValueError:
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
+def ratelimit_quota(headers: Mapping[str, str]) -> Optional[Quota]:
+    """
+    The quota an answer's IETF RateLimit headers describe, in any letter case: `RateLimit`
+    (draft-7 `limit=10, remaining=0, reset=42`, or the later `"name";r=0;t=42`), the older
+    `RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset`, and `RateLimit-Policy`
+    (`10; w=60`, or `"name";q=10;w=60`). Where several quotas are given, the strictest wins: the
+    lowest limit and remaining, the longest reset and window. Malformed values are skipped; None
+    when nothing usable is left.
+    """
+    lowered = {str(name).lower(): str(value) for name, value in headers.items()}
+    found: dict[str, list[float]] = {"limit": [], "remaining": [], "reset": [], "window": []}
+    for key in ("limit", "remaining", "reset"):
+        for item in lowered.get(f"ratelimit-{key}", "").split(","):
+            value = _quota_number(item.split(";")[0])  # an old draft allowed "10, 10;w=1"
+            if value is not None:
+                found[key].append(value)
+    for name in ("ratelimit", "ratelimit-policy"):
+        for item in lowered.get(name, "").split(","):
+            params = item.split(";")
+            if name == "ratelimit-policy":
+                value = _quota_number(params[0])  # draft-7: the item starts with the limit
+                if value is not None:
+                    found["limit"].append(value)
+            for param in params:
+                key, equals, text = param.partition("=")
+                key = _QUOTA_KEYS.get(key.strip().lower(), "")
+                value = _quota_number(text) if equals and key else None
+                if value is not None:
+                    found[key].append(value)
+    if not any(found.values()):
+        return None
+
+    def pick(key: str, strictest: Callable[[list[float]], float]) -> Optional[float]:
+        return strictest(found[key]) if found[key] else None
+
+    return Quota(pick("limit", min), pick("remaining", min), pick("reset", max), pick("window", max))
 
 
 def retry_after_seconds(response: requests.Response, cap: float = 60.0) -> Optional[float]:
@@ -214,16 +293,20 @@ class MailTmClient:
                 self._sleep(wait)
                 waited += wait
                 continue
+            spent = self._quota_pause(response)
             if response.status_code == 429:
                 wait = retry_after_seconds(response, policy.retry_after_cap)
                 if wait is None:
-                    wait = self._backoff(attempt)
+                    wait = spent if spent is not None else self._backoff(attempt)
+                wait = max(wait, spent or 0.0)
                 # Every process sharing the limiter waits this out, not just this one.
                 self.limiter.penalize(wait)
                 if not retry_429 or last_try or waited + wait > policy.max_total_wait:
                     return response
                 waited += wait  # the next acquire() sleeps through the pause
                 continue
+            if spent:
+                self.limiter.penalize(spent)  # the next call, from any process, waits for the reset
             if response.status_code in TRANSIENT_STATUSES and idempotent and not last_try:
                 wait = retry_after_seconds(response, policy.retry_after_cap)
                 if wait is None:
@@ -237,6 +320,18 @@ class MailTmClient:
     def _backoff(self, attempt: int) -> float:
         policy = self.retry
         return backoff_seconds(attempt - 1, policy.backoff_base, policy.backoff_cap, self._rng)
+
+    def _quota_pause(self, response: requests.Response) -> Optional[float]:
+        """How long everyone should wait when the RateLimit headers say the quota is spent: until
+        the reset, else the policy's window, else a second (mail.tm's documented window); at most
+        `quota_pause_cap`. None while the quota lasts, or without such headers."""
+        quota = ratelimit_quota(response.headers)
+        if quota is None or quota.remaining is None:
+            return None
+        if quota.remaining > self.retry.quota_reserve:
+            return None
+        wait = next(s for s in (quota.reset, quota.window, 1.0) if s is not None)
+        return min(wait, self.retry.quota_pause_cap)
 
     @staticmethod
     def _check(response: requests.Response, what: str, show_body: bool = True) -> None:
