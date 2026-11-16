@@ -23,6 +23,9 @@ const defaultBody: RequestHandler = (req, _res, next) => {
  * JSON and form parsers with the default size limit, mounted per prefix rather than globally so a
  * handler that needs the raw body (a webhook, say) can be mounted ahead of them. Files never come
  * through the API: browsers upload straight to S3 (POST /api/private/uploads/presign).
+ *
+ * Passed to app.use as one array argument (Express flattens it), never spread: code scanning can't
+ * place the arguments after a spread, so the router behind one would lose the limiter in front.
  */
 const parseBody: RequestHandler[] = [
   express.json(),
@@ -57,20 +60,20 @@ export function createApp(): Express {
   app.use(requestMemo);
   app.use(responseFormatter);
 
-  app.use('/api/public', ...parseBody, publicRouter);
+  app.use('/api/public', parseBody, publicRouter);
   // Verified token → the per-user limit → the user's row: an over-budget user costs no DB read.
   app.use(
     '/api/private',
     verifyCognitoToken,
     privateLimiter,
     loadCognitoUser,
-    ...parseBody,
+    parseBody,
     privateRouter,
   );
   // MCP sign-in: public OAuth endpoints and discovery. Before /api/mcp, which would swallow them.
-  app.use('/.well-known', ...parseBody, wellKnownRouter);
-  app.use('/api/mcp/oauth', ...parseBody, mcpOAuthRouter);
-  app.use('/api/mcp', ...parseBody, mcpRouter, mcpBodyErrors); // agent keys, not Cognito
+  app.use('/.well-known', parseBody, wellKnownRouter);
+  app.use('/api/mcp/oauth', parseBody, mcpOAuthRouter);
+  app.use('/api/mcp', parseBody, mcpRouter, mcpBodyErrors); // agent keys, not Cognito
 
   app.use(notFound);
   app.use(errorHandler);
