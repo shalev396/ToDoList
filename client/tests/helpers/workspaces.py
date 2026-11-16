@@ -47,10 +47,12 @@ def get_workspace(api_base_url: str, user, workspace_id: str) -> dict:
 
 # Seconds a create may take. The suite's API runs locally against a deployed stage's database, so
 # every query is a long round trip (about 100 ms from a laptop, more from CI's runners), and four
-# workers create at once. Demo data is a seed of a few hundred queries (server/src/seed): it gets
-# a minute. A create is never retried here.
+# workers create at once. A create is never retried here.
 CREATE_TIMEOUT = 30
-DEMO_CREATE_TIMEOUT = 60
+# Demo data (server/src/seed) is a few dozen batched queries, about 7 s at 150 ms a round trip. A
+# remote stage is slow, though (150-200 ms a round trip from CI's runners), and the four workers'
+# seeds share the API's two database connections: a safety net of two minutes.
+DEMO_CREATE_TIMEOUT = 120
 
 # Accounts one of whose creates timed out here. The server may still have made that workspace, and
 # with nothing stored the app opens an account's oldest workspace, so the next test would open the
