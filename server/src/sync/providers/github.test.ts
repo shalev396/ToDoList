@@ -1873,7 +1873,7 @@ describe('github: runIntegrationSync with this adapter', () => {
       for (const id of OWNED_BY_ISSUES) assert.equal(stored(items, id).syncResource, 'issues', id);
       for (const item of items.values()) {
         assert.equal(item.deletedAt, null);
-        assert.match(item.source.hash ?? '', /^sha1:[0-9a-f]{40}$/);
+        assert.match(item.source.hash ?? '', /^sha256:[0-9a-f]{64}$/);
         assert.equal(item.source.accountId, ME);
       }
       const board = stored(containers, 'PVT_FAKE_roadmap').id;

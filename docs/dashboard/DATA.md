@@ -166,7 +166,7 @@ To-dos, issues, tasks, events, assignments, deadlines, files and messages all sh
   "assignees": ["me"], "labels": ["backend"], "parentId": null,
   "source": { "provider": "jira", "accountId": "autods.atlassian.net", "externalId": "10421",
               "key": "ADS-1234", "url": "https://<site>.atlassian.net/browse/ADS-1234",
-              "updatedAtSource": "…", "etag": null, "hash": "sha1:…" },
+              "updatedAtSource": "…", "etag": null, "hash": "sha256:…" },
   "props": { "issueType": "Bug", "sprint": "S45", "storyPoints": 3 },
   "visibility": "workspace", "closedAt": null, "deletedAt": null, "lastSeenAt": "…" }
 ```
@@ -323,7 +323,7 @@ A **sign-in grant** (`kind: "oauth"`) is the same row made by an MCP OAuth clien
 ## 4. Upsert, dedup and lifecycle
 
 - **Natural key:** `(workspaceId, source.provider, source.accountId, source.externalId)`, backed by a unique index. Every sync write is a `bulkWrite` of `updateOne({key}, {$set: mapped, $setOnInsert: {_id, createdAt}}, {upsert: true})`.
-- **Skip no-op writes.** When `source.hash` (a SHA-1 of the mapped fields) is unchanged, only `lastSeenAt` is updated.
+- **Skip no-op writes.** When `source.hash` (`sha256:` and a SHA-256 of the mapped fields) is unchanged, only `lastSeenAt` is updated. The prefix names the algorithm: a copy still holding a `sha1:` hash (written before the switch) is compared field by field instead, and when nothing it covers changed it only takes the new hash, so the switch rewrote no record and bumped no `updatedAt`.
 - **Closed at source.** When the provider reports done, cancelled or archived, the sync sets `status` and `closedAt` and keeps the item, so deadline history and the donut "done" count still work.
 - **Deleted at source.** Deletion is detected through the provider's delete signal (Google `status: "cancelled"`, webhook events) or a **sweep**: after a full sync of a resource, items in that resource with `lastSeenAt < runStartedAt` get `deletedAt = now`. This is a soft delete, and the purge (run only when invoked) hard-deletes rows 30 days later. Nothing schedules the purge (an infra test asserts it), so the 30-day hard delete and the orphan sweeps happen only when someone runs it.
 - **Disconnecting an integration** sets `Integrations.deletedAt`, deletes its `Credentials` document (a hard delete, followed by a check that it is gone), and soft-deletes its items and containers.

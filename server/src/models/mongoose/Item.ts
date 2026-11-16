@@ -341,6 +341,7 @@ const itemStore: SourceUpsertStore<StoredItem> = {
     })
       .lean<StoredItem[]>()
       .exec(),
+  findWritten: (filter) => ItemMongoModel.find(filter).lean<Record<string, unknown>[]>().exec(),
   bulkWrite: (writes) => ItemMongoModel.bulkWrite(writes),
 };
 

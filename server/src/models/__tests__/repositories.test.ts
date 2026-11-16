@@ -711,6 +711,62 @@ describe('ItemRepository', () => {
     assert.equal((await ItemRepository.findById(w, id))?.syncResource, null);
   });
 
+  it('bulkUpsert compares a stored hash of another algorithm field by field, once', async () => {
+    const w = 'w-rehash';
+    const fields: Partial<ItemUpsert> = {
+      dueAt: new Date('2026-11-20T09:00:00Z'),
+      labels: ['a', 'b'],
+      assignees: ['ann'],
+      props: { points: 3, sprint: { name: 'S1', endsAt: new Date('2026-11-30T00:00:00Z') } },
+      // Longer than the stored preview: the comparison reads what a write would store.
+      bodyPreview: 'x'.repeat(600),
+    };
+    await ItemRepository.bulkUpsert(w, [
+      jiraIssue('same', 'sha1:same', fields),
+      jiraIssue('moved', 'sha1:moved', fields),
+      jiraIssue('closing', 'sha1:closing'),
+    ]);
+    const sameId = await mirroredId(w, 'same');
+    const before = await ItemRepository.findById(w, sameId);
+    assert.ok(before?.lastSeenAt);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const later = new Date('2026-11-21T09:00:00Z');
+    const result = await ItemRepository.bulkUpsert(w, [
+      // Only volatile source fields changed: unchanged, and it takes the new hash.
+      jiraIssue('same', 'sha256:same', {
+        ...fields,
+        syncResource: 'issues',
+        source: { ...jiraSource('same', 'sha256:same'), etag: 'e2', updatedAtSource: later },
+      }),
+      // A new due date: written in full.
+      jiraIssue('moved', 'sha256:moved', { ...fields, dueAt: later }),
+      // Closed at the provider: written, and counted as closed.
+      jiraIssue('closing', 'sha256:closing', { status: 'done', closedAt: later }),
+    ]);
+    assert.deepEqual(result, { inserted: 0, updated: 2, unchanged: 1, closed: 1 });
+
+    const same = await ItemRepository.findById(w, sameId);
+    assert.ok(same?.lastSeenAt);
+    assert.deepEqual(same.updatedAt, before.updatedAt, 'no updatedAt bump');
+    assert.ok(same.lastSeenAt > before.lastSeenAt, 'lastSeenAt moves on');
+    assert.deepEqual(
+      [same.source.hash, same.source.etag, same.syncResource, same.bodyPreview?.length],
+      ['sha256:same', null, 'issues', 500],
+    );
+    const moved = await ItemRepository.findById(w, await mirroredId(w, 'moved'));
+    assert.deepEqual([moved?.dueAt, moved?.source.hash], [later, 'sha256:moved']);
+
+    // From now on the hashes compare as before: same hash unchanged, another one a full write.
+    assert.deepEqual(
+      await ItemRepository.bulkUpsert(w, [
+        jiraIssue('same', 'sha256:same', fields),
+        jiraIssue('moved', 'sha256:moved-v2', { ...fields, dueAt: later }),
+      ]),
+      { inserted: 0, updated: 1, unchanged: 1, closed: 0 },
+    );
+  });
+
   it('bulkUpsert counts the items it closes: stored not closed, now done or cancelled with closedAt', async () => {
     const w = 'w-closed';
     const closedAt = new Date('2026-11-10T09:00:00Z');
@@ -870,6 +926,30 @@ describe('ContainerRepository', () => {
     );
     const renamed = await ContainerRepository.findById('w-cont', c1.id);
     assert.deepEqual([renamed?.name, renamed?.hidden], ['Course c1 renamed', true]);
+  });
+
+  it('bulkUpsert compares a stored hash of another algorithm field by field', async () => {
+    await ContainerRepository.bulkUpsert('w-cont-rehash', [
+      course('same', 'sha1:same', { path: ['Year 1'], props: { code: 'CS101' } }),
+      course('renamed', 'sha1:renamed'),
+    ]);
+    const [same] = await ContainerRepository.list('w-cont-rehash', { externalIds: ['same'] });
+    assert.ok(same);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(
+      await ContainerRepository.bulkUpsert('w-cont-rehash', [
+        course('same', 'sha256:same', { path: ['Year 1'], props: { code: 'CS101' } }),
+        course('renamed', 'sha256:renamed', { name: 'Course renamed there' }),
+      ]),
+      { inserted: 0, updated: 1, unchanged: 1 },
+    );
+    const after = await ContainerRepository.findById('w-cont-rehash', same.id);
+    assert.deepEqual([after?.source.hash, after?.updatedAt], ['sha256:same', same.updatedAt]);
+    const [renamed] = await ContainerRepository.list('w-cont-rehash', { externalIds: ['renamed'] });
+    assert.deepEqual(
+      [renamed?.name, renamed?.source.hash],
+      ['Course renamed there', 'sha256:renamed'],
+    );
   });
 
   it('bulkUpsert stamps syncResource on every write, unchanged ones too', async () => {

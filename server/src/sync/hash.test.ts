@@ -6,7 +6,7 @@ import type { ItemUpsert } from '../models/definitions/Item.js';
 import { stableStringify } from '../utils/stableStringify.js';
 import { containerSourceHash, itemSourceHash } from './hash.js';
 
-const SHA1 = /^sha1:[0-9a-f]{40}$/;
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
 function item(extra: Partial<ItemUpsert> = {}): ItemUpsert {
   return {
@@ -59,8 +59,8 @@ describe('stableStringify', () => {
 });
 
 describe('itemSourceHash', () => {
-  it('is "sha1:" + 40 hex characters and repeatable', () => {
-    assert.match(itemSourceHash(item()), SHA1);
+  it('is "sha256:" + 64 hex characters and repeatable', () => {
+    assert.match(itemSourceHash(item()), SHA256);
     assert.equal(itemSourceHash(item()), itemSourceHash(item()));
   });
 
@@ -116,7 +116,7 @@ describe('itemSourceHash', () => {
 describe('containerSourceHash', () => {
   it('changes with the name or area and ignores volatile source fields', () => {
     const base = containerSourceHash(container());
-    assert.match(base, SHA1);
+    assert.match(base, SHA256);
     assert.equal(containerSourceHash(container({ path: [], props: {}, parentId: null })), base);
     assert.equal(
       containerSourceHash(container({ source: { ...container().source, etag: 'x', hash: 'y' } })),

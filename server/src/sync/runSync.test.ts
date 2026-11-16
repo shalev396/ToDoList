@@ -255,7 +255,7 @@ describe('runIntegrationSync: fixture sets v1 → v1 → v2', () => {
     for (const stored of items.values()) {
       assert.equal(stored.source.provider, FAKE_PROVIDER);
       assert.equal(stored.source.accountId, s.integration.accountId);
-      assert.match(stored.source.hash ?? '', /^sha1:[0-9a-f]{40}$/);
+      assert.match(stored.source.hash ?? '', /^sha256:[0-9a-f]{64}$/);
       assert.equal(stored.deletedAt, null);
     }
     assert.equal(item(items, 'A').containerId, containers[0]?.id);
@@ -298,6 +298,32 @@ describe('runIntegrationSync: fixture sets v1 → v1 → v2', () => {
     const after = await itemsOf(s);
     for (const [externalId, stored] of after) {
       assert.deepEqual(stored.updatedAt, item(before, externalId).updatedAt, externalId);
+    }
+  });
+
+  it('v1 again over SHA-1 hashes (stored before SHA-256): nothing changes, each takes the new hash', async () => {
+    const scope = { workspaceId: s.workspaceId, integrationId: s.integration.id };
+    const legacy = { $set: { 'source.hash': `sha1:${'0'.repeat(40)}` } };
+    await ItemMongoModel.updateMany(scope, legacy, { timestamps: false });
+    await ContainerMongoModel.updateMany(scope, legacy, { timestamps: false });
+    const before = await itemsOf(s);
+    const containersBefore = await ContainerMongoModel.find(scope).lean();
+    const summary = await run(s.integration.id, {
+      trigger: 'manual',
+      mode: 'fixtures',
+      transport: await fakeTransport('v1'),
+    });
+    assert.deepEqual(summary.counts, counts({ fetched: 5, unchanged: 4, failed: 1 }));
+    for (const [externalId, stored] of await itemsOf(s)) {
+      assert.deepEqual(stored.updatedAt, item(before, externalId).updatedAt, externalId);
+      assert.match(stored.source.hash ?? '', /^sha256:[0-9a-f]{64}$/, externalId);
+    }
+    const containers = await ContainerMongoModel.find(scope).lean();
+    assert.equal(containers.length, containersBefore.length);
+    for (const container of containers) {
+      const was = containersBefore.find((c) => c._id === container._id);
+      assert.deepEqual(container.updatedAt, was?.updatedAt);
+      assert.match(container.source.hash ?? '', /^sha256:[0-9a-f]{64}$/);
     }
   });
 

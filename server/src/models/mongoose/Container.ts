@@ -102,6 +102,8 @@ const containerStore: SourceUpsertStore = {
     ContainerMongoModel.find(filter, { integrationId: 1, source: 1, deletedAt: 1 })
       .lean<StoredSource[]>()
       .exec(),
+  findWritten: (filter) =>
+    ContainerMongoModel.find(filter).lean<Record<string, unknown>[]>().exec(),
   bulkWrite: (writes) => ContainerMongoModel.bulkWrite(writes),
 };
 

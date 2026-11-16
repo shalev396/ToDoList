@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import mongoose from 'mongoose';
 
 import { PROVIDERS, type Provider } from '../../types/domain.js';
+import { stableStringify } from '../../utils/stableStringify.js';
 import type {
   BulkUpsertResult,
   ErrorInfo,
@@ -149,11 +150,60 @@ export interface StoredSource {
   deletedAt?: Date | null;
 }
 
-/** The two collection calls upsertBySource() makes, bound to one model by the repository. */
+/** The collection calls upsertBySource() makes, bound to one model by the repository. */
 export interface SourceUpsertStore<S extends StoredSource = StoredSource> {
   /** Stored documents matching the filter, with `_id`, `source` and `deletedAt` (at least). */
   findStored(filter: mongoose.FilterQuery<StoredSource>): Promise<S[]>;
+  /** Stored documents matching the filter, every field: what a write is compared against. */
+  findWritten(filter: mongoose.FilterQuery<StoredSource>): Promise<Record<string, unknown>[]>;
   bulkWrite(writes: mongoose.AnyBulkWriteOperation[]): Promise<{ upsertedCount: number }>;
+}
+
+/** The algorithm a `source.hash` names (`sha256:<hex>`, sync/hash.ts), or null when it names none. */
+function hashAlgorithm(hash: string | null | undefined): string | null {
+  return /^([a-z0-9]+):/.exec(hash ?? '')?.[1] ?? null;
+}
+
+/**
+ * The stored copy's hash and the record's were made by different algorithms (`sha1:` before
+ * `sha256:`): they can't be compared, though the record may well be unchanged.
+ */
+function hashedOtherwise(stored: string | null | undefined, record: string): boolean {
+  const before = hashAlgorithm(stored);
+  const now = hashAlgorithm(record);
+  return before !== null && now !== null && before !== now;
+}
+
+/** What every write sets, unchanged ones too: never a change. */
+const ALWAYS_WRITTEN = new Set(['lastSeenAt', 'syncResource']);
+/** `source` fields a hash leaves out (sync/hash.ts): they change without the record changing. */
+const VOLATILE_SOURCE = new Set(['hash', 'etag', 'updatedAtSource']);
+
+/**
+ * What a write of `set` changes, read from `doc` (the write itself, or the stored copy) as one
+ * comparable string: every field `set` writes but ALWAYS_WRITTEN, `source` without its volatile
+ * fields. The same string for both: the write changes nothing a hash covers.
+ */
+function changedBy(set: Record<string, unknown>, doc: Record<string, unknown>): string {
+  const picked: Record<string, unknown> = {};
+  for (const [field, written] of Object.entries(set)) {
+    if (ALWAYS_WRITTEN.has(field)) continue;
+    const value = doc[field] ?? null;
+    if (field === 'source' && typeof written === 'object' && written !== null) {
+      const stored = (typeof value === 'object' && value !== null ? value : {}) as Record<
+        string,
+        unknown
+      >;
+      const source: Record<string, unknown> = {};
+      for (const key of Object.keys(written)) {
+        if (!VOLATILE_SOURCE.has(key)) source[key] = stored[key] ?? null;
+      }
+      picked[field] = source;
+    } else {
+      picked[field] = value;
+    }
+  }
+  return stableStringify(picked);
 }
 
 function sourceKey(integrationId: string | null | undefined, source: SourceRef): string {
@@ -205,6 +255,9 @@ function storedSourcesFilter(
  * the same account each keep their own copies (PERMISSIONS-V2 ruling 8):
  * - a live stored copy with the same non-null `source.hash` only gets `lastSeenAt` and
  *   `syncResource`, without an `updatedAt` bump (unchanged);
+ * - a live stored copy whose hash another algorithm made (`sha1:`, before `sha256:`) is compared
+ *   field by field instead: when the write would change nothing its hash covers, it is unchanged
+ *   too and only takes the new hash, so a change of algorithm rewrites no record (DATA.md §4);
  * - so does a record signalling a delete (`deletedAt`) whose stored copy is already deleted: its
  *   `deletedAt`, the purge clock, is kept (unchanged);
  * - anything else is written in full, `$set: toSet(record)` with `$setOnInsert: {_id}`, which
@@ -227,31 +280,61 @@ export async function upsertBySource<T extends SourceRecord, S extends StoredSou
     ]),
   );
 
-  const unchanged: { _id: string; syncResource: string | null }[] = [];
+  /** `hash`: the record's, written over a stored hash of another algorithm. */
+  const unchanged: { _id: string; syncResource: string | null; hash?: string }[] = [];
   const changed: T[] = [];
+  const rehashed: { record: T; current: S; hash: string }[] = [];
   for (const record of records) {
     const current = stored.get(sourceKey(record.integrationId, record.source));
     const storedDeleted = current !== undefined && (current.deletedAt ?? null) !== null;
     const signalsDelete = (record.deletedAt ?? null) !== null;
-    const same =
-      current !== undefined &&
-      !storedDeleted &&
-      !signalsDelete &&
-      record.source.hash !== null &&
-      record.source.hash === current.source.hash;
+    const live = current !== undefined && !storedDeleted && !signalsDelete;
+    const same = live && record.source.hash !== null && record.source.hash === current.source.hash;
     if (same || (storedDeleted && signalsDelete)) {
       unchanged.push({ _id: current._id, syncResource: record.syncResource ?? null });
+    } else if (
+      live &&
+      record.source.hash !== null &&
+      hashedOtherwise(current.source.hash, record.source.hash)
+    ) {
+      rehashed.push({ record, current, hash: record.source.hash });
     } else {
       changed.push(record);
       onWrite?.(record, current);
     }
   }
+  if (rehashed.length > 0) {
+    const written = new Map(
+      (
+        await store.findWritten({
+          workspaceId,
+          _id: { $in: rehashed.map(({ current }) => current._id) },
+        })
+      ).map((doc) => [doc['_id'], doc]),
+    );
+    for (const { record, current, hash } of rehashed) {
+      const set = toSet(record, seenAt);
+      const doc = written.get(current._id);
+      if (doc !== undefined && changedBy(set, set) === changedBy(set, doc)) {
+        unchanged.push({ _id: current._id, syncResource: record.syncResource ?? null, hash });
+      } else {
+        changed.push(record);
+        onWrite?.(record, current);
+      }
+    }
+  }
 
   const { upsertedCount } = await store.bulkWrite([
-    ...unchanged.map(({ _id, syncResource }) => ({
+    ...unchanged.map(({ _id, syncResource, hash }) => ({
       updateOne: {
         filter: { _id, workspaceId },
-        update: { $set: { lastSeenAt: seenAt, syncResource } },
+        update: {
+          $set: {
+            lastSeenAt: seenAt,
+            syncResource,
+            ...(hash === undefined ? {} : { 'source.hash': hash }),
+          },
+        },
         timestamps: false,
       },
     })),
