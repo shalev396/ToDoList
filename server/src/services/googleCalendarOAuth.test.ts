@@ -152,14 +152,15 @@ describe('POST …/integrations/google-calendar/oauth/start', () => {
     assert.ok(!url.href.includes(record.codeVerifier), 'the verifier never leaves the server');
   });
 
-  it('sets the binding cookie HttpOnly, SameSite=Lax, on the OAuth callbacks only, 10 minutes', async () => {
+  it('sets the binding cookie HttpOnly, Secure, SameSite=Lax, on the OAuth callbacks only, 10 minutes', async () => {
     const response = await fetch(`${api.baseUrl}${START()}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
       body: '{}',
     });
     const cookie = response.headers.get('set-cookie') ?? '';
-    assert.match(cookie, /HttpOnly/i);
+    assert.match(cookie, /; HttpOnly(;|$)/i);
+    assert.match(cookie, /; Secure(;|$)/i);
     assert.match(cookie, /SameSite=Lax/i);
     assert.match(cookie, /Path=\/api\/public\/oauth/);
     assert.match(cookie, /Max-Age=600/);
@@ -302,6 +303,9 @@ describe('GET /api/public/oauth/google-calendar/callback', () => {
       assert.ok(!res.location.includes(state) && !res.location.includes('FAKE-code'));
       assert.match(res.setCookie, /todolist_oauth=;/);
       assert.match(res.setCookie, /Path=\/api\/public\/oauth/);
+      assert.match(res.setCookie, /; HttpOnly(;|$)/i);
+      assert.match(res.setCookie, /; Secure(;|$)/i);
+      assert.match(res.setCookie, /SameSite=Lax/i);
     }
   });
 

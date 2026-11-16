@@ -229,6 +229,40 @@ describe('the authorize URL', () => {
   }
 });
 
+describe('the binding cookie', () => {
+  it('a start sets it HttpOnly, Secure, SameSite=Lax, on the OAuth callbacks only, 10 minutes', async () => {
+    for (const provider of MOCK_OAUTH_PROVIDERS) {
+      const response = await fetch(`${api.baseUrl}${START(provider)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: '{}',
+      });
+      assert.equal(response.status, 200, provider);
+      const cookie = response.headers.get('set-cookie') ?? '';
+      assert.match(cookie, /^todolist_oauth=[A-Za-z0-9_-]{43};/, provider);
+      assert.match(cookie, /; HttpOnly(;|$)/i, provider);
+      assert.match(cookie, /; Secure(;|$)/i, provider);
+      assert.match(cookie, /SameSite=Lax/i, provider);
+      assert.match(cookie, /Path=\/api\/public\/oauth(;|$)/, provider);
+      assert.match(cookie, /Max-Age=600/, provider);
+    }
+  });
+
+  it('the callback clears it with the same attributes', async () => {
+    const response = await fetch(`${api.baseUrl}/api/public/oauth/github/callback?state=nope`, {
+      redirect: 'manual',
+    });
+    assert.equal(response.status, 302);
+    const cookie = response.headers.get('set-cookie') ?? '';
+    assert.match(cookie, /^todolist_oauth=;/);
+    assert.match(cookie, /Expires=Thu, 01 Jan 1970/);
+    assert.match(cookie, /; HttpOnly(;|$)/i);
+    assert.match(cookie, /; Secure(;|$)/i);
+    assert.match(cookie, /SameSite=Lax/i);
+    assert.match(cookie, /Path=\/api\/public\/oauth(;|$)/);
+  });
+});
+
 describe('a full connection', () => {
   for (const provider of MOCK_OAUTH_PROVIDERS) {
     it(`${provider}: creates an active OAuth integration with a sealed credential`, async () => {

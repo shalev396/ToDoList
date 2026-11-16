@@ -7,7 +7,12 @@ import type {
   ListGoogleCalendarsResponseData,
   StartGoogleCalendarOAuthResponseData,
 } from '../routes/private/integrations.js';
-import { OAUTH_COOKIE, OAUTH_COOKIE_PATH } from '../services/oauth/common.js';
+import {
+  OAUTH_COOKIE,
+  OAUTH_COOKIE_ATTRIBUTES,
+  OAUTH_COOKIE_PATH,
+  type OAuthCookieOptions,
+} from '../services/oauth/common.js';
 import {
   GOOGLE_CALENDAR_OAUTH_CLASS,
   listGoogleCalendars,
@@ -15,14 +20,6 @@ import {
 } from '../services/oauth/service.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
-
-/** HttpOnly, sent back only to the OAuth callbacks, Lax so the provider's redirect carries it. */
-const cookieOptions = (): {
-  httpOnly: true;
-  sameSite: 'lax';
-  secure: boolean;
-  path: string;
-} => ({ httpOnly: true, sameSite: 'lax', secure: true, path: OAUTH_COOKIE_PATH });
 
 /** The binding cookie's value from the request, or null. */
 export function browserNonceOf(req: Request): string | null {
@@ -38,10 +35,14 @@ const start: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(StartOAuthBody, req.body ?? {});
   const request = req as WorkspaceRequest;
   const started = await OAuthFlow.start(request.caller, GOOGLE_CALENDAR_OAUTH_CLASS, body);
-  res.cookie(OAUTH_COOKIE, started.browserNonce, {
-    ...cookieOptions(),
+  const cookie: OAuthCookieOptions = {
+    httpOnly: true,
+    secure: true,
+    sameSite: 'lax',
+    path: OAUTH_COOKIE_PATH,
     maxAge: OAUTH_STATE_TTL_MS,
-  });
+  };
+  res.cookie(OAUTH_COOKIE, started.browserNonce, cookie);
   res.set('Cache-Control', 'no-store');
   const data: StartGoogleCalendarOAuthResponseData = { authorizeUrl: started.authorizeUrl };
   res.success(data);
@@ -55,7 +56,7 @@ const callback: RequestHandler = async (req, res): Promise<void> => {
     new Date(),
     Actor.originOf(req),
   );
-  res.clearCookie(OAUTH_COOKIE, cookieOptions());
+  res.clearCookie(OAUTH_COOKIE, OAUTH_COOKIE_ATTRIBUTES);
   res.set('Cache-Control', 'no-store');
   // The callback URL carries the code: the next page never sees it as a referrer.
   res.set('Referrer-Policy', 'no-referrer');

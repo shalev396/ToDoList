@@ -14,6 +14,20 @@ export { OAuthFailure, type OAuthErrorCode } from './failure.js';
 /** The browser-binding cookie: HttpOnly, sent only to the OAuth callbacks. */
 export const OAUTH_COOKIE = 'todolist_oauth';
 export const OAUTH_COOKIE_PATH = '/api/public/oauth';
+/**
+ * The binding cookie's attributes: HttpOnly (no script reads it), Secure, SameSite=Lax (the
+ * provider's redirect back is a top-level GET, which must carry it), and sent only to the
+ * callbacks. A start writes them out in full, typed by this constant (OAuthCookieOptions), so the
+ * flags stand where the cookie is set and can't drift from the ones that clear it.
+ */
+export const OAUTH_COOKIE_ATTRIBUTES = {
+  httpOnly: true,
+  secure: true,
+  sameSite: 'lax',
+  path: OAUTH_COOKIE_PATH,
+} as const;
+/** What a start sets the cookie with: the attributes, and how long the flow may take. */
+export type OAuthCookieOptions = typeof OAUTH_COOKIE_ATTRIBUTES & { maxAge: number };
 export const OAUTH_LANGUAGES = ['en', 'he'] as const;
 export const DEFAULT_LANGUAGE = 'en';
 /** A state, verifier or nonce: 32 random bytes, base64url (43 characters). */
