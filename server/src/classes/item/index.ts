@@ -34,6 +34,7 @@ export {
 } from './Overrides.js';
 export { Copies, type LiveStatuses } from './Copies.js';
 export { TimeRange } from './TimeRange.js';
+export { DueDate } from './DueDate.js';
 export { PlannedAt } from './PlannedAt.js';
 export { safeCopyUrl } from './providerCreates.js';
 export type {

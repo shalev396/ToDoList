@@ -27,6 +27,7 @@ import { redactString } from '../../services/secretPatterns.js';
 import type { ItemKind, ItemStatus, Provider, Visibility } from '../../types/domain.js';
 import type { ItemDetail, ItemSummary } from '../../types/items.js';
 import { Copies, type LiveStatuses } from './Copies.js';
+import { DueDate } from './DueDate.js';
 import type { ItemEdit, ProviderHalf } from './ItemEdit.js';
 import type { ItemEditing } from './ItemEditing.js';
 import { itemDataOf } from './itemRecord.js';
@@ -179,6 +180,12 @@ export abstract class Item
 
   get allDay(): boolean {
     return this.effective.allDay;
+  }
+
+  /** Its effective due date as a value (HasDueDate): null when it has none. */
+  get due(): DueDate | null {
+    const { dueAt, allDay } = this.effective;
+    return DueDate.from(dueAt, allDay);
   }
 
   get startAt(): Date | null {

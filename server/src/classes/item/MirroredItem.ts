@@ -21,6 +21,7 @@ import type { Caller } from '../base/Caller.js';
 import { Integration } from '../integration/index.js';
 import { definitionOf } from '../integration/definitions/index.js';
 import { ItemPolicy } from '../policies/ItemPolicy.js';
+import { DueDate } from './DueDate.js';
 import { TopicRules } from '../workspace/TopicRules.js';
 import { IntegrationNotOwnerError } from '../../errors/IntegrationNotOwnerError.js';
 import { MirroredItemError } from '../../errors/MirroredItemError.js';
@@ -266,12 +267,8 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
     if (half.title !== undefined && half.title !== data.title) changed.title = half.title;
     if (half.status !== undefined && half.status !== data.status) changed.status = half.status;
     if (half.dueAt !== undefined) {
-      const allDay = half.allDay ?? data.allDay;
-      const same =
-        half.dueAt === null
-          ? data.dueAt === null
-          : sameInstant(half.dueAt, data.dueAt) && allDay === data.allDay;
-      if (!same) {
+      const due = DueDate.from(half.dueAt, half.allDay ?? data.allDay);
+      if (!DueDate.same(due, DueDate.from(data.dueAt, data.allDay))) {
         changed.dueAt = half.dueAt;
         if (half.allDay !== undefined) changed.allDay = half.allDay;
       }
@@ -328,7 +325,10 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
       const allDay = given.allDay ?? null;
       const same =
         given.dueAt === null ||
-        (sameInstant(given.dueAt, source.dueAt) && (allDay ?? source.allDay) === source.allDay);
+        DueDate.same(
+          DueDate.from(given.dueAt, allDay ?? source.allDay),
+          DueDate.from(source.dueAt, source.allDay),
+        );
       patch.dueAt = same ? null : given.dueAt;
       patch.allDay = same || allDay === source.allDay ? null : allDay;
     }

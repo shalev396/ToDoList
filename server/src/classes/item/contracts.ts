@@ -6,6 +6,7 @@
 import type { Caller } from '../base/Caller.js';
 import type { CreateCopyOutcome, CreateCopyRequestBody } from '../../types/providerCreate.js';
 import type { Provider } from '../../types/domain.js';
+import type { DueDate } from './DueDate.js';
 import type { ItemEdit } from './ItemEdit.js';
 import type { TimeRange } from './TimeRange.js';
 
@@ -24,10 +25,9 @@ export interface Deletable {
   delete(caller: Caller): Promise<void>;
 }
 
-/** Has a due date (null: none). */
+/** Has a due date (null: none): the instant, and whether it has no time of day. */
 export interface HasDueDate {
-  readonly dueAt: Date | null;
-  readonly allDay: boolean;
+  readonly due: DueDate | null;
 }
 
 /** Can be copied into one of its owner's providers (H5: "Also create in"). */

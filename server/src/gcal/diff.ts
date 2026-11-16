@@ -18,6 +18,7 @@
  * - at most `maxOps` ops per run, at most `maxCreates` creates (what is left of the daily cap).
  */
 
+import { DueDate } from '../classes/item/DueDate.js';
 import { PlannedAt } from '../classes/item/PlannedAt.js';
 import { sha256Hex } from '../services/crypto/hashing.js';
 import { stableStringify } from '../utils/stableStringify.js';
@@ -204,9 +205,46 @@ function plannedTimes(planned: PlannedAt, timeZone: string): { start: EventTime;
 }
 
 /**
+ * A started item's time: all day, from its start's local date up to its end's (end exclusive; at
+ * least that one day); timed, from its start to its end, or FIFTEEN_MIN_MS without a later end.
+ */
+function startTimes(
+  startAt: Date,
+  item: PushItem,
+  timeZone: string,
+): { start: EventTime; end: EventTime } {
+  if (item.allDay) {
+    const first = localDate(startAt, timeZone);
+    const last = item.endAt !== null ? localDate(item.endAt, timeZone) : first;
+    return { start: { date: first }, end: { date: last > first ? last : addDays(first, 1) } };
+  }
+  const to =
+    item.endAt !== null && item.endAt > startAt
+      ? item.endAt
+      : new Date(startAt.getTime() + FIFTEEN_MIN_MS);
+  return {
+    start: { dateTime: startAt.toISOString(), timeZone },
+    end: { dateTime: to.toISOString(), timeZone },
+  };
+}
+
+/** A due date alone: all day on the day it falls on locally, or the FIFTEEN_MIN_MS before it. */
+function dueTimes(due: DueDate, timeZone: string): { start: EventTime; end: EventTime } {
+  const at = due.at;
+  if (due.allDay) {
+    const day = localDate(at, timeZone);
+    return { start: { date: day }, end: { date: addDays(day, 1) } };
+  }
+  return {
+    start: { dateTime: new Date(at.getTime() - FIFTEEN_MIN_MS).toISOString(), timeZone },
+    end: { dateTime: at.toISOString(), timeZone },
+  };
+}
+
+/**
  * The event an item projects to, or null when it has no date. A planned item (`plannedAt`) is at
- * its plan (plannedTimes). Otherwise all-day items span local dates (end exclusive); a due-only
- * item is all-day on its local date, or the 15 minutes before it.
+ * its plan (plannedTimes); otherwise a started item spans its start to its end (startTimes); a
+ * due-only item is all-day on its local date, or the 15 minutes before it (dueTimes).
  */
 export function projectEvent(
   item: PushItem,
@@ -214,30 +252,17 @@ export function projectEvent(
   timeZone: string,
 ): EventBody | null {
   const planned = PlannedAt.from(item.plannedAt);
-  const anchor = item.startAt ?? item.dueAt;
-  if (anchor === null && planned === null) return null;
+  const due = DueDate.from(item.dueAt, item.allDay);
   let start: EventTime;
   let end: EventTime;
   if (planned !== null) {
     ({ start, end } = plannedTimes(planned, timeZone));
-  } else if (anchor === null) {
-    return null;
-  } else if (item.allDay) {
-    const first = localDate(anchor, timeZone);
-    const last =
-      item.startAt !== null && item.endAt !== null ? localDate(item.endAt, timeZone) : first;
-    start = { date: first };
-    end = { date: last > first ? last : addDays(first, 1) };
   } else if (item.startAt !== null) {
-    const to =
-      item.endAt !== null && item.endAt > item.startAt
-        ? item.endAt
-        : new Date(item.startAt.getTime() + FIFTEEN_MIN_MS);
-    start = { dateTime: item.startAt.toISOString(), timeZone };
-    end = { dateTime: to.toISOString(), timeZone };
+    ({ start, end } = startTimes(item.startAt, item, timeZone));
+  } else if (due !== null) {
+    ({ start, end } = dueTimes(due, timeZone));
   } else {
-    start = { dateTime: new Date(anchor.getTime() - FIFTEEN_MIN_MS).toISOString(), timeZone };
-    end = { dateTime: anchor.toISOString(), timeZone };
+    return null;
   }
   const url = item.source.url;
   return {

@@ -20,7 +20,8 @@ import { TITLE_MAX } from './createFields.js';
 import { ITEM_STATUSES, type ItemStatus } from '../../types/domain.js';
 import type { WritableField } from '../../types/integrations.js';
 import { parseOr400 } from '../../utils/validation.js';
-import type { DueChange, ProviderPatch } from './writeBack.js';
+import { DueDate } from '../item/DueDate.js';
+import type { ProviderPatch } from './writeBack.js';
 
 /** An edit as callers give it: every field optional, at least one. */
 export interface TaskPatch {
@@ -124,14 +125,9 @@ export class TaskEdit {
       changed.push('status');
     }
     if (patch.dueAt !== undefined) {
-      const due: DueChange | null =
-        patch.dueAt === null ? null : { at: patch.dueAt, allDay: patch.allDay ?? item.allDay };
-      const unchanged =
-        due === null
-          ? item.dueAt === null
-          : sameInstant(due.at, item.dueAt) && due.allDay === item.allDay;
-      if (!unchanged) {
-        sent.due = due;
+      const due = DueDate.from(patch.dueAt, patch.allDay ?? item.allDay);
+      if (!DueDate.same(due, DueDate.from(item.dueAt, item.allDay))) {
+        sent.due = due === null ? null : { at: due.at, allDay: due.allDay };
         changed.push('dueAt');
       }
     }
