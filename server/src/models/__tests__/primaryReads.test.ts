@@ -20,6 +20,8 @@ after(async () => {
   await db.stop();
 });
 
+const ONLY_IDS_FROM_PRIMARY = { mode: 'primary', projection: { _id: 1 } };
+
 interface Seen {
   model: string;
   mode: string | undefined;
@@ -91,11 +93,13 @@ describe('the sweep reads the primary, ids only', () => {
       'View',
     ]);
     for (const read of distincts) assert.equal(read.mode, 'primary', read.model);
+    // The sweep's lookup, then one more per class bulk delete (Workspace.requireEnded): all of
+    // them from the primary, ids only.
     const lookup = seen.filter((read) => read.model === 'Workspace');
-    assert.deepEqual(
-      lookup.map(({ mode, projection }) => ({ mode, projection })),
-      [{ mode: 'primary', projection: { _id: 1 } }],
-    );
+    assert.ok(lookup.length >= 1);
+    for (const read of lookup) {
+      assert.deepEqual({ mode: read.mode, projection: read.projection }, ONLY_IDS_FROM_PRIMARY);
+    }
   });
 
   it('Topic.removeOrphans: the id list and the Workspaces lookup from the primary, ids only', async () => {
@@ -116,11 +120,13 @@ describe('the sweep reads the primary, ids only', () => {
       distincts.map(({ model, mode }) => ({ model, mode })),
       [{ model: 'Topic', mode: 'primary' }],
     );
+    // The sweep's lookup, then one more per class bulk delete (Workspace.requireEnded): all of
+    // them from the primary, ids only.
     const lookup = seen.filter((read) => read.model === 'Workspace');
-    assert.deepEqual(
-      lookup.map(({ mode, projection }) => ({ mode, projection })),
-      [{ mode: 'primary', projection: { _id: 1 } }],
-    );
+    assert.ok(lookup.length >= 1);
+    for (const read of lookup) {
+      assert.deepEqual({ mode: read.mode, projection: read.projection }, ONLY_IDS_FROM_PRIMARY);
+    }
   });
 
   it('a failed workspace lookup rejects the topics sweep and deletes nothing', async () => {
