@@ -35,6 +35,7 @@ import { errorMessage } from '@/api/errors';
 import { useLanguage } from '@/hooks/useLanguage';
 import { pathTo, ROUTES, topicPath } from '@/router/routes';
 import { useTemplateShareConfirm } from '@/features/templates/useTemplateShareConfirm';
+import { renameStep } from '@/features/shell/renameTopic';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { cn } from '@/lib/utils';
 import { TOPIC_NAME_MAX } from '@api-types/topics';
@@ -185,7 +186,10 @@ export function AddPageDialog({
   );
 }
 
-/** A topic's name, edited in place: Enter or leaving the field saves, Escape keeps the old one. */
+/**
+ * A topic's name, edited in place: Enter or leaving the field saves, Escape keeps the old one. While
+ * the name is being saved the field stays (renameStep), so its toast shows.
+ */
 export function RenameTopicInput({
   topic,
   onDone,
@@ -201,13 +205,16 @@ export function RenameTopicInput({
   const [name, setName] = useState(topic.name);
 
   const save = () => {
-    const trimmed = name.trim();
-    if (trimmed === '' || trimmed === topic.name || updateTopic.isPending) {
+    const step = renameStep(name, topic.name, updateTopic.isPending);
+    if (step === 'wait') {
+      return;
+    }
+    if (step === 'close') {
       onDone();
       return;
     }
     updateTopic.mutate(
-      { topicId: topic.id, body: { name: trimmed } },
+      { topicId: topic.id, body: { name: name.trim() } },
       {
         onSuccess: (updated) => {
           toast.success(t('topics.renamed', { name: updated.name }));
