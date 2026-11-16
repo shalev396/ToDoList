@@ -4,17 +4,17 @@
  * the run, then kept current after the run writes or sweeps containers.
  */
 import type { ContainerData } from '../../models/definitions/Container.js';
-import type { SyncedRows } from './SyncedRows.js';
+import type { ContainerSource } from './SyncStore.js';
 
 /** What items need of their container: its id and topic (and the resource that swept it). */
 export type CachedContainer = Pick<ContainerData, 'id' | 'topicId' | 'syncResource'>;
 
 export class ContainerCache {
-  readonly #rows: SyncedRows;
+  readonly #rows: ContainerSource;
   /** null until the first lookup. */
   #byExternalId: Map<string, CachedContainer> | null = null;
 
-  constructor(rows: SyncedRows) {
+  constructor(rows: ContainerSource) {
     this.#rows = rows;
   }
 

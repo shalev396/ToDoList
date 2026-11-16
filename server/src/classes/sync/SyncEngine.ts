@@ -2,11 +2,15 @@
  * The sync engine (BACKEND.md §5, DATA.md §4): the body of one sync of one integration, behind
  * Integration#sync (the template method), whoever started it: the sync worker (a background job,
  * sync/worker.ts) or the demo seed (seed/seedWorkspace.ts). One engine is one run (a method
- * object). Its collaborators: the run's accounting (SyncTally), its rows (SyncedRows, internal)
- * and their container cache (ContainerCache), the pure record rules (syncRecords.ts).
+ * object). Its collaborators: the run's accounting (SyncTally), its store (SyncStore.ts: its
+ * cursors and rows, SyncedRows being internal) and their container cache (ContainerCache), the
+ * pure record rules (syncRecords.ts). A run stores to the database as it goes; a batch of fixture
+ * replays of integrations that never synced stores in memory and writes every run at once
+ * (`executeTogether`, FreshReplay), with the same outcome.
  *
- * Internal to the sync: a private constructor behind one static door (`execute`), not in any
- * barrel, and an importer test (syncInternals.test.ts) holds that only Integration loads it. The
+ * Internal to the sync: a private constructor behind two static doors (`execute`,
+ * `executeTogether`), not in any barrel, and an importer test (syncInternals.test.ts) holds that
+ * only Integration loads it. The
  * provider's adapter (the strategy) is resolved here from the integration's provider, never
  * handed in; a test transport is taken in live mode only under node:test.
  *
@@ -33,7 +37,7 @@
  */
 import { Actor } from '../base/Actor.js';
 import { AuditTarget } from '../base/AuditTarget.js';
-import { AuditLog } from '../AuditLog.js';
+import { AuditLog, type AuditEntry } from '../AuditLog.js';
 import { sessionAuth, sessionTransport } from '../integration/definitions/index.js';
 import { assertUnderTest } from '../../config/testSwitches.js';
 import type { ErrorInfo, SourceAccount } from '../../models/definitions/common.js';
@@ -44,6 +48,8 @@ import {
   type SyncResultPatch,
 } from '../../models/definitions/Integration.js';
 import type { ItemUpsert, SweepWindow } from '../../models/definitions/Item.js';
+import type { SyncRunFailure } from '../../models/definitions/SyncRun.js';
+import type { SyncStatePatch, SyncStateUpsert } from '../../models/definitions/SyncState.js';
 import type { WorkspaceData } from '../../models/definitions/Workspace.js';
 import { logger } from '../../services/logger.js';
 import { FixtureMissingError, ProviderHttpError } from '../../sync/errors.js';
@@ -65,15 +71,17 @@ import {
   type MappedItem,
   type ProviderAdapter,
   type ResourceResult,
+  type SyncCounts,
   type SyncErrorCode,
   type SyncRunSummary,
 } from '../../sync/types.js';
-import type { SyncRunStatus } from '../../types/domain.js';
 import type { SyncMode } from '../../types/env.d.ts';
 import { ContainerCache } from './ContainerCache.js';
+import { FreshReplay, NotReplayableError } from './FreshReplay.js';
 import { SyncCursors } from './SyncCursors.js';
 import { SyncedRows } from './SyncedRows.js';
 import type { RunClock, SyncRunOptions } from './SyncOptions.js';
+import type { RunCursors, RunRows, RunStore } from './SyncStore.js';
 import {
   adapterFailureCode,
   checkedWindow,
@@ -167,6 +175,29 @@ const BUG_CODES: ReadonlySet<SyncErrorCode> = new Set([
   'invalid_data',
 ]);
 
+/** How a run's fetching and storing ended, before it is finished. */
+interface RunOutcome {
+  error: ErrorInfo | null;
+  /** Every resource listed in full: a complete full sync. */
+  fullSyncCompleted: boolean;
+}
+
+/** One run of a batch (executeTogether): its integration, its opened run, how it syncs. */
+export interface BatchRun {
+  target: SyncTarget;
+  run: SyncRun;
+  options: SyncRunOptions;
+  clock: RunClock;
+}
+
+/** What a batch needs of its integrations as a whole (Integration.syncTogether). */
+export interface BatchTarget {
+  /** The integrations of these ids still connected (a fresh read), by id. */
+  reloadAll(ids: readonly string[]): Promise<Map<string, IntegrationData>>;
+  /** recordSyncResult of each integration, at once. */
+  recordSyncResults(results: readonly { id: string; result: SyncResultPatch }[]): Promise<void>;
+}
+
 /** The run's finishing time on its own clock: its start time plus the time it took. */
 function finishedAtOf(clock: RunClock): Date {
   return new Date(clock.now.getTime() + (Date.now() - clock.wallStart));
@@ -196,8 +227,10 @@ export class SyncEngine {
   readonly #run: SyncRun;
   readonly #options: SyncRunOptions;
   readonly #clock: RunClock;
-  readonly #cursors: SyncCursors;
-  readonly #rows: SyncedRows;
+  /** Where the run fetches and stores to: the database, or a batch's replay. */
+  readonly #store: RunStore;
+  readonly #cursors: RunCursors;
+  readonly #rows: RunRows;
   readonly #containers: ContainerCache;
   readonly #tally: SyncTally;
   /** Wall clock when the run started fetching: rows not touched since then were not seen. */
@@ -211,6 +244,7 @@ export class SyncEngine {
     workspace: WorkspaceData,
     options: SyncRunOptions,
     clock: RunClock,
+    store: RunStore,
   ) {
     this.#target = target;
     this.#integration = target.data;
@@ -218,10 +252,20 @@ export class SyncEngine {
     this.#run = run;
     this.#options = options;
     this.#clock = clock;
-    this.#cursors = SyncCursors.of(target.data);
-    this.#rows = SyncedRows.of(target.data);
-    this.#containers = new ContainerCache(this.#rows);
+    this.#store = store;
+    this.#cursors = store.cursors;
+    this.#rows = store.rows;
+    this.#containers = new ContainerCache(store.rows);
     this.#tally = new SyncTally(run.id, target.data.id);
+  }
+
+  /** The integration's own cursors and rows, in the database, each write as it happens. */
+  static #databaseStore(target: SyncTarget): RunStore {
+    return {
+      cursors: SyncCursors.of(target.data),
+      rows: SyncedRows.of(target.data),
+      reload: () => target.reload(),
+    };
   }
 
   /**
@@ -236,16 +280,158 @@ export class SyncEngine {
     options: SyncRunOptions,
     clock: RunClock,
   ): Promise<SyncRunSummary> {
-    const engine = new SyncEngine(target, run, workspace, options, clock);
+    const store = SyncEngine.#databaseStore(target);
+    const engine = new SyncEngine(target, run, workspace, options, clock, store);
     try {
-      return await engine.#execute();
+      return await engine.#finish(await engine.#sync(), store);
     } catch (thrown) {
       await engine.#abandon(thrown);
       throw thrown;
     }
   }
 
-  async #execute(): Promise<SyncRunSummary> {
+  /**
+   * Opened runs of several integrations of one workspace at once (Integration.syncTogether: the
+   * demo seed's fixture replays), each with the outcome `execute` would give it, in a handful of
+   * round trips instead of dozens per run:
+   * 1. when none of the integrations has a stored item or container (none ever synced), every
+   *    run fetches and stores in memory (FreshReplay), all at once, from their stored cursors
+   *    (read at once);
+   * 2. the integrations are read again: a run whose integration was disconnected meanwhile writes
+   *    nothing, and finishes as `execute` would (`integration_deleted`);
+   * 3. the containers and items of every run are bulk-upserted at once, then their cursors (with
+   *    the `__run__` state of each run that succeeded);
+   * 4. the runs that succeeded end at once: their runs, their integrations' status, then their
+   *    `sync.run` audit entries. A run that failed finishes on its own, as `execute` does.
+   * When an integration has rows, every run syncs with `execute` instead; so does a run the replay
+   * refuses (NotReplayableError: the database would have answered it otherwise). Answers in the
+   * order of `runs`.
+   */
+  static async executeTogether(
+    runs: readonly BatchRun[],
+    workspace: WorkspaceData,
+    batch: BatchTarget,
+  ): Promise<SyncRunSummary[]> {
+    const workspaceId = workspace.id;
+    if (runs.some(({ target }) => target.data.workspaceId !== workspaceId)) {
+      throw new Error('SyncEngine.executeTogether: the runs of one workspace at a time');
+    }
+    const alone = (entry: BatchRun): Promise<SyncRunSummary> =>
+      SyncEngine.execute(entry.target, entry.run, workspace, entry.options, entry.clock);
+    const ids = runs.map(({ target }) => target.data.id);
+    if (await SyncedRows.anyOf(workspaceId, ids)) return Promise.all(runs.map(alone));
+
+    const states = await SyncCursors.listOf(workspaceId, ids);
+    const engines = runs.map((entry) => {
+      const replay = new FreshReplay(entry.target.data, states.get(entry.target.data.id) ?? []);
+      const { target, run, options, clock } = entry;
+      return {
+        entry,
+        replay,
+        engine: new SyncEngine(target, run, workspace, options, clock, replay),
+      };
+    });
+    const settled = await Promise.allSettled(engines.map(({ engine }) => engine.#sync()));
+    const thrown = settled.find(
+      (result): result is PromiseRejectedResult =>
+        result.status === 'rejected' && !(result.reason instanceof NotReplayableError),
+    );
+    if (thrown !== undefined) {
+      // Nothing is written yet: every run ends failed, none is left `running`.
+      await Promise.all(engines.map(({ engine }) => engine.#abandon(thrown.reason)));
+      throw thrown.reason;
+    }
+    const replayed = engines.flatMap((replaying, index) => {
+      const result = settled[index];
+      return result?.status === 'fulfilled' ? [{ ...replaying, outcome: result.value }] : [];
+    });
+
+    const connected = await batch.reloadAll(replayed.map(({ entry }) => entry.target.data.id));
+    const kept = replayed.filter(({ entry }) => connected.has(entry.target.data.id));
+    const succeeded = kept.flatMap((replaying) => {
+      const integration = connected.get(replaying.entry.target.data.id);
+      if (replaying.outcome.error !== null || integration === undefined) return [];
+      const finishedAt = finishedAtOf(replaying.entry.clock);
+      const ending = replaying.engine.#success(replaying.outcome, integration, finishedAt);
+      return [{ ...replaying, integration, finishedAt, ending }];
+    });
+    try {
+      await SyncEngine.#writeReplays(
+        workspaceId,
+        kept.map(({ replay }) => replay),
+        succeeded.map(({ integration, ending }) => ({
+          integrationId: integration.id,
+          resource: SyncCursors.RUN,
+          patch: ending.cursor,
+        })),
+      );
+    } catch (error) {
+      await Promise.all(replayed.map(({ engine }) => engine.#abandon(error)));
+      throw error;
+    }
+
+    await SyncRun.succeedAll(
+      succeeded.map(({ engine, finishedAt }) => ({
+        run: engine.#run,
+        results: engine.#results(),
+        outcome: { finishedAt, partial: engine.#tally.anyFailed },
+      })),
+    );
+    for (const { engine } of succeeded) engine.#recorded = true;
+    await batch.recordSyncResults(
+      succeeded.map(({ integration, ending }) => ({ id: integration.id, result: ending.result })),
+    );
+    await AuditLog.recordAll(
+      { workspaceId, actor: Actor.system() },
+      succeeded.map(({ engine }) => engine.#auditEntry()),
+    );
+
+    const finished = new Set(succeeded.map(({ engine }) => engine));
+    // A run that failed, or whose integration is gone, finishes on its own in the database; one
+    // the replay refused syncs there.
+    return Promise.all(
+      engines.map(async ({ entry, engine }, index) => {
+        if (finished.has(engine)) return engine.#summary(null);
+        const result = settled[index];
+        if (result?.status !== 'fulfilled') return alone(entry);
+        const store = SyncEngine.#databaseStore(entry.target);
+        try {
+          return await engine.#finish(result.value, store);
+        } catch (error) {
+          await engine.#abandon(error);
+          throw error;
+        }
+      }),
+    );
+  }
+
+  /**
+   * What the replays wrote, in the database: their containers and items in one bulk upsert each,
+   * then their cursors with `runStates` (the `__run__` state of each run that succeeded). Every
+   * row must be new (the batch checked that none was stored).
+   */
+  static async #writeReplays(
+    workspaceId: string,
+    replays: readonly FreshReplay[],
+    runStates: readonly SyncStateUpsert[],
+  ): Promise<void> {
+    const containers = replays.flatMap((replay) => replay.writtenContainers);
+    const items = replays.flatMap((replay) => replay.writtenItems);
+    const written = await SyncedRows.upsertAll(workspaceId, containers, items);
+    if (
+      written.containers.inserted !== containers.length ||
+      written.items.inserted !== items.length
+    ) {
+      throw new Error('SyncEngine.executeTogether: rows were stored while the batch replayed');
+    }
+    await SyncCursors.saveAll(workspaceId, [
+      ...replays.flatMap((replay) => replay.savedCursors),
+      ...runStates,
+    ]);
+  }
+
+  /** Fetches and stores every resource; how that ended (a failure is the run's error, no throw). */
+  async #sync(): Promise<RunOutcome> {
     const integration = this.#integration;
     const { now } = this.#clock;
     const runState = await this.#cursors.run();
@@ -260,39 +446,66 @@ export class SyncEngine {
         runState.isFullSyncDue(now, FULL_SYNC_INTERVAL_MS),
       );
     } catch (thrown) {
+      // A replay's refusal is no run error: the batch syncs that run in the database instead.
+      if (thrown instanceof NotReplayableError) throw thrown;
       const code = errorCodeOf(thrown);
       error = SyncRun.error(code);
       this.#logFailure(code, thrown);
     }
+    return { error, fullSyncCompleted };
+  }
 
+  /**
+   * After fetching and storing, in the database (`store`): a check for a disconnect, then the
+   * run, its outcome and the audit entry.
+   */
+  async #finish(outcome: RunOutcome, store: RunStore): Promise<SyncRunSummary> {
+    let { error } = outcome;
     // Disconnected while the run was in flight: what it wrote or revived is deleted again.
     const connected = await this.#target.reload();
     if (connected === null) {
-      await this.#deleteWritesOfDisconnected();
+      await this.#deleteWritesOfDisconnected(store.rows);
       error = SyncRun.error('integration_deleted');
     }
 
     const finishedAt = finishedAtOf(this.#clock);
-    // An object literal (the counts by name), as the run stores it.
-    const counts = { ...this.#tally.counts };
-    const results = { counts, failures: this.#tally.failures };
+    const results = this.#results();
     if (error !== null) await this.#run.fail(error, finishedAt, results);
     else await this.#run.succeed(results, { finishedAt, partial: this.#tally.anyFailed });
     this.#recorded = true;
-    const status: SyncRunStatus = this.#run.status;
 
     if (connected !== null) {
-      await this.#recordOutcome(connected, { error, fullSyncCompleted, finishedAt });
+      await this.#recordOutcome(connected, { ...outcome, error }, finishedAt, store.cursors);
     }
 
+    const { action, target, meta } = this.#auditEntry();
     await AuditLog.record(
-      { workspaceId: integration.workspaceId, actor: Actor.system() },
-      'sync.run',
-      AuditTarget.integration(integration.id),
-      { trigger: this.#run.trigger, counts },
+      { workspaceId: this.#integration.workspaceId, actor: Actor.system() },
+      action,
+      target,
+      meta,
     );
+    return this.#summary(error);
+  }
 
-    return { runId: this.#run.id, status, counts, error };
+  /** What the run stores of its records: its counts (an object literal, by name), its failures. */
+  #results(): { counts: Record<string, number>; failures: SyncRunFailure[] } {
+    return { counts: { ...this.#tally.counts }, failures: this.#tally.failures };
+  }
+
+  /** The run's `sync.run` audit entry: its trigger and its counts. */
+  #auditEntry(): AuditEntry {
+    return {
+      action: 'sync.run',
+      target: AuditTarget.integration(this.#integration.id),
+      meta: { trigger: this.#run.trigger, counts: { ...this.#tally.counts } },
+    };
+  }
+
+  /** What the run answers once it is recorded. */
+  #summary(error: ErrorInfo | null): SyncRunSummary {
+    const counts: SyncCounts = { ...this.#tally.counts };
+    return { runId: this.#run.id, status: this.#run.status, counts, error };
   }
 
   /**
@@ -396,7 +609,7 @@ export class SyncEngine {
     const result = step.value;
     const window = checkedWindow(result.window);
     // Disconnected meanwhile: stop here (the run deletes again what it wrote, see finishing).
-    if ((await this.#target.reload()) === null) {
+    if ((await this.#store.reload()) === null) {
       throw new SyncRunError('integration_deleted');
     }
     const now = this.#clock.now;
@@ -535,12 +748,35 @@ export class SyncEngine {
    * The integration was disconnected during the run. The disconnect soft-deleted its items and
    * containers, but this run may have written or revived some since: they are deleted again.
    */
-  async #deleteWritesOfDisconnected(): Promise<void> {
-    await this.#rows.softDeleteAll(this.#clock.now);
+  async #deleteWritesOfDisconnected(rows: RunRows): Promise<void> {
+    await rows.softDeleteAll(this.#clock.now);
     logger.warn('sync run stopped: the integration was disconnected', {
       runId: this.#run.id,
       integrationId: this.#integration.id,
     });
+  }
+
+  /**
+   * What a run that succeeded writes on its (still connected) integration: its `__run__` state (no
+   * failed runs in a row; the last full sync, when it was one) and its status, lastSyncAt and
+   * lastError.
+   */
+  #success(
+    outcome: RunOutcome,
+    integration: IntegrationData,
+    finishedAt: Date,
+  ): { cursor: SyncStatePatch; result: SyncResultPatch } {
+    return {
+      cursor: {
+        consecutiveErrors: 0,
+        ...(outcome.fullSyncCompleted ? { lastFullSyncAt: this.#clock.now } : {}),
+      },
+      result: {
+        status: isExpiring(integration.expiresAt, finishedAt) ? 'expiring' : 'active',
+        lastSyncAt: finishedAt,
+        lastError: null,
+      },
+    };
   }
 
   /**
@@ -552,22 +788,18 @@ export class SyncEngine {
    */
   async #recordOutcome(
     integration: IntegrationData,
-    outcome: { error: ErrorInfo | null; fullSyncCompleted: boolean; finishedAt: Date },
+    outcome: RunOutcome,
+    finishedAt: Date,
+    cursors: RunCursors,
   ): Promise<void> {
-    const { error, finishedAt } = outcome;
+    const { error } = outcome;
     if (error === null) {
-      await this.#cursors.saveRun({
-        consecutiveErrors: 0,
-        ...(outcome.fullSyncCompleted ? { lastFullSyncAt: this.#clock.now } : {}),
-      });
-      await this.#target.recordSyncResult({
-        status: isExpiring(integration.expiresAt, finishedAt) ? 'expiring' : 'active',
-        lastSyncAt: finishedAt,
-        lastError: null,
-      });
+      const { cursor, result } = this.#success(outcome, integration, finishedAt);
+      await cursors.saveRun(cursor);
+      await this.#target.recordSyncResult(result);
       return;
     }
-    const failedRuns = await this.#cursors.countFailedRun(this.#run.id);
+    const failedRuns = await cursors.countFailedRun(this.#run.id);
     const needsAttention = error.code === 'auth_failed' || failedRuns >= FAILED_RUNS_BEFORE_ERROR;
     await this.#target.recordSyncResult({
       lastError: error,

@@ -1,0 +1,316 @@
+/**
+ * Integration.syncTogether (SyncEngine.executeTogether): several runs at once leave exactly what
+ * one sync each (Integration.runSync) leaves. Every case syncs the same integrations twice, in two
+ * workspaces of the same name: together in one, one by one in the other; the two workspaces'
+ * documents (testing/workspaceDump.ts: ids named, wall-clock times masked) must be equal. The
+ * fake provider (testing/fakeAdapter.ts) stands in for a real one.
+ */
+import { after, before, describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { join } from 'node:path';
+import mongoose from 'mongoose';
+
+import type { IntegrationData } from '../../models/definitions/Integration.js';
+import {
+  createFakeAdapter,
+  FAKE_BASE_URL,
+  FAKE_FIXTURES_DIR,
+  FAKE_PROVIDER,
+  type FakeItem,
+} from '../../testing/fakeAdapter.js';
+import { installOutboundGuard, type OutboundGuard } from '../../testing/outboundGuard.js';
+import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
+import { dumpWorkspace } from '../../testing/workspaceDump.js';
+import type { Transport } from '../../sync/http.js';
+import { registerAdapter } from '../../sync/registry.js';
+import {
+  fixtureTransport,
+  loadFixtureSet,
+  type FixtureEntry,
+} from '../../sync/transports/fixtures.js';
+import type { SyncRunSummary } from '../../sync/types.js';
+import type * as IntegrationModule from '../integration/index.js';
+
+const NOW = new Date('2026-11-12T09:00:00.000Z');
+
+let db: TestDatabase;
+let guard: OutboundGuard;
+let Integration: typeof IntegrationModule.Integration;
+
+before(async () => {
+  // Through the (instant) proxy: the driver reports every command, which a case counts.
+  db = await startTestDatabase('todolist_sync_together_test', {}, { roundTripMs: 0 });
+  // Every collection and index exists first, so only the syncs' own commands are counted.
+  const { syncDB } = await import('../../config/database.js');
+  await syncDB();
+  guard = installOutboundGuard();
+  ({ Integration } = await import('../integration/index.js'));
+  registerAdapter(createFakeAdapter().adapter);
+});
+
+after(async () => {
+  guard.restore();
+  await db.stop();
+});
+
+/** One fake integration of a case: its label (its name in the dump) and its config. */
+interface Spec {
+  label: string;
+  config?: Record<string, unknown>;
+  transport: () => Promise<Transport>;
+}
+
+let workspaces = 0;
+
+/** A workspace named `name` (every case makes two of the same name) with the integrations. */
+async function setup(
+  name: string,
+  specs: readonly Spec[],
+): Promise<{ workspaceId: string; integrations: IntegrationData[] }> {
+  const models = await import('../../models/index.js');
+  workspaces += 1;
+  const workspace = await (
+    await models.getWorkspaceRepository()
+  ).create({
+    name,
+    slug: `together-${String(workspaces)}`,
+    ownerId: 'u-owner',
+    settings: { topicRules: [] },
+  });
+  const repository = await models.getIntegrationRepository();
+  const integrations: IntegrationData[] = [];
+  for (const spec of specs) {
+    integrations.push(
+      await repository.create(workspace.id, {
+        connectedBy: 'u-owner',
+        provider: FAKE_PROVIDER,
+        accountId: `account-${spec.label}`,
+        label: spec.label,
+        authMethod: 'none',
+        topicId: 'work',
+        config: spec.config ?? {},
+      }),
+    );
+  }
+  return { workspaceId: workspace.id, integrations };
+}
+
+async function options(spec: Spec): Promise<{
+  trigger: 'seed';
+  mode: 'fixtures';
+  now: Date;
+  transport: Transport;
+}> {
+  return { trigger: 'seed', mode: 'fixtures', now: NOW, transport: await spec.transport() };
+}
+
+/** The same integrations synced together in one workspace and one by one in another. */
+async function twins(
+  name: string,
+  specs: readonly Spec[],
+): Promise<{
+  together: Awaited<ReturnType<typeof setup>>;
+  alone: Awaited<ReturnType<typeof setup>>;
+}> {
+  return { together: await setup(name, specs), alone: await setup(name, specs) };
+}
+
+async function syncTogether(
+  { workspaceId, integrations }: Awaited<ReturnType<typeof setup>>,
+  specs: readonly Spec[],
+): Promise<SyncRunSummary[]> {
+  return Integration.syncTogether(
+    workspaceId,
+    await Promise.all(
+      integrations.map(async (integration, index) => {
+        const spec = specs[index];
+        assert.ok(spec);
+        return { integrationId: integration.id, options: await options(spec) };
+      }),
+    ),
+  );
+}
+
+async function syncAlone(
+  { integrations }: Awaited<ReturnType<typeof setup>>,
+  specs: readonly Spec[],
+): Promise<SyncRunSummary[]> {
+  const summaries: SyncRunSummary[] = [];
+  for (const [index, integration] of integrations.entries()) {
+    const spec = specs[index];
+    assert.ok(spec);
+    summaries.push(await Integration.runSync(integration.id, await options(spec)));
+  }
+  return summaries;
+}
+
+/** What `work` answers, and how many commands it sent to the database. */
+async function counted<T>(work: () => Promise<T>): Promise<{ result: T; commands: number }> {
+  let commands = 0;
+  const count = (): void => {
+    commands += 1;
+  };
+  const client = mongoose.connection.getClient();
+  client.on('commandStarted', count);
+  try {
+    return { result: await work(), commands };
+  } finally {
+    client.off('commandStarted', count);
+  }
+}
+
+/** What a summary says, its run id aside. */
+function outcomes(summaries: readonly SyncRunSummary[]): unknown[] {
+  return summaries.map(({ status, counts, error }) => ({ status, counts, error }));
+}
+
+/** The documents of the two workspaces, which must be equal. */
+async function assertSame(
+  together: Awaited<ReturnType<typeof setup>>,
+  alone: Awaited<ReturnType<typeof setup>>,
+): Promise<void> {
+  const [a, b] = await Promise.all([
+    dumpWorkspace(together.workspaceId),
+    dumpWorkspace(alone.workspaceId),
+  ]);
+  delete a['Workspaces'];
+  delete b['Workspaces'];
+  assert.deepEqual(a, b);
+}
+
+async function fixtureSet(set: 'v1' | 'v2'): Promise<Transport> {
+  return fixtureTransport(await loadFixtureSet(join(FAKE_FIXTURES_DIR, set)));
+}
+
+/** The project list and the item listings of `resources`, as one fixture set. */
+function custom(items: Record<string, FakeItem[]>): Transport {
+  const entries: FixtureEntry[] = [
+    {
+      request: { graphql: 'FakeProjects' },
+      response: {
+        body: {
+          data: {
+            projects: [{ id: 'p1', name: 'shalev396/Elytra', url: `${FAKE_BASE_URL}/projects/p1` }],
+          },
+        },
+      },
+    },
+    ...Object.entries(items).map(([resource, listed]) => ({
+      request: { url: `${FAKE_BASE_URL}/api/${resource}?page=1` },
+      response: { body: { items: listed, next: null } },
+    })),
+  ];
+  return fixtureTransport(entries);
+}
+
+function fakeItem(id: string, extra: Partial<FakeItem> = {}): FakeItem {
+  return {
+    id,
+    key: `FAKE-${id}`,
+    title: `Item ${id}`,
+    status: 'open',
+    closedAt: null,
+    projectId: 'p1',
+    dueAt: '2026-11-20T10:00:00.000Z',
+    updatedAt: '2026-11-01T08:00:00Z',
+    url: `${FAKE_BASE_URL}/items/${id}`,
+    ...extra,
+  };
+}
+
+describe('Integration.syncTogether', () => {
+  it('replays integrations that never synced as one sync each would, a failed run too', async () => {
+    const specs: Spec[] = [
+      { label: 'plain', transport: () => fixtureSet('v1') },
+      // Its second item listing has no fixture: the run fails after storing the first.
+      {
+        label: 'failing',
+        config: { resources: ['projects', 'items', 'missing'] },
+        transport: () => fixtureSet('v1'),
+      },
+      {
+        label: 'closed',
+        transport: () =>
+          Promise.resolve(
+            custom({
+              items: [
+                fakeItem('X', { status: 'done', closedAt: '2026-11-10T10:00:00Z' }),
+                fakeItem('Y', { deletedAt: '2026-11-11T10:00:00Z' }),
+                fakeItem('Z', { url: '' }),
+              ],
+            }),
+          ),
+      },
+    ];
+    const { together, alone } = await twins('Fresh', specs);
+    const batched = await counted(() => syncTogether(together, specs));
+    const oneByOne = await counted(() => syncAlone(alone, specs));
+    assert.deepEqual(outcomes(batched.result), outcomes(oneByOne.result));
+    assert.deepEqual(
+      batched.result.map(({ status }) => status),
+      ['partial', 'failed', 'partial'],
+    );
+    await assertSame(together, alone);
+    // Replayed in memory and written at once (the failed run finishes on its own).
+    assert.ok(
+      batched.commands * 2 < oneByOne.commands,
+      `${String(batched.commands)} commands together, ${String(oneByOne.commands)} one by one`,
+    );
+
+    // Synced before: each syncs on its own, still as runSync would.
+    const v2 = specs.map(
+      (spec): Spec => ({ ...spec, transport: (): Promise<Transport> => fixtureSet('v2') }),
+    );
+    assert.deepEqual(
+      outcomes(await syncTogether(together, v2)),
+      outcomes(await syncAlone(alone, v2)),
+    );
+    await assertSame(together, alone);
+  });
+
+  it('syncs a run the replay refuses on its own: a delete-only record, a record listed twice', async () => {
+    const specs: Spec[] = [
+      { label: 'replayed', transport: () => fixtureSet('v1') },
+      {
+        label: 'delete-only',
+        transport: () =>
+          Promise.resolve(custom({ items: [fakeItem('A'), fakeItem('B', { deleted: true })] })),
+      },
+      {
+        label: 'twice',
+        config: { resources: ['projects', 'items', 'again'] },
+        transport: () =>
+          Promise.resolve(custom({ items: [fakeItem('A')], again: [fakeItem('A')] })),
+      },
+    ];
+    const { together, alone } = await twins('Refused', specs);
+    assert.deepEqual(
+      outcomes(await syncTogether(together, specs)),
+      outcomes(await syncAlone(alone, specs)),
+    );
+    await assertSame(together, alone);
+  });
+
+  it('a gone integration is skipped as runSync skips it', async () => {
+    const specs: Spec[] = [
+      { label: 'kept', transport: () => fixtureSet('v1') },
+      { label: 'gone', transport: () => fixtureSet('v1') },
+    ];
+    const { together, alone } = await twins('Gone', specs);
+    const models = await import('../../models/index.js');
+    const repository = await models.getIntegrationRepository();
+    for (const setupOf of [together, alone]) {
+      const gone = setupOf.integrations[1];
+      assert.ok(gone);
+      await repository.softDelete(setupOf.workspaceId, gone.id);
+    }
+    const batched = await syncTogether(together, specs);
+    assert.deepEqual(outcomes(batched), outcomes(await syncAlone(alone, specs)));
+    assert.equal(batched[1]?.status, 'skipped');
+    await assertSame(together, alone);
+  });
+
+  it('never leaves the machine', () => {
+    assert.deepEqual(guard.externalHosts(), []);
+  });
+});

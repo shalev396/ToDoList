@@ -13,10 +13,11 @@
  * 3. local to-dos (Todo.create): overdue, today, later this week and undated;
  * 4. the template dashboards (Dashboard.instantiate), published; what exists is found by its
  *    outline (Dashboard.listOutlines);
- * 5. one fixture sync per integration (Integration.runSync, trigger `seed`), all at once: the items
- *    are the adapters' recorded fixtures, their relative dates resolved against `now` in the
- *    workspace's time zone, so they look exactly like a real sync's. Records without a URL are
- *    counted as the run's failures and never stored, as in any sync.
+ * 5. one fixture sync per integration (trigger `seed`), all together (Integration.syncTogether:
+ *    each run replayed in memory, then every run's rows written at once): the items are the
+ *    adapters' recorded fixtures, their relative dates resolved against `now` in the workspace's
+ *    time zone, so they look exactly like a real sync's. Records without a URL are counted as the
+ *    run's failures and never stored, as in any sync.
  *
  * Steps that don't depend on each other run at once, since every query is a round trip to the
  * database (from a local API to a stage's, a long one): 1 (the integrations in demo order, the
@@ -379,26 +380,34 @@ const noWaitClock: Clock = {
   sleep: () => Promise.resolve(),
 };
 
-/** One fixture sync per integration, all at once (different integrations share nothing). */
+/**
+ * One fixture sync per integration, all at once: their runs are written together
+ * (Integration.syncTogether), in a handful of round trips instead of dozens per integration.
+ */
 async function syncAll(
+  workspaceId: string,
   connected: readonly Connected[],
   now: Date,
   timeZone: string,
 ): Promise<SyncRunSummary[]> {
-  return allOrFirstFailure(
+  const requests = await Promise.all(
     connected.map(async ({ spec, integration }) => {
       const transport = await fixtureReplay(integration.provider, spec.fixtureSet, now, timeZone);
-      return Integration.runSync(integration.id, {
-        trigger: 'seed',
-        mode: 'fixtures',
-        fixtureSet: spec.fixtureSet,
-        now,
-        // Fixture replays never wait on a provider's request throttle (Moodle: 1 s per request).
-        clock: noWaitClock,
-        ...(transport === null ? {} : { transport }),
-      });
+      return {
+        integrationId: integration.id,
+        options: {
+          trigger: 'seed' as const,
+          mode: 'fixtures' as const,
+          fixtureSet: spec.fixtureSet,
+          now,
+          // Fixture replays never wait on a provider's request throttle (Moodle: 1 s per request).
+          clock: noWaitClock,
+          ...(transport === null ? {} : { transport }),
+        },
+      };
     }),
   );
+  return Integration.syncTogether(workspaceId, requests);
 }
 
 async function summarize(
@@ -478,7 +487,7 @@ export async function seedWorkspace(
     await ensureConnectorBlocks(caller, connected, language);
     return count;
   });
-  const runsDone = syncAll(connected, now, caller.settings.timezone);
+  const runsDone = syncAll(workspaceId, connected, now, caller.settings.timezone);
   await Promise.allSettled([dashboardsDone, runsDone]);
   const dashboards = await dashboardsDone;
   const runs = await runsDone;

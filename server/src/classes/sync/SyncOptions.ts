@@ -23,6 +23,9 @@ export interface SyncOptions {
 export type SyncRunOptions = SyncOptions &
   ({ trigger: SyncTrigger; runId?: never } | { runId: string; trigger?: never });
 
+/** A sync started by a trigger, not by a queued run (a batch of syncs: Integration.syncTogether). */
+export type TriggeredSyncOptions = Extract<SyncRunOptions, { trigger: SyncTrigger }>;
+
 /** The run's clock: the time it runs at, and the wall clock when it opened. */
 export interface RunClock {
   now: Date;

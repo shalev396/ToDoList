@@ -44,6 +44,7 @@ import {
   type IntegrationPatch,
   type IntegrationStatusView,
 } from '../../models/definitions/Integration.js';
+import type { WorkspaceData } from '../../models/definitions/Workspace.js';
 import { getIntegrationRepository, getWorkspaceRepository } from '../../models/index.js';
 import { EMPTY_UPDATE_MESSAGE } from '../../services/integrationConfig.js';
 import { logger } from '../../services/logger.js';
@@ -51,7 +52,7 @@ import { writeModeFor } from '../../services/providerCreate/mode.js';
 import { SyncCursors } from '../sync/SyncCursors.js';
 import { SyncedRows } from '../sync/SyncedRows.js';
 import { SyncEngine, type SyncTarget } from '../sync/SyncEngine.js';
-import type { SyncRunOptions } from '../sync/SyncOptions.js';
+import type { SyncRunOptions, TriggeredSyncOptions } from '../sync/SyncOptions.js';
 import { skippedRun, zeroCounts } from '../sync/syncRecords.js';
 import { SyncRun } from '../sync/SyncRun.js';
 import { Topic } from '../workspace/Topic.js';
@@ -760,6 +761,83 @@ export abstract class Integration<
     const data = await (await getIntegrationRepository()).findByIdForWorker(integrationId);
     if (data === null) return Integration.#endRunOfGone(integrationId, null, options, now);
     return Integration.from(data).sync(options, now);
+  }
+
+  /**
+   * Syncs of several integrations of one workspace at once, each started by a trigger (the demo
+   * seed's fixture replays): each as `runSync` would run it, by id, the runs written together
+   * (SyncEngine.executeTogether). The integrations and the workspace are read at once; one that is
+   * gone, held or in a gone workspace is handled as `runSync` handles it. Answers in the order of
+   * `requests`.
+   */
+  static async syncTogether(
+    workspaceId: string,
+    requests: readonly { integrationId: string; options: TriggeredSyncOptions }[],
+  ): Promise<SyncRunSummary[]> {
+    const integrations = await getIntegrationRepository();
+    const liveOf = async (ids: readonly string[]): Promise<Map<string, IntegrationData>> =>
+      new Map(
+        (await integrations.listByIdsIncludingDeleted(workspaceId, ids))
+          .filter((data) => data.deletedAt === null)
+          .map((data) => [data.id, data]),
+      );
+    const [live, workspace] = await Promise.all([
+      liveOf(requests.map(({ integrationId }) => integrationId)),
+      (async (): Promise<WorkspaceData | null> =>
+        (await getWorkspaceRepository()).findById(workspaceId))(),
+    ]);
+    const planned = requests.map(({ integrationId, options }) => {
+      const data = live.get(integrationId);
+      const now = options.now ?? new Date();
+      return { integrationId, options, now, integration: data && Integration.from(data) };
+    });
+    const together = planned.flatMap(({ integration, options, now }, index) =>
+      workspace !== null &&
+      integration !== undefined &&
+      HELD_RUN_CODES[integration.status] === undefined
+        ? [{ integration, options, now, index }]
+        : [],
+    );
+
+    const summaries = new Map<number, SyncRunSummary>();
+    if (workspace !== null && together.length > 0) {
+      const runs = await SyncRun.beginAll(
+        together.map(({ integration, options, now }) => ({
+          owner: integration,
+          trigger: options.trigger,
+          startedAt: now,
+        })),
+      );
+      const batch = together.map(({ integration, options, now }, at) => {
+        const run = runs[at];
+        if (run === undefined) throw new Error('Integration.syncTogether: a run is missing');
+        return {
+          target: integration.#syncTarget(),
+          run,
+          options,
+          clock: { now, wallStart: Date.now() },
+        };
+      });
+      const done = await SyncEngine.executeTogether(batch, workspace, {
+        reloadAll: liveOf,
+        recordSyncResults: (results) => integrations.recordSyncResults(workspaceId, results),
+      });
+      together.forEach(({ index }, at) => {
+        const summary = done[at];
+        if (summary !== undefined) summaries.set(index, summary);
+      });
+    }
+    // Gone, held, or in a gone workspace: as runSync and sync answer it.
+    return Promise.all(
+      planned.map(async ({ integrationId, options, now, integration }, index) => {
+        const summary = summaries.get(index);
+        if (summary !== undefined) return summary;
+        if (integration === undefined) {
+          return Integration.#endRunOfGone(integrationId, null, options, now);
+        }
+        return integration.sync(options, now);
+      }),
+    );
   }
 
   /**
