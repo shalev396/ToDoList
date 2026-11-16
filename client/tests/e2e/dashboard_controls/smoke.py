@@ -8,12 +8,18 @@ import re
 
 from playwright.sync_api import Page, expect
 
-from tests.config import NORMAL_TIMEOUT
+from tests.config import APP_REQUEST_TIMEOUT, NORMAL_TIMEOUT
 from tests.helpers.dashboards import apply_ops, create_dashboard, get_dashboard
 from tests.helpers.items import create_local_item, list_items
 from tests.helpers.users import pooled_user
 from tests.helpers.workspaces import open_as, topic_id
 from tests.viewports import DESKTOP_VIEWPORT
+
+
+def _item_write(item_id: str, overlay: bool = False):
+    """For `expect_response`: the item's save (PATCH …/items/<id>), or its overlay's."""
+    path = f"/items/{item_id}/overlay" if overlay else f"/items/{item_id}"
+    return lambda response: response.request.method == "PATCH" and response.url.endswith(path)
 
 
 def _dashboard_with(api_base_url, user, workspace, blocks):
@@ -110,13 +116,17 @@ def test_item_sheet_opens_edits_and_back_closes(page: Page, base_url: str, api_b
     # A local to-do edits in place.
     sheet.get_by_role("button", name="Edit", exact=True).click()
     sheet.get_by_label("Title").fill("Write the final report")
-    sheet.get_by_role("button", name="Save changes").click()
+    with page.expect_response(_item_write(item["id"]), timeout=APP_REQUEST_TIMEOUT) as saved:
+        sheet.get_by_role("button", name="Save changes").click()
+    assert saved.value.ok
     expect(sheet.locator("[data-item-title]")).to_have_text("Write the final report")
 
     expect(sheet.locator("[data-item-local-edit] [data-save-status=saved]")).to_have_count(1)
 
     # Overlay: pin it; the change is saved (its own status, beside the overlay controls).
-    sheet.get_by_role("switch", name="Pin this item").click()
+    with page.expect_response(_item_write(item["id"], overlay=True), timeout=APP_REQUEST_TIMEOUT) as pinned:
+        sheet.get_by_role("switch", name="Pin this item").click()
+    assert pinned.value.ok
     expect(sheet.locator("section[aria-labelledby=item-overlay] [data-save-status=saved]")).to_be_visible()
 
     # The browser's back button closes the Sheet.
@@ -161,22 +171,31 @@ def test_mirrored_item_edits_follow_its_connection(
     expect(form.locator("[data-sends-to]")).to_have_count(0)
     expect(sheet.get_by_text("Saved to Jira too.")).to_have_count(0)
     start.locator("input[type=date]").fill("2027-01-04")
-    form.locator("[data-item-edit-save]").click()
-    expect(edit.locator("[data-save-status=saved]")).to_be_visible(timeout=NORMAL_TIMEOUT)
+    with page.expect_response(_item_write(item["id"]), timeout=APP_REQUEST_TIMEOUT) as saved:
+        form.locator("[data-item-edit-save]").click()
+    assert saved.value.ok
+    expect(edit.locator("[data-save-status=saved]")).to_be_visible()
     expect(edit.locator("[data-sent-fields]")).to_have_count(0)
     stored = next(i for i in list_items(api_base_url, owner, demo["id"], provider="jira") if i["id"] == item["id"])
     assert stored["overlay"]["overrides"]["startAt"], "the start is kept as an override"
 
     # Use Jira's value: Jira has no start date, so the override goes.
     edit.get_by_role("button", name="Edit", exact=True).click()
-    sheet.locator("[data-use-source=startAt]").click()
-    expect(sheet.locator("[data-use-source=startAt]")).to_have_count(0, timeout=NORMAL_TIMEOUT)
+    with page.expect_response(_item_write(item["id"]), timeout=APP_REQUEST_TIMEOUT) as cleared:
+        sheet.locator("[data-use-source=startAt]").click()
+    assert cleared.value.ok
+    expect(sheet.locator("[data-use-source=startAt]")).to_have_count(0)
 
     # The overlay still works: it never writes to Jira.
-    sheet.get_by_role("switch", name="Hide from dashboards").click()
+    hide = sheet.get_by_role("switch", name="Hide from dashboards")
+    with page.expect_response(_item_write(item["id"], overlay=True), timeout=APP_REQUEST_TIMEOUT) as hidden:
+        hide.click()
+    assert hidden.value.ok
     overlay = sheet.locator("section[aria-labelledby=item-overlay]")
     expect(overlay.locator("[data-save-status=saved]")).to_be_visible()
-    sheet.get_by_role("switch", name="Hide from dashboards").click()
+    with page.expect_response(_item_write(item["id"], overlay=True), timeout=APP_REQUEST_TIMEOUT) as shown:
+        hide.click()
+    assert shown.value.ok
 
 
 def test_new_todo_repeat_needs_the_workspace_calendar(
