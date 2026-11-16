@@ -18,4 +18,4 @@ On GitHub, these alerts are dismissed with a short comment that points here. The
   - User passwords never reach this server. Cognito handles sign-up, sign-in and password storage.
 - **When this stops being true:** if anything user-chosen or low-entropy (a password, a PIN, a short code) is ever hashed with `sha256Hex` for storage. Use a password hash for that.
 - **Format first:** the OAuth code and revoke paths now test a token's exact format before hashing it, like the other token paths; a malformed one is refused or ignored with no hash and no lookup.
-- **GitHub alert:** CodeQL #4, dismissed as "false positive" on 2026-11-16 (PR #1).
+- **GitHub alert:** CodeQL #4: Dismissed as false positive on 2026-11-16; since 9de4ac55 the paths also validate format first (CodeQL may now report it fixed).
