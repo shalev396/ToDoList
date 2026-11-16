@@ -22,6 +22,7 @@ from .ratelimit import (
     DEFAULT_RATE,
     InterProcessLock,
     LockTimeout,
+    RateLimitTimeout,
     SharedRateLimiter,
 )
 
@@ -36,6 +37,7 @@ __all__ = [
     "MailTmError",
     "MailTmTimeout",
     "Quota",
+    "RateLimitTimeout",
     "RetryPolicy",
     "SharedRateLimiter",
     "backoff_seconds",

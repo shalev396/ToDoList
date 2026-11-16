@@ -61,6 +61,10 @@ class LockTimeout(TimeoutError):
     """The shared lock stayed taken for longer than the lock timeout."""
 
 
+class RateLimitTimeout(TimeoutError):
+    """The next free slot is further away than the caller can wait (nothing was reserved)."""
+
+
 class PosixLocking:
     """`fcntl.flock`: an advisory lock on the whole file, per open file, released by the OS when
     the process exits or dies."""
@@ -271,7 +275,7 @@ class SharedRateLimiter:
     `state_dir`. All of them should use the same `rate` and `burst`.
 
     - `acquire()` blocks until the caller may send one request, and returns its slot (a `clock`
-      time).
+      time). `acquire(max_wait=...)` raises RateLimitTimeout instead of waiting longer.
     - `penalize(seconds)` stops every process from sending for `seconds` (at most `max_pause`):
       call it on a 429. After the pause the bucket restarts with no burst.
     - `load_shared(name)` / `store_shared(name, value)` keep a small JSON value in the same
@@ -350,13 +354,23 @@ class SharedRateLimiter:
     def _save(self, tat: float, pause: float) -> None:
         _write_file(self._state_path, json.dumps({"tat": tat, "pause_until": pause}).encode())
 
-    def acquire(self) -> float:
+    def acquire(self, max_wait: Optional[float] = None) -> float:
+        """Blocks until the caller may send one request; returns its slot. With `max_wait`, raises
+        RateLimitTimeout instead of waiting longer than that, and reserves nothing then."""
+        limit = None if max_wait is None else self._clock() + max(max_wait, 0.0)
         while True:
             with self._locked():
                 now = self._clock()
                 tat, pause = self._load(now)
                 slot = max(now, pause, tat - self.tolerance)
-                self._save(max(tat, slot) + self.interval, pause)
+                too_late = limit is not None and slot > max(now, limit)
+                if not too_late:
+                    self._save(max(tat, slot) + self.interval, pause)
+            if too_late:
+                raise RateLimitTimeout(
+                    f"The next free slot is {slot - now:.1f} s away; this call can wait "
+                    f"{max(limit - now, 0.0):.1f} s more"
+                )
             wait = slot - self._clock()
             if wait <= 0:
                 return slot

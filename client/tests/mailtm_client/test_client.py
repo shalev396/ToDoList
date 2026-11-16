@@ -90,9 +90,9 @@ class CountingLimiter(SharedRateLimiter):
         super().__init__(*args, **kwargs)
         self.acquired = 0
 
-    def acquire(self) -> float:
+    def acquire(self, max_wait: Any = None) -> float:
         self.acquired += 1
-        return super().acquire()
+        return super().acquire(max_wait=max_wait)
 
 
 @pytest.fixture
@@ -534,6 +534,30 @@ def test_wait_for_message_gives_up_at_the_timeout(mail, clock):
     polls = [clock.since_start(call.at) for call in mail.session.calls]
     assert polls == pytest.approx([12, 20, 28, 36, 44, 52, 60], abs=0.5)
     assert isinstance(MailTmTimeout("x"), RuntimeError)
+
+
+def test_wait_for_message_never_waits_past_its_deadline_for_a_slot(mail, clock, state_dir):
+    other_process = SharedRateLimiter(state_dir, clock=clock, sleep=clock.sleep)
+    other_process.penalize(100)  # a 429 elsewhere, or a spent quota
+    with pytest.raises(MailTmTimeout):
+        mail.wait_for_message("tok", lambda m: True, timeout=10, poll_interval=2)
+    assert clock.since_start(clock.now) <= 10
+    assert mail.session.calls == []
+
+
+def test_wait_for_message_does_not_retry_past_its_deadline(mail, clock):
+    mail.session.answers = [answer(429, retry_after=30)]
+    with pytest.raises(MailTmError, match="429"):
+        mail.wait_for_message("tok", lambda m: True, timeout=10, poll_interval=2)
+    assert clock.since_start(clock.now) <= 10
+    assert len(mail.session.calls) == 1
+
+
+def test_wait_for_message_still_retries_within_its_deadline(mail, clock):
+    mail.session.answers = [answer(429, retry_after=3), _inbox("m1"), _message("m1", "hi")]
+    found = mail.wait_for_message("tok", lambda m: True, timeout=10, poll_interval=2)
+    assert found["id"] == "m1"
+    assert clock.since_start(mail.session.calls[1].at) == pytest.approx(3)
 
 
 # --- settings ------------------------------------------------------------------------------------

@@ -33,7 +33,14 @@ from urllib.parse import quote, urlparse
 
 import requests
 
-from .ratelimit import DEFAULT_BURST, DEFAULT_RATE, Clock, SharedRateLimiter, Sleep
+from .ratelimit import (
+    DEFAULT_BURST,
+    DEFAULT_RATE,
+    Clock,
+    RateLimitTimeout,
+    SharedRateLimiter,
+    Sleep,
+)
 
 DEFAULT_BASE_URL = "https://api.mail.tm"
 # https://docs.mail.tm/: "The general quota limit is 8 queries per second (QPS) per IP address."
@@ -138,7 +145,9 @@ def ratelimit_quota(headers: Mapping[str, str]) -> Optional[Quota]:
     def pick(key: str, strictest: Callable[[list[float]], float]) -> Optional[float]:
         return strictest(found[key]) if found[key] else None
 
-    return Quota(pick("limit", min), pick("remaining", min), pick("reset", max), pick("window", max))
+    return Quota(
+        pick("limit", min), pick("remaining", min), pick("reset", max), pick("window", max)
+    )
 
 
 def retry_after_seconds(response: requests.Response, cap: float = 60.0) -> Optional[float]:
@@ -257,12 +266,17 @@ class MailTmClient:
         params: Optional[dict] = None,
         idempotent: Optional[bool] = None,
         retry_429: Optional[bool] = None,
+        max_wait: Optional[float] = None,
     ) -> requests.Response:
         """
         One call to `path` under the base URL, through the limiter, retried as the module
         docstring says. `idempotent` defaults to the method's nature; `retry_429` (retry a
         refusal) defaults to `idempotent`. Returns the last response: its status is the
         caller's to check.
+
+        `max_wait` caps the seconds this call may spend waiting, for its slot and between its
+        retries. Past it, the last answer is returned, or the limiter raises RateLimitTimeout
+        when even the first slot is further away.
         """
         method = method.upper()
         if idempotent is None:
@@ -278,17 +292,26 @@ class MailTmClient:
             kwargs["headers"] = {"Authorization": f"Bearer {token}"}
         url = f"{self.base_url}{path}"
         policy = self.retry
+        ends = None if max_wait is None else self._clock() + max(max_wait, 0.0)
         waited = 0.0
+
+        def may_wait(wait: float) -> bool:
+            within_budget = ends is None or self._clock() + wait <= ends
+            return within_budget and waited + wait <= policy.max_total_wait
+
         attempt = 0
         while True:
             attempt += 1
             last_try = attempt >= policy.max_attempts
-            self.limiter.acquire()
+            if ends is None:
+                self.limiter.acquire()
+            else:
+                self.limiter.acquire(max_wait=max(ends - self._clock(), 0.0))
             try:
                 response = self.session.request(method, url, **kwargs)
             except (requests.ConnectionError, requests.Timeout):
                 wait = self._backoff(attempt)
-                if not idempotent or last_try or waited + wait > policy.max_total_wait:
+                if not idempotent or last_try or not may_wait(wait):
                     raise
                 self._sleep(wait)
                 waited += wait
@@ -301,7 +324,7 @@ class MailTmClient:
                 wait = max(wait, spent or 0.0)
                 # Every process sharing the limiter waits this out, not just this one.
                 self.limiter.penalize(wait)
-                if not retry_429 or last_try or waited + wait > policy.max_total_wait:
+                if not retry_429 or last_try or not may_wait(wait):
                     return response
                 waited += wait  # the next acquire() sleeps through the pause
                 continue
@@ -311,7 +334,7 @@ class MailTmClient:
                 wait = retry_after_seconds(response, policy.retry_after_cap)
                 if wait is None:
                     wait = self._backoff(attempt)
-                if waited + wait <= policy.max_total_wait:
+                if may_wait(wait):
                     self._sleep(wait)
                     waited += wait
                     continue
@@ -403,17 +426,21 @@ class MailTmClient:
             raise MailTmError("mail.tm answered the token request without a token")
         return token
 
-    def list_messages(self, token: str, page: int = 1) -> list[dict]:
-        """The inbox's message summaries, newest first (30 a page)."""
-        response = self.request(
-            "GET", "/messages", token=token, params={"page": page} if page != 1 else None
-        )
+    def list_messages(
+        self, token: str, page: int = 1, *, max_wait: Optional[float] = None
+    ) -> list[dict]:
+        """The inbox's message summaries, newest first (30 a page). `max_wait`: see `request`."""
+        params = {"page": page} if page != 1 else None
+        response = self.request("GET", "/messages", token=token, params=params, max_wait=max_wait)
         self._check(response, "message list")
         return _members(response.json())
 
-    def get_message(self, token: str, message_id: str) -> dict:
-        """One full message (`text`, `html`, `subject`, `from`, ...)."""
-        response = self.request("GET", f"/messages/{quote(str(message_id), safe='')}", token=token)
+    def get_message(
+        self, token: str, message_id: str, *, max_wait: Optional[float] = None
+    ) -> dict:
+        """One full message (`text`, `html`, `subject`, `from`, ...). `max_wait`: see `request`."""
+        path = f"/messages/{quote(str(message_id), safe='')}"
+        response = self.request("GET", path, token=token, max_wait=max_wait)
         self._check(response, "message read")
         return response.json()
 
@@ -430,23 +457,35 @@ class MailTmClient:
         The first full message for which `predicate(message)` is true (`message_text` gives its
         text). Looks after `initial_delay` seconds, then every `poll_interval`, until `timeout`
         seconds after the call; raises MailTmTimeout after that. Each message is fetched once.
+
+        It never waits past its deadline: each call gets the time left as its `max_wait`, for
+        its slot and its retries. (A request already sent may still take its own `timeout`.)
         """
         deadline = self._clock() + timeout
         if initial_delay > 0:
             self._sleep(min(initial_delay, timeout))
         checked: set[str] = set()
+
+        def left() -> float:
+            return max(deadline - self._clock(), 0.0)
+
+        def give_up() -> MailTmTimeout:
+            return MailTmTimeout(
+                f"No matching mail.tm message within {timeout:g} s ({len(checked)} checked)"
+            )
+
         while True:
-            for summary in self.list_messages(token):
-                message_id = summary.get("id")
-                if not message_id or message_id in checked:
-                    continue
-                message = self.get_message(token, message_id)
-                checked.add(message_id)
-                if predicate(message):
-                    return message
-            left = deadline - self._clock()
-            if left <= 0:
-                raise MailTmTimeout(
-                    f"No matching mail.tm message within {timeout:g} s ({len(checked)} checked)"
-                )
-            self._sleep(min(poll_interval, left))
+            try:
+                for summary in self.list_messages(token, max_wait=left()):
+                    message_id = summary.get("id")
+                    if not message_id or message_id in checked:
+                        continue
+                    message = self.get_message(token, message_id, max_wait=left())
+                    checked.add(message_id)
+                    if predicate(message):
+                        return message
+            except RateLimitTimeout:
+                raise give_up() from None  # the next free slot is past the deadline
+            if left() <= 0:
+                raise give_up()
+            self._sleep(min(poll_interval, left()))

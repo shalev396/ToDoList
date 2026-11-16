@@ -71,6 +71,14 @@ message = mail.wait_for_message(
 
 `list_messages(token)` and `get_message(token, id)` read an inbox. `wait_for_message` fetches each message once. `request(method, path, token=..., json=...)` makes any other call, for example `DELETE /accounts/{id}`, through the same limit and retries. Errors are `MailTmError`, a `RuntimeError`. They never include passwords or tokens.
 
+`wait_for_message` never waits past its `timeout`: each of its calls gets the time left as `max_wait`, for its slot and for its retries.
+
+- When the next free slot is past the deadline, it raises `MailTmTimeout` at once.
+- When a 429 asks for longer than is left, it raises a `MailTmError` (429) without retrying.
+- A request already sent can still take its own `timeout` (10 s).
+
+`request(..., max_wait=...)` and `acquire(max_wait=...)` do the same for your own calls; `acquire` raises `RateLimitTimeout`.
+
 ### What is retried
 
 - **A 429** is retried for idempotent calls (GET, DELETE, and `POST /token`, which only issues a token) and for account creation. A 429 is a refusal, so no account exists yet, and sending the request again cannot make a second one. Any other call (a PATCH, say) gets the 429 back, but every process still pauses.
@@ -86,8 +94,8 @@ message = mail.wait_for_message(
 
 Its tests need no network and never touch the real state directory:
 
-- `test_ratelimit.py`: the bucket arithmetic on a fake clock; four real processes hammering one bucket, whose slots must conform to it, with no second over the bound; the lock timing out, and recovering from a holder that was killed; the Windows and POSIX locking (each runs on its own platform).
-- `test_client.py`: 429 and `Retry-After` handling, the backoff bounds, what is retried, the RateLimit headers in every form (and malformed ones), the pause a spent quota sets for every process, the shared domain cache, `wait_for_message`; three real processes calling a local HTTP endpoint with the default settings.
+- `test_ratelimit.py`: the bucket arithmetic on a fake clock, and `max_wait`; four real processes hammering one bucket, whose slots must conform to it, with no second over the bound; the lock timing out, and recovering from a holder that was killed; the Windows and POSIX locking (each runs on its own platform).
+- `test_client.py`: 429 and `Retry-After` handling, the backoff bounds, what is retried, the RateLimit headers in every form (and malformed ones), the pause a spent quota sets for every process, the shared domain cache, `wait_for_message` and its deadline; three real processes calling a local HTTP endpoint with the default settings.
 
 ## Limits
 

@@ -27,6 +27,7 @@ from .ratelimit import (
     InterProcessLock,
     LockTimeout,
     PosixLocking,
+    RateLimitTimeout,
     SharedRateLimiter,
     WindowsLocking,
 )
@@ -137,6 +138,37 @@ def test_a_pause_that_comes_while_a_caller_sleeps_moves_its_slot(make, clock):
     clock.on_sleep = refused_meanwhile
     slot = sleeper.acquire()
     assert clock.since_start(slot) == pytest.approx(6)
+
+
+def test_max_wait_refuses_a_slot_too_far_away_and_reserves_nothing(make, clock):
+    limiter = make(rate=4, burst=1)
+    limiter.penalize(5)
+    with pytest.raises(RateLimitTimeout):
+        limiter.acquire(max_wait=2)
+    assert clock.sleeps == []  # refused at once, not after waiting
+    assert clock.since_start(limiter.acquire(max_wait=5)) == pytest.approx(5)  # still free
+    assert clock.since_start(limiter.acquire()) == pytest.approx(5.25)
+
+
+def test_max_wait_of_zero_still_takes_a_free_slot(make, clock):
+    limiter = make(rate=4, burst=1)
+    assert clock.since_start(limiter.acquire(max_wait=0)) == 0
+    with pytest.raises(RateLimitTimeout):
+        limiter.acquire(max_wait=0)  # the next one is 0.25 s away
+
+
+def test_max_wait_also_covers_a_pause_that_comes_while_sleeping(make, clock):
+    sleeper, refused = make(rate=1, burst=1), make(rate=1, burst=1)
+    sleeper.acquire()
+
+    def refused_meanwhile():
+        clock.on_sleep = None
+        refused.penalize(5)
+
+    clock.on_sleep = refused_meanwhile
+    with pytest.raises(RateLimitTimeout):
+        sleeper.acquire(max_wait=3)  # its slot was 1 s away, then the pause moved it to 6 s
+    assert clock.since_start(clock.now) == pytest.approx(1)
 
 
 def test_penalize_is_capped_and_shrugs_off_nonsense(make, clock):
