@@ -117,8 +117,9 @@ export class IntegrationConnector {
    * number (the demo seed's): the topics read once, both caps checked for all of them (before and
    * after, as one connect is), the integrations inserted in one write in the order given (each a
    * millisecond after the one before it, so they list in that order), each class's connect hook in
-   * that order, then the audit entries in one write. A duplicate account stops it at that one
-   * (409); the ones before it stay connected, as one connect after another would leave them.
+   * that order, then the audit entries in one write. All or nothing: a duplicate account refuses
+   * the whole batch (409), what it inserted before the duplicate soft-deleted again, as an insert
+   * over a cap is.
    */
   async connectAllWithKey(
     caller: Caller,
@@ -321,7 +322,10 @@ export class IntegrationConnector {
    * them included. Over a cap, the new ones are soft-deleted again and the full cap comes back
    * instead. Racers may all back out, but the caps are never exceeded: the last of any set of kept
    * integrations to count would have seen them all. The insert's own errors (a duplicate account)
-   * propagate. Every new integration is read-only: `mode` is never an input.
+   * propagate, the ones it inserted before the duplicate soft-deleted again (an earlier input
+   * matching a stored account would have been the duplicate, so the member's integrations of those
+   * accounts are exactly what it inserted). Every new integration is read-only: `mode` is never an
+   * input.
    */
   static async #createWithinCaps(
     workspaceId: string,
@@ -331,10 +335,28 @@ export class IntegrationConnector {
     const full = await IntegrationConnector.#capExceeded(workspaceId, ownerUserId, inputs.length);
     if (full !== null) return { created: null, cap: full };
     const integrations = await getIntegrationRepository();
-    const created = await integrations.createMany(
-      workspaceId,
-      inputs.map((input) => ({ ...input, mode: Mode.read.name })),
-    );
+    let created: IntegrationData[];
+    try {
+      created = await integrations.createMany(
+        workspaceId,
+        inputs.map((input) => ({ ...input, mode: Mode.read.name })),
+      );
+    } catch (error) {
+      // The insert stopped at a duplicate account: the ones before it go again (all or nothing).
+      const refused = duplicateIndex(error) ?? 0;
+      if (refused > 0) {
+        const inserted = inputs.slice(0, refused);
+        const own = await integrations.listForOwner(workspaceId, ownerUserId);
+        for (const integration of own) {
+          const ours = inserted.some(
+            (input) =>
+              input.provider === integration.provider && input.accountId === integration.accountId,
+          );
+          if (ours) await integrations.softDelete(workspaceId, integration.id);
+        }
+      }
+      throw error;
+    }
     const exceeded = await IntegrationConnector.#capExceeded(workspaceId, ownerUserId, 0);
     if (exceeded === null) return { created, cap: null };
     for (const integration of created) await integrations.softDelete(workspaceId, integration.id);

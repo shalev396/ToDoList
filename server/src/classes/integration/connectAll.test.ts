@@ -122,6 +122,33 @@ describe('Integration.connectAllWithKey and saveCredentials', () => {
     );
   });
 
+  it('refuses the whole batch for a duplicate after the first: nothing of it stays', async () => {
+    const t = await workspace('Middle');
+    const [jira, github, moodle] = CONNECTIONS;
+    assert.ok(jira && github && moodle);
+    const [kept] = await Integration.connectAllWithKey(t.owner, [jira], { demo: true });
+    const before = await dumpWorkspace(t.owner.workspaceId);
+    await assert.rejects(
+      Integration.connectAllWithKey(t.owner, [moodle, github, jira], { demo: true }),
+      hasCode(409, 'account_already_connected'),
+    );
+    assert.deepEqual(
+      (await Integration.listOwn(t.owner)).map((integration) => integration.id),
+      [kept?.id],
+    );
+    const after = await dumpWorkspace(t.owner.workspaceId);
+    // No audit entry and no GitHub topic rule for the ones before the duplicate.
+    assert.deepEqual(after['AuditLogs'], before['AuditLogs']);
+    assert.deepEqual(after['Workspaces'], before['Workspaces']);
+    // They were withdrawn (soft-deleted, as over a cap): only the first connect is live.
+    assert.deepEqual(
+      (after['Integrations'] ?? [])
+        .filter((row) => (row as { deletedAt: unknown }).deletedAt === null)
+        .map((row) => (row as { label: unknown }).label),
+      ['Jira'],
+    );
+  });
+
   it('refuses a viewer, an account already connected, and a secret of the wrong shape', async () => {
     const t = await workspace('Refused');
     await assert.rejects(
