@@ -30,6 +30,7 @@ import {
 } from '../../sync/transports/fixtures.js';
 import type { SyncRunSummary } from '../../sync/types.js';
 import type * as IntegrationModule from '../integration/index.js';
+import type * as Models from '../../models/index.js';
 
 const NOW = new Date('2026-11-12T09:00:00.000Z');
 
@@ -308,6 +309,101 @@ describe('Integration.syncTogether', () => {
     assert.deepEqual(outcomes(batched), outcomes(await syncAlone(alone, specs)));
     assert.equal(batched[1]?.status, 'skipped');
     await assertSame(together, alone);
+  });
+
+  /**
+   * One write of the batch fails (stubbed on its repository, once): the batch throws, and no run
+   * of it is left `running`, whatever step failed. Each batch has a run that replays, one the
+   * replay refuses and one that fails, so every kind of run is open when the write fails.
+   */
+  async function failingAt(
+    name: string,
+    stub: (models: typeof Models) => Promise<() => void>,
+  ): Promise<void> {
+    const specs: Spec[] = [
+      { label: 'replayed', transport: () => fixtureSet('v1') },
+      {
+        label: 'refused',
+        transport: () =>
+          Promise.resolve(custom({ items: [fakeItem('A'), fakeItem('B', { deleted: true })] })),
+      },
+      {
+        label: 'failing',
+        config: { resources: ['projects', 'items', 'missing'] },
+        transport: () => fixtureSet('v1'),
+      },
+    ];
+    const setupOf = await setup(`Failing ${name}`, specs);
+    const models = await import('../../models/index.js');
+    const restore = await stub(models);
+    try {
+      await assert.rejects(syncTogether(setupOf, specs), /injected/, name);
+    } finally {
+      restore();
+    }
+    const all = (
+      await Promise.all(
+        setupOf.integrations.map(async (integration) =>
+          (await models.getSyncRunRepository()).listForIntegration(
+            setupOf.workspaceId,
+            integration.id,
+            10,
+          ),
+        ),
+      )
+    ).flat();
+    assert.ok(all.length > 0, `${name}: runs were opened`);
+    assert.deepEqual(
+      all.filter((run) => run.status === 'running' || run.status === 'queued').map((run) => run.id),
+      [],
+      `${name}: no run is left open`,
+    );
+  }
+
+  /** Replaces `method` of `target` with one that throws once; answers how to restore it. */
+  function throwOnce<T extends object>(
+    target: T,
+    method: keyof T & string,
+    before?: (original: (...args: unknown[]) => Promise<unknown>, args: unknown[]) => Promise<void>,
+  ): () => void {
+    const original = target[method] as (...args: unknown[]) => Promise<unknown>;
+    let thrown = false;
+    Object.assign(target, {
+      [method]: async (...args: unknown[]): Promise<unknown> => {
+        if (thrown) return original.apply(target, args);
+        thrown = true;
+        await before?.(original, args);
+        throw new Error(`injected: ${method}`);
+      },
+    });
+    return () => {
+      Object.assign(target, { [method]: original });
+    };
+  }
+
+  it('a failed write at any step leaves no run running', async () => {
+    await failingAt('opening the runs', async (models) =>
+      // The first run is written, then the write stops.
+      throwOnce(await models.getSyncRunRepository(), 'createMany', async (original, args) => {
+        const [workspaceId, inputs] = args as [string, unknown[]];
+        await original(workspaceId, inputs.slice(0, 1));
+      }),
+    );
+    await failingAt('the first reads', async (models) =>
+      throwOnce(await models.getContainerRepository(), 'existsForIntegrations'),
+    );
+    await failingAt('the rows', async (models) =>
+      throwOnce(await models.getItemRepository(), 'bulkUpsert'),
+    );
+    await failingAt('the cursors', async (models) =>
+      throwOnce(await models.getSyncStateRepository(), 'upsertMany'),
+    );
+    await failingAt('the runs', async (models) =>
+      throwOnce(await models.getSyncRunRepository(), 'updateMany'),
+    );
+    await failingAt('the audit entries', async (models) =>
+      throwOnce(await models.getAuditLogRepository(), 'appendMany'),
+    );
   });
 
   it('never leaves the machine', () => {

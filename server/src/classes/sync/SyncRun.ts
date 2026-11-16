@@ -26,6 +26,8 @@
  *   still running".
  * - Every other write is unconditional, exactly as before.
  */
+import { randomUUID } from 'node:crypto';
+
 import { AuditTarget } from '../base/AuditTarget.js';
 import type { Caller } from '../base/Caller.js';
 import type { Auditable, Viewable } from '../base/contracts.js';
@@ -38,6 +40,7 @@ import type {
   SyncRunPatch,
 } from '../../models/definitions/SyncRun.js';
 import { getSyncRunRepository } from '../../models/index.js';
+import { logger } from '../../services/logger.js';
 import { startSyncRunJob } from '../../services/syncJobs.js';
 import { syncModeFor } from '../../sync/syncMode.js';
 import type { SyncErrorCode } from '../../sync/types.js';
@@ -190,18 +193,57 @@ export class SyncRun
     if (runs.some(({ owner }) => owner.workspaceId !== workspaceId)) {
       throw new Error('SyncRun.beginAll: the runs of one workspace at a time');
     }
-    const created = await (
+    const repository = await getSyncRunRepository();
+    // Their ids first: a write that stops part-way leaves runs that are then ended by id.
+    const opened = runs.map((entry) => ({ ...entry, id: randomUUID() }));
+    try {
+      const created = await repository.createMany(
+        workspaceId,
+        opened.map(({ id, owner, trigger, startedAt }) => ({
+          id,
+          integrationId: owner.id,
+          trigger,
+          status: 'running',
+          startedAt,
+        })),
+      );
+      return created.map((data) => new SyncRun(data));
+    } catch (error) {
+      // Whatever was written ends failed (none is left `running`), as it opened; best effort.
+      await SyncRun.cancelAll(
+        workspaceId,
+        opened.map(({ id, startedAt }) => ({
+          id,
+          error: SyncRun.error('internal'),
+          finishedAt: startedAt,
+        })),
+      ).catch((cancelError: unknown) => {
+        logger.error('sync runs could not be marked failed', { error: cancelError });
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * `cancel` for several runs of one workspace by id, in one conditional write: each ends `failed`
+   * with its error at `finishedAt` while it is still open (queued or running), and one that
+   * finished meanwhile keeps its own outcome. What a batch of syncs that failed does to the runs
+   * it had not recorded yet.
+   */
+  static async cancelAll(
+    workspaceId: string,
+    ends: readonly { id: string; error: ErrorInfo; finishedAt: Date }[],
+  ): Promise<void> {
+    await (
       await getSyncRunRepository()
-    ).createMany(
+    ).updateManyIfStatus(
       workspaceId,
-      runs.map(({ owner, trigger, startedAt }) => ({
-        integrationId: owner.id,
-        trigger,
-        status: 'running',
-        startedAt,
+      SYNC_RUN_TRANSITIONS.cancel.from,
+      ends.map(({ id, error, finishedAt }) => ({
+        id,
+        patch: { status: 'failed', finishedAt, error },
       })),
     );
-    return created.map((data) => new SyncRun(data));
   }
 
   /**

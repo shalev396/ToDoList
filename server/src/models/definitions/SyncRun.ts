@@ -31,6 +31,8 @@ export interface SyncRunData {
 }
 
 export interface CreateSyncRunInput {
+  /** The new run's id (default: a random one): a batch knows its runs before they are written. */
+  id?: string;
   integrationId: string;
   trigger: SyncTrigger;
   /** Default `queued`. */
@@ -67,6 +69,15 @@ export interface ISyncRunRepository {
     statuses: readonly SyncRunStatus[],
     patch: SyncRunPatch,
   ): Promise<SyncRunData | null>;
+  /**
+   * updateIfStatus() for each run, in one write (no run is answered): ends the runs of a batch that
+   * failed, leaving any that finished meanwhile as they are. How many it changed.
+   */
+  updateManyIfStatus(
+    workspaceId: string,
+    statuses: readonly SyncRunStatus[],
+    updates: readonly { id: string; patch: SyncRunPatch }[],
+  ): Promise<number>;
   /**
    * GLOBAL, every workspace: the purge job (jobs/purge.ts) only. Runs still `running` that
    * started before `before`, oldest first, at most `limit`.

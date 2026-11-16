@@ -305,18 +305,33 @@ export class SyncEngine {
    * 4. the runs that succeeded end at once: their runs, their integrations' status, then their
    *    `sync.run` audit entries. A run that failed finishes on its own, as `execute` does.
    * When an integration has rows, every run syncs with `execute` instead; so does a run the replay
-   * refuses (NotReplayableError: the database would have answered it otherwise). Answers in the
-   * order of `runs`.
+   * refuses (NotReplayableError: the database would have answered it otherwise). Whichever step
+   * throws, every run still open then ends `failed`, as `execute` ends its run: none is left
+   * `running`. Answers in the order of `runs`.
    */
   static async executeTogether(
     runs: readonly BatchRun[],
     workspace: WorkspaceData,
     batch: BatchTarget,
   ): Promise<SyncRunSummary[]> {
-    const workspaceId = workspace.id;
-    if (runs.some(({ target }) => target.data.workspaceId !== workspaceId)) {
+    if (runs.some(({ target }) => target.data.workspaceId !== workspace.id)) {
       throw new Error('SyncEngine.executeTogether: the runs of one workspace at a time');
     }
+    try {
+      return await SyncEngine.#together(runs, workspace, batch);
+    } catch (thrown) {
+      await SyncEngine.#abandonAll(runs, workspace.id, thrown);
+      throw thrown;
+    }
+  }
+
+  /** executeTogether's steps (see there); whatever throws, the caller ends the open runs. */
+  static async #together(
+    runs: readonly BatchRun[],
+    workspace: WorkspaceData,
+    batch: BatchTarget,
+  ): Promise<SyncRunSummary[]> {
+    const workspaceId = workspace.id;
     const alone = (entry: BatchRun): Promise<SyncRunSummary> =>
       SyncEngine.execute(entry.target, entry.run, workspace, entry.options, entry.clock);
     const ids = runs.map(({ target }) => target.data.id);
@@ -342,11 +357,8 @@ export class SyncEngine {
       (result): result is PromiseRejectedResult =>
         result.status === 'rejected' && !(result.reason instanceof NotReplayableError),
     );
-    if (thrown !== undefined) {
-      // Nothing is written yet: every run ends failed, none is left `running`.
-      await Promise.all(engines.map(({ engine }) => engine.#abandon(thrown.reason)));
-      throw thrown.reason;
-    }
+    // Nothing is written yet.
+    if (thrown !== undefined) throw thrown.reason;
     const replayed = engines.flatMap((replaying, index) => {
       const result = settled[index];
       return result?.status === 'fulfilled' ? [{ ...replaying, outcome: result.value }] : [];
@@ -360,24 +372,18 @@ export class SyncEngine {
       const ending = replaying.engine.#success(replaying.outcome, integration, finishedAt);
       return [{ ...replaying, integration, finishedAt, ending }];
     });
-    try {
-      await SyncEngine.#writeReplays(
-        workspaceId,
-        kept.map(({ replay }) => replay),
-        succeeded.map(({ integration, ending }) => ({
-          integrationId: integration.id,
-          resource: SyncCursors.RUN,
-          patch: ending.cursor,
-        })),
-      );
-    } catch (error) {
-      await Promise.all(replayed.map(({ engine }) => engine.#abandon(error)));
-      throw error;
-    }
+    await SyncEngine.#writeReplays(
+      workspaceId,
+      kept.map(({ replay }) => replay),
+      succeeded.map(({ integration, ending }) => ({
+        integrationId: integration.id,
+        resource: SyncCursors.RUN,
+        patch: ending.cursor,
+      })),
+    );
 
-    // The runs, their integrations' status and their audit entries: at once. A failure ends every
-    // run not yet recorded failed (none is left `running`).
-    const ended = settleAll([
+    // The runs, their integrations' status and their audit entries: at once.
+    await settleAll([
       SyncRun.succeedAll(
         succeeded.map(({ engine, finishedAt }) => ({
           run: engine.#run,
@@ -393,12 +399,6 @@ export class SyncEngine {
         succeeded.map(({ engine }) => engine.#auditEntry()),
       ),
     ] as const);
-    try {
-      await ended;
-    } catch (error) {
-      await settleAll(succeeded.map(({ engine }) => engine.#abandon(error)));
-      throw error;
-    }
     for (const { engine } of succeeded) engine.#recorded = true;
 
     const finished = new Set(succeeded.map(({ engine }) => engine));
@@ -409,15 +409,41 @@ export class SyncEngine {
         if (finished.has(engine)) return engine.#summary(null);
         const result = settled[index];
         if (result?.status !== 'fulfilled') return alone(entry);
-        const store = SyncEngine.#databaseStore(entry.target);
-        try {
-          return await engine.#finish(result.value, store);
-        } catch (error) {
-          await engine.#abandon(error);
-          throw error;
-        }
+        return engine.#finish(result.value, SyncEngine.#databaseStore(entry.target));
       }),
     );
+  }
+
+  /**
+   * A batch threw: every run of it still open (none it recorded, whichever step failed) ends
+   * `failed` with the code of what was thrown, as `execute` ends its run, so none is left
+   * `running`. One conditional write: a run that finished meanwhile keeps its outcome. Best
+   * effort: the database may be the reason it threw.
+   */
+  static async #abandonAll(
+    runs: readonly BatchRun[],
+    workspaceId: string,
+    thrown: unknown,
+  ): Promise<void> {
+    const code = errorCodeOf(thrown);
+    const open = runs.filter(({ run }) => run.isOpen);
+    logger.error('sync batch threw', {
+      runIds: open.map(({ run }) => run.id),
+      code,
+      error: thrown,
+    });
+    try {
+      await SyncRun.cancelAll(
+        workspaceId,
+        open.map(({ run, clock }) => ({
+          id: run.id,
+          error: SyncRun.error(code),
+          finishedAt: finishedAtOf(clock),
+        })),
+      );
+    } catch (error) {
+      logger.error('sync batch runs could not be marked failed', { workspaceId, error });
+    }
   }
 
   /**

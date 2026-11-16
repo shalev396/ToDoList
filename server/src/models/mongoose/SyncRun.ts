@@ -96,6 +96,7 @@ export const SyncRunRepository: ISyncRunRepository = {
     if (inputs.length === 0) return [];
     const docs = await SyncRunMongoModel.insertMany(
       inputs.map((input) => ({
+        ...(input.id === undefined ? {} : { _id: input.id }),
         workspaceId,
         integrationId: input.integrationId,
         trigger: input.trigger,
@@ -128,6 +129,20 @@ export const SyncRunRepository: ISyncRunRepository = {
       { ordered: true },
     );
     return result.matchedCount;
+  },
+
+  async updateManyIfStatus(workspaceId, statuses, updates) {
+    if (updates.length === 0) return 0;
+    const result = await SyncRunMongoModel.bulkWrite(
+      updates.map(({ id, patch }) => ({
+        updateOne: {
+          filter: { _id: id, workspaceId, status: { $in: [...statuses] } },
+          update: { $set: setFields(patch, PATCH_KEYS) },
+        },
+      })),
+      { ordered: true },
+    );
+    return result.modifiedCount;
   },
 
   async updateIfStatus(workspaceId, id, statuses, patch) {
