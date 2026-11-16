@@ -109,7 +109,10 @@ function cmdRun(): void {
     // The default dev servers, unless the shell names others. conftest.py refuses to run when
     // either URL is missing, so a forgotten variable never reaches somebody else's server.
     baseUrl = process.env['BASE_URL'] ?? 'http://localhost:5173';
-    apiBaseUrl = process.env['API_BASE_URL'] ?? 'http://localhost:3000/api';
+    // The local API listens on 127.0.0.1 only (server/src/local.ts). Python's requests tries
+    // localhost's ::1 first, and on Windows each new connection there waits about 2 s before it
+    // falls back, which every API call of the test helpers paid.
+    apiBaseUrl = process.env['API_BASE_URL'] ?? 'http://127.0.0.1:3000/api';
   }
 
   if (!fs.existsSync(PYTHON)) {

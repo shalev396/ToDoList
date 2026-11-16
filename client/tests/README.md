@@ -38,7 +38,7 @@ This creates `.venv`, installs dependencies, and Playwright Chromium. Cross-plat
 npm run test
 ```
 
-Runs pytest via `.venv` with `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://localhost:3000/api`. Translations are exported automatically before tests (conftest fixture). Accounts are pooled (below) instead of one per test: each signup costs a Mail.tm inbox, an SES email and 15 to 25 seconds.
+Runs pytest via `.venv` with `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://127.0.0.1:3000/api`. Translations are exported automatically before tests (conftest fixture). Accounts are pooled (below) instead of one per test: each signup costs a Mail.tm inbox, an SES email and 15 to 25 seconds.
 
 ### Accounts and data
 
@@ -97,7 +97,7 @@ Accessibility tests also call `wait_for_fade_in(page)` from `tests/helpers/anima
 
 Tests use `BASE_URL` (frontend) and `API_BASE_URL` (backend). Defaults:
 
-- **Local API on a stage** (`npm run test`): `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://localhost:3000/api`. No basic-auth password needed.
+- **Local API on a stage** (`npm run test`): `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://127.0.0.1:3000/api`. No basic-auth password needed.
 - **Running pytest directly**: set both yourself. There are no fallbacks, so a run never lands on someone else's dev server by accident; `npm run test` honours them too.
 - **QA** (`npm run test:qa`): loads the gitignored `server/.env.qa` without overriding variables already set (shell and CI win). `BASE_URL` and `API_BASE_URL` default to `https://<DOMAIN_NAME>` and `https://<DOMAIN_NAME>/api`.
 
