@@ -200,12 +200,13 @@ describe('the dashboard internals', () => {
       ).some((edge) => edge.target === OPS && reachesApplyOps(edge)),
       'Dashboard imports applyOps',
     );
-    // And every call of it hands applyOps the one document check (not just one of them).
+    // And every call of it hands applyOps the one document check (not just one of them). Comment
+    // lines may stand before it; each ends at its newline, so the pattern can't backtrack.
     const calls = (files.get(DASHBOARD) ?? '').split(/(?<![.\w])(?<!async )applyOps\(/).slice(1);
     assert.ok(calls.length >= 1, 'Dashboard calls applyOps');
     for (const call of calls) {
       assert.ok(
-        /^[^;]{0,200}?\{\s*(?:\/\/[^\n]*\s*)*check: \(draft\) => DocCheck\.instance\.check\(draft\)/.test(
+        /^[^;]{0,200}?\{\s*(?:\/\/[^\n]*\n\s*)*check: \(draft\) => DocCheck\.instance\.check\(draft\)/.test(
           call,
         ),
         `an applyOps call without DocCheck's check: ${call.slice(0, 80)}`,
