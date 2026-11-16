@@ -461,7 +461,11 @@ def test_no_domain_is_an_error(mail):
 
 
 def test_create_account_sends_the_credentials_and_reports_a_refusal(mail):
-    mail.session.answers = [answer(201, {"id": "a1"}), answer(422, {"detail": "address: used"})]
+    mail.session.answers = [
+        answer(201, {"id": "a1"}),
+        answer(422, {"detail": "address: used"}),
+        answer(401, {"message": "Invalid credentials."}),  # someone else's address
+    ]
     mail.create_account("x@mail.test", "secret-pw")
     call = mail.session.calls[0]
     assert (call.method, call.url) == ("POST", f"{BASE}/accounts")
@@ -469,6 +473,19 @@ def test_create_account_sends_the_credentials_and_reports_a_refusal(mail):
     with pytest.raises(MailTmError, match="422") as refused:
         mail.create_account("x@mail.test", "secret-pw")
     assert "secret-pw" not in str(refused.value)
+
+
+def test_an_address_already_ours_is_taken_as_created(mail):
+    """A creation that went through behind an earlier answer: the password opens the inbox."""
+    mail.session.answers = [
+        answer(422, {"detail": "address: used"}),
+        answer(200, {"token": "t"}),
+        answer(200, {"id": "a1", "address": "x@mail.test"}),
+    ]
+    assert mail.create_account("x@mail.test", "pw") == {"id": "a1", "address": "x@mail.test"}
+    me = mail.session.calls[2]
+    assert (me.method, me.url) == ("GET", f"{BASE}/me")
+    assert me.kwargs["headers"] == {"Authorization": "Bearer t"}
 
 
 def test_a_token_never_shows_up_in_an_error(mail):

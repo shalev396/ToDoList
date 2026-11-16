@@ -409,11 +409,26 @@ class MailTmClient:
             idempotent=False,
             retry_429=True,  # a 429 created nothing: see the module docstring
         )
+        if response.status_code == 422:
+            # "Address already used": an earlier answer may have hidden a creation that went
+            # through. The password is the caller's own, so if it opens the inbox, it is theirs.
+            owned = self._account_if_ours(address, password)
+            if owned is not None:
+                return owned
         if response.status_code != 201:
             raise MailTmError(
                 f"mail.tm account creation failed: {response.status_code} {response.text[:200]}"
             )
         return response.json()
+
+    def _account_if_ours(self, address: str, password: str) -> Optional[dict]:
+        """The account `address`, if `password` signs in to it; otherwise None."""
+        try:
+            token = self.get_token(address, password)
+        except MailTmError:
+            return None
+        me = self.request("GET", "/me", token=token)
+        return me.json() if me.status_code == 200 else None
 
     def get_token(self, address: str, password: str) -> str:
         """A bearer token for the inbox. (Errors never show the response: it may hold one.)"""
