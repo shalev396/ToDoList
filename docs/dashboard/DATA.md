@@ -222,6 +222,55 @@ Unique on `(integrationId, resource)`. Example cursors: Google Calendar uses `sy
 ### 3.10 `AuditLogs`
 `{workspaceId, actorUserId | "system", actorAgentId (→ AgentKeys, null for UI/system), action: "integration.connect" | "credential.rotate" | "member.invite" | "gcal.write" | "dashboard.update" | "mcp.<tool>" | …, targetType, targetId, ip, userAgent, meta (redacted; MCP calls store `{argsHash, resultStatus}`, never raw args), at}`. Append-only. A TTL index removes entries after 365 days. Audit entries never contain secret values; credentials are referenced by `credentialId` only.
 
+**Actions the server records** (every `AuditLog.record` call; `AuditLog` is the only writer). `integration.write` and `gcal.*` never hold a value, only field names or counts.
+
+| Action | Written when |
+| --- | --- |
+| `workspace.create` / `workspace.update` | A workspace is created / its settings change (`changed` names the fields). |
+| `workspace.delete` | The cascade retires a workspace (the workspace-deleted flow and an owner's account deletion). |
+| `workspace.link_update` | The join link is turned on or off, or its token is rotated. |
+| `workspace.primary_calendar` | The primary calendar is set or cleared (`cleared: true`). |
+| `member.invite` | An invite is sent. |
+| `invite.revoke` | A pending invite is revoked. |
+| `member.join` | An invite is accepted. |
+| `member.join_link` | Someone joins through the join link. |
+| `member.update` | A member's role or settings change. |
+| `member.remove` | An owner removes a member. |
+| `member.leave` | A member leaves, or their account is deleted (`reason: account_deleted`). |
+| `member.former_todos_delete` | An owner soft-deletes the private local to-dos of former members (`count`). |
+| `topic.create` / `topic.update` / `topic.delete` | A topic is created, edited or deleted. |
+| `attribute.create` / `attribute.update` / `attribute.delete` | A custom attribute definition changes. |
+| `view.create` / `view.update` / `view.delete` | A saved view changes. |
+| `dashboard.create` | A dashboard is created. |
+| `dashboard.update` | A save, undo, redo or revert writes a new version (`version`, `summary`). |
+| `dashboard.publish` | A dashboard is published. |
+| `dashboard.delete` | A dashboard is deleted. |
+| `dashboard.connector_remove` | A save took another member's connector off a block (one entry per removal). |
+| `integration.create` | An integration is created. |
+| `integration.connect` / `credential.rotate` | A credential is saved for the first time / replaces a stored one (the `credentialId` only). |
+| `integration.update` | Label, topic, config or expiry change (`changed`); also a read-only calendar added by the primary calendar's picker. |
+| `integration.mode` | The owner switches it between read and read & write. |
+| `integration.test` | A connection test is run. |
+| `integration.stop_sharing` | Its connectors are taken off every block (`dashboards` changed). |
+| `integration.disconnect` | It is disconnected (by its owner, or by the cascade). |
+| `integration.write` | A change made at the provider, write-back or calendar: item fields, `event.delete`, `calendar.create` and so on (field names only; `outcome: unknown` or `refused` when Google did not take it). `event.delete` that follows a member deleting the to-do is recorded as that member. |
+| `integration.cleanup` | "Also remove what TodoList added" ran before a disconnect (counts only, including a partial one). |
+| `integration.connect_link` / `integration.connect_link_used` | An agent's connect link is made / consumed. |
+| `provider.create` | `create_todo` with `targets` made (or failed to make) one item at a provider (`result`, `externalKey`, never a title). |
+| `sync.run` | A sync run ends (`trigger`, `counts`; actor system). |
+| `gcal.write` | The calendar push created, updated or deleted an event (actor system). |
+| `gcal.delete` | A Google-side delete was pulled back: the item was soft-deleted, or only its link ended (`google_kept`). |
+| `gcal.conflict` | Both sides changed an event; one won (last write). |
+| `agent_key.create` / `agent_key.revoke` | An agent key is created / revoked. |
+| `agent_key.oauth_grant` | An MCP sign-in grant is issued. |
+| `agent_key.oauth_refresh` | A grant's tokens are rotated by a refresh. |
+| `agent_key.oauth_reuse` | An already-rotated refresh token came back after its grace period: the grant is revoked. |
+| `agent_key.oauth_code_reuse` | An authorization code was presented twice. |
+| `agent_key.oauth_revoke` | A grant is ended through the token revocation endpoint. |
+| `mcp.<tool>` | Every MCP tool call (`argsHash`, `resultStatus`; actor user plus `actorAgentId`). |
+
+`McpClient.register` (a client's dynamic registration) is not audited: registrations belong to no workspace.
+
 ### 3.11 `Dashboards` (builder output; schema owned by BUILDER.md)
 ```json
 { "_id": "d-…", "workspaceId": "w-1", "ownerUserId": "u-1",
@@ -236,7 +285,7 @@ Unique on `(integrationId, resource)`. Example cursors: Google Calendar uses `sy
 - `version` is bumped on every write (optimistic concurrency via `expectedVersion`). `publishedVersion` is what the UI shows to non-editors.
 
 ### 3.12 `DashboardVersions` (history, undo)
-`{workspaceId, dashboardId, version, patch (RFC 6902), inverse (RFC 6902), snapshot (every 10th version, else null), actorUserId, actorAgentId, at}`. Keep the last 50 per dashboard (pruned by the purge, which runs only when invoked) plus every snapshot of a published version.
+`{workspaceId, dashboardId, version, patch (RFC 6902), inverse (RFC 6902), snapshot (every 10th version, else null), actorUserId, actorAgentId, at}`. Pruned on every save (`History`): the last 50 versions per dashboard are kept, plus the published version. A snapshot is taken at version 1 and every 10th version. The purge also prunes (`jobs/purge.ts`), but it runs only when invoked, so history does not wait for it.
 
 ### 3.13 `Views` (saved query + viz)
 `{workspaceId, ownerUserId, title, query (FRONTEND.md §4 query JSON), viz, visibility}`. A block references one through `savedViewId`. `POST /workspaces/:wid/query` accepts its id (BACKEND.md §4).
@@ -276,7 +325,7 @@ A **sign-in grant** (`kind: "oauth"`) is the same row made by an MCP OAuth clien
 - **Natural key:** `(workspaceId, source.provider, source.accountId, source.externalId)`, backed by a unique index. Every sync write is a `bulkWrite` of `updateOne({key}, {$set: mapped, $setOnInsert: {_id, createdAt}}, {upsert: true})`.
 - **Skip no-op writes.** When `source.hash` (a SHA-1 of the mapped fields) is unchanged, only `lastSeenAt` is updated.
 - **Closed at source.** When the provider reports done, cancelled or archived, the sync sets `status` and `closedAt` and keeps the item, so deadline history and the donut "done" count still work.
-- **Deleted at source.** Deletion is detected through the provider's delete signal (Google `status: "cancelled"`, webhook events) or a **sweep**: after a full sync of a resource, items in that resource with `lastSeenAt < runStartedAt` get `deletedAt = now`. This is a soft delete, and the purge (run only when invoked) hard-deletes rows 30 days later.
+- **Deleted at source.** Deletion is detected through the provider's delete signal (Google `status: "cancelled"`, webhook events) or a **sweep**: after a full sync of a resource, items in that resource with `lastSeenAt < runStartedAt` get `deletedAt = now`. This is a soft delete, and the purge (run only when invoked) hard-deletes rows 30 days later. Nothing schedules the purge (an infra test asserts it), so the 30-day hard delete and the orphan sweeps happen only when someone runs it.
 - **Disconnecting an integration** sets `Integrations.deletedAt`, deletes its `Credentials` document (a hard delete, followed by a check that it is gone), and soft-deletes its items and containers.
 - **Deleting a workspace** (by its owner, or with its last owner's account; the `Workspace` class's cascade, `classes/workspace/cascade.ts`) disconnects its integrations as above, soft-deletes the workspace, its items and containers, then **hard-deletes** its `Dashboards` (deleted ones too), their `DashboardVersions` and its `Views`, and its `Topics`, then ends every membership. Dashboards and topics go with their workspace because they are unreachable without it (a deleted workspace answers 404). The `2026-11-15-orphaned-dashboards` and `2026-11-16-orphaned-topics` migrations removed, once, the documents of workspaces deleted before those steps existed, and the purge job applies the same rules each run (`Dashboard.removeOrphans`, `Topic.removeOrphans`: what a request in flight wrote after the cascade). Both decide "this workspace is gone" from reads of the primary, ids only, and a failed read deletes nothing.
 - **Local overlays.** User-only fields on mirrored items (`pinned`, `note`, `hidden`, `topicOverride`, `plannedAt`, `overrides`, …) live in `overlay.*`, which the sync never touches.

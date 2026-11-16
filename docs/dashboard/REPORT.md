@@ -19,6 +19,13 @@ After the first build the server was reshaped, phase by phase, into a set of cla
 
 - A calendar move whose DELETE half gets no answer (or a 429) leaves the old event in Google, untracked: the move's create half re-points the item's one link, so neither a push nor "Remove" sees the old event again; only "Also remove" at disconnect clears it. Backlog (R3-M2): leave the row on the old calendar until the delete half succeeded.
 - PERMISSIONS-V2 ruling 12, case F (a move's claim on the old calendar no longer exists after the move, so another integration adopting that event in the same moments can read the move's delete as the user's).
+- `McpClient.register` is not audited: client registrations belong to no workspace.
+- `Integration.removeAllIn` has no live-workspace guard on purpose: the cascade runs it before the workspace is retired, to destroy credentials first, and it is pinned by class to the cascade.
+- `Dashboard#blocks(caller)` has no production caller yet.
+- The purge runs only when invoked directly. There are no schedules, by design (an infra test asserts it), so the 30-day hard delete and the orphan sweeps happen only when someone runs it.
+- Descriptions are never written back to trackers, on purpose (only a preview is stored; D21).
+- Postman has no coverage of the newer routes (`PATCH …/integrations/:iid {mode}`, the primary calendar, `?removeAdded`, `remove-pushed`); the collection was not touched.
+- Plan elements not built, and the three classes still over about 900 lines: see DECISIONS D28.
 - The persona dry run can reveal that another member's private topic page exists. It cannot be reached today, because no route makes a dashboard private.
 
 ## What was built
