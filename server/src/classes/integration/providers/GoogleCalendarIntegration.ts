@@ -22,16 +22,12 @@
  * - disconnect: the grant is revoked at Google, unless another live integration (in any
  *   workspace) uses the same Google account, since revoking ends the grant for all of them.
  */
-import { z } from 'zod';
-
 import type { Caller } from '../../base/Caller.js';
 import { AuditLog } from '../../AuditLog.js';
 import { AppError } from '../../../errors/AppError.js';
 import { CleanupIncompleteError } from '../../../errors/CleanupIncompleteError.js';
 import { EventHasGuestsError } from '../../../errors/EventHasGuestsError.js';
 import { NotFoundError } from '../../../errors/NotFoundError.js';
-import { ProviderItemMissingError } from '../../../errors/ProviderItemMissingError.js';
-import { ProviderNoAnswerError } from '../../../errors/ProviderNoAnswerError.js';
 import { ScopeMissingError } from '../../../errors/ScopeMissingError.js';
 import { WrittenNotStoredError } from '../../../errors/WrittenNotStoredError.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
@@ -116,14 +112,12 @@ import type { PrimaryCalendar } from '../../workspace/PrimaryCalendar.js';
 import { WorkspaceSettings } from '../../workspace/WorkspaceSettings.js';
 import { EventEdit } from '../EventEdit.js';
 import { Integration } from '../Integration.js';
-import { eventHasGuests } from '../../item/guests.js';
 import { IntegrationRegistry } from '../IntegrationRegistry.js';
 import { RecurrenceRule } from '../RecurrenceRule.js';
 import {
   CalendarApiError,
   calendarReader,
   calendarWriter,
-  type CalendarReader,
   type CalendarWriter,
   type GuestUpdates,
   type PlainEventBody,
@@ -132,6 +126,27 @@ import {
 } from '../writers/calendarApi.js';
 import { applyOps, type OpResult } from '../writers/calendarOps.js';
 import type { WriteResult } from '../writers/trackerWriter.js';
+import {
+  ALL_EVENTS_FROM,
+  CalendarName,
+  calendarEntry,
+  hasGuests,
+  MAX_CALENDAR_PAGES,
+  MAX_FOREIGN_PAGES,
+  MAX_READ_CALENDARS,
+  pullOwnEvents,
+  readsCalendar,
+  TOO_MANY_READS,
+  type OwnEvent,
+  type PulledCalendar,
+} from './googleCalendarData.js';
+import {
+  calendarFailure,
+  outcomeUnknown,
+  readingOf,
+  refusedForGood,
+  statusOf,
+} from './googleCalendarFailures.js';
 
 export type { GoogleCalendarSecret };
 
@@ -140,216 +155,6 @@ export const PUSH_BUDGET_MS = WRITE_BUDGET_MS;
 
 /** How long the list's sweep (`pushedEventCount`) may go on starting reads. */
 export const COUNT_SWEEP_MS = 2_000;
-
-const MAX_CALENDAR_PAGES = 10;
-const MAX_PULL_PAGES = 10;
-const ACCESS_ROLES: ReadonlySet<string> = new Set(['owner', 'writer', 'reader', 'freeBusyReader']);
-
-/** One calendar's pulled changes, in the shape the commit reads (PushCommit's CalendarResult). */
-interface PulledCalendar {
-  id: string;
-  events: Record<string, unknown>[];
-  nextSyncToken: string | null;
-  fullSync: boolean;
-  reset: boolean;
-  partial: boolean;
-}
-
-const statusOf = (error: unknown): number | null =>
-  error instanceof CalendarApiError ? error.status : null;
-
-/** The most calendars one connection reads (the definition's `.max(50)`). */
-const MAX_READ_CALENDARS = 50;
-const TOO_MANY_READS =
-  'calendars: this connection reads 50 calendars, the most; untick one to read the workspace calendar';
-
-/** Whether a stored entry of `config.calendars` is `calendarId` (an object, or a legacy plain id). */
-function readsCalendar(entry: unknown, calendarId: string): boolean {
-  return entry === calendarId || (entry as { id?: unknown } | null)?.id === calendarId;
-}
-
-const RECONNECT = 'Google refused the connection: reconnect Google Calendar';
-/** A clean-up step Google refused without saying why: kept, and retried by the next call. */
-const RETRIED_LATER =
-  'Google refused for now; what is left will be retried. Try again in a moment.';
-
-/** A calendar's name as TodoList creates it: one line of text. */
-const CalendarName = z
-  .string()
-  .trim()
-  .min(1)
-  .max(255)
-  .refine((name) => !Array.from(name).some((char) => (char.codePointAt(0) ?? 0) < 32), {
-    message: 'Must be one line of text',
-  });
-
-/** Whether a pulled event has guests beyond the calendar's owner (classes/item/guests.ts). */
-function hasGuests(item: ItemData): boolean {
-  return eventHasGuests(item.props);
-}
-
-/** A Google answer that leaves the outcome unknown (no answer, a timeout, a 5xx): it may have landed. */
-function outcomeUnknown(error: unknown): boolean {
-  if (!(error instanceof CalendarApiError)) return false;
-  return error.status === null || error.status >= 500;
-}
-
-/** Google's 403 reasons that mean "this account may not do this": a refusal for good. */
-const PERMISSION_REASONS: ReadonlySet<string> = new Set([
-  'forbidden',
-  'insufficientPermissions',
-  'requiredAccessLevel',
-  'forbiddenForNonOrganizer',
-]);
-
-/** Google's 403 reasons that mean "too much, too fast": back off and retry later, like a 429. */
-const RATE_LIMIT_REASONS: ReadonlySet<string> = new Set([
-  'rateLimitExceeded',
-  'userRateLimitExceeded',
-  'quotaExceeded',
-  'dailyLimitExceeded',
-]);
-
-/** A 403 that is Google's rate or usage limit (to retry later), not a refusal. */
-function rateLimited(error: CalendarApiError): boolean {
-  return error.status === 403 && error.reason !== null && RATE_LIMIT_REASONS.has(error.reason);
-}
-
-/**
- * A Google answer that refuses a clean-up step for good, so the step is recorded and dropped, not
- * retried: a rejected request (400), or a 403 whose reason is a permission one. A 403 for a rate
- * limit, or with an unknown or missing reason, is not: it stops the call, and the next one retries.
- */
-function refusedForGood(error: unknown): boolean {
-  if (!(error instanceof CalendarApiError)) return false;
-  if (error.status === 400) return true;
-  return error.status === 403 && error.reason !== null && PERMISSION_REASONS.has(error.reason);
-}
-
-/**
- * What one read of an event says about a DELETE whose answer was lost: gone (404, or 410 as null)
- * or cancelled → made; live → not made; the read fails → unknown.
- */
-async function readingOf(
-  get: () => Promise<Record<string, unknown> | null>,
-): Promise<DeleteReading> {
-  try {
-    const event = await get();
-    return event === null || event['status'] === 'cancelled' ? 'made' : 'not_made';
-  } catch (error) {
-    return statusOf(error) === 404 ? 'made' : 'unknown';
-  }
-}
-
-/** Events.list from the start of time: every event of a calendar (deleted ones marked so). */
-const ALL_EVENTS_FROM = '1970-01-01T00:00:00.000Z';
-/** Pages read to decide whether a calendar TodoList created holds anything else. */
-const MAX_FOREIGN_PAGES = 5;
-
-/** One pulled event of this integration: its item, and where it is at Google. */
-interface OwnEvent {
-  stored: ItemData;
-  calendarId: string;
-  eventId: string;
-}
-
-/**
- * A write that failed, as the caller answers it: Google's status (never its text), or a grant
- * Google refused to refresh (reconnect).
- */
-function calendarFailure(error: unknown, write = false): Error {
-  const refused = write ? { code: 'provider_refused' as const } : {};
-  if (error instanceof ProviderHttpError && error.code === 'auth_failed') {
-    return new AppError(409, RECONNECT, refused);
-  }
-  if (!(error instanceof CalendarApiError)) {
-    return error instanceof Error ? error : new Error('A Google Calendar write failed');
-  }
-  const { status } = error;
-  if (status === null || status >= 500) {
-    const silent = 'Google Calendar did not answer. Try again in a moment.';
-    // A write: it may have been made there (provider_no_answer, which MCP names too).
-    return write ? new ProviderNoAnswerError('google_calendar', silent) : new AppError(502, silent);
-  }
-  if (status === 401) return new AppError(409, RECONNECT, refused);
-  if (rateLimited(error)) {
-    return new AppError(429, 'Google Calendar is busy. Try again in a moment.');
-  }
-  if (status === 403 && !write && !refusedForGood(error)) {
-    // No permission reason (an unknown or missing one): nothing was dropped, the next call retries.
-    return new AppError(409, RETRIED_LATER);
-  }
-  if (status === 403) {
-    return new AppError(409, 'Google refused this change for this account', refused);
-  }
-  if (status === 404 || status === 410) return new ProviderItemMissingError('google_calendar');
-  if (status === 429) return new AppError(429, 'Google Calendar is busy. Try again in a moment.');
-  return new AppError(422, 'Google Calendar rejected this change');
-}
-
-function calendarEntry(raw: unknown): GoogleCalendarEntry | null {
-  if (typeof raw !== 'object' || raw === null) return null;
-  const { id, summary, summaryOverride, primary, accessRole } = raw as Record<string, unknown>;
-  if (typeof id !== 'string' || !/^\S{1,255}$/.test(id)) return null;
-  const name =
-    typeof summaryOverride === 'string' && summaryOverride.trim() !== ''
-      ? summaryOverride
-      : typeof summary === 'string' && summary.trim() !== ''
-        ? summary
-        : id;
-  return {
-    id,
-    summary: name.slice(0, 200),
-    primary: primary === true,
-    accessRole:
-      typeof accessRole === 'string' && ACCESS_ROLES.has(accessRole) ? accessRole : 'reader',
-  };
-}
-
-/**
- * Lists one calendar's changes: incremental with the stored `syncToken` (a 410 is reported as
- * `reset`), otherwise in full from `timeMin`. Only events carrying our origin are kept, each with
- * `priv` (the private extended properties) the commit reads.
- */
-async function pullOwnEvents(
-  reader: CalendarReader,
-  calendarId: string,
-  syncToken: string | null,
-  timeMin: string,
-  budget: TimeBudget,
-): Promise<PulledCalendar> {
-  const out: PulledCalendar = {
-    id: calendarId,
-    events: [],
-    nextSyncToken: null,
-    fullSync: syncToken === null,
-    reset: false,
-    partial: false,
-  };
-  const query = syncToken === null ? { timeMin } : { syncToken };
-  let pageToken: string | null = null;
-  for (let page = 0; page < MAX_PULL_PAGES; page += 1) {
-    if (page > 0 && !budget.canStart()) break;
-    let result;
-    try {
-      result = await reader.list(calendarId, query, pageToken);
-    } catch (error) {
-      if (syncToken !== null && statusOf(error) === 410) return { ...out, reset: true };
-      throw error;
-    }
-    for (const raw of result.items) {
-      const ext = raw['extendedProperties'] as { private?: Record<string, unknown> } | undefined;
-      const priv = ext?.private ?? null;
-      if (priv?.['origin'] === ORIGIN) out.events.push({ ...raw, priv });
-    }
-    if (result.nextPageToken === null) {
-      out.nextSyncToken = result.nextSyncToken;
-      return out;
-    }
-    pageToken = result.nextPageToken;
-  }
-  return { ...out, partial: true };
-}
 
 export class GoogleCalendarIntegration
   extends Integration<GoogleCalendarConfig, GoogleCalendarSecret, CalendarWriter>
