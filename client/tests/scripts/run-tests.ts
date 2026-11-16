@@ -127,10 +127,12 @@ function cmdRun(): void {
 
   // --browser is passed only here: pytest.ini must not repeat it, or pytest-playwright
   // parameterizes every test once per occurrence and the whole suite runs twice.
+  // tests/mailtm_client holds the Mail.tm client's own offline tests (a few seconds).
   const args = [
     '-m',
     'pytest',
     'tests/e2e',
+    'tests/mailtm_client',
     '-v',
     '--browser',
     'chromium',
