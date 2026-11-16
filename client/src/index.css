@@ -179,6 +179,21 @@
   --shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.5);
 }
 
+/*
+ * Toasts (sonner, richColors). The toaster follows the app's theme (DirectionalToaster), and
+ * sonner's dark palette keeps AA. Its light one doesn't at the toast's 13px (error 4.35:1, success
+ * 4.26:1, info 4.35:1, warning 3.08:1), so the text is deepened on the same washes: error in the
+ * theme's red text colour, the others in sonner's hues. Unlayered and more specific than sonner's
+ * own `[data-sonner-toaster][data-sonner-theme]` rule, which it injects at run time.
+ * Checked by components/shared/toastPalette.test.ts.
+ */
+:root [data-sonner-toaster][data-sonner-theme='light'] {
+  --success-text: #007a29;
+  --info-text: #0869c9;
+  --warning-text: #a65907;
+  --error-text: var(--destructive);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
