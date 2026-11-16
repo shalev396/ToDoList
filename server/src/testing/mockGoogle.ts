@@ -249,8 +249,9 @@ export async function startMockGoogle(options: MockGoogleOptions): Promise<MockG
     res: ServerResponse,
     grant: Grant,
   ): Promise<void> {
-    const scopes = grant.scope.split(' ');
-    if (!scopes.includes(APP_CREATED_SCOPE) && !scopes.includes(FULL_CALENDAR_SCOPE)) {
+    // The granted scopes as a set: membership is exact, one whole scope string each.
+    const scopes = new Set(grant.scope.split(' '));
+    if (!scopes.has(APP_CREATED_SCOPE) && !scopes.has(FULL_CALENDAR_SCOPE)) {
       apiError(res, 403, 'Request had insufficient authentication scopes.');
       return;
     }

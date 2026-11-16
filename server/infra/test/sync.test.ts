@@ -108,10 +108,18 @@ for (const stage of STAGES) {
       template.resourceCountIs('AWS::Scheduler::Schedule', 0);
       template.resourceCountIs('AWS::Scheduler::ScheduleGroup', 0);
       template.resourceCountIs('AWS::Events::Rule', 0);
-      const trusted = Object.values(template.findResources('AWS::IAM::Role')).map((r) =>
-        JSON.stringify((r['Properties'] as Json)['AssumeRolePolicyDocument']),
+      // Every service principal any role trusts, compared whole.
+      const trusted = Object.values(template.findResources('AWS::IAM::Role')).flatMap((r) => {
+        const policy = (r['Properties'] as Json)['AssumeRolePolicyDocument'] as {
+          Statement: { Principal?: { Service?: unknown } }[];
+        };
+        return policy.Statement.flatMap((statement) => [statement.Principal?.Service ?? []].flat());
+      });
+      assert.ok(trusted.length > 0, 'the roles trust some service');
+      assert.ok(
+        trusted.every((service) => service !== 'scheduler.amazonaws.com'),
+        JSON.stringify(trusted),
       );
-      assert.ok(trusted.every((policy) => !policy.includes('scheduler.amazonaws.com')));
     });
 
     it('serves /api/mcp and /api/mcp/{proxy+} without an authorizer', () => {

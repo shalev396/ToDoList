@@ -356,8 +356,9 @@ describe('connectors on blocks', () => {
       mine: false,
       removed: false,
     });
-    assert.ok(!JSON.stringify(view).includes('private label'));
-    assert.ok(!JSON.stringify(view).includes('atlassian.net'));
+    // Nowhere in the answer, not as a value nor inside one: a text search over all of it.
+    assert.doesNotMatch(JSON.stringify(view), /private label/);
+    assert.doesNotMatch(JSON.stringify(view), /atlassian\.net/);
     // Ben disconnects his: the block shows "A source was removed" (computed: removed: true).
     assert.equal((await call('ben', 'DELETE', `${f.base}/integrations/${f.benJira}`)).status, 204);
     const after = dataOf(await call('cy', 'GET', `${f.base}/dashboards/${dash.id}`));
@@ -445,7 +446,7 @@ describe('members, leaving and roles', () => {
     assert.deepEqual(byId.get(ids.ann), ['jira']);
     assert.deepEqual(byId.get(ids.ben), ['jira']);
     assert.deepEqual(byId.get(ids.cy), []);
-    assert.ok(!JSON.stringify(members).includes('atlassian'));
+    assert.doesNotMatch(JSON.stringify(members), /atlassian/);
   });
 
   it('leaving disconnects my integrations here; my local to-dos stay (ruling 6)', async () => {
