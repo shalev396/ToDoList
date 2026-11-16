@@ -152,6 +152,22 @@ describe('BlockRegistry and Block.from', () => {
       [{ pointer: '/type', message: schemaIssue.message }],
     );
   });
+
+  it('the template steps are the base’s own: only the hooks, and the Null Object’s whole check, are overridable', () => {
+    for (const step of ['catalogIssues', 'queryIssues']) {
+      assert.equal(step in Block.prototype, false, step);
+    }
+    for (const hook of ['checkSpecific', 'lintSpecific']) {
+      assert.equal(
+        typeof (Block.prototype as unknown as Record<string, unknown>)[hook],
+        'function',
+      );
+    }
+    assert.equal(Object.hasOwn(UnknownBlock.prototype, 'check'), true);
+    for (const cls of Object.values(CLASSES)) {
+      assert.equal(Object.hasOwn((cls as typeof Block).prototype, 'check'), false);
+    }
+  });
 });
 
 describe('capability contracts', () => {
@@ -244,6 +260,11 @@ describe('the contracts', () => {
     assert.ok(isDataBlock(saved));
     assert.equal(saved.query(), null);
     assert.equal(saved.savedViewId, 'view-1');
+    // A query stored as null (the schema refuses it) is no query, never a Query wrapping null.
+    const nulled = Block.from(jsonOf('counter', { query: null }));
+    assert.ok(isDataBlock(nulled));
+    assert.equal(nulled.query(), null);
+    assert.equal(nulled.toJSON().query, null, 'the JSON stays as given');
   });
 
   it('TimeBlock: the span it draws', () => {

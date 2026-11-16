@@ -4,7 +4,8 @@
  * polymorphism instead of a switch on its type: `Block.from(json)` makes the class of the block's
  * type (BlockRegistry), and a type this code does not know gets UnknownBlock.
  *
- * Two template methods, each the steps every block shares around a hook its class overrides:
+ * Two template methods, each the steps every block shares (private: no class changes them) around a
+ * hook its class overrides:
  * - `check()`, the catalog and the compiler (validation layers 2–3, BUILDER.md §8): the type's
  *   catalog entry (its viz schema, then its query rule: a data block has a query or a saved view,
  *   any other block takes none), then `checkSpecific()` (a filter sets a variable, an action names
@@ -19,7 +20,7 @@
  */
 import { queryRuleIssues, vizIssues, type CatalogIssue } from '../../../builder/catalog.js';
 import { lintFields, lintText, type LintIssue, type LintScope } from '../../../builder/lint.js';
-import type { BlockType, Block as BlockJson } from '../../../types/builder.js';
+import type { Block as BlockJson } from '../../../types/builder.js';
 import { Query } from '../Query.js';
 import { BlockRegistry } from './BlockRegistry.js';
 import type { BlockCapability } from './contracts.js';
@@ -40,7 +41,9 @@ export abstract class Block {
 
   protected constructor(json: BlockJson) {
     this.#json = deepFreeze(structuredClone(json));
-    this.#query = json.query === undefined ? null : Query.from(json.query);
+    // None, or null as stored (the document schema refuses it): no query, as query() says.
+    const { query } = json;
+    this.#query = query === undefined || (query as unknown) === null ? null : Query.from(query);
   }
 
   /** The class of the block's type (BlockRegistry), frozen; an unknown type: UnknownBlock. */
@@ -48,7 +51,8 @@ export abstract class Block {
     return BlockRegistry.instance.create(json);
   }
 
-  abstract readonly type: BlockType;
+  /** The block's type: one of BLOCK_TYPES, for every class but UnknownBlock (the type as given). */
+  abstract readonly type: string;
 
   get id(): string {
     return this.#json.id;
@@ -77,11 +81,11 @@ export abstract class Block {
 
   /** Every catalog and compiler issue of this block, in the order above. */
   check(): BlockIssue[] {
-    return [...this.catalogIssues(), ...this.checkSpecific(), ...this.queryIssues()];
+    return [...this.#catalogIssues(), ...this.checkSpecific(), ...this.#queryIssues()];
   }
 
   /** The type's catalog entry: the viz fits its schema, then the query rule. */
-  protected catalogIssues(): BlockIssue[] {
+  #catalogIssues(): BlockIssue[] {
     return [...vizIssues(this.#json), ...queryRuleIssues(this.#json)];
   }
 
@@ -91,7 +95,7 @@ export abstract class Block {
   }
 
   /** The embedded query compiled against the whitelist for this type (never run). */
-  protected queryIssues(): BlockIssue[] {
+  #queryIssues(): BlockIssue[] {
     const issue = this.#query?.compileIssue(this.#json.type) ?? null;
     return issue === null ? [] : [{ pointer: `/query${issue.pointer}`, message: issue.message }];
   }
