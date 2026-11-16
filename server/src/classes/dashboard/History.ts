@@ -29,19 +29,11 @@ import { AppError } from '../../errors/AppError.js';
 import type { DashboardVersionData } from '../../models/definitions/DashboardVersion.js';
 import { getDashboardVersionRepository } from '../../models/index.js';
 import { KEEP_VERSIONS, SNAPSHOT_EVERY } from './limits.js';
+import { deepFreeze } from '../../utils/deepFreeze.js';
 
 /** A deep copy as plain JSON: what history patches are diffed from. */
 function plain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
-}
-
-/** Freezes a value and everything it holds (a Date's own fields; its time stays its slot). */
-function deepFreeze<T>(value: T): T {
-  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const inner of Object.values(value)) deepFreeze(inner);
-  }
-  return value;
 }
 
 /** HistoryTrail's maker, handed to this module by the class itself: only History#read reads one. */

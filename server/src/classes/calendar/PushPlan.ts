@@ -11,6 +11,7 @@
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { RuleGroup } from '../../types/builder.js';
 import type { BuildResult, PushConfig, WireOp } from '../../gcal/diff.js';
+import { deepFreeze } from '../../utils/deepFreeze.js';
 
 export const DEFAULT_HORIZON_DAYS = 90;
 export const DEFAULT_MAX_OPS = 50;
@@ -59,15 +60,6 @@ export interface LoadedPlan extends BuildResult {
   /** `calendarId` is the primary calendar's. */
   cfg: PushConfig & { calendarId: string };
   config: GcalConfig;
-}
-
-/** Freezes a value and everything in it. */
-function deepFreeze<T>(value: T): T {
-  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const inner of Object.values(value)) deepFreeze(inner);
-  }
-  return value;
 }
 
 export class PushPlan {

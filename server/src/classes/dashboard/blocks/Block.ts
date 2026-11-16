@@ -23,18 +23,10 @@ import type { BlockType, Block as BlockJson } from '../../../types/builder.js';
 import { Query } from '../Query.js';
 import { BlockRegistry } from './BlockRegistry.js';
 import type { BlockCapability } from './contracts.js';
+import { deepFreeze } from '../../../utils/deepFreeze.js';
 
 /** One issue of a block's check: where (relative to the block) and why. */
 export type BlockIssue = CatalogIssue;
-
-/** Freezes a value and everything it holds. */
-function deepFreeze<T>(value: T): T {
-  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const inner of Object.values(value)) deepFreeze(inner);
-  }
-  return value;
-}
 
 export abstract class Block {
   /**

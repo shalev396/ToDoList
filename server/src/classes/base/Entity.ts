@@ -1,11 +1,4 @@
-/** Freezes a value and everything it holds (a Date's own fields; its time stays its slot). */
-function deepFreeze<T>(value: T): T {
-  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const inner of Object.values(value)) deepFreeze(inner);
-  }
-  return value;
-}
+import { deepFreeze } from '../../utils/deepFreeze.js';
 
 /**
  * The root of every persisted class: its stored data is a private, deeply frozen copy, it is

@@ -9,15 +9,7 @@ import { OpValidationError, QueryValidationError } from '../../builder/errors.js
 import { validationContext } from '../../builder/validate.js';
 import { stableStringify } from '../../utils/stableStringify.js';
 import type { BlockType, Query as QueryJson } from '../../types/builder.js';
-
-/** Freezes a value and everything it holds. */
-function deepFreeze<T>(value: T): T {
-  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const inner of Object.values(value)) deepFreeze(inner);
-  }
-  return value;
-}
+import { deepFreeze } from '../../utils/deepFreeze.js';
 
 export class Query {
   readonly #json: Readonly<QueryJson>;

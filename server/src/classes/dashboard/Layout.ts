@@ -6,15 +6,7 @@
 import type { Breakpoint } from '../../builder/ops.js';
 import type { DashboardLayouts } from '../../models/definitions/Dashboard.js';
 import { stableStringify } from '../../utils/stableStringify.js';
-
-/** Freezes a value and everything it holds. */
-function deepFreeze<T>(value: T): T {
-  if (typeof value === 'object' && value !== null && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const inner of Object.values(value)) deepFreeze(inner);
-  }
-  return value;
-}
+import { deepFreeze } from '../../utils/deepFreeze.js';
 
 /** Where a placed block ends, top to bottom: its `y + h`, 0 for anything that isn't a placement. */
 function bottomOf(item: unknown): number {
