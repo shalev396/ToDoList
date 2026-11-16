@@ -74,9 +74,9 @@ export function toolCaller(ctx: ToolContext): Caller {
 }
 
 /**
- * The principal's user acting in the tool's own workspace context (narrowed to a read tool's topics
- * where it is), without the agent's identity: what the services that act as "the member" were
- * always handed (sync runs, the Google Calendar push). Not the request's origin: use `toolCaller`.
+ * The principal's user acting in the tool's own workspace context, without the agent's identity:
+ * what the services that act as "the member" were always handed (sync runs, the Google Calendar
+ * push). Not the request's origin: use `toolCaller`.
  */
 export function userCaller(ctx: ToolContext): Caller {
   return Caller.fromContext(ctx.workspace, Actor.user(ctx.principal.userId));
