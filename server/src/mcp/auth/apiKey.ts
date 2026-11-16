@@ -2,18 +2,21 @@
  * Agent-key authentication (MCP.md §4 option A, DATA.md §3.14). Agents send
  * `Authorization: Bearer elk_…` (a key) or `Bearer elo_…` (a sign-in grant's access token); the
  * token is hashed with SHA-256 and looked up by its hash, the only form ever stored. A missing,
- * malformed, unknown, expired or revoked token, or one whose user
- * is no longer an active member, gets the same 401: `WWW-Authenticate: Bearer` and a generic
- * JSON-RPC error that never says which check failed.
+ * malformed, unknown, expired or revoked token, or one whose user is no longer an active member,
+ * gets the same 401 status, `WWW-Authenticate` challenge and generic JSON-RPC body, which never
+ * says which check failed. What differs is the budget: only an unknown well-formed token spends
+ * the address's failed-auth budget, so its `RateLimit-*` headers (and a 429 over the budget)
+ * show that a token was never issued. A known but dead one gets the agent limiter's headers and
+ * a 401 (see docs/security/CODE-SCANNING.md).
  */
 import type { Request, RequestHandler, Response } from 'express';
 
 import { AGENT_BEARER_PATTERN, AgentKey } from '../../classes/AgentKey.js';
-import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
+import { Actor } from '../../classes/base/Actor.js';
 import { jsonRpcError, JSON_RPC, requestIdOf } from '../jsonRpc.js';
 import type { AuthFailureBudget } from '../middleware/limiter.js';
 import { mcpIssuer, mcpResource } from '../oauth/urls.js';
-import { setRequestAgent, type AuthenticatedAgent } from './principal.js';
+import { setRequestAgent } from './principal.js';
 
 const REALM = 'todolist-mcp';
 
@@ -33,15 +36,6 @@ export function bearerKey(authorization: string | undefined): {
     presented: true,
     key: candidate !== undefined && AGENT_BEARER_PATTERN.test(candidate) ? candidate : null,
   };
-}
-
-/** The agent behind a raw key or access token, or null (AgentKey.authenticate has the rules). */
-export function authenticateAgentKey(
-  rawKey: string,
-  now: Date = new Date(),
-  origin: ActorOrigin = {},
-): Promise<AuthenticatedAgent | null> {
-  return AgentKey.authenticate(rawKey, now, origin);
 }
 
 /** What a client is told to ask for when it has no token yet (the sign-in's default scopes). */

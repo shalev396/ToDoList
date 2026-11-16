@@ -40,7 +40,8 @@ const parseBody: RequestHandler[] = [
  *
  * - /api/public  → no auth (Cognito sign-up/login flows; rate-limited in routes/public/index.ts)
  * - /api/private → JWT verified in-app (middlewares/expressAuth.ts; API Gateway also runs a JWT
- *   authorizer), behind a per-token rate limit, then the user is loaded
+ *   authorizer). Order: privateLimiter (300 per token) → verifyCognitoToken → privateUserLimiter
+ *   (200 per verified user) → loadCognitoUser
  *
  * Stage maintenance (schema sync, test reset) is not HTTP: it runs as a direct Lambda invoke, see
  * lambda.ts.

@@ -10,8 +10,8 @@
  *   changes on every refresh (rotateGrant replaces the key hash), so its per-key budget restarts
  *   on each refresh; the bound is API Gateway's MCP route throttle. Personal keys keep one budget.
  * - AuthFailureLimit: failed authentications per client address. mcpAuth spends it only when a
- *   well-formed key was looked up and is unknown (an expired or revoked one exists: 401, no spend), so it never
- *   holds off a key that authenticates (hosted assistants share egress addresses). Over the
+ *   well-formed key was looked up and is unknown (an expired or revoked one exists: 401, no
+ *   spend), so it never holds off a key that authenticates (hosted assistants share egress addresses). Over the
  *   budget, a failed key gets 429 instead of 401, still with the `WWW-Authenticate` challenge, so
  *   a client stuck on a bad key backs off (Retry-After) and can still start sign-in. It neither
  *   saves the lookup nor refuses a right guess: guessing is bounded by the 256-bit keys and API
@@ -86,7 +86,7 @@ export function agentLimiter(limit: Limit = AGENT_LIMIT): RateLimitRequestHandle
 export interface AuthFailureBudget {
   /**
    * Counts one failed authentication: true within the budget, false when it answered 429 itself.
-   * mcpAuth calls it only after a well-formed key was looked up and failed, so a key that
+   * mcpAuth calls it only after a well-formed key was looked up and is unknown, so a key that
    * authenticates never spends it, and neither does a request with no well-formed key.
    */
   spend(req: Request, res: Response): Promise<boolean>;
