@@ -1,106 +1,43 @@
 """
-Mail.tm helper for E2E tests - creates temp email, signup, confirms, and returns credentials.
-Reuses the Postman flow logic.
+Test users for the E2E suite (a Mail.tm inbox -> signup -> confirm -> login, real Cognito), and
+the inboxes tests read.
 
-Mail.tm is free and shared: it answers 429 when an address sends too much (about 8 requests a
-second; GitHub runners share their addresses with other users of it). Every call goes through
-`mailtm_request`, which keeps each pytest worker to one call per MIN_CALL_INTERVAL (four workers
-stay under the limit together) and retries a 429 after its Retry-After, or else after an
-exponential backoff with jitter, for at most MAX_ATTEMPTS calls. The active domain is looked up
-once per worker, and inboxes are polled every POLL_RETRY_DELAY seconds.
+Mail.tm itself is tests/mailtm_client, a portable package (no project imports): every call goes
+through one rate limit shared by all the pytest workers on this machine (6 a second; Mail.tm
+allows 8 per IP address), a 429 pauses every worker and is retried after its Retry-After or a
+backoff, and the active domain is looked up once for all workers. This module only holds the
+project's settings (MAILTM_RATE and MAILTM_STATE_DIR override the limiter's) and the TodoList
+API steps.
 """
 import os
-import random
 import re
 import secrets
-import time
-from email.utils import parsedate_to_datetime
-from typing import Any, NamedTuple, Optional
+from typing import NamedTuple, Optional
 from urllib.parse import urlparse
 
 import requests
 
+from tests.mailtm_client import MailTmClient, MailTmTimeout, message_text
 
 MAILTM_BASE = "https://api.mail.tm"
 # A confirmation email takes about 5 to 15 seconds through SES: look after 12 s, then every 8 s,
 # for up to a minute in all.
 POLL_INITIAL_DELAY = 12
 POLL_RETRY_DELAY = 8
-POLL_MAX_RETRIES = 7
+POLL_TIMEOUT = 60
 
-# One Mail.tm call per worker per half second at most: four workers send at most 8 a second.
-MIN_CALL_INTERVAL = 0.5
-# A 429 is retried, up to MAX_ATTEMPTS calls: after what Retry-After asks for (at most
-# RETRY_AFTER_CAP), or else after 1-2 s, 2-4 s, 4-8 s, ... (each at most BACKOFF_CAP). No call
-# waits more than MAX_TOTAL_WAIT in all: past that the 429 is the answer.
-MAX_ATTEMPTS = 7
-BACKOFF_BASE = 2.0
-BACKOFF_CAP = 30.0
-RETRY_AFTER_CAP = 60.0
-MAX_TOTAL_WAIT = 120.0
+_CODE = re.compile(r"\b(\d{6})\b")
+_INVITE_PATH = re.compile(r"/(?:en|he)/invites/[A-Za-z0-9_%-]+")
 
-_session = requests.Session()
-_last_call = 0.0
-_domain: Optional[str] = None
+_client: Optional[MailTmClient] = None
 
 
-def _pace() -> None:
-    """Waits until MIN_CALL_INTERVAL has passed since this worker's last Mail.tm call."""
-    global _last_call
-    wait = _last_call + MIN_CALL_INTERVAL - time.monotonic()
-    if wait > 0:
-        time.sleep(wait)
-    _last_call = time.monotonic()
-
-
-def retry_after_seconds(response: requests.Response) -> Optional[float]:
-    """The wait a 429's Retry-After header asks for (seconds or an HTTP date), capped; None
-    without a readable one."""
-    value = response.headers.get("Retry-After", "").strip()
-    if not value:
-        return None
-    try:
-        seconds = float(value)
-    except ValueError:
-        try:
-            seconds = parsedate_to_datetime(value).timestamp() - time.time()
-        except (TypeError, ValueError, IndexError, OverflowError):
-            return None
-    return min(max(seconds, 0.0), RETRY_AFTER_CAP)
-
-
-def backoff_seconds(attempt: int) -> float:
-    """Exponential backoff with equal jitter: half of BACKOFF_BASE * 2^attempt (capped) for sure,
-    plus a random share of the other half, so workers that were refused together come back apart."""
-    ceiling = min(BACKOFF_CAP, BACKOFF_BASE * 2**attempt)
-    return ceiling / 2 + random.uniform(0, ceiling / 2)
-
-
-def mailtm_request(method: str, path: str, **kwargs: Any) -> requests.Response:
-    """
-    One Mail.tm call (`path` under MAILTM_BASE), paced, with a 429 retried (see the module
-    docstring). Returns the last response: checking its status is the caller's job.
-    """
-    kwargs.setdefault("timeout", 10)
-
-    def send() -> requests.Response:
-        _pace()
-        return _session.request(method, f"{MAILTM_BASE}{path}", **kwargs)
-
-    response = send()
-    waited = 0.0
-    for attempt in range(MAX_ATTEMPTS - 1):
-        if response.status_code != 429:
-            break
-        wait = retry_after_seconds(response)
-        if wait is None:
-            wait = backoff_seconds(attempt)
-        if waited + wait > MAX_TOTAL_WAIT:
-            break
-        time.sleep(wait)
-        waited += wait
-        response = send()
-    return response
+def get_mailtm_client() -> MailTmClient:
+    """This process's Mail.tm client (the rate limit itself is shared by all of them)."""
+    global _client
+    if _client is None:
+        _client = MailTmClient(MAILTM_BASE)
+    return _client
 
 
 class TestUser(NamedTuple):
@@ -113,18 +50,8 @@ class TestUser(NamedTuple):
 
 
 def get_mailtm_domain() -> str:
-    """The active Mail.tm domain, looked up once per worker: it does not change during a run."""
-    global _domain
-    if _domain is None:
-        r = mailtm_request("GET", "/domains")
-        r.raise_for_status()
-        data = r.json()
-        domains = data.get("hydra:member", [])
-        active = next((d for d in domains if d.get("isActive")), domains[0] if domains else None)
-        if not active:
-            raise RuntimeError("No Mail.tm domain available")
-        _domain = active["domain"]
-    return _domain
+    """The active Mail.tm domain, looked up once for all workers (cached for ten minutes)."""
+    return get_mailtm_client().domain()
 
 
 def create_mailtm_account(domain: str) -> tuple[str, str, str]:
@@ -134,31 +61,12 @@ def create_mailtm_account(domain: str) -> tuple[str, str, str]:
     email = f"qatest{r1}{r2}@{domain}"
     mailtm_password = f"Password{r1}!"
     app_password = f"Test@{r1}Aa1!"
-
-    r = mailtm_request(
-        "POST",
-        "/accounts",
-        json={"address": email, "password": mailtm_password},
-        headers={"Content-Type": "application/json"},
-    )
-    if r.status_code != 201:
-        raise RuntimeError(f"Mail.tm account creation failed: {r.status_code} {r.text}")
+    get_mailtm_client().create_account(email, mailtm_password)
     return email, mailtm_password, app_password
 
 
 def get_mailtm_token(email: str, mailtm_password: str) -> str:
-    r = mailtm_request(
-        "POST",
-        "/token",
-        json={"address": email, "password": mailtm_password},
-        headers={"Content-Type": "application/json"},
-    )
-    r.raise_for_status()
-    data = r.json()
-    token = data.get("token")
-    if not token:
-        raise RuntimeError("No Mail.tm token in response")
-    return token
+    return get_mailtm_client().get_token(email, mailtm_password)
 
 
 def signup_app(api_base_url: str, email: str, password: str, name: str = "Test User") -> None:
@@ -173,25 +81,18 @@ def signup_app(api_base_url: str, email: str, password: str, name: str = "Test U
 
 
 def poll_inbox_and_get_code(mailtm_token: str) -> str:
-    time.sleep(POLL_INITIAL_DELAY)
-    headers = {"Authorization": f"Bearer {mailtm_token}"}
-    for attempt in range(POLL_MAX_RETRIES):
-        r = mailtm_request("GET", "/messages", headers=headers)
-        r.raise_for_status()
-        data = r.json()
-        messages = data.get("hydra:member", [])
-        if messages:
-            msg_id = messages[0]["id"]
-            rr = mailtm_request("GET", f"/messages/{msg_id}", headers=headers)
-            rr.raise_for_status()
-            msg = rr.json()
-            text = msg.get("text", "") + " " + " ".join(msg.get("html", []))
-            match = re.search(r"\b(\d{6})\b", text)
-            if match:
-                return match.group(1)
-        if attempt < POLL_MAX_RETRIES - 1:
-            time.sleep(POLL_RETRY_DELAY)
-    raise RuntimeError(f"No confirmation code received after {POLL_MAX_RETRIES} retries")
+    """The 6-digit code from the confirmation email."""
+    try:
+        message = get_mailtm_client().wait_for_message(
+            mailtm_token,
+            lambda message: _CODE.search(message_text(message)),
+            timeout=POLL_TIMEOUT,
+            poll_interval=POLL_RETRY_DELAY,
+            initial_delay=POLL_INITIAL_DELAY,
+        )
+    except MailTmTimeout:
+        raise RuntimeError(f"No confirmation code received within {POLL_TIMEOUT}s") from None
+    return _CODE.search(message_text(message)).group(1)
 
 
 def confirm_signup_app(api_base_url: str, email: str, code: str) -> None:
@@ -250,27 +151,18 @@ def wait_for_invite_path(user: TestUser, timeout_s: int = 90) -> str:
     The email goes out through the stage's queue and SES, so it takes a few seconds."""
     if not user.mailtm_password:
         raise RuntimeError("This user's Mail.tm password is unknown, so its inbox cannot be read")
-    headers = {"Authorization": f"Bearer {get_mailtm_token(user.email, user.mailtm_password)}"}
-    # Messages already read without an invite link (the signup confirmation, say) are not
-    # fetched again on the next look.
-    read: set[str] = set()
-    deadline = time.time() + timeout_s
-    while time.time() < deadline:
-        r = mailtm_request("GET", "/messages", headers=headers)
-        r.raise_for_status()
-        for message in r.json().get("hydra:member", []):
-            if message["id"] in read:
-                continue
-            rr = mailtm_request("GET", f"/messages/{message['id']}", headers=headers)
-            rr.raise_for_status()
-            body = rr.json()
-            text = body.get("text", "") + " " + " ".join(body.get("html", []))
-            match = re.search(r"/(?:en|he)/invites/[A-Za-z0-9_%-]+", text)
-            if match:
-                return match.group(0)
-            read.add(message["id"])
-        time.sleep(POLL_RETRY_DELAY)
-    raise RuntimeError(f"No invite email reached {user.email} within {timeout_s}s")
+    token = get_mailtm_token(user.email, user.mailtm_password)
+    try:
+        # Messages without an invite link (the signup confirmation, say) are read only once.
+        message = get_mailtm_client().wait_for_message(
+            token,
+            lambda message: _INVITE_PATH.search(message_text(message)),
+            timeout=timeout_s,
+            poll_interval=POLL_RETRY_DELAY,
+        )
+    except MailTmTimeout:
+        raise RuntimeError(f"No invite email reached {user.email} within {timeout_s}s") from None
+    return _INVITE_PATH.search(message_text(message)).group(0)
 
 
 def get_test_user_from_env() -> Optional[TestUser]:

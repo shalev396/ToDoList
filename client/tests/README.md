@@ -204,6 +204,8 @@ tests/
     page_404/           invalid routes
     flows/              critical.py (cross-page: signup, login, edit-profile, delete, etc.)
     app/                smoke.py, translations.py, translation_pages.py
+    mailtm/             test_helper.py (offline: helpers/mailtm.py's wiring)
+  mailtm_client/       portable Mail.tm client + shared rate limit, with its offline tests
   scripts/
   helpers/
   fixtures/
@@ -232,7 +234,9 @@ Tests that create users (sign up, login flow, profile flows) use [Mail.tm](https
 - Network access to api.mail.tm
 - Initial 12s wait for email delivery (first poll), then a look every 8 s, for up to a minute
 
-Mail.tm is free and shared, and answers 429 when an address sends too much (GitHub runners share addresses). Every call goes through `mailtm_request` ([`tests/helpers/mailtm.py`](helpers/mailtm.py)): at most one call per worker every half second (four workers stay under Mail.tm's 8 a second), a 429 retried after its `Retry-After` or an exponential backoff with jitter (up to 7 calls and 2 minutes of waiting), and the active domain looked up once per worker. `tests/e2e/mailtm/test_retry.py` checks that logic offline.
+Mail.tm is free and shared, and answers 429 when an address sends too much (GitHub runners share addresses). [`tests/helpers/mailtm.py`](helpers/mailtm.py) makes every Mail.tm call through [`tests/mailtm_client`](mailtm_client/README.md), a portable package: no project imports, so it can be copied into other projects as is. All the pytest workers on the machine share one rate limit there (a lock file and a state file in the temp dir): 6 calls a second at most, where Mail.tm allows 8 per IP address. A 429 pauses every worker, for its `Retry-After` or else an exponential backoff with jitter, then the call is retried (up to 7 calls and 2 minutes of waiting). The active domain is looked up once for all workers. Several machines behind one address need a lower `MAILTM_RATE` each (see the package README).
+
+The package's own tests are offline and run with the suite (`tests/mailtm_client`, about 10 seconds); `tests/e2e/mailtm/test_helper.py` checks the helper's wiring. To run just those: `BASE_URL=http://127.0.0.1:9 API_BASE_URL=http://127.0.0.1:9 .venv/bin/python -m pytest tests/mailtm_client tests/e2e/mailtm` (`conftest.py` insists on both URLs; nothing contacts them).
 
 Optionally set `E2E_TEST_EMAIL`, `E2E_TEST_PASSWORD`, `E2E_TEST_ID_TOKEN`, `E2E_TEST_REFRESH_TOKEN` to use an existing account and skip user creation. Don't run `npm run reset:db` in this mode (it would delete that account); the run uses whatever data the stage already has.
 
