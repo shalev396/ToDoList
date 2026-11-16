@@ -10,13 +10,16 @@
  * 4. its containers, soft-deleted;
  * 5. its dashboards with their version histories, and its saved views: hard-deleted (the purge job
  *    removes only items and containers, so nothing else would; the owner's Phase 6 ruling);
- * 6. its members: pending invites are withdrawn, every membership ends (with the member's agent
+ * 6. its topics, hard-deleted, once nothing above points at them any more: topics go with their
+ *    workspace (the owner's phase 7 ruling);
+ * 7. its members: pending invites are withdrawn, every membership ends (with the member's agent
  *    keys);
- * 7. the audit entry, `workspace.delete`;
- * 8. an email to every member who had integrations in it (PERMISSIONS-V2 ruling 11; best effort).
+ * 8. the audit entry, `workspace.delete`;
+ * 9. an email to every member who had integrations in it (PERMISSIONS-V2 ruling 11; best effort).
  *
- * Every step is idempotent, so an interrupted run completes on the next one. Dashboards of
- * workspaces deleted before step 5 existed are removed once by the orphaned-dashboards migration.
+ * Every step is idempotent, so an interrupted run completes on the next one. What workspaces
+ * deleted before steps 5 and 6 existed left is removed once by the orphaned-dashboards and
+ * orphaned-topics migrations, and the purge sweeps what a request in flight writes afterwards.
  */
 import {
   getContainerRepository,
@@ -31,6 +34,7 @@ import { AuditLog } from '../AuditLog.js';
 import { Integration } from '../integration/index.js';
 import { Invite } from './Invite.js';
 import { Member } from './Member.js';
+import { Topic } from './Topic.js';
 
 /** Removes a workspace's dashboards (with their histories) and its saved views. */
 type DashboardRemoval = (workspaceId: string) => Promise<void>;
@@ -65,6 +69,7 @@ export abstract class WorkspaceTeardown {
     await this.removeItems();
     await this.removeContainers();
     await this.removeDashboards();
+    await this.removeTopics();
     await this.endMemberships();
     await this.recordAudit();
     await this.notifyConnectedMembers(workspaceName);
@@ -115,6 +120,11 @@ export abstract class WorkspaceTeardown {
   protected async removeDashboards(): Promise<void> {
     const removal = this.#dashboardRemoval ?? (await WorkspaceTeardown.#loadDashboardRemoval());
     await removal(this.#workspaceId);
+  }
+
+  /** The topics, hard-deleted: the integrations, items, containers and dashboards are gone. */
+  protected async removeTopics(): Promise<void> {
+    await Topic.removeAllIn(this.#workspaceId);
   }
 
   protected async endMemberships(): Promise<void> {

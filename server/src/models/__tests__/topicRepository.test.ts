@@ -114,4 +114,20 @@ describe('TopicRepository', () => {
     const again = await topics.create('w-1', { name: 'Work', slug: 'work', order: 0 });
     assert.equal(again.slug, 'work');
   });
+
+  it('deletes a workspace’s topics, only its own, and lists the workspaces topics name', async () => {
+    await topics.create('w-gone', { name: 'One', slug: 'one', order: 0 });
+    await topics.create('w-gone', { name: 'Two', slug: 'two', order: 1 });
+    await topics.create('w-kept', { name: 'Kept', slug: 'kept', order: 0 });
+    const before = await topics.listWorkspaceIds();
+    assert.ok(before.includes('w-gone') && before.includes('w-kept'));
+    assert.equal(new Set(before).size, before.length, 'each workspace once');
+    assert.equal(await topics.deleteForWorkspace('w-gone'), 2);
+    assert.equal(await topics.deleteForWorkspace('w-gone'), 0);
+    assert.equal(await topics.count('w-kept'), 1);
+    assert.deepEqual(
+      (await topics.listWorkspaceIds()).sort(),
+      before.filter((id) => id !== 'w-gone').sort(),
+    );
+  });
 });

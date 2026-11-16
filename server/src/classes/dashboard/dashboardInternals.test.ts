@@ -79,13 +79,13 @@ const GUARDED_NAMES: readonly { pattern: RegExp; allowed: ReadonlySet<string> }[
   { pattern: /\bpinAccount\b/, allowed: new Set([INTEGRATION, SEED]) },
   {
     pattern: /\bremoveAllIn\b/,
-    allowed: new Set([DASHBOARD, HISTORY, VIEW, INTEGRATION, CASCADE]),
+    allowed: new Set([DASHBOARD, HISTORY, VIEW, INTEGRATION, TOPIC, CASCADE]),
   },
   { pattern: /\bremoveConnectorEverywhere\b/, allowed: new Set([DASHBOARD, INTEGRATION]) },
   { pattern: /\bremoveOrphans\b/, allowed: new Set([DASHBOARD, PURGE]) },
   { pattern: /\breferencedWorkspaceIds\b/, allowed: new Set([DASHBOARD, HISTORY, VIEW]) },
   // The repository's global id list: the sweep's classes only (models/** is exempt).
-  { pattern: /\blistWorkspaceIds\b/, allowed: new Set([DASHBOARD, HISTORY, VIEW]) },
+  { pattern: /\blistWorkspaceIds\b/, allowed: new Set([DASHBOARD, HISTORY, VIEW, TOPIC]) },
   // The load gate by name too: a local `export { History }` in an allowed loader would otherwise
   // hand the class on without any import edge to History.ts.
   {

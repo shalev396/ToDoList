@@ -50,6 +50,13 @@ export interface ITopicRepository {
   update(workspaceId: string, id: string, patch: TopicPatch): Promise<TopicData | null>;
   /** Hard delete. False when there was nothing to delete. */
   delete(workspaceId: string, id: string): Promise<boolean>;
+  /** Hard-deletes every topic of the workspace (its deletion). Returns how many. */
+  deleteForWorkspace(workspaceId: string): Promise<number>;
+  /**
+   * Global (the purge's sweep): every workspace id a topic names, read from the primary, so a
+   * workspace a lagging secondary doesn't show yet is never taken for gone.
+   */
+  listWorkspaceIds(): Promise<string[]>;
 }
 
 export const TOPIC_TABLE_NAME = 'Topics';

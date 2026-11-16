@@ -113,6 +113,9 @@ async function seedWorkspaceData(workspace: WorkspaceEntity, owner: UserData): P
     query: { source: 'items' },
     viz: { kind: 'list' },
   });
+  await (
+    await models.getTopicRepository()
+  ).create(workspace.id, { name: 'Work', slug: 'work', order: 1 });
 }
 
 async function giveKey(workspaceId: string, userId: string, name: string): Promise<void> {
@@ -137,6 +140,7 @@ async function remains(workspaceId: string): Promise<Record<string, unknown>> {
   const { DashboardMongoModel } = await import('../../models/mongoose/Dashboard.js');
   const { DashboardVersionMongoModel } = await import('../../models/mongoose/DashboardVersion.js');
   const { ViewMongoModel } = await import('../../models/mongoose/View.js');
+  const { TopicMongoModel } = await import('../../models/mongoose/Topic.js');
   const live = { workspaceId, deletedAt: null };
   const workspace = await WorkspaceMongoModel.findById(workspaceId).lean();
   return {
@@ -154,6 +158,7 @@ async function remains(workspaceId: string): Promise<Record<string, unknown>> {
     dashboards: await DashboardMongoModel.countDocuments({ workspaceId }),
     dashboardVersions: await DashboardVersionMongoModel.countDocuments({ workspaceId }),
     views: await ViewMongoModel.countDocuments({ workspaceId }),
+    topics: await TopicMongoModel.countDocuments({ workspaceId }),
   };
 }
 
@@ -169,6 +174,8 @@ const UNTOUCHED = {
   dashboards: 3,
   dashboardVersions: 2,
   views: 1,
+  // Personal, which Workspace.create makes, and the page seedWorkspaceData adds.
+  topics: 2,
 };
 
 const DELETED = {
@@ -183,6 +190,7 @@ const DELETED = {
   dashboards: 0,
   dashboardVersions: 0,
   views: 0,
+  topics: 0,
 };
 
 describe('deleteWorkspace', () => {

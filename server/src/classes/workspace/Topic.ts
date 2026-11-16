@@ -9,6 +9,8 @@
  * - Deleting a topic deletes its pages only (its topic and group dashboards, with their views,
  *   layouts and filters). Its items stay, Unsorted (`topicId: null`): they live at their source,
  *   and local to-dos stay too.
+ * - Topics go with their workspace (the owner's phase 7 ruling): its deletion removes them all
+ *   (removeAllIn, the cascade's topics step).
  */
 import { AppError } from '../../errors/AppError.js';
 import type { TopicData, TopicPatch } from '../../models/definitions/Topic.js';
@@ -363,5 +365,16 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
       ...result,
     });
     return result;
+  }
+
+  // ─── A workspace's end ─────────────────────────────────────────────────────
+
+  /**
+   * The workspace was deleted (the cascade, once its integrations, items, containers and
+   * dashboards are gone, before its members): every topic of it, hard-deleted. Topics go with
+   * their workspace. Safe to run again. Returns how many.
+   */
+  static async removeAllIn(workspaceId: string): Promise<number> {
+    return (await getTopicRepository()).deleteForWorkspace(workspaceId);
   }
 }

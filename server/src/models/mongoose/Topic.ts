@@ -96,4 +96,12 @@ export const TopicRepository: ITopicRepository = {
     const result = await TopicMongoModel.deleteOne({ _id: id, workspaceId });
     return result.deletedCount > 0;
   },
+
+  async deleteForWorkspace(workspaceId) {
+    return (await TopicMongoModel.deleteMany({ workspaceId })).deletedCount;
+  },
+
+  async listWorkspaceIds() {
+    return (await TopicMongoModel.distinct('workspaceId').read('primary')).map(String);
+  },
 };
