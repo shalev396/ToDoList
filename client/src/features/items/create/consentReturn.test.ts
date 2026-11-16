@@ -10,6 +10,7 @@ import {
   CONSENT_RETURN_TTL_MS,
   forgetConsentReturn,
   rememberConsentReturn,
+  startConsent,
   takeConsentReturn,
   type ConsentReturn,
   type ReturnStore,
@@ -101,5 +102,64 @@ describe('the consent-return marker', () => {
     rememberConsentReturn(MARKER, null, AT);
     forgetConsentReturn(null);
     assert.equal(takeConsentReturn(params(`?connected=${OURS}`), null, AT), null);
+  });
+});
+
+describe('startConsent: how the create’s "Allow" and the item’s "Allow edits" start', () => {
+  it('forgets the marker and rethrows when the start fails: a later connect goes nowhere', async () => {
+    const store = memoryStore();
+    const failure = new Error('start failed');
+    await assert.rejects(
+      startConsent(MARKER, () => Promise.reject(failure), store, AT),
+      (error: unknown) => error === failure,
+    );
+    assert.equal(store.size(), 0);
+    assert.equal(takeConsentReturn(params(`?connected=${OURS}`), store, AT + 1000), null);
+  });
+
+  it('forgets it when the start throws before it returns a promise too', async () => {
+    const store = memoryStore();
+    await assert.rejects(
+      startConsent(
+        MARKER,
+        () => {
+          throw new Error('sync failure');
+        },
+        store,
+        AT,
+      ),
+    );
+    assert.equal(store.size(), 0);
+  });
+
+  it('keeps the marker for the round trip when the start succeeds, and answers its return', async () => {
+    const store = memoryStore();
+    const authorizeUrl = await startConsent(
+      MARKER,
+      () => Promise.resolve('https://idp'),
+      store,
+      AT,
+    );
+    assert.equal(authorizeUrl, 'https://idp');
+    assert.equal(store.size(), 1);
+    assert.equal(
+      takeConsentReturn(params(`?connected=${OURS}`), store, AT + 1000)?.todoId,
+      'todo-1',
+    );
+  });
+
+  it('sets nothing for a create with no to-do yet, and still passes the start through', async () => {
+    const store = memoryStore();
+    assert.equal(await startConsent(null, () => Promise.resolve(7), store, AT), 7);
+    assert.equal(store.size(), 0);
+    await assert.rejects(startConsent(null, () => Promise.reject(new Error('x')), store, AT));
+    assert.equal(store.size(), 0);
+  });
+
+  it('a failed start leaves no marker even over an earlier one', async () => {
+    const store = memoryStore();
+    rememberConsentReturn({ ...MARKER, todoId: 'earlier' }, store, AT);
+    await assert.rejects(startConsent(MARKER, () => Promise.reject(new Error('x')), store, AT + 5));
+    assert.equal(store.size(), 0);
   });
 });

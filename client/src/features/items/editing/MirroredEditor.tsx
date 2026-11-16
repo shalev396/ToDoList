@@ -30,7 +30,7 @@ import { cn } from '@/lib/utils';
 import { pathTo, ROUTES } from '@/router/routes';
 import { integrationAnchor } from '@/features/integrations/anchor';
 import { isOAuthSignIn } from '@/features/integrations/oauthSetup';
-import { forgetConsentReturn, rememberConsentReturn } from '../create/consentReturn';
+import { startConsent } from '../create/consentReturn';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { ItemDetail, OverridableField, UpdateItemRequestBody } from '@api-types/api-contracts';
 import type { ItemStatus } from '@api-types/domain';
@@ -92,24 +92,26 @@ function AllowEdits({ item, source }: { item: ItemDetail; source: string }) {
   const start = async () => {
     setStarting(true);
     setProblem(null);
-    // Back here after signing in (the callback lands on Integrations): this item's sheet again.
-    rememberConsentReturn({
-      todoId: item.id,
-      integrationId,
-      path: `${window.location.pathname}${window.location.search}`,
-      preselect: false,
-    });
     try {
-      const { data } = await startProviderOAuth(
-        workspace.id,
-        provider,
-        { lng: language, integrationId, includeWrite: true },
-        { suppressErrorToast: true },
+      // Back here after signing in (the callback lands on Integrations): this item's sheet again.
+      const { data } = await startConsent(
+        {
+          todoId: item.id,
+          integrationId,
+          path: `${window.location.pathname}${window.location.search}`,
+          preselect: false,
+        },
+        () =>
+          startProviderOAuth(
+            workspace.id,
+            provider,
+            { lng: language, integrationId, includeWrite: true },
+            { suppressErrorToast: true },
+          ),
       );
       window.location.assign(data.authorizeUrl);
     } catch (failure) {
-      // No round trip will answer the marker: a later `?connected=` must not jump to this item.
-      forgetConsentReturn();
+      // startConsent forgot the marker: no round trip will answer it.
       setStarting(false);
       setProblem(errorMessage(t, failure, 'connect.oauth.startFailed'));
     }

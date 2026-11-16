@@ -6,7 +6,7 @@
  *
  * A marker belongs to the one round trip that set it, so a later `?connected=` (say, from an
  * integration card) never jumps to a stale item:
- * - a start that fails forgets it at once (forgetConsentReturn);
+ * - a start that fails forgets it at once (startConsent, which both places start through);
  * - any OAuth return takes it: a `?connected=` for the integration it names comes back to its
  *   item, and any other return (another integration connected, an `?oauth_error=`) only drops it;
  * - it expires with the server's OAuth state (OAUTH_STATE_TTL_MS, 10 minutes): no consent the
@@ -58,6 +58,29 @@ export function forgetConsentReturn(store: ReturnStore | null = tabStore()): voi
     store?.removeItem(RETURN_KEY);
   } catch {
     /* a convenience */
+  }
+}
+
+/**
+ * The one way a consent starts, for the create's "Allow" and the item's "Allow edits": sets the
+ * marker (none for a null `marker`), runs `start`, and when it fails forgets the marker at once
+ * and rethrows: no round trip will answer it, so a later `?connected=` must not jump to that
+ * to-do. On success the marker stays for the round trip.
+ */
+export async function startConsent<T>(
+  marker: ConsentReturn | null,
+  start: () => Promise<T>,
+  store: ReturnStore | null = tabStore(),
+  now: number = Date.now(),
+): Promise<T> {
+  if (marker !== null) {
+    rememberConsentReturn(marker, store, now);
+  }
+  try {
+    return await start();
+  } catch (failure) {
+    forgetConsentReturn(store);
+    throw failure;
   }
 }
 

@@ -4,7 +4,7 @@ import { errorMessage } from '@/api/errors';
 import { useCreateCopy } from '@/api/queries/providerCreate';
 import { startProviderOAuth } from '@/api/services/integrationService';
 import { useLanguage } from '@/hooks/useLanguage';
-import { forgetConsentReturn, rememberConsentReturn } from './consentReturn';
+import { startConsent } from './consentReturn';
 import { isDone, toTarget, type FunnelState } from './funnel';
 import { nextAttempt, type Phase } from './retry';
 import { writeRemembered } from './remembered';
@@ -124,23 +124,26 @@ export function useCopyRunner(workspaceId: string, userId: string, todoId: () =>
       return;
     }
     try {
-      if (id !== null) {
-        rememberConsentReturn({
-          todoId: id,
-          integrationId,
-          path: `${window.location.pathname}${window.location.search}`,
-        });
-      }
-      const { data } = await startProviderOAuth(
-        workspaceId,
-        result.provider,
-        { lng: language, integrationId, includeWrite: true },
-        { suppressErrorToast: true },
+      const provider = result.provider;
+      const { data } = await startConsent(
+        id === null
+          ? null
+          : {
+              todoId: id,
+              integrationId,
+              path: `${window.location.pathname}${window.location.search}`,
+            },
+        () =>
+          startProviderOAuth(
+            workspaceId,
+            provider,
+            { lng: language, integrationId, includeWrite: true },
+            { suppressErrorToast: true },
+          ),
       );
       window.location.assign(data.authorizeUrl);
     } catch (failure) {
-      // No round trip will answer the marker: a later `?connected=` must not jump to this to-do.
-      forgetConsentReturn();
+      // startConsent forgot the marker: no round trip will answer it.
       patch(integrationId, (current) => ({
         ...current,
         phase: { kind: 'error', message: errorMessage(t, failure, 'connect.oauth.startFailed') },
