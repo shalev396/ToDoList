@@ -20,7 +20,7 @@
 
 import { PlannedAt } from '../classes/item/PlannedAt.js';
 import { sha256Hex } from '../services/crypto/hashing.js';
-import { stableStringify } from '../sync/hash.js';
+import { stableStringify } from '../utils/stableStringify.js';
 
 export const ORIGIN = 'todolist';
 export const EVENT_ID_PREFIX = 'el';

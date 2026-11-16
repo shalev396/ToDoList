@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 
 import type { ContainerUpsert } from '../models/definitions/Container.js';
 import type { ItemUpsert } from '../models/definitions/Item.js';
-import { containerSourceHash, itemSourceHash, stableStringify } from './hash.js';
+import { stableStringify } from '../utils/stableStringify.js';
+import { containerSourceHash, itemSourceHash } from './hash.js';
 
 const SHA1 = /^sha1:[0-9a-f]{40}$/;
 

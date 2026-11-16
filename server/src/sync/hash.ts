@@ -17,8 +17,6 @@ import type { SourceRef } from '../models/definitions/common.js';
 import type { ContainerUpsert } from '../models/definitions/Container.js';
 import type { ItemUpsert } from '../models/definitions/Item.js';
 
-export { stableStringify };
-
 function sha1(fields: Record<string, unknown>): string {
   return `sha1:${createHash('sha1').update(stableStringify(fields)).digest('hex')}`;
 }

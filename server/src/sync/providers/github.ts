@@ -38,7 +38,7 @@ import { createHash } from 'node:crypto';
 import type { SyncStateData } from '../../models/definitions/SyncState.js';
 import type { Provider } from '../../types/domain.js';
 import { TopicRules } from '../../classes/workspace/TopicRules.js';
-import { stableStringify } from '../hash.js';
+import { stableStringify } from '../../utils/stableStringify.js';
 import { createReadOnlyClient, ProviderHttpError } from '../http.js';
 import { registerAdapter } from '../registry.js';
 import type {
