@@ -10,7 +10,7 @@
  *    and is never written to: it stays read-only), with a FAKE credential
  *    (Integration#saveCredential: sealed like any other, never stored in plaintext);
  * 2. the demo area rules (`shalev396/*` → personal, `Braude*` → college);
- * 3. local to-dos (Todo.create): overdue, today, later this week and undated;
+ * 3. local to-dos (Todo.createAll, in one write): overdue, today, later this week and undated;
  * 4. the template dashboards (Dashboard.instantiate), published; what exists is found by its
  *    outline (Dashboard.listOutlines);
  * 5. one fixture sync per integration (trigger `seed`), all together (Integration.syncTogether:
@@ -214,24 +214,25 @@ function dueAt(due: DemoDue, now: Date, settings: WorkspaceSettings): Date | nul
 }
 
 /**
- * The demo to-dos, created by the owner with an idempotency key each (its seed id). Returns the
- * keys. One that exists, even deleted, is left as its owner left it.
+ * The demo to-dos, created by the owner with an idempotency key each (its seed id), in one write
+ * (Todo.createAll), in demo order. Returns the keys. One that exists, even deleted, is left as its
+ * owner left it.
  */
 async function ensureTodos(caller: Caller, now: Date, topics: TopicIds): Promise<string[]> {
-  const keys: string[] = [];
-  for (const todo of DEMO_TODOS) {
-    const idempotencyKey = seedId(todo.name);
-    keys.push(idempotencyKey);
-    if (await Todo.existsWithKey(caller, idempotencyKey)) continue;
-    await Todo.create(caller, {
+  const keys = DEMO_TODOS.map((todo) => seedId(todo.name));
+  const taken = await Todo.keysTaken(caller, keys);
+  const missing = DEMO_TODOS.filter((todo) => !taken.has(seedId(todo.name)));
+  await Todo.createAll(
+    caller,
+    missing.map((todo) => ({
       title: todo.title,
       topicId: topics[todo.topic],
       dueAt: dueAt(todo.due, now, caller.settings),
       ...(todo.priority === undefined ? {} : { priority: todo.priority }),
       ...(todo.note === undefined ? {} : { note: todo.note }),
-      idempotencyKey,
-    });
-  }
+      idempotencyKey: seedId(todo.name),
+    })),
+  );
   return keys;
 }
 

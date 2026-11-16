@@ -7,6 +7,7 @@ import {
   ITEM_TABLE_NAME,
   localItemUrl,
   SWEEP_WINDOW_FIELDS,
+  type CreateLocalItemInput,
   type IItemRepository,
   COPY_STATUSES,
   type ItemCopy,
@@ -232,6 +233,48 @@ function toPreview(text: string | null | undefined): string | null {
 }
 
 /** A patch or input with its `bodyPreview` (when present) cut by the one preview rule. */
+/** A new local item's document, with its id (a local item's external id is its own id). */
+function localItemDoc(
+  workspaceId: string,
+  input: CreateLocalItemInput,
+  id: string,
+): Record<string, unknown> {
+  return {
+    _id: id,
+    workspaceId,
+    integrationId: null,
+    kind: input.kind ?? 'todo',
+    topicId: input.topicId,
+    title: input.title,
+    ownerUserId: input.ownerUserId,
+    ...setFields(withPreview(input), [
+      'bodyPreview',
+      'status',
+      'priority',
+      'startAt',
+      'dueAt',
+      'endAt',
+      'allDay',
+      'assignees',
+      'labels',
+      'parentId',
+      'containerId',
+      'props',
+      'visibility',
+    ]),
+    source: {
+      provider: 'local',
+      accountId: '',
+      externalId: id,
+      key: null,
+      url: localItemUrl(workspaceId, id),
+      updatedAtSource: null,
+      etag: null,
+      hash: null,
+    },
+  };
+}
+
 function withPreview<T extends { bodyPreview?: string | null }>(input: T): T {
   if (input.bodyPreview === undefined) return input;
   return { ...input, bodyPreview: toPreview(input.bodyPreview) };
@@ -427,42 +470,23 @@ export const ItemRepository: IItemRepository = {
   },
 
   async createLocal(workspaceId, input) {
-    const id = randomUUID();
-    const doc = await ItemMongoModel.create({
-      _id: id,
-      workspaceId,
-      integrationId: null,
-      kind: input.kind ?? 'todo',
-      topicId: input.topicId,
-      title: input.title,
-      ownerUserId: input.ownerUserId,
-      ...setFields(withPreview(input), [
-        'bodyPreview',
-        'status',
-        'priority',
-        'startAt',
-        'dueAt',
-        'endAt',
-        'allDay',
-        'assignees',
-        'labels',
-        'parentId',
-        'containerId',
-        'props',
-        'visibility',
-      ]),
-      source: {
-        provider: 'local',
-        accountId: '',
-        externalId: id,
-        key: null,
-        url: localItemUrl(workspaceId, id),
-        updatedAtSource: null,
-        etag: null,
-        hash: null,
-      },
-    });
+    const doc = await ItemMongoModel.create(localItemDoc(workspaceId, input, randomUUID()));
     return toItemData(doc);
+  },
+
+  async createLocalMany(workspaceId, inputs, at = new Date()) {
+    if (inputs.length === 0) return [];
+    const docs = await ItemMongoModel.insertMany(
+      inputs.map(
+        (input, index) =>
+          new ItemMongoModel({
+            ...localItemDoc(workspaceId, input, randomUUID()),
+            createdAt: new Date(at.getTime() + index),
+          }),
+      ),
+      { ordered: true },
+    );
+    return docs.map((doc) => toItemData(doc));
   },
 
   async updateLocal(workspaceId, id, patch) {

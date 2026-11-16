@@ -268,6 +268,15 @@ export interface IItemRepository {
   /** Soft-deleted items are not found. */
   findById(workspaceId: string, id: string): Promise<ItemData | null>;
   createLocal(workspaceId: string, input: CreateLocalItemInput): Promise<ItemData>;
+  /**
+   * createLocal() for each input, in one write, in order, each created a millisecond after the one
+   * before it (from `at`, default now), so they list by creation in that order.
+   */
+  createLocalMany(
+    workspaceId: string,
+    inputs: readonly CreateLocalItemInput[],
+    at?: Date,
+  ): Promise<ItemData[]>;
   /** Local items only: a mirrored item throws MirroredItemError (edit it at the source). */
   updateLocal(workspaceId: string, id: string, patch: LocalItemPatch): Promise<ItemData | null>;
   /**

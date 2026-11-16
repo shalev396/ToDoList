@@ -106,6 +106,56 @@ export class Todo
   }
 
   /**
+   * Editors: new to-dos of the caller's, in one write, in order (each created a millisecond after
+   * the one before it, so they list by creation in that order), each as `create` makes it: a topic
+   * of the workspace (checked at once) or the `personal` one, a container the caller can see. For
+   * keys the caller already used, see `keysTaken`: here a used key fails the whole write.
+   */
+  static async createAll(caller: Caller, inputs: readonly NewTodo[]): Promise<Todo[]> {
+    caller.require('editor');
+    if (inputs.length === 0) return [];
+    const workspaceId = caller.workspaceId;
+    const containerIds = inputs.flatMap(({ containerId }) =>
+      containerId === undefined || containerId === null ? [] : [containerId],
+    );
+    if (containerIds.length > 0) {
+      const policy = await ItemPolicy.for(caller);
+      for (const containerId of new Set(containerIds)) {
+        await Container.assertVisible(caller, policy, containerId);
+      }
+    }
+    await Topic.assertAllOf(workspaceId, [
+      ...new Set(
+        inputs.flatMap(({ topicId }) =>
+          topicId === undefined || topicId === null ? [] : [topicId],
+        ),
+      ),
+    ]);
+    const personal = inputs.some(({ topicId }) => topicId === undefined)
+      ? ((await Topic.bySlug(workspaceId, 'personal'))?.id ?? null)
+      : null;
+    const stored = await (
+      await getItemRepository()
+    ).createLocalMany(
+      workspaceId,
+      inputs.map((input) => ({
+        ownerUserId: caller.userId,
+        title: input.title,
+        topicId: input.topicId === undefined ? personal : input.topicId,
+        ...(input.note === undefined ? {} : { bodyPreview: input.note }),
+        ...(input.dueAt === undefined ? {} : { dueAt: input.dueAt }),
+        ...(input.allDay === undefined ? {} : { allDay: input.allDay }),
+        ...(input.containerId === undefined ? {} : { containerId: input.containerId }),
+        ...(input.priority === undefined ? {} : { priority: input.priority }),
+        ...(input.idempotencyKey === undefined
+          ? {}
+          : { props: { idempotencyKey: input.idempotencyKey } }),
+      })),
+    );
+    return stored.map((data) => new Todo(data));
+  }
+
+  /**
    * H5: the caller's own to-do `id`, created in one of their providers too (TodoCopy.start: an
    * editor, a well-formed request id, then the to-do, each checked once).
    */
@@ -130,6 +180,21 @@ export class Todo
       { $limit: 1 },
     ]);
     return existing !== undefined;
+  }
+
+  /**
+   * Which of these idempotency keys the caller already made a to-do with, live or deleted (one
+   * read: what `existsWithKey` answers for each).
+   */
+  static async keysTaken(caller: Caller, keys: readonly string[]): Promise<Set<string>> {
+    if (keys.length === 0) return new Set();
+    const found = await (
+      await getItemRepository()
+    ).aggregate<{ _id: unknown }>(caller.workspaceId, [
+      { $match: { ownerUserId: caller.userId, 'props.idempotencyKey': { $in: [...keys] } } },
+      { $group: { _id: '$props.idempotencyKey' } },
+    ]);
+    return new Set(found.flatMap(({ _id }) => (typeof _id === 'string' ? [_id] : [])));
   }
 
   /** How many of the caller's to-dos with these idempotency keys are live. */

@@ -176,6 +176,13 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
     }
   }
 
+  /** 400 unless every one of `topicIds` is a topic of the workspace (`assertOf`, one read). */
+  static async assertAllOf(workspaceId: string, topicIds: readonly string[]): Promise<void> {
+    if (topicIds.length === 0) return;
+    const ids = await Topic.idsIn(workspaceId);
+    if (!topicIds.every((topicId) => ids.has(topicId))) throw new AppError(400, 'Unknown topic');
+  }
+
   /**
    * The id a default topic has in a workspace: derived (SHA-256 of the workspace id and the slug),
    * UUID-shaped (RFC 9562 version 8), so every writer agrees on it without reading first.
