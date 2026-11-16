@@ -1,6 +1,7 @@
 import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { containerSourceHash, itemSourceHash } from '../../sync/hash.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { BUILTIN_IMPORTANCE } from '../../types/attributes.js';
 import type { IntegrationStatus } from '../../types/domain.js';
@@ -767,6 +768,92 @@ describe('ItemRepository', () => {
     );
   });
 
+  it('bulkUpsert never counts a copy changed that the old hash would have matched', async () => {
+    const w = 'w-rehash-as-stored';
+    const invalid = (): Date => new Date(Number.NaN);
+    // [external id, mapped then (stored under sha1:), mapped now]. MongoDB stores an undefined
+    // under a key as null, where the hash dropped it, and an invalid date as the epoch, where the
+    // hash read null; a mapping may also have spelled a value one way then and another now.
+    const matching: [string, Partial<ItemUpsert>, Partial<ItemUpsert>][] = [
+      [
+        'undefined',
+        { props: { a: undefined, b: { c: undefined, k: 1 }, list: [{ d: undefined }, undefined] } },
+        { props: { a: undefined, b: { c: undefined, k: 1 }, list: [{ d: undefined }, undefined] } },
+      ],
+      ['undefined-now', { props: { b: { k: 1 } } }, { props: { a: undefined, b: { k: 1 } } }],
+      ['undefined-then', { props: { a: undefined } }, { props: {} }],
+      [
+        'invalid-date',
+        { props: { at: invalid(), b: { at: invalid() }, list: [invalid()] } },
+        { props: { at: invalid(), b: { at: invalid() }, list: [invalid()] } },
+      ],
+      [
+        'invalid-then',
+        { props: { at: invalid(), list: [invalid()] } },
+        { props: { at: null, list: [null] } },
+      ],
+      [
+        'invalid-now',
+        { props: { at: null, n: Number.NaN } },
+        { props: { at: invalid(), n: null } },
+      ],
+      // A typed date: the hash reads an invalid one as null (and Mongoose would refuse to store it).
+      ['invalid-due', { dueAt: null }, { dueAt: invalid() }],
+    ];
+    // Real changes inside props are still written.
+    const changing: [string, Partial<ItemUpsert>, Partial<ItemUpsert>][] = [
+      ['nested', { props: { b: { k: 1 } } }, { props: { b: { c: undefined, k: 2 } } }],
+      ['dropped', { props: { a: 1 } }, { props: { a: undefined } }],
+      ['dated', { props: { at: new Date('2026-11-20T09:00:00Z') } }, { props: { at: invalid() } }],
+    ];
+    for (const [id, then, now] of matching) {
+      // The same stable JSON, so the old SHA-1 of it matched too.
+      assert.equal(
+        itemSourceHash(jiraIssue(id, null, then)),
+        itemSourceHash(jiraIssue(id, null, now)),
+        `${id}: the old hash would have matched`,
+      );
+    }
+    for (const [id, then, now] of changing) {
+      assert.notEqual(
+        itemSourceHash(jiraIssue(id, null, then)),
+        itemSourceHash(jiraIssue(id, null, now)),
+        `${id}: a real change`,
+      );
+    }
+
+    const all = [...matching, ...changing];
+    await ItemRepository.bulkUpsert(
+      w,
+      all.map(([id, then]) => jiraIssue(id, `sha1:${id}`, then)),
+    );
+    const before = new Map<string, Date | undefined>();
+    for (const [id] of all) {
+      before.set(id, (await ItemRepository.findById(w, await mirroredId(w, id)))?.updatedAt);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.deepEqual(
+      await ItemRepository.bulkUpsert(
+        w,
+        all.map(([id, , now]) => jiraIssue(id, `sha256:${id}`, now)),
+      ),
+      { inserted: 0, updated: changing.length, unchanged: matching.length, closed: 0 },
+    );
+    for (const [id] of matching) {
+      const item = await ItemRepository.findById(w, await mirroredId(w, id));
+      assert.deepEqual(
+        [item?.updatedAt, item?.source.hash],
+        [before.get(id), `sha256:${id}`],
+        `${id}: unchanged, no updatedAt bump`,
+      );
+    }
+    for (const [id] of changing) {
+      const item = await ItemRepository.findById(w, await mirroredId(w, id));
+      assert.ok(item && item.updatedAt > (before.get(id) ?? item.updatedAt), `${id}: written`);
+    }
+  });
+
   it('bulkUpsert counts the items it closes: stored not closed, now done or cancelled with closedAt', async () => {
     const w = 'w-closed';
     const closedAt = new Date('2026-11-10T09:00:00Z');
@@ -950,6 +1037,32 @@ describe('ContainerRepository', () => {
       [renamed?.name, renamed?.source.hash],
       ['Course renamed there', 'sha256:renamed'],
     );
+  });
+
+  it('bulkUpsert reads an undefined in props as the old hash did, stored as null or not', async () => {
+    const w = 'w-cont-rehash-undefined';
+    const then = { props: { code: 'CS101', term: undefined, meta: { tag: undefined } } };
+    const now = { props: { code: 'CS101', meta: {} } };
+    assert.equal(
+      containerSourceHash(course('u', 'sha1:u', then)),
+      containerSourceHash(course('u', 'sha1:u', now)),
+    );
+    await ContainerRepository.bulkUpsert(w, [
+      course('u', 'sha1:u', then),
+      course('v', 'sha1:v', then),
+    ]);
+    const [stored] = await ContainerRepository.list(w, { externalIds: ['u'] });
+    assert.ok(stored);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(
+      await ContainerRepository.bulkUpsert(w, [
+        course('u', 'sha256:u', now),
+        course('v', 'sha256:v', then),
+      ]),
+      { inserted: 0, updated: 0, unchanged: 2 },
+    );
+    const after = await ContainerRepository.findById(w, stored.id);
+    assert.deepEqual([after?.source.hash, after?.updatedAt], ['sha256:u', stored.updatedAt]);
   });
 
   it('bulkUpsert stamps syncResource on every write, unchanged ones too', async () => {

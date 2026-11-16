@@ -180,9 +180,39 @@ const ALWAYS_WRITTEN = new Set(['lastSeenAt', 'syncResource']);
 const VOLATILE_SOURCE = new Set(['hash', 'etag', 'updatedAtSource']);
 
 /**
+ * A value inside a field (what `props` holds, at any depth) as the comparison reads it, the write's
+ * and the stored copy's alike: the way the hash (stableStringify) reads a mapped record, with what
+ * storage changes undone. MongoDB keeps an undefined under a key as null, where the hash drops it,
+ * and an invalid date as the Unix epoch, where the hash reads null (as it reads NaN and ±Infinity).
+ * So here an invalid or epoch date and a number that is not finite read as null, and a key that
+ * reads as null counts as missing. Whatever the old hash found equal reads equal, whichever form
+ * each side holds it in; the price is that inside a field a null, a missing key and the epoch are
+ * one value.
+ */
+function asHashed(value: unknown): unknown {
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isNaN(time) || time === 0 ? null : value;
+  }
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (Array.isArray(value)) return value.map(asHashed);
+  if (typeof value === 'object' && value !== null) {
+    const kept: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      const read = asHashed(child);
+      if (read !== null && read !== undefined) kept[key] = read;
+    }
+    return kept;
+  }
+  return value;
+}
+
+/**
  * What a write of `set` changes, read from `doc` (the write itself, or the stored copy) as one
  * comparable string: every field `set` writes but ALWAYS_WRITTEN, `source` without its volatile
- * fields. The same string for both: the write changes nothing a hash covers.
+ * fields, what a field holds read by asHashed. The same string for both whenever the old hash
+ * would have matched; otherwise only when the write changes no stored field the hash covers (inside
+ * a field, null, missing and the epoch aside).
  */
 function changedBy(set: Record<string, unknown>, doc: Record<string, unknown>): string {
   const picked: Record<string, unknown> = {};
@@ -200,7 +230,8 @@ function changedBy(set: Record<string, unknown>, doc: Record<string, unknown>): 
       }
       picked[field] = source;
     } else {
-      picked[field] = value;
+      // A top-level date is a typed field, and Mongoose refuses an invalid one: read as it is.
+      picked[field] = value instanceof Date ? value : asHashed(value);
     }
   }
   return stableStringify(picked);
@@ -256,8 +287,10 @@ function storedSourcesFilter(
  * - a live stored copy with the same non-null `source.hash` only gets `lastSeenAt` and
  *   `syncResource`, without an `updatedAt` bump (unchanged);
  * - a live stored copy whose hash another algorithm made (`sha1:`, before `sha256:`) is compared
- *   field by field instead: when the write would change nothing its hash covers, it is unchanged
- *   too and only takes the new hash, so a change of algorithm rewrites no record (DATA.md §4);
+ *   field by field instead (changedBy), equivalent on what is stored: a copy the old hash would
+ *   have matched, or one the write would change no stored field of that the hash covers, is
+ *   unchanged too and only takes the new hash, so a change of algorithm rewrites no record
+ *   (DATA.md §4);
  * - so does a record signalling a delete (`deletedAt`) whose stored copy is already deleted: its
  *   `deletedAt`, the purge clock, is kept (unchanged);
  * - anything else is written in full, `$set: toSet(record)` with `$setOnInsert: {_id}`, which
