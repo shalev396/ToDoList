@@ -10,6 +10,7 @@
  * module may even name it.
  */
 import type {
+  BulkUpsertOptions,
   BulkUpsertResult,
   SourceAccount,
   SourceDeleteResult,
@@ -63,19 +64,21 @@ export class SyncedRows {
    * The rows of several integrations of a workspace (each resolved there by the caller), bulk-
    * upserted on their natural keys: the containers and the items at once (an item names its
    * container's id, which a new container takes from its record: SyncEngine.executeTogether).
+   * `assumeNew`: the caller checked that none is stored (BulkUpsertOptions).
    */
   static async upsertAll(
     workspaceId: string,
     containers: readonly ContainerUpsert[],
     items: readonly ItemUpsert[],
+    options: BulkUpsertOptions = {},
   ): Promise<{ containers: BulkUpsertResult; items: ItemBulkUpsertResult }> {
     const [itemRepository, containerRepository] = await Promise.all([
       getItemRepository(),
       getContainerRepository(),
     ]);
     const [containersDone, itemsDone] = await Promise.all([
-      containerRepository.bulkUpsert(workspaceId, containers),
-      itemRepository.bulkUpsert(workspaceId, items),
+      containerRepository.bulkUpsert(workspaceId, containers, options),
+      itemRepository.bulkUpsert(workspaceId, items, options),
     ]);
     return { containers: containersDone, items: itemsDone };
   }

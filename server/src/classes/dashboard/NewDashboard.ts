@@ -25,6 +25,7 @@ import type {
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { getDashboardRepository } from '../../models/index.js';
 import type { Block, DashboardDraft, Layouts } from '../../types/builder.js';
+import { settleAll } from '../../utils/concurrency.js';
 import type { BlockPreview, IntegrationShare } from '../../types/dashboards.js';
 import type { DashboardPage } from '../../types/domain.js';
 import { AuditTarget } from '../base/AuditTarget.js';
@@ -292,10 +293,13 @@ export class NewDashboard {
       plans.push(this.#checked(planned, own));
     }
     const { workspaceId, actor } = caller;
-    await Topic.assertAllOf(workspaceId, [
-      ...new Set(plans.flatMap(({ draft }) => draft.scope.topicId ?? [])),
-    ]);
-    await connectors.assertEach(plans.map(({ draft }) => draft.blocks));
+    // The topics, then the connectors decide (as a write checks them), both read at once.
+    await settleAll([
+      Topic.assertAllOf(workspaceId, [
+        ...new Set(plans.flatMap(({ draft }) => draft.scope.topicId ?? [])),
+      ]),
+      connectors.assertEach(plans.map(({ draft }) => draft.blocks)),
+    ] as const);
     const dashboards = await getDashboardRepository();
     const created = await dashboards.createMany(
       workspaceId,
@@ -307,34 +311,37 @@ export class NewDashboard {
       if (plan === undefined) throw new Error('NewDashboard.writeAll: a dashboard is missing');
       return { data, ...plan };
     });
-    await History.startAll<DashboardDraft>(
-      workspaceId,
-      written.map(({ data, draft, templateKey }) => ({
-        documentId: data.id,
-        version: data.version,
-        doc: draft,
-        author: actor,
-        summary: createdSummary(templateKey),
-      })),
-    );
-    if (autoPublishes(caller)) {
-      await dashboards.setPublishedMany(
+    // Their history, an owner's publish and the audit entries: at once.
+    await settleAll([
+      History.startAll<DashboardDraft>(
         workspaceId,
-        written.map(({ data, draft }) => ({
-          id: data.id,
+        written.map(({ data, draft, templateKey }) => ({
+          documentId: data.id,
           version: data.version,
-          snapshot: publishedCopy(draft),
+          doc: draft,
+          author: actor,
+          summary: createdSummary(templateKey),
         })),
-      );
-    }
-    await AuditLog.recordAll(
-      caller,
-      written.map(({ data, templateKey }) => ({
-        action: DASHBOARD_AUDIT.create,
-        target: AuditTarget.of('dashboard', data.id),
-        meta: createdMeta(data.version, templateKey),
-      })),
-    );
+      ),
+      autoPublishes(caller)
+        ? dashboards.setPublishedMany(
+            workspaceId,
+            written.map(({ data, draft }) => ({
+              id: data.id,
+              version: data.version,
+              snapshot: publishedCopy(draft),
+            })),
+          )
+        : Promise.resolve(),
+      AuditLog.recordAll(
+        caller,
+        written.map(({ data, templateKey }) => ({
+          action: DASHBOARD_AUDIT.create,
+          target: AuditTarget.of('dashboard', data.id),
+          meta: createdMeta(data.version, templateKey),
+        })),
+      ),
+    ] as const);
     return created.map(({ id }) => id);
   }
 

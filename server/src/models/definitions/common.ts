@@ -60,3 +60,13 @@ export interface BulkUpsertResult {
   updated: number;
   unchanged: number;
 }
+
+/** How a bulk upsert on the natural key reads first. */
+export interface BulkUpsertOptions {
+  /**
+   * None of the records is stored (the caller checked): the stored copies are not read first, and
+   * every record is written as a new one. One stored after all is still updated, not duplicated
+   * (each write is an upsert), and counted as updated.
+   */
+  assumeNew?: boolean;
+}

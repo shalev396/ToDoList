@@ -1,6 +1,7 @@
 import type { ContainerType } from '../../types/domain.js';
 import type {
   AggregateOptions,
+  BulkUpsertOptions,
   BulkUpsertResult,
   SourceAccount,
   SourceDeleteResult,
@@ -68,7 +69,11 @@ export interface IContainerRepository {
    * Natural-key upserts, as for items: same `source.hash` = unchanged, and so is a delete
    * signalled again for a container already deleted (its `deletedAt` is kept).
    */
-  bulkUpsert(workspaceId: string, docs: readonly ContainerUpsert[]): Promise<BulkUpsertResult>;
+  bulkUpsert(
+    workspaceId: string,
+    docs: readonly ContainerUpsert[],
+    options?: BulkUpsertOptions,
+  ): Promise<BulkUpsertResult>;
   /** Delete-only records, as for items: `deletedAt` on the live ones, nothing else changes. */
   softDeleteBySource(
     workspaceId: string,

@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { PROVIDERS, type Provider } from '../../types/domain.js';
 import { stableStringify } from '../../utils/stableStringify.js';
 import type {
+  BulkUpsertOptions,
   BulkUpsertResult,
   ErrorInfo,
   SourceAccount,
@@ -305,14 +306,15 @@ export async function upsertBySource<T extends SourceRecord, S extends StoredSou
   store: SourceUpsertStore<S>,
   toSet: (record: T, seenAt: Date) => Record<string, unknown>,
   onWrite?: (record: T, stored: S | undefined) => void,
+  options: BulkUpsertOptions = {},
 ): Promise<BulkUpsertResult> {
   if (records.length === 0) return { inserted: 0, updated: 0, unchanged: 0 };
   const seenAt = new Date();
   const stored = new Map(
-    (await store.findStored(storedSourcesFilter(workspaceId, records))).map((doc) => [
-      sourceKey(doc.integrationId, doc.source),
-      doc,
-    ]),
+    (options.assumeNew === true
+      ? []
+      : await store.findStored(storedSourcesFilter(workspaceId, records))
+    ).map((doc) => [sourceKey(doc.integrationId, doc.source), doc]),
   );
 
   /** `hash`: the record's, written over a stored hash of another algorithm. */

@@ -672,7 +672,7 @@ export const ItemRepository: IItemRepository = {
     return result.modifiedCount;
   },
 
-  async bulkUpsert(workspaceId, docs) {
+  async bulkUpsert(workspaceId, docs, options = {}) {
     let closed = 0;
     const result = await upsertBySource(
       workspaceId,
@@ -682,6 +682,7 @@ export const ItemRepository: IItemRepository = {
       (item, stored) => {
         if (closesItem(item, stored)) closed += 1;
       },
+      options,
     );
     return { ...result, closed };
   },

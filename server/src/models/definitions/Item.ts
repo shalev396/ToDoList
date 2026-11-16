@@ -2,6 +2,7 @@ import type { ItemKind, ItemStatus, Visibility } from '../../types/domain.js';
 export { OVERRIDABLE_FIELDS, type OverridableField } from '../../types/items.js';
 import type {
   AggregateOptions,
+  BulkUpsertOptions,
   BulkUpsertResult,
   SourceAccount,
   SourceDeleteResult,
@@ -352,7 +353,11 @@ export interface IItemRepository {
    * soft-deleted item seen again is restored. A record carrying `deletedAt` whose stored copy is
    * already deleted is unchanged too: its `deletedAt` (the purge clock) is kept.
    */
-  bulkUpsert(workspaceId: string, docs: readonly ItemUpsert[]): Promise<ItemBulkUpsertResult>;
+  bulkUpsert(
+    workspaceId: string,
+    docs: readonly ItemUpsert[],
+    options?: BulkUpsertOptions,
+  ): Promise<ItemBulkUpsertResult>;
   /**
    * Delete-only records (a provider's delete signal that carries only ids): sets `deletedAt` on
    * the live items with these external ids of one provider account, and changes nothing else. An

@@ -76,6 +76,7 @@ import {
   type SyncRunSummary,
 } from '../../sync/types.js';
 import type { SyncMode } from '../../types/env.d.ts';
+import { settleAll } from '../../utils/concurrency.js';
 import { ContainerCache } from './ContainerCache.js';
 import { FreshReplay, NotReplayableError } from './FreshReplay.js';
 import { SyncCursors } from './SyncCursors.js';
@@ -294,11 +295,11 @@ export class SyncEngine {
    * Opened runs of several integrations of one workspace at once (Integration.syncTogether: the
    * demo seed's fixture replays), each with the outcome `execute` would give it, in a handful of
    * round trips instead of dozens per run:
-   * 1. when none of the integrations has a stored item or container (none ever synced), every
-   *    run fetches and stores in memory (FreshReplay), all at once, from their stored cursors
-   *    (read at once);
-   * 2. the integrations are read again: a run whose integration was disconnected meanwhile writes
-   *    nothing, and finishes as `execute` would (`integration_deleted`);
+   * 1. whether any of the integrations has a stored item or container, their stored cursors and
+   *    which of them are still connected are read at once;
+   * 2. when none has rows (none ever synced), every run fetches and stores in memory
+   *    (FreshReplay), all at once, from those cursors. A run whose integration is no longer
+   *    connected writes nothing, and finishes as `execute` would (`integration_deleted`);
    * 3. the containers and items of every run are bulk-upserted at once, then their cursors (with
    *    the `__run__` state of each run that succeeded);
    * 4. the runs that succeeded end at once: their runs, their integrations' status, then their
@@ -319,9 +320,14 @@ export class SyncEngine {
     const alone = (entry: BatchRun): Promise<SyncRunSummary> =>
       SyncEngine.execute(entry.target, entry.run, workspace, entry.options, entry.clock);
     const ids = runs.map(({ target }) => target.data.id);
-    if (await SyncedRows.anyOf(workspaceId, ids)) return Promise.all(runs.map(alone));
+    // Whether any of them has rows, their stored cursors, and which are still connected: at once.
+    const [hasRows, states, connected] = await settleAll([
+      SyncedRows.anyOf(workspaceId, ids),
+      SyncCursors.listOf(workspaceId, ids),
+      batch.reloadAll(ids),
+    ] as const);
+    if (hasRows) return settleAll(runs.map(alone));
 
-    const states = await SyncCursors.listOf(workspaceId, ids);
     const engines = runs.map((entry) => {
       const replay = new FreshReplay(entry.target.data, states.get(entry.target.data.id) ?? []);
       const { target, run, options, clock } = entry;
@@ -346,7 +352,6 @@ export class SyncEngine {
       return result?.status === 'fulfilled' ? [{ ...replaying, outcome: result.value }] : [];
     });
 
-    const connected = await batch.reloadAll(replayed.map(({ entry }) => entry.target.data.id));
     const kept = replayed.filter(({ entry }) => connected.has(entry.target.data.id));
     const succeeded = kept.flatMap((replaying) => {
       const integration = connected.get(replaying.entry.target.data.id);
@@ -370,26 +375,36 @@ export class SyncEngine {
       throw error;
     }
 
-    await SyncRun.succeedAll(
-      succeeded.map(({ engine, finishedAt }) => ({
-        run: engine.#run,
-        results: engine.#results(),
-        outcome: { finishedAt, partial: engine.#tally.anyFailed },
-      })),
-    );
+    // The runs, their integrations' status and their audit entries: at once. A failure ends every
+    // run not yet recorded failed (none is left `running`).
+    const ended = settleAll([
+      SyncRun.succeedAll(
+        succeeded.map(({ engine, finishedAt }) => ({
+          run: engine.#run,
+          results: engine.#results(),
+          outcome: { finishedAt, partial: engine.#tally.anyFailed },
+        })),
+      ),
+      batch.recordSyncResults(
+        succeeded.map(({ integration, ending }) => ({ id: integration.id, result: ending.result })),
+      ),
+      AuditLog.recordAll(
+        { workspaceId, actor: Actor.system() },
+        succeeded.map(({ engine }) => engine.#auditEntry()),
+      ),
+    ] as const);
+    try {
+      await ended;
+    } catch (error) {
+      await settleAll(succeeded.map(({ engine }) => engine.#abandon(error)));
+      throw error;
+    }
     for (const { engine } of succeeded) engine.#recorded = true;
-    await batch.recordSyncResults(
-      succeeded.map(({ integration, ending }) => ({ id: integration.id, result: ending.result })),
-    );
-    await AuditLog.recordAll(
-      { workspaceId, actor: Actor.system() },
-      succeeded.map(({ engine }) => engine.#auditEntry()),
-    );
 
     const finished = new Set(succeeded.map(({ engine }) => engine));
     // A run that failed, or whose integration is gone, finishes on its own in the database; one
     // the replay refused syncs there.
-    return Promise.all(
+    return settleAll(
       engines.map(async ({ entry, engine }, index) => {
         if (finished.has(engine)) return engine.#summary(null);
         const result = settled[index];
@@ -417,7 +432,10 @@ export class SyncEngine {
   ): Promise<void> {
     const containers = replays.flatMap((replay) => replay.writtenContainers);
     const items = replays.flatMap((replay) => replay.writtenItems);
-    const written = await SyncedRows.upsertAll(workspaceId, containers, items);
+    // None is stored (checked before the replay): nothing to read first, and each must insert.
+    const written = await SyncedRows.upsertAll(workspaceId, containers, items, {
+      assumeNew: true,
+    });
     if (
       written.containers.inserted !== containers.length ||
       written.items.inserted !== items.length

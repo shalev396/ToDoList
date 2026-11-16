@@ -131,8 +131,15 @@ export const ContainerRepository: IContainerRepository = {
     return docs.map(toContainerData);
   },
 
-  async bulkUpsert(workspaceId, docs) {
-    return upsertBySource(workspaceId, docs, containerStore, syncedContainerFields);
+  async bulkUpsert(workspaceId, docs, options = {}) {
+    return upsertBySource(
+      workspaceId,
+      docs,
+      containerStore,
+      syncedContainerFields,
+      undefined,
+      options,
+    );
   },
 
   async softDeleteBySource(workspaceId, account, externalIds, deletedAt = new Date()) {
