@@ -13,6 +13,19 @@ const WINDOWS_MONGOD = 'C:/Program Files/MongoDB/Server/8.0/bin/mongod.exe';
  */
 const LAUNCH_TIMEOUT_MS = 60_000;
 
+/**
+ * Every database test file starts its own mongod on a random port, all at once, so now and then
+ * two pick the same port ("already in use", mongod's exit code 48) or a starting mongod loses its
+ * temp directory (NonExistentPath). A fresh start picks a new port and directory; nothing else is
+ * retried.
+ */
+const START_ATTEMPTS = 3;
+const RETRYABLE_START = /already in use|code:? "?48\b|NonExistentPath/i;
+
+export function isRetryableStart(error: unknown): boolean {
+  return error instanceof Error && RETRYABLE_START.test(error.message);
+}
+
 export interface MemoryMongo {
   uri: string;
   stop: () => Promise<void>;
@@ -23,11 +36,19 @@ export async function startMemoryMongo(dbName = 'todolist_test'): Promise<Memory
     process.env['MONGOMS_SYSTEM_BINARY'] = WINDOWS_MONGOD;
   }
   const { MongoMemoryServer } = await import('mongodb-memory-server');
-  const server = await MongoMemoryServer.create({ instance: { launchTimeout: LAUNCH_TIMEOUT_MS } });
-  return {
-    uri: server.getUri(dbName),
-    stop: async (): Promise<void> => {
-      await server.stop();
-    },
-  };
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      const server = await MongoMemoryServer.create({
+        instance: { launchTimeout: LAUNCH_TIMEOUT_MS },
+      });
+      return {
+        uri: server.getUri(dbName),
+        stop: async (): Promise<void> => {
+          await server.stop();
+        },
+      };
+    } catch (error) {
+      if (attempt >= START_ATTEMPTS || !isRetryableStart(error)) throw error;
+    }
+  }
 }
