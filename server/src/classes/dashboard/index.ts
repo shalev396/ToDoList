@@ -4,7 +4,8 @@
  * View (with its Query), Persona, and the Operation each of them checks before reading. History
  * (DashboardVersions) is internal to Dashboard and NewDashboard: not exported here
  * (dashboardInternals.test.ts); its limits are in limits.ts. The collaborators a dashboard composes
- * (DashboardConnectors, BlockPreviews, DashboardDryRun, DocCheck) are used through it.
+ * (DashboardConnectors, BlockPreviews, DashboardDryRun, DocCheck) are used through it, and so are
+ * the Block classes (blocks/), which DocCheck asks to check and lint each block.
  */
 export {
   Dashboard,

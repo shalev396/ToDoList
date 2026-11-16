@@ -23,8 +23,8 @@
  * - Connectors (PERMISSIONS-V2): see DashboardConnectors. Removing another member's connector is
  *   audited (`dashboard.connector_remove`, ruling 3). "Stop sharing" takes one integration off
  *   every block of every dashboard (removeConnectorEverywhere).
- * - The blocks are plain JSON, checked and linted in one place (DocCheck); the Block classes of
- *   phase 6b take over there.
+ * - The blocks are stored as plain JSON, and checked and linted in one place, DocCheck, which
+ *   asks each block's own class (Block.from: one class per block type, classes/dashboard/blocks/).
  *
  * Errors: AppError (403, 404, 409), ConflictError (409 + currentVersion), OpValidationError (400
  * with a JSON pointer).
