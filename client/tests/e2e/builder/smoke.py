@@ -109,8 +109,10 @@ def test_build_a_connector_list_block(page: Page, base_url: str, api_base_url: s
     everything = int(total_all.get_attribute("data-preview-total"))
     connectors = editor.locator("[data-connectors]")
     expect(connectors.locator("[data-connector-label]")).to_have_count(len(integrations))
-    connectors.get_by_label(labels["clickup"], exact=True).check()
-    connectors.get_by_label(labels["jira"], exact=True).check()
+    # A source's label names the provider and the account, then "Read-only" for an own read-only one.
+    for provider in ("clickup", "jira"):
+        name = rf"^{re.escape(PROVIDER_LABELS[provider])} · {re.escape(labels[provider])}( · |$)"
+        connectors.get_by_label(re.compile(name)).check()
     both = _query(api_base_url, user, wid, {"source": "items"}, [ids["clickup"], ids["jira"]])["total"]
     assert 0 < both < everything
     expect(total_all).to_have_attribute("data-preview-total", str(both), timeout=NORMAL_TIMEOUT)
