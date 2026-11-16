@@ -2355,7 +2355,9 @@ Auditable, Viewable<SavedView>`, composing a **`Query`** value object (parsed an
 - **`Persona`** (`classes/dashboard/Persona.ts`): `plan` / `instantiate` (role, then the key, then
   topics, pages through `Dashboard.create`, views through `applyOps`), idempotent per topic slug as
   before; a page is found with `Dashboard.listOutlines` (every live dashboard's outline, as the old
-  repository read found them).
+  repository read found them). Known limitation: because that outline includes other members'
+  private pages, a persona dry run can reveal that one exists; no route makes a dashboard private
+  today, so it is unreachable (PERMISSIONS-V2, Dynamic topics).
 - **`ConnectLink`** (`classes/ConnectLink.ts`) `implements Expirable, Viewable<ConnectLinkView>`:
   `create` (an editor; the id's sha256 in the `integration.connect_link` entry) and `consume` (the
   member it was made for, once through ReplayNonces: 404 unknown or expired, 403 another member,
