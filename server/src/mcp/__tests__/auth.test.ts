@@ -10,12 +10,19 @@ import { createHash } from 'node:crypto';
 
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { AGENT_SCOPES } from '../../types/domain.js';
+import type { AgentKey as AgentKeyClass } from '../../classes/AgentKey.js';
 import type * as ApiKey from '../auth/apiKey.js';
 import { insertAgentKey, newRawKey } from './helpers/agentKeys.js';
 import { newTeam } from './helpers/team.js';
 
 let db: TestDatabase;
 let auth: typeof ApiKey;
+let agents: typeof AgentKeyClass;
+
+const authenticate = (
+  raw: string,
+  now: Date = new Date(),
+): ReturnType<typeof AgentKeyClass.authenticate> => agents.authenticate(raw, now, {});
 
 const ALL = [...AGENT_SCOPES];
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -25,6 +32,7 @@ before(async () => {
   const { syncDB } = await import('../../config/database.js');
   await syncDB();
   auth = await import('../auth/apiKey.js');
+  agents = (await import('../../classes/AgentKey.js')).AgentKey;
 });
 
 after(async () => {
@@ -67,7 +75,7 @@ describe('keys from the agent-key service', () => {
       name: 'From the UI',
       scopes: ['workspace:read'],
     });
-    const agent = await auth.authenticateAgentKey(created.raw);
+    const agent = await authenticate(created.raw);
     assert.equal(agent?.principal.agentId, created.key.id);
     assert.deepEqual(agent.principal.scopes, ['workspace:read']);
   });
@@ -79,7 +87,7 @@ describe('keys from the agent-key service', () => {
   });
 });
 
-describe('authenticateAgentKey', () => {
+describe('AgentKey.authenticate', () => {
   it('resolves a valid key to its principal, scopes limited by the role', async () => {
     const team = await newTeam('auth-ok');
     const ownerKey = await insertAgentKey({
@@ -93,7 +101,7 @@ describe('authenticateAgentKey', () => {
       scopes: ALL,
     });
 
-    const owner = await auth.authenticateAgentKey(ownerKey.raw);
+    const owner = await authenticate(ownerKey.raw);
     assert.ok(owner);
     assert.deepEqual(owner.principal, {
       userId: team.owner.id,
@@ -105,7 +113,7 @@ describe('authenticateAgentKey', () => {
     assert.equal(owner.workspace.id, team.workspace.id);
     assert.equal(owner.workspace.role, 'owner');
 
-    const viewer = await auth.authenticateAgentKey(viewerKey.raw);
+    const viewer = await authenticate(viewerKey.raw);
     assert.deepEqual(viewer?.principal.scopes, [
       'read',
       'integrations:read',
@@ -123,7 +131,7 @@ describe('authenticateAgentKey', () => {
       scopes: ['workspace:read'],
     });
     const at = new Date('2026-11-12T08:00:00.000Z');
-    assert.ok(await auth.authenticateAgentKey(key.raw, at));
+    assert.ok(await authenticate(key.raw, at));
     const { getAgentKeyRepository } = await import('../../models/index.js');
     const [stored] = await (
       await getAgentKeyRepository()
@@ -132,11 +140,11 @@ describe('authenticateAgentKey', () => {
   });
 
   it('refuses an unknown key', async () => {
-    assert.equal(await auth.authenticateAgentKey(newRawKey()), null);
+    assert.equal(await authenticate(newRawKey()), null);
   });
 
   it('refuses a key that is not an elk_ key at all', async () => {
-    assert.equal(await auth.authenticateAgentKey('not-a-key'), null);
+    assert.equal(await authenticate('not-a-key'), null);
   });
 
   it('refuses an expired key, and accepts one that has not expired yet', async () => {
@@ -154,8 +162,8 @@ describe('authenticateAgentKey', () => {
       scopes: ['workspace:read'],
       expiresAt: new Date(now + DAY_MS),
     });
-    assert.equal(await auth.authenticateAgentKey(expired.raw), null);
-    assert.ok(await auth.authenticateAgentKey(current.raw));
+    assert.equal(await authenticate(expired.raw), null);
+    assert.ok(await authenticate(current.raw));
   });
 
   it('refuses a revoked key', async () => {
@@ -166,7 +174,7 @@ describe('authenticateAgentKey', () => {
       scopes: ['workspace:read'],
       revoked: true,
     });
-    assert.equal(await auth.authenticateAgentKey(key.raw), null);
+    assert.equal(await authenticate(key.raw), null);
   });
 
   it('refuses a key whose user is no longer a member, even if the key was not revoked', async () => {
@@ -176,11 +184,11 @@ describe('authenticateAgentKey', () => {
       userId: team.editor.id,
       scopes: ['workspace:read'],
     });
-    assert.ok(await auth.authenticateAgentKey(key.raw));
+    assert.ok(await authenticate(key.raw));
     // The membership ends without the key cascade (a race, or a future code path).
     const { getMembershipRepository } = await import('../../models/index.js');
     await (await getMembershipRepository()).revoke(team.workspace.id, team.editor.id);
-    assert.equal(await auth.authenticateAgentKey(key.raw), null);
+    assert.equal(await authenticate(key.raw), null);
   });
 
   it('refuses a key of a deleted workspace', async () => {
@@ -192,6 +200,6 @@ describe('authenticateAgentKey', () => {
     });
     const { getWorkspaceRepository } = await import('../../models/index.js');
     await (await getWorkspaceRepository()).softDelete(team.workspace.id);
-    assert.equal(await auth.authenticateAgentKey(key.raw), null);
+    assert.equal(await authenticate(key.raw), null);
   });
 });
