@@ -1,5 +1,5 @@
 /** AgentKey grants: OAuth access/refresh tokens, rotation with a grace window, reuse detection. */
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { newTeam } from '../mcp/__tests__/helpers/team.js';
@@ -291,6 +291,32 @@ describe('AgentKey grants', () => {
 
     await AgentKey.revokeByToken('elr_' + 'B'.repeat(43), CLIENT);
     await AgentKey.revokeByToken('garbage', CLIENT);
+  });
+
+  it('revokeByToken looks nothing up for a token not of the shape we issue', async () => {
+    const keys = await getAgentKeyRepository();
+    const byRefresh = mock.method(keys, 'findByRefreshHash');
+    const byHash = mock.method(keys, 'findByHash');
+    try {
+      for (const bad of [
+        '',
+        'garbage',
+        'elr_short',
+        `elr_${'B'.repeat(44)}`,
+        `elo_${'B'.repeat(42)}!`,
+      ]) {
+        await AgentKey.revokeByToken(bad, CLIENT);
+      }
+      assert.equal(byRefresh.mock.callCount(), 0);
+      assert.equal(byHash.mock.callCount(), 0);
+      await AgentKey.revokeByToken(`elr_${'B'.repeat(43)}`, CLIENT);
+      await AgentKey.revokeByToken(`elo_${'B'.repeat(43)}`, CLIENT);
+      assert.equal(byRefresh.mock.callCount(), 1);
+      assert.equal(byHash.mock.callCount(), 1);
+    } finally {
+      byRefresh.mock.restore();
+      byHash.mock.restore();
+    }
   });
 
   it('revokeBySource ends the grant its authorization request made', async () => {

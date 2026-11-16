@@ -414,12 +414,12 @@ export class AgentKey
    */
   static async revokeByToken(rawToken: string, clientId: string): Promise<void> {
     const keys = await getAgentKeyRepository();
-    const hash = hashAgentKey(rawToken);
     let data: AgentKeyData | null = null;
+    // Only a token of the shape we issue is hashed; anything else is an unknown token (RFC 7009).
     if (REFRESH_TOKEN_PATTERN.test(rawToken)) {
-      data = (await keys.findByRefreshHash(hash))?.key ?? null;
+      data = (await keys.findByRefreshHash(hashAgentKey(rawToken)))?.key ?? null;
     } else if (AGENT_BEARER_PATTERN.test(rawToken)) {
-      data = await keys.findByHash(hash);
+      data = await keys.findByHash(hashAgentKey(rawToken));
     }
     if (data?.kind !== 'oauth' || data.clientId !== clientId) return;
     await keys.revoke(data.workspaceId, data.id);

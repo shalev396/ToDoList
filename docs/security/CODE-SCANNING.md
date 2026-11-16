@@ -17,4 +17,5 @@ On GitHub, these alerts are dismissed with a short comment that points here. The
   - They are stored only as SHA-256 and found by that hash. A slow, salted password hash (bcrypt, scrypt, argon2) would make lookup-by-hash impossible and add latency to every request, with no gain: a 256-bit random value can't be brute-forced at any hash speed.
   - User passwords never reach this server. Cognito handles sign-up, sign-in and password storage.
 - **When this stops being true:** if anything user-chosen or low-entropy (a password, a PIN, a short code) is ever hashed with `sha256Hex` for storage. Use a password hash for that.
+- **Format first:** the OAuth code and revoke paths now test a token's exact format before hashing it, like the other token paths; a malformed one is refused or ignored with no hash and no lookup.
 - **GitHub alert:** CodeQL #4, dismissed as "false positive" on 2026-11-16 (PR #1).

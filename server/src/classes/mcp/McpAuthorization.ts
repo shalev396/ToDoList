@@ -63,6 +63,8 @@ export interface ExchangeInput {
 const REQUEST_TTL_MS = 10 * 60 * 1000;
 const CODE_TTL_MS = 10 * 60 * 1000;
 const CODE_PREFIX = 'elc_';
+/** The exact shape of a code we issue: the prefix and 32 random bytes in base64url. */
+const CODE_PATTERN = /^elc_[A-Za-z0-9_-]{43}$/;
 const NAME_MAX = 80;
 const STATE_MAX = 1024;
 const DEFAULT_SCOPES: readonly AgentScope[] = ['read', 'items:write', 'builder:write'];
@@ -262,7 +264,7 @@ export class McpAuthorization {
     now: Date = new Date(),
     origin: ActorOrigin = {},
   ): Promise<IssuedTokens> {
-    if (!input.code.startsWith(CODE_PREFIX)) throw invalidGrant();
+    if (!CODE_PATTERN.test(input.code)) throw invalidGrant();
     const requests = await getMcpAuthRequestRepository();
     const request = await requests.findByCodeHash(sha256Hex(input.code));
     if (request === null) throw invalidGrant();

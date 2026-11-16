@@ -1,6 +1,6 @@
 /** McpAuthorization: authorization requests, consent, and single-use PKCE codes. */
 import { randomBytes } from 'node:crypto';
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { LIMITS } from '../../config/limits.js';
@@ -355,6 +355,33 @@ describe('McpAuthorization', () => {
     // None of those used it up: the right call still works, with the resource named.
     const tokens = await exchange(a, { resource: urls.mcpResource(false) });
     assert.ok(tokens !== null && typeof tokens === 'object');
+  });
+
+  it('a code not of the shape we issue is invalid_grant with no lookup', async () => {
+    const { getMcpAuthRequestRepository } = await import('../../models/index.js');
+    const requests = await getMcpAuthRequestRepository();
+    const lookup = mock.method(requests, 'findByCodeHash');
+    try {
+      for (const code of [
+        '',
+        'elc_',
+        'elc_short',
+        `elc_${'A'.repeat(44)}`,
+        `elc_${'A'.repeat(42)}!`,
+      ]) {
+        const input = { code, codeVerifier: newVerifier(), clientId: 'c', redirectUri: REDIRECT };
+        assert.equal(await oauthCode(McpAuthorization.exchange(input)), 'invalid_grant', code);
+      }
+      assert.equal(lookup.mock.callCount(), 0);
+      const well = { code: `elc_${'A'.repeat(43)}`, codeVerifier: newVerifier(), clientId: 'c' };
+      assert.equal(
+        await oauthCode(McpAuthorization.exchange({ ...well, redirectUri: REDIRECT })),
+        'invalid_grant',
+      );
+      assert.equal(lookup.mock.callCount(), 1);
+    } finally {
+      lookup.mock.restore();
+    }
   });
 
   it('a replayed code fails and revokes the grant it made', async () => {
