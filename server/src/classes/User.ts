@@ -5,82 +5,67 @@ import {
 } from '@aws-sdk/client-cognito-identity-provider';
 import { environment } from '../config/environment.js';
 import type { Actor } from './base/Actor.js';
+import { Entity } from './base/Entity.js';
 import { Workspace } from './workspace/Workspace.js';
 
 const cognitoClient = new CognitoIdentityProviderClient({
   region: environment.awsRegion,
 });
 
-export class User {
-  private readonly _id: string;
-  private readonly _cognitoSub: string;
-  private readonly _name: string | null;
-  private readonly _email: string | null;
-  private readonly _photoId: string | null;
-  private readonly _lastLoginAt: Date | null;
-  private readonly _defaultWorkspaceId: string | null;
-  private readonly _createdAt: Date;
-  private readonly _updatedAt: Date;
-
-  constructor(data: UserData) {
-    this._id = data.id;
-    this._cognitoSub = data.cognitoSub;
-    this._name = data.name;
-    this._email = data.email;
-    this._photoId = data.photoId;
-    this._lastLoginAt = data.lastLoginAt;
-    this._defaultWorkspaceId = data.defaultWorkspaceId;
-    this._createdAt = data.createdAt;
-    this._updatedAt = data.updatedAt;
-  }
-
-  get id(): string {
-    return this._id;
+/**
+ * A signed-in person (Cognito's user, mirrored as a Users row): this class is the only code that
+ * touches the Users collection. A user lives outside any workspace (an Entity, not a
+ * WorkspaceEntity); `deleteAccount` runs the workspace cascade first (Workspace.deleteAccountCascade).
+ */
+export class User extends Entity<UserData> {
+  private constructor(data: UserData) {
+    super(data);
   }
 
   get cognitoSub(): string {
-    return this._cognitoSub;
+    return this.data.cognitoSub;
   }
 
   get name(): string | null {
-    return this._name;
+    return this.data.name;
   }
 
   get email(): string | null {
-    return this._email;
+    return this.data.email;
   }
 
   get photoId(): string | null {
-    return this._photoId;
+    return this.data.photoId;
   }
 
   get lastLoginAt(): Date | null {
-    return this._lastLoginAt;
+    return this.data.lastLoginAt;
   }
 
   get defaultWorkspaceId(): string | null {
-    return this._defaultWorkspaceId;
+    return this.data.defaultWorkspaceId;
   }
 
   get createdAt(): Date {
-    return this._createdAt;
+    return this.data.createdAt;
   }
 
   get updatedAt(): Date {
-    return this._updatedAt;
+    return this.data.updatedAt;
   }
 
-  toJSON(): UserData {
+  /** The row's fields, exactly these. */
+  override toJSON(): UserData {
     return {
-      id: this._id,
-      cognitoSub: this._cognitoSub,
-      name: this._name,
-      email: this._email,
-      photoId: this._photoId,
-      lastLoginAt: this._lastLoginAt,
-      defaultWorkspaceId: this._defaultWorkspaceId,
-      createdAt: this._createdAt,
-      updatedAt: this._updatedAt,
+      id: this.id,
+      cognitoSub: this.cognitoSub,
+      name: this.name,
+      email: this.email,
+      photoId: this.photoId,
+      lastLoginAt: this.lastLoginAt,
+      defaultWorkspaceId: this.defaultWorkspaceId,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
     };
   }
 

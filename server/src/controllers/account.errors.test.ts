@@ -22,7 +22,7 @@ const LEAK = 'connect ECONNREFUSED 10.0.0.7:27017 FAKE-secret-detail';
 
 beforeEach(() => {
   mock.method(Media, 'findByUploadedBy', () => Promise.resolve([]));
-  mock.method(Media, 'deleteByUploadedBy', () => Promise.resolve());
+  mock.method(Media, 'removeAllOf', () => Promise.resolve());
 });
 
 afterEach(() => {

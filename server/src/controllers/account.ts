@@ -11,11 +11,6 @@ import type {
 } from '../routes/private/account.js';
 import { accountImageFolder } from '../constants/s3Folders.js';
 import { consumeStagedUpload, stagedUploadErrorStatus } from '../services/stagedUpload.js';
-import {
-  deleteAllEntityMedia,
-  deleteMediaById,
-  uploadAndCreateMedia,
-} from '../services/mediaManager.js';
 import { getPresignedDownloadUrl, uploadExportZip } from '../utils/s3Util.js';
 import { createUserExportZip } from '../utils/exportZipUtil.js';
 import { sendEmail, escapeHtml } from '../utils/sesUtil.js';
@@ -145,7 +140,7 @@ const updateMe: RequestHandler = async (req, res): Promise<void> => {
         fileName: body.photo.fileName,
         purpose: 'account-photo',
       });
-      newPhoto = await uploadAndCreateMedia({
+      newPhoto = await Media.upload({
         ...staged,
         folder: accountImageFolder(userId),
         uploadedBy: userId,
@@ -165,7 +160,7 @@ const updateMe: RequestHandler = async (req, res): Promise<void> => {
 
     const oldPhotoId = user.photoId;
     if (oldPhotoId !== null && 'photoId' in updateData && updateData.photoId !== oldPhotoId) {
-      await deleteMediaById(oldPhotoId).catch((error: unknown) => {
+      await Media.remove(oldPhotoId).catch((error: unknown) => {
         console.warn('Failed to delete replaced photo %s:', oldPhotoId, error);
       });
     }
@@ -176,7 +171,7 @@ const updateMe: RequestHandler = async (req, res): Promise<void> => {
   } catch (error) {
     if (newPhoto !== null) {
       const orphanId = newPhoto.id;
-      await deleteMediaById(orphanId).catch((cleanupError: unknown) => {
+      await Media.remove(orphanId).catch((cleanupError: unknown) => {
         console.warn('Failed to remove uncommitted photo %s:', orphanId, cleanupError);
       });
     }
@@ -193,7 +188,7 @@ const deleteAccount: RequestHandler = async (req, res): Promise<void> => {
     const userId = authReq.user.id;
     const cognitoSub = authReq.user.cognitoSub;
 
-    await deleteAllEntityMedia(userId);
+    await Media.removeAllOf(userId);
 
     // Runs the workspace cascade (deleteAccountCascade) before Cognito and the user row go.
     await User.deleteAccount(userId, cognitoSub, Actor.user(userId, Actor.originOf(req)));
