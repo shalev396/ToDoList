@@ -14,6 +14,7 @@ from tests.helpers.items import create_local_item
 from tests.helpers.select import choose
 from tests.helpers.workspaces import accept_invite, create_invite, invite_token, open_as, topic_id
 from tests.viewports import DESKTOP_VIEWPORT
+from tests.helpers.block_editor import save_block_editor
 
 
 def _editor(page: Page):
@@ -68,8 +69,7 @@ def test_add_list_block_filter_preview_and_save(
 
     editor.locator("[data-editor-step=viz]").click()
     editor.get_by_label("Title", exact=True).fill("Work to-dos")
-    editor.locator("[data-editor-save]").click()
-    expect(editor).to_have_count(0, timeout=NORMAL_TIMEOUT)
+    save_block_editor(page, editor)
     expect(page.get_by_role("heading", name="Work to-dos")).to_be_visible(timeout=NORMAL_TIMEOUT)
     dashboard = get_dashboard(api_base_url, user, workspace["id"], _setup_id(page, api_base_url, user, workspace))
     added = [b for b in dashboard["blocks"] if b["title"] == "Work to-dos"]
@@ -112,8 +112,7 @@ def test_edit_title_of_a_block(page: Page, base_url: str, api_base_url: str, fre
     expect(editor).to_be_visible(timeout=NORMAL_TIMEOUT)
     editor.locator("[data-editor-step=viz]").click()
     editor.get_by_label("Title", exact=True).fill("Renamed list")
-    editor.locator("[data-editor-save]").click()
-    expect(editor).to_have_count(0, timeout=NORMAL_TIMEOUT)
+    save_block_editor(page, editor)
     expect(page.get_by_role("heading", name="Renamed list")).to_be_visible(timeout=NORMAL_TIMEOUT)
     saved = get_dashboard(api_base_url, user, workspace["id"], dashboard["id"])
     assert any(b["title"] == "Renamed list" for b in saved["blocks"])
@@ -138,7 +137,7 @@ def test_a_stale_save_keeps_the_draft_and_reapplies(
         api_base_url, user, workspace["id"], dashboard["id"], current["version"],
         [{"op": "set_title", "title": "Changed elsewhere"}],
     )
-    editor.locator("[data-editor-save]").click()
+    save_block_editor(page, editor, closes=False)
     expect(editor.locator("[data-editor-conflict]")).to_be_visible(timeout=NORMAL_TIMEOUT)
     expect(editor.get_by_label("Title", exact=True)).to_have_value("My edit")
 

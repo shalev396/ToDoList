@@ -31,6 +31,7 @@ from tests.helpers.workspaces import (
     open_as,
 )
 from tests.viewports import DESKTOP_VIEWPORT
+from tests.helpers.block_editor import save_block_editor
 
 SITE = "perm-fake.atlassian.net"
 
@@ -112,8 +113,7 @@ def test_share_on_attach_between_two_members(
     expect(editor.locator("[data-connectors]").get_by_label(SITE)).to_be_checked()
     editor.locator("[data-editor-step=viz]").click()
     editor.get_by_label("Title", exact=True).fill("Team issues")
-    editor.locator("[data-editor-save]").click()
-    expect(editor).to_have_count(0, timeout=NORMAL_TIMEOUT)
+    save_block_editor(page, editor)
     saved = get_dashboard(api_base_url, owner, wid, dashboard["id"])
     block = next(b for b in saved["blocks"] if b["title"] == "Team issues")
     assert block["connectors"] == [integration_id]

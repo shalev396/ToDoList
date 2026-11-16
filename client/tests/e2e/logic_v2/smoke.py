@@ -17,6 +17,7 @@ from tests.helpers.dashboards import apply_ops, get_dashboard, list_dashboards
 from tests.helpers.select import choose
 from tests.helpers.workspaces import demo_workspace, open_as, topic_id
 from tests.viewports import DESKTOP_VIEWPORT
+from tests.helpers.block_editor import save_block_editor
 
 NEW_TITLE = "E2E sentence"
 OPEN_ITEMS = {
@@ -138,8 +139,7 @@ def test_build_a_filter_with_the_sentence_editor(page: Page, base_url: str, api_
 
     editor.locator("[data-editor-step=viz]").click()
     editor.get_by_label("Title", exact=True).fill(NEW_TITLE)
-    editor.locator("[data-editor-save]").click()
-    expect(editor).to_have_count(0, timeout=NORMAL_TIMEOUT)
+    save_block_editor(page, editor)
     page.get_by_role("button", name="Done", exact=True).click()
 
     saved = next(b for b in _work(api_base_url, user, wid)["blocks"] if b["title"] == NEW_TITLE)
