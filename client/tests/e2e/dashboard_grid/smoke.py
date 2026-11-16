@@ -10,7 +10,7 @@ from typing import Optional
 
 from playwright.sync_api import Page, expect
 
-from tests.config import LONG_TIMEOUT, NORMAL_TIMEOUT
+from tests.config import APP_REQUEST_TIMEOUT, LONG_TIMEOUT, NORMAL_TIMEOUT
 from tests.helpers.dashboards import (
     apply_ops,
     block_id,
@@ -51,7 +51,12 @@ def _open_dashboard(
 
 
 def _box(page: Page, title: str) -> dict:
-    box = page.get_by_role("article", name=title, exact=True).bounding_box()
+    """The block's frame on screen, once it has loaded. A block shows a stand-in frame while its
+    code loads, then its own, then its data: measuring before that can catch the frame as it is
+    replaced (no box)."""
+    block = page.get_by_role("article", name=title, exact=True)
+    expect(block).not_to_have_attribute("aria-busy", "true", timeout=APP_REQUEST_TIMEOUT)
+    box = block.bounding_box()
     assert box is not None, f"{title} is not on screen"
     return box
 
