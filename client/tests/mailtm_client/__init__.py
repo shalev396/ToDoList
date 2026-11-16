@@ -4,6 +4,7 @@ by all the processes on the machine (pytest-xdist workers included). Portable: t
 imports nothing outside itself and the standard library, except `requests`. See README.md.
 """
 from .client import (
+    AddressTaken,
     DEFAULT_BASE_URL,
     DOCUMENTED_LIMIT,
     MailTmClient,
@@ -27,6 +28,7 @@ from .ratelimit import (
 )
 
 __all__ = [
+    "AddressTaken",
     "DEFAULT_BASE_URL",
     "DEFAULT_BURST",
     "DEFAULT_RATE",

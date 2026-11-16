@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from tests.mailtm_client import MailTmClient, MailTmTimeout, message_text
+from tests.mailtm_client import AddressTaken, MailTmClient, MailTmTimeout, message_text
 
 MAILTM_BASE = "https://api.mail.tm"
 # A confirmation email takes about 5 to 15 seconds through SES: look after 12 s, then every 8 s,
@@ -55,14 +55,24 @@ def get_mailtm_domain() -> str:
 
 
 def create_mailtm_account(domain: str) -> tuple[str, str, str]:
-    """Create Mail.tm account. Returns (email, mailtm_password, app_password)."""
-    r1 = secrets.token_hex(4)
-    r2 = secrets.token_hex(3)
-    email = f"qatest{r1}{r2}@{domain}"
-    mailtm_password = f"Password{r1}!"
-    app_password = f"Test@{r1}Aa1!"
-    get_mailtm_client().create_account(email, mailtm_password)
-    return email, mailtm_password, app_password
+    """Create Mail.tm account. Returns (email, mailtm_password, app_password).
+
+    If the random address turns out to be someone else's (AddressTaken), it tries once more with
+    a new one: that is Mail.tm's side, not the test's."""
+    for attempt in range(2):
+        r1 = secrets.token_hex(4)
+        r2 = secrets.token_hex(3)
+        email = f"qatest{r1}{r2}@{domain}"
+        mailtm_password = f"Password{r1}!"
+        app_password = f"Test@{r1}Aa1!"
+        try:
+            get_mailtm_client().create_account(email, mailtm_password)
+        except AddressTaken:
+            if attempt == 1:
+                raise
+            continue
+        return email, mailtm_password, app_password
+    raise AssertionError("unreachable")
 
 
 def get_mailtm_token(email: str, mailtm_password: str) -> str:

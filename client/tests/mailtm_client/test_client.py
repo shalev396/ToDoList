@@ -28,6 +28,7 @@ from ._testing import (
 )
 from .client import (
     DOCUMENTED_LIMIT,
+    AddressTaken,
     RATE_ENV,
     STATE_DIR_ENV,
     MailTmClient,
@@ -470,8 +471,9 @@ def test_create_account_sends_the_credentials_and_reports_a_refusal(mail):
     call = mail.session.calls[0]
     assert (call.method, call.url) == ("POST", f"{BASE}/accounts")
     assert call.kwargs["json"] == {"address": "x@mail.test", "password": "secret-pw"}
-    with pytest.raises(MailTmError, match="422") as refused:
+    with pytest.raises(AddressTaken, match="422") as refused:
         mail.create_account("x@mail.test", "secret-pw")
+    assert isinstance(refused.value, MailTmError)
     assert "secret-pw" not in str(refused.value)
 
 

@@ -61,6 +61,10 @@ class MailTmTimeout(MailTmError):
     """No message matched before the deadline."""
 
 
+class AddressTaken(MailTmError):
+    """The address belongs to an inbox the given password doesn't open: pick another address."""
+
+
 @dataclass(frozen=True)
 class RetryPolicy:
     """At most `max_attempts` calls and `max_total_wait` seconds of waiting per request. Waits
@@ -415,6 +419,7 @@ class MailTmClient:
             owned = self._account_if_ours(address, password)
             if owned is not None:
                 return owned
+            raise AddressTaken(f"mail.tm account creation failed: 422 {response.text[:200]}")
         if response.status_code != 201:
             raise MailTmError(
                 f"mail.tm account creation failed: {response.status_code} {response.text[:200]}"

@@ -76,6 +76,20 @@ def test_a_new_inbox_is_made_on_the_active_domain(mail):
     assert mail.paths == ["GET /domains", "POST /accounts", "POST /token"]
 
 
+def test_an_address_someone_else_has_is_replaced_once(mail):
+    """Mail.tm says the random address is used, and the password doesn't open it: a new address."""
+    taken = [_answer(422, {"detail": "address: used"}), _answer(401, {"message": "bad"})]
+    mail.answers = [*taken, _answer(201, {"id": "a2"})]
+    first = mailtm.create_mailtm_account("mail.test")[0]
+    assert mail.paths == ["POST /accounts", "POST /token", "POST /accounts"]
+    mail.paths.clear()
+    mail.answers = [*taken, *taken]
+    with pytest.raises(mailtm.AddressTaken):
+        mailtm.create_mailtm_account("mail.test")
+    assert mail.paths.count("POST /accounts") == 2  # one retry, no more
+    assert first.endswith("@mail.test")
+
+
 def test_the_confirmation_code_comes_from_the_inbox(mail):
     mail.answers = [
         _answer(200, {"hydra:member": [{"id": "m1"}]}),
