@@ -4,10 +4,10 @@ import { User } from '../classes/User.js';
 import type { AuthenticatedRequest } from '../types/express.js';
 
 /**
- * /api/private's authentication, in two steps so the per-user rate limit (privateLimiter) runs
- * between them, after the token is verified and before the database is read (app.ts):
+ * /api/private's authentication, in two steps so the database is read only after the token is
+ * verified, behind the per-token rate limit (privateLimiter) that runs first (app.ts):
  *
- *   verifyCognitoToken → privateLimiter (keyed by the verified `sub`) → loadCognitoUser
+ *   privateLimiter (keyed by the presented token) → verifyCognitoToken → loadCognitoUser
  *
  * A failed check answers `{ message: … }` with 401 (404 when the token's user does not exist).
  */

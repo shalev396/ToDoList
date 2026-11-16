@@ -39,7 +39,7 @@ const parseBody: RequestHandler[] = [
  *
  * - /api/public  → no auth (Cognito sign-up/login flows; rate-limited in routes/public/index.ts)
  * - /api/private → JWT verified in-app (middlewares/expressAuth.ts; API Gateway also runs a JWT
- *   authorizer), then rate-limited per user, then the user is loaded
+ *   authorizer), behind a per-token rate limit, then the user is loaded
  *
  * Stage maintenance (schema sync, test reset) is not HTTP: it runs as a direct Lambda invoke, see
  * lambda.ts.
@@ -61,11 +61,11 @@ export function createApp(): Express {
   app.use(responseFormatter);
 
   app.use('/api/public', parseBody, publicRouter);
-  // Verified token → the per-user limit → the user's row: an over-budget user costs no DB read.
+  // The per-token limit → the token check → the user's row: an over-budget caller costs neither.
   app.use(
     '/api/private',
-    verifyCognitoToken,
     privateLimiter,
+    verifyCognitoToken,
     loadCognitoUser,
     parseBody,
     privateRouter,

@@ -1,8 +1,8 @@
 /**
- * How the in-app rate limits count (middlewares/rateLimit.ts): /api/private per verified Cognito
- * user, so people behind one address keep their own budgets; the public surfaces per address.
- * app.ts mounts the per-user limit between the token check and the user lookup, so an
- * over-budget user is refused without a database read.
+ * How the in-app rate limits count (middlewares/rateLimit.ts): /api/private per presented bearer
+ * token, so people behind one address keep their own budgets; the public surfaces per address.
+ * app.ts mounts the per-token limit first, before verification, so an over-budget caller is
+ * refused without a token check or a database read.
  *
  * Tokens are verified by a stand-in (setTokenVerifierForTests): the token text is its `sub`, and
  * "bad" fails verification. Every request comes from 127.0.0.1.
@@ -13,6 +13,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Request, Response } from 'express';
 
+import { sha256Hex } from '../services/crypto/hashing.js';
 import { setTokenVerifierForTests } from '../utils/cognitoUtil.js';
 
 // config/environment.ts reads process.env when asked: set it before the app is imported.
@@ -25,14 +26,18 @@ Object.assign(process.env, {
   COGNITO_CLIENT_ID: 'test-client',
 });
 
-setTokenVerifierForTests((token) =>
-  token === 'bad' ? Promise.reject(new Error('invalid token')) : Promise.resolve({ sub: token }),
-);
+let verifications = 0;
+setTokenVerifierForTests((token) => {
+  verifications += 1;
+  return token === 'bad'
+    ? Promise.reject(new Error('invalid token'))
+    : Promise.resolve({ sub: token });
+});
 
 const express = (await import('express')).default;
 const { responseFormatter } = await import('./responseFormatter.js');
 const { verifyCognitoToken } = await import('./expressAuth.js');
-const { limiter, ipKey, userKey } = await import('./rateLimit.js');
+const { limiter, ipKey, tokenKey } = await import('./rateLimit.js');
 const { createApp } = await import('../app.js');
 const { User } = await import('../classes/User.js');
 
@@ -47,8 +52,7 @@ before(async () => {
   const ok = (_req: Request, res: Response): void => {
     res.success({ ok: true });
   };
-  app.get('/per-user', verifyCognitoToken, limiter(CAP, userKey), ok);
-  app.get('/per-user-unverified', limiter(CAP, userKey), ok);
+  app.get('/per-token', limiter(CAP, tokenKey), verifyCognitoToken, ok);
   app.get('/per-address', verifyCognitoToken, limiter(CAP), ok);
   // The real app, for the order its /api/private chain runs in.
   app.use(createApp());
@@ -74,16 +78,21 @@ async function get(path: string, token?: string): Promise<number> {
 
 describe('the rate-limit keys', () => {
   const request = (ip: string | undefined): Request => ({ ip }) as Request;
-  const response = (locals: Record<string, unknown>): Response =>
-    ({ locals }) as unknown as Response;
 
-  it('an authenticated request counts against its verified user', () => {
-    assert.equal(userKey(request('203.0.113.7'), response({ cognitoSub: 'sub-a' })), 'user:sub-a');
+  const withHeader = (authorization: string | undefined): Request =>
+    ({ ip: '203.0.113.7', headers: { authorization } }) as Request;
+
+  it('a request counts against the SHA-256 of its bearer token', () => {
+    const key = tokenKey(withHeader('Bearer abc'));
+    assert.equal(key, `token:${sha256Hex('abc')}`);
+    assert.doesNotMatch(key, /abc/);
+    assert.notEqual(tokenKey(withHeader('Bearer abd')), key);
   });
 
-  it('a request without a verified user counts against its address', () => {
-    assert.equal(userKey(request('203.0.113.7'), response({})), 'ip:203.0.113.7');
-    assert.equal(userKey(request('203.0.113.7'), response({ cognitoSub: '' })), 'ip:203.0.113.7');
+  it('a request without a bearer token counts against its address', () => {
+    assert.equal(tokenKey(withHeader(undefined)), 'ip:203.0.113.7');
+    assert.equal(tokenKey(withHeader('Bearer ')), 'ip:203.0.113.7');
+    assert.equal(tokenKey(withHeader('Basic abc')), 'ip:203.0.113.7');
     assert.equal(ipKey(request(undefined)), 'ip:unknown');
   });
 
@@ -95,27 +104,29 @@ describe('the rate-limit keys', () => {
   });
 });
 
-describe('a per-user limit', () => {
-  it('gives each user from one address a budget of their own', async () => {
-    for (let i = 0; i < CAP; i += 1) assert.equal(await get('/per-user', 'user-a'), 200);
-    assert.equal(await get('/per-user', 'user-a'), 429);
-    assert.equal(await get('/per-user', 'user-b'), 200);
-    assert.equal(await get('/per-user', 'user-a'), 429);
+describe('a per-token limit', () => {
+  it('gives each token from one address a budget of its own', async () => {
+    for (let i = 0; i < CAP; i += 1) assert.equal(await get('/per-token', 'user-a'), 200);
+    assert.equal(await get('/per-token', 'user-a'), 429);
+    assert.equal(await get('/per-token', 'user-b'), 200);
+    assert.equal(await get('/per-token', 'user-a'), 429);
   });
 
-  it('falls back to the address when no token was verified', async () => {
-    for (let i = 0; i < CAP; i += 1) assert.equal(await get('/per-user-unverified'), 200);
-    assert.equal(await get('/per-user-unverified', 'user-c'), 429);
+  it('counts requests without a token by address, and refuses them past the budget', async () => {
+    for (let i = 0; i < CAP; i += 1) assert.equal(await get('/per-token'), 401);
+    assert.equal(await get('/per-token'), 429);
   });
 
-  it('never reaches a token that fails verification: 401, and nothing is counted', async () => {
+  it('counts a token that fails verification, and refuses it past the budget unverified', async () => {
     const logged = mock.method(console, 'error', () => undefined);
     try {
-      for (let i = 0; i < CAP + 2; i += 1) assert.equal(await get('/per-user', 'bad'), 401);
+      for (let i = 0; i < CAP; i += 1) assert.equal(await get('/per-token', 'bad'), 401);
+      assert.equal(await get('/per-token', 'bad'), 429);
+      assert.equal(logged.mock.callCount(), CAP);
     } finally {
       logged.mock.restore();
     }
-    assert.equal(await get('/per-user', 'user-d'), 200);
+    assert.equal(await get('/per-token', 'user-d'), 200);
   });
 });
 
@@ -154,16 +165,18 @@ describe('MCP sign-in discovery in the app', () => {
 });
 
 describe('/api/private in the app', () => {
-  it('refuses an over-budget user before the user is looked up, and only that user', async () => {
+  it('refuses an over-budget token before it is verified or the user looked up', async () => {
     const lookups = mock.method(User, 'findByCognitoSub', () => Promise.resolve(null));
+    const verifiedBefore = verifications;
     try {
-      // privateLimiter's budget is 200 per user per window; each request looks its user up.
+      // privateLimiter's budget is 200 per token per window; each request looks its user up.
       for (let i = 0; i < 200; i += 1) {
         assert.equal(await get('/api/private/me', 'busy-user'), 404, `request ${String(i)}`);
       }
       assert.equal(lookups.mock.callCount(), 200);
       assert.equal(await get('/api/private/me', 'busy-user'), 429);
       assert.equal(lookups.mock.callCount(), 200);
+      assert.equal(verifications - verifiedBefore, 200, 'the 429 was not verified');
       assert.equal(await get('/api/private/me', 'quiet-user'), 404);
       assert.equal(lookups.mock.callCount(), 201);
     } finally {

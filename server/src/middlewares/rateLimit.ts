@@ -1,8 +1,8 @@
-import type { Request, Response } from 'express';
+import type { Request } from 'express';
 import rateLimit, { type Options, type RateLimitRequestHandler } from 'express-rate-limit';
 import { environment } from '../config/environment.js';
+import { sha256Hex } from '../services/crypto/hashing.js';
 import { addressKey } from '../utils/clientAddress.js';
-import { verifiedCognitoSub } from './expressAuth.js';
 
 const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -17,13 +17,15 @@ export function ipKey(req: Request): string {
 }
 
 /**
- * The verified Cognito user (verifyCognitoToken's `sub`) of an authenticated request, so people
- * behind one address (an office, a campus, a mobile carrier) don't share a budget; the address
- * when no token was verified.
+ * The bearer token a request presents, by its SHA-256, so people behind one address (an office, a
+ * campus, a mobile carrier) don't share a budget, and the raw token is never kept. The token is
+ * not verified yet: the limiter runs before verification so a request over its budget costs
+ * neither a verification nor a database read. A request with no bearer token counts by address.
  */
-export function userKey(req: Request, res: Response): string {
-  const sub = verifiedCognitoSub(res);
-  return sub === undefined ? ipKey(req) : `user:${sub}`;
+export function tokenKey(req: Request): string {
+  const header = req.headers.authorization;
+  const token = header?.startsWith('Bearer ') === true ? header.substring(7) : '';
+  return token === '' ? ipKey(req) : `token:${sha256Hex(token)}`;
 }
 
 /**
@@ -50,10 +52,10 @@ export function limiter(max: number, keyGenerator: KeyGenerator = ipKey): RateLi
 }
 
 /**
- * Authenticated user APIs (/api/private), per user: app.ts mounts it after the token is verified
- * and before the user is loaded, so an over-budget user is refused without a database read.
+ * Authenticated user APIs (/api/private), per presented token: app.ts mounts it first, before the
+ * token is verified, so an over-budget caller is refused without verification or a database read.
  */
-export const privateLimiter = limiter(200, userKey);
+export const privateLimiter = limiter(200, tokenKey);
 
 /**
  * Auth endpoints (/api/public/auth: login, signup, forgot-password, …), per address: nobody is
