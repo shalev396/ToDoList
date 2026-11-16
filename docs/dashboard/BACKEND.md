@@ -106,12 +106,13 @@ Collections: `Dashboards`, `DashboardVersions`, `Views` (DATA.md §3.11–3.13).
 **Integrations**
 - `GET /workspaces/:wid/integrations` → `[{ id, provider, accountLabel, status: "connected"|"expired"|"error", expiresAt, lastSyncAt }]`. **That is the whole shape**: no token, no masked hint, no last-4, no prefix. Sanitized error details live on `GET /sync-runs`.
 - `POST /workspaces/:wid/integrations` (provider + non-secret config) · `PUT /workspaces/:wid/integrations/:iid/credential` (the secret; **write-only**, returns `204`, never echoed, body excluded from logs)
-- `POST /integrations/:id/test` → `{ ok, accountLabel }`
-- `PATCH /integrations/:id` (rotate token, schedule, filters) · `DELETE /integrations/:id` (wipes ciphertext; mirrored items kept or purged per flag)
+- `POST /workspaces/:wid/integrations/:iid/test` → `{ ok, accountLabel }`
+- `PATCH /workspaces/:wid/integrations/:iid` body `{mode?, label?, topicId?, config?, expiresAt?}` (at least one; its owner only). `mode` is `read` (the default, nothing is ever changed at the provider) or `read_write` (audited as `integration.mode`). Rotating the secret is `PUT …/credential`, not this route.
+- `DELETE /workspaces/:wid/integrations/:iid` (its owner; wipes the ciphertext, then soft-deletes its items and containers). The only flag is `?removeAdded=true` (Google Calendar, read & write): first deletes what TodoList pushed to the calendar. Answers `204`, or `200` with the clean-up's counts when `removeAdded` ran, or `409 cleanup_incomplete` (out of time; the integration stays connected, call again). Audited as `integration.cleanup`.
 
 **Sync**
-- `POST /workspaces/:wid/sync` (all) · `POST /integrations/:id/sync` → creates a queued run, starts the background job and returns `{ runId }` (`202`)
-- `GET /sync-runs?integrationId&limit` → status, counts, sanitized error
+- `POST /workspaces/:wid/sync` (all) · `POST /workspaces/:wid/integrations/:iid/sync` → creates a queued run, starts the background job and returns `{ runId }` (`202`)
+- `GET /workspaces/:wid/sync-runs?integrationId&limit` → status, counts, sanitized error
 
 **Primary calendar** (the owner's choice of where dated items are pushed)
 - `GET|PUT|DELETE /workspaces/:wid/primary-calendar`: the workspace's one primary calendar (`settings.primaryCalendar`), set by the workspace owner from a read & write Google Calendar integration they own. `POST …/integrations/:iid/remove-pushed` removes what a push added, on request only.

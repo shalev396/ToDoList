@@ -120,7 +120,7 @@ The wire format is JSON-RPC 2.0. The AI reads the tool list (name, description, 
 4. **Redaction:** every MCP response passes through the same response guard and `redact()` as DATA.md §0. That covers deny-listed keys and the `pk_*`/`lin_api_*`/`xox*`/`ghp_*`/`github_pat_*`/`ATATT*`/`elk_*`/JWT patterns. A hit in dev or qa throws; in prod it returns a 500 and raises an alert.
 5. **Scopes plus audit:** every call appends to DATA.md `AuditLogs` with `actorUserId`, **plus a new `actorAgentId`** field, `action: "mcp.<tool>"`, `targetType/targetId`, and `meta: {argsHash, resultStatus}`. Raw arguments are never stored.
 6. **Confirm destructive actions.** Tools with `destructiveHint: true` need `confirm: true`. Without it, the server returns a preview of the change, or an `input_required` confirmation if the client supports elicitation.
-7. **One-way mirror:** every provider flows one way into the app; Jira, ClickUp, Linear, Moodle and GitHub are read-only. The **one sanctioned exception** is the two-way sync with Shalev's personal Google Calendar through Google OAuth (the Apps Script bridge was removed); the agent-triggered provider writes are `sync_to_google_calendar` (behind `gcal:write`) and `create_todo` with `targets` (D19: creates one item in the user's own Jira, ClickUp, Linear, GitHub or Google Calendar; needs `confirm: true` and the `providers:create` scope), and every write is audit-logged. Edits to mirrored items return `isError` with an "Open in {provider}" link, matching BACKEND.md's 409.
+7. **Write-back follows the integration's mode:** a provider integration is read-only by default and nothing is ever changed at the provider. When its owner switches it to read & write, `update_todo` writes the mirrored item's common fields back (§7.2; needs `providers:create` and `confirm: true`). Read-only integrations are never written. Google Calendar is the two-way case: `sync_to_google_calendar` (behind `gcal:write`) pushes to the workspace's primary calendar, and `create_todo` with `targets` (D19) creates one item in the user's own Jira, ClickUp, Linear, GitHub or Google Calendar. Every write is audit-logged. A mirrored item whose integration is read-only returns `isError` with an "Open in {provider}" link, matching BACKEND.md's 409.
 8. **Slack is out of scope.** There are no Slack tools; agents use Slack's own MCP.
 9. **Untrusted input:** item titles and bodies may contain prompt injection. Tools return data, never instructions. Annotations are only hints, so the server enforces scopes itself. Results are size-capped, and inputs are validated against JSON Schema (draft 2020-12).
 
@@ -132,7 +132,7 @@ The wire format is JSON-RPC 2.0. The AI reads the tool list (name, description, 
 - **Minimal hard-coded text:** tool descriptions are the static contract. All data, topics, block titles, filters and templates come from MongoDB and provider metadata, and **templates are stored as data**.
 - **Personal vs Work:** the server applies DATA.md `Workspaces.settings.areaRules` (e.g. `{match: "shalev396/*", area: "personal"}`), and `area ∈ work|college|personal` can be filtered in every read tool.
 - **AutoDS is included in all data.** The mute is only in *Remi's own messages*. The `morning_brief` prompt has an optional `muteSources` argument that Remi passes; tools never filter AutoDS out on their own.
-- **Sources of truth:** ClickUp and Jira (work), Linear (personal), Moodle (college), Google Calendar (events). The only items agents can write are `source.provider = "local"` items (plus the audited Google Calendar push via `sync_to_google_calendar`).
+- **Sources of truth:** ClickUp and Jira (work), Linear (personal), Moodle (college), Google Calendar (events). Agents write `source.provider = "local"` items freely. Mirrored items are written back only when their integration is read & write (§7.2); the Google Calendar push is audited (`sync_to_google_calendar`).
 
 ---
 
@@ -256,7 +256,7 @@ Errors a mirrored update can answer (each carries its `code`; the audit log reco
   "additionalProperties": false
 }
 ```
-The target calendar comes from the GCal integration's `config` and isn't chosen by the agent. Writes are idempotent per item key (BACKEND.md).
+The target is the workspace's primary calendar (`settings.primaryCalendar`) and isn't chosen by the agent. Writes are idempotent per item key (BACKEND.md).
 
 ### 7.4 Integrations
 | Tool | Purpose | Scope | Ann. |

@@ -1711,7 +1711,7 @@ How the pieces work, in short:
 ## 6. Dashboards and views (phases 6a and 6b, built)
 
 `classes/dashboard/`. A dashboard's blocks are stored as plain JSON, and handed out as their Block
-classes (`blocks()`, `pageBlock`). `DocCheck` is the one place a
+classes (`blocks(caller)`, `pageBlock`). `DocCheck` is the one place a
 document is checked and linted: it runs the builder's document-level steps (`validate.ts`) and asks
 each block's own class (`Block.from(json).check()` and `.lint(scope)`, the Block hierarchy below)
 for the rest. Every write comes through it, builder ops included (`ApplyOpsContext.check`), except
@@ -1742,7 +1742,7 @@ classDiagram
     +removeOrphans()$ counts
     +connectorIdsIn(workspaceId)$ string[]
     +softDeleteAllOn(topic)$ number
-    +blocks() Block[]
+    +blocks(caller) Block[]
     +pageBlock(caller, blockId) PageBlock
     +view(caller, options) DashboardView
     +versions(caller, options) DashboardVersionView[]
@@ -1892,7 +1892,7 @@ classDiagram
     +lint(scope) LintIssue[]
   }
   DocCheck ..> Block : per block
-  Dashboard *-- Block : blocks()
+  Dashboard *-- Block : blocks(caller)
 
   class View {
     +Audit$
@@ -1952,7 +1952,7 @@ classDiagram
 
 `classes/dashboard/blocks/`. One class per block type of the catalog (`BLOCK_TYPES`, 14), each an
 immutable value object over the block's JSON. DocCheck checks a document's blocks through them,
-and Dashboard hands its blocks out as them (`blocks()`, `pageBlock`, phase 7a); the dashboard
+and Dashboard hands its blocks out as them (`blocks(caller)`, `pageBlock`, phase 7a); the dashboard
 barrel does not hand them on.
 
 ```mermaid
@@ -2044,7 +2044,7 @@ classDiagram
     +check() the schema's type issue
   }
   class Dashboard {
-    +blocks() Block[]
+    +blocks(caller) Block[]
     +pageBlock(caller, blockId)
   }
   DocCheck ..> Block : from(json).check(), .lint(scope)
@@ -2337,7 +2337,7 @@ classDiagram
     -constructor()
     +name, redirectUris
     +allowsRedirect(uri) boolean
-    +register(metadata, origin)$ McpClient
+    +register(metadata)$ McpClient
     +resolve(clientId)$ McpClient
     +setMetadataFetchForTests(fetcher)$
   }
@@ -2395,7 +2395,7 @@ SHA-256 of a raw token is stored (`hashAgentKey`).
 **`McpClient`** (`classes/mcp/McpClient.ts`) `extends Entity<McpClientData>`: who is asking to
 sign a member in. Both kinds are public clients (PKCE, no secret).
 
-- **Dynamic (DCR, RFC 7591)**: `register(metadata)` validates and stores it; `resolve(clientId)`
+- **Dynamic (DCR, RFC 7591)**: `register(metadata)` validates and stores it (it is not audited: a client registration belongs to no workspace); `resolve(clientId)`
   finds it by id and notes its use at most once an hour, so an unused one expires after 30 days
   (a TTL on `lastUsedAt`).
 - **Metadata document (CIMD)**: a client id that is an https URL with a path. `resolve` fetches the
@@ -2498,8 +2498,9 @@ build; it is not a style note.
   `ItemPolicy` asks `Dashboard.connectorIdsIn` for the share facts and `Topic.delete` asks
   `Dashboard.softDeleteAllOn(topic)`. `dashboardInternals.test.ts` pins the three repositories to
   their classes.
-- **`Dashboard#blocks()`**: the draft's blocks as their classes, the plan's composition (storage
-  stays JSON).
+- **`Dashboard#blocks(caller)`**: the blocks as their classes, the plan's composition (storage
+  stays JSON). An editor gets the draft's blocks; a viewer gets the published copy's, and a 404
+  before the first publish. It has no production caller yet (only tests use it).
 - **Topics go with their workspace** (the owner's ruling on N9): the cascade's topics step
   (`Topic.removeAllIn`, after the dashboards, before the members), the purge's
   `Topic.removeOrphans` (reads from the primary, ids only; `PurgeResult.orphanedTopics`), and the
@@ -2891,3 +2892,22 @@ The rulings are in `.superpowers/sdd/2026-11-14-oop-redesign/progress.md` (the c
 - **The disconnect answers its clean-up's counts** (200; 204 without one); Google's OAuth
   transport and `#contentsOf`'s paging fit the request's `TimeBudget`; `applyOps` always runs a
   first op.
+
+## Known limitations
+
+Stated plainly. None is a regression, and each is pinned or deliberate.
+
+- **`McpClient.register` is not audited.** Client registrations are not workspace-scoped, and an
+  audit entry needs a workspace. (`register` takes no origin; an older sketch showed one.)
+- **`Integration.removeAllIn` has no live-workspace guard, on purpose.** The workspace cascade
+  runs it before the workspace is retired, so credentials are destroyed first. It is pinned by
+  class to the cascade (`dashboardInternals.test.ts`).
+- **`Dashboard#blocks(caller)` has no production caller yet.** Only tests use it; the editor and
+  viewer reads still go through the builder's views.
+- **The purge runs only when invoked directly.** There are no schedules, by design, and an infra
+  test asserts it. The 30-day hard delete and the orphan sweeps happen only when someone runs it.
+- **Descriptions are never written back to trackers.** Only a 500-character preview is stored
+  (DECISIONS D21).
+- **Three classes are still over 900 lines** (see DECISIONS D28).
+- **Postman has no coverage of the newer routes** (`PATCH …/integrations/:iid {mode}`, the primary
+  calendar, `?removeAdded`, `remove-pushed`).
