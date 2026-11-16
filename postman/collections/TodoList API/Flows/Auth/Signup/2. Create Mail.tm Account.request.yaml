@@ -38,18 +38,20 @@ scripts:
     language: text/javascript
   - type: afterResponse
     code: |-
-      if (pm.response.code !== 201) {
-          console.log('Mail.tm Error Response:', pm.response.text());
+      if (pm.response.code !== 429 || pm.collectionVariables.get('mailtmRetrying') !== '1') {
+          if (pm.response.code !== 201) {
+              console.log('Mail.tm Error Response:', pm.response.text());
+          }
+
+          pm.test('Status code is 201', function () {
+              pm.response.to.have.status(201);
+          });
+
+          pm.test('Account created', function () {
+              const json = pm.response.json();
+              pm.expect(json).to.have.property('id');
+              pm.expect(json).to.have.property('address');
+          });
       }
-
-      pm.test('Status code is 201', function () {
-          pm.response.to.have.status(201);
-      });
-
-      pm.test('Account created', function () {
-          const json = pm.response.json();
-          pm.expect(json).to.have.property('id');
-          pm.expect(json).to.have.property('address');
-      });
     language: text/javascript
 order: 2000

@@ -17,19 +17,21 @@ scripts:
     language: text/javascript
   - type: afterResponse
     code: |-
-      const json = pm.response.json();
+      if (pm.response.code !== 429 || pm.collectionVariables.get('mailtmRetrying') !== '1') {
+          const json = pm.response.json();
 
-      if (pm.response.code === 200 && json && json.token) {
-          pm.collectionVariables.set('mailTmToken', json.token);
-          pm.environment.set('mailTmToken', json.token);
+          if (pm.response.code === 200 && json && json.token) {
+              pm.collectionVariables.set('mailTmToken', json.token);
+              pm.environment.set('mailTmToken', json.token);
+          }
+
+          pm.test('Status code is 200', function () {
+              pm.response.to.have.status(200);
+          });
+
+          pm.test('Token received', function () {
+              pm.expect(json).to.have.property('token');
+          });
       }
-
-      pm.test('Status code is 200', function () {
-          pm.response.to.have.status(200);
-      });
-
-      pm.test('Token received', function () {
-          pm.expect(json).to.have.property('token');
-      });
     language: text/javascript
 order: 3000

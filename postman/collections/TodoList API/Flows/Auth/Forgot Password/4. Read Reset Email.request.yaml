@@ -8,26 +8,28 @@ auth:
 scripts:
   - type: afterResponse
     code: |-
-      pm.test('Status code is 200', function () {
-          pm.response.to.have.status(200);
-      });
+      if (pm.response.code !== 429 || pm.collectionVariables.get('mailtmRetrying') !== '1') {
+          pm.test('Status code is 200', function () {
+              pm.response.to.have.status(200);
+          });
 
-      const json = pm.response.json();
-      const emailText = json.text || '';
-      const emailHtml = (json.html || []).join(' ');
-      const content = emailText + ' ' + emailHtml;
+          const json = pm.response.json();
+          const emailText = json.text || '';
+          const emailHtml = (json.html || []).join(' ');
+          const content = emailText + ' ' + emailHtml;
 
-      const codeMatch = content.match(/\b(\d{6})\b/);
+          const codeMatch = content.match(/\b(\d{6})\b/);
 
-      pm.test('Reset code found', function () {
-          pm.expect(codeMatch).to.not.be.null;
-          pm.expect(codeMatch[1]).to.have.lengthOf(6);
-      });
+          pm.test('Reset code found', function () {
+              pm.expect(codeMatch).to.not.be.null;
+              pm.expect(codeMatch[1]).to.have.lengthOf(6);
+          });
 
-      if (codeMatch && codeMatch[1]) {
-          pm.collectionVariables.set('resetCode', codeMatch[1]);
-          pm.environment.set('resetCode', codeMatch[1]);
-          console.log('Reset code extracted:', codeMatch[1]);
+          if (codeMatch && codeMatch[1]) {
+              pm.collectionVariables.set('resetCode', codeMatch[1]);
+              pm.environment.set('resetCode', codeMatch[1]);
+              console.log('Reset code extracted:', codeMatch[1]);
+          }
       }
     language: text/javascript
 order: 4000
