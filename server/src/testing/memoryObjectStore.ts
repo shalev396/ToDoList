@@ -1,8 +1,9 @@
 /**
- * Test-only: the S3 assets bucket in memory (utils/s3Util.ts, setObjectStoreForTests). Objects
- * keep their Content-Type and Content-Disposition; URLs are FAKE and never fetched.
+ * Test-only: the ObjectStore a test process installs instead of the S3 assets bucket
+ * (utils/s3Util.ts, setObjectStoreForTests). Objects keep their Content-Type and
+ * Content-Disposition; URLs are FAKE and never fetched.
  */
-import type { PresignedUpload, TestObjectStore } from '../utils/s3Util.js';
+import type { ObjectStore, ObjectUrls, PresignedUpload } from '../utils/s3Util.js';
 
 interface StoredObject {
   body: Buffer;
@@ -20,7 +21,7 @@ function notFound(): Error {
   return error;
 }
 
-export class MemoryObjectStore implements TestObjectStore {
+export class MemoryObjectStore implements ObjectStore {
   readonly #objects = new Map<string, StoredObject>();
 
   put(
@@ -50,6 +51,10 @@ export class MemoryObjectStore implements TestObjectStore {
     return Promise.resolve();
   }
 
+  async deleteMany(keys: readonly string[]): Promise<void> {
+    for (const key of keys) await this.delete(key);
+  }
+
   list(prefix: string): Promise<string[]> {
     return Promise.resolve(
       [...this.#objects.keys()].filter((key) => key.startsWith(prefix)).sort(),
@@ -60,11 +65,22 @@ export class MemoryObjectStore implements TestObjectStore {
     return `${ORIGIN}/${key}`;
   }
 
-  presignedUpload(params: { s3Key: string; mimeType: string; maxBytes: number }): PresignedUpload {
-    return {
+  /** Stands in for both the bucket URL and the CloudFront one. */
+  urlsOf(key: string): ObjectUrls {
+    const url = this.url(key);
+    return { s3Url: url, cloudfrontUrl: url };
+  }
+
+  presignedUpload(params: { s3Key: string; mimeType: string }): Promise<PresignedUpload> {
+    return Promise.resolve({
       url: `${ORIGIN}/upload`,
       fields: { key: params.s3Key, 'Content-Type': params.mimeType },
-    };
+    });
+  }
+
+  /** Stands in for a presigned GET. */
+  presignedDownloadUrl(key: string): Promise<string> {
+    return Promise.resolve(this.url(key));
   }
 
   /** Content-Disposition of a stored object, or null (for assertions). */
