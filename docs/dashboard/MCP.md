@@ -2,7 +2,7 @@
 
 # MCP.md: Elytra MCP server
 
-> **Status:** design only. Nothing is built, deployed or committed to `shalev396/Elytra`.
+> **Status:** built. `/api/mcp` and `/api/mcp/readonly` are served by the Elytra-shaped server (`server/src/mcp`); this page is the contract, and §7 lists the tools.
 > **Siblings:** [DATA.md](DATA.md) (MongoDB: `Workspaces`, `Memberships`, `Invites`, `Integrations`, `Credentials`, `Items`, `Containers`, `SyncStates`, `SyncRuns`, `AuditLogs`, `Dashboards`, `DashboardVersions`, `Views`, `AgentKeys`, `CalendarLinks`, `ReplayNonces`), [BACKEND.md](BACKEND.md) (Express on one Lambda, `/api/private/*` routes) and [FRONTEND.md](FRONTEND.md) (block JSON and the composition model). **On field names and shapes, those docs win.** MCP is a thin layer over the same services.
 > **Spec baseline:** MCP **2026-07-28**, the latest stable revision ([changelog](https://modelcontextprotocol.io/specification/2026-07-28/changelog)). It is stateless, with no `initialize` handshake and no sessions.
 
@@ -10,7 +10,7 @@
 
 ## 0. TL;DR
 
-- **What:** a `POST /api/mcp` endpoint mounted in the existing Elytra Express app on the same Lambda, calling the same services as BACKEND.md. Agents (Grok Bot, Claude, Cursor…) get about 35 tools in 6 toolsets: **read, items, sync, integrations, workspace, builder**. There's also a `/api/mcp/readonly` variant.
+- **What:** a `POST /api/mcp` endpoint mounted in the existing Elytra Express app on the same Lambda, calling the same services as BACKEND.md. Agents (Grok Bot, Claude, Cursor…) get 48 tools in 6 toolsets: **read, items, sync, integrations, workspace, builder**. There's also a `/api/mcp/readonly` variant.
 - **Transport:** Streamable HTTP (stateless, JSON responses) for remote use. stdio for local dev.
 - **Agent auth:** phase 1 uses **per-agent scoped API keys** made in the Elytra UI. Phase 2 adds **OAuth 2.1** per the MCP authorization spec, with Cognito as the authorization server.
 - **Hard rule:** no tool accepts or returns a provider token. "Connect X" returns a link the **user** opens to paste the token into the Elytra UI.
@@ -130,7 +130,7 @@ The wire format is JSON-RPC 2.0. The AI reads the tool list (name, description, 
 
 - **Every item returns its source:** `source {provider, externalId, key?, url}` (DATA.md) plus `openIn {provider, url}`. The client renders "Open in <provider>" from the provider registry. URLs only ever come from the provider's data.
 - **Minimal hard-coded text:** tool descriptions are the static contract. All data, topics, block titles, filters and templates come from MongoDB and provider metadata, and **templates are stored as data**.
-- **Personal vs Work:** the server applies DATA.md `Workspaces.settings.areaRules` (e.g. `{match: "shalev396/*", area: "personal"}`), and `area ∈ work|college|personal` can be filtered in every read tool.
+- **Topics, not areas:** the server applies `Workspaces.settings.topicRules` (e.g. `{match: "shalev396/*", topicId: <the Personal topic's id>}`), and `topic` (one or more topic slugs) can be filtered in every read tool.
 - **AutoDS is included in all data.** The mute is only in *Remi's own messages*. The `morning_brief` prompt has an optional `muteSources` argument that Remi passes; tools never filter AutoDS out on their own.
 - **Sources of truth:** ClickUp and Jira (work), Linear (personal), Moodle (college), Google Calendar (events). Agents write `source.provider = "local"` items freely. Mirrored items are written back only when their integration is read & write (§7.2); the Google Calendar push is audited (`sync_to_google_calendar`).
 
@@ -147,10 +147,10 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 |---|---|---|
 | `search_items` | Text and filter search over `Items` (mirrored + local) | RO |
 | `list_today` | Today's events, items due today and overdue items (workspace TZ, `Asia/Jerusalem`) | RO |
-| `list_deadlines` | Upcoming `dueAt`, grouped by area / container (project or course) / provider | RO |
+| `list_deadlines` | Upcoming `dueAt`, grouped by topic / container (project or course) / provider | RO |
 | `get_calendar` | Events and dated items for `week`\|`month`\|custom (week starts per `settings.weekStart`) | RO |
 | `get_item` | One item, full `props`, `source`, `openIn` | RO |
-| `list_facets` | Distinct providers, containers, areas and courses (wraps BACKEND.md `/facets`) | RO |
+| `list_facets` | Distinct providers, topics and containers (wraps BACKEND.md `/facets`) | RO |
 | `query_items` | Run a query via `POST /workspaces/:wid/query`: a saved query id (`savedQueryId` or `dashboardId`+`blockId`) **or** a draft query, plus optional runtime cross-block filter `vars` (`$page.*`) | RO |
 
 ```json
@@ -159,7 +159,7 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
   "type": "object",
   "properties": {
     "q": { "type": "string" },
-    "area": { "type": "array", "items": { "enum": ["work", "college", "personal"] } },
+    "topic": { "type": "array", "items": { "type": "string" }, "description": "topic slugs or ids" },
     "provider": { "type": "array", "items": { "enum": ["google_calendar","jira","clickup","linear","moodle","github","local"] } },
     "kind": { "type": "array", "items": { "enum": ["todo","issue","task","event","assignment","deadline","file","pr"] } },
     "status": { "type": "array", "items": { "enum": ["open","in_progress","done","cancelled"] } },
@@ -270,17 +270,17 @@ The target is the workspace's primary calendar (`settings.primaryCalendar`) and 
 ### 7.5 Workspace and sharing
 | Tool | Purpose | Scope | Ann. |
 |---|---|---|---|
-| `workspace_get` | Workspace, settings (TZ, weekStart, areas, areaRules), and the agent's own scopes | `workspace:read` | RO |
-| `workspace_list_members` | Members, roles and `areaScope` | `workspace:read` | RO |
-| `workspace_invite` | `{email, role, areaScope?}` → a pending invite; the invitee accepts in the UI (DATA.md `Invites`) | `workspace:share` + owner | D=false |
-| `workspace_update_member` | Change role or `areaScope`; needs `confirm` | `workspace:share` + owner | D |
+| `workspace_get` | Workspace, settings (TZ, weekStart, topicRules), and the agent's own scopes | `workspace:read` | RO |
+| `workspace_list_members` | Members, roles | `workspace:read` | RO |
+| `workspace_invite` | `{email, role, message?, language?}` → a pending invite; the invitee accepts in the UI (DATA.md `Invites`) | `workspace:share` + owner | D=false |
+| `workspace_update_member` | Change a member's role; needs `confirm` | `workspace:share` + owner | D |
 | `workspace_remove_member` | Revoke a membership; needs `confirm` | `workspace:share` + owner | D |
 | `audit_log_query` | Recent actions, filterable by agent | `workspace:read` | RO |
 
 ### 7.6 Shared output: `ItemSummary`
 ```json
 {
-  "id": "it-…", "kind": "issue", "area": "work", "title": "…", "bodyPreview": "…",
+  "id": "it-…", "kind": "issue", "topicId": "t-…", "title": "…", "bodyPreview": "…",
   "status": "open", "priority": 2, "startAt": null, "dueAt": "2026-11-15T21:59:00Z", "endAt": null,
   "containerId": "ct-…",
   "source": { "provider": "jira", "externalId": "10421", "key": "ADS-1234", "url": "https://<site>.atlassian.net/browse/ADS-1234" },
@@ -338,7 +338,7 @@ Same shape as FRONTEND.md §4, served as `elytra://schema/query`:
 {
   "source": "items",
   "where": { "combinator": "and", "rules": [
-    { "field": "area", "operator": "in", "value": ["work"] },
+    { "field": "topic", "operator": "in", "value": ["work"] },
     { "field": "status", "operator": "in", "value": ["open", "in_progress"] },
     { "combinator": "or", "rules": [
       { "field": "dueAt", "operator": "within", "value": "next_7d" },
@@ -427,8 +427,8 @@ Agent: → builder_create_dashboard({title:"Work", fromTemplate:"Work"})        
             variable:"$page.provider", field:"source.provider", toBlockIds:["b-table","b-deadlines"]}) ⇐ v2
        → builder_add_block({dashboardId:"d-1", expectedVersion:2, block:{type:"kanban",
             query:{source:"items", where:{combinator:"and", rules:[
-              {field:"area", operator:"=", value:"work"}]}, groupBy:["status"]}}})  ⇐ v3
-       (shalev396/* is already personal via areaRules, so area=work excludes it; no extra rule)
+              {field:"topic", operator:"=", value:"work"}]}, groupBy:["status"]}}})  ⇐ v3
+       (shalev396/* is already personal via topicRules, so topic=work excludes it; no extra rule)
        → builder_preview({dashboardId:"d-1"})                                ⇐ previewUrl
 Agent: "Draft v3 ready: the donut filters the table and deadlines, plus a kanban by status. Publish?"
 User:  Undo the kanban, then publish.
@@ -467,7 +467,7 @@ Agent: → builder_undo({dashboardId:"d-1", steps:1})    ⇐ v4
 | `elytra://dashboard/{id}` (`?draft=1`) | Dashboard config |
 | `elytra://dashboard/{id}/versions` | Version list |
 | `elytra://item/{id}` | `ItemSummary` |
-| `elytra://facets` | Providers, containers, areas, courses |
+| `elytra://facets` | Providers, topics, containers |
 | `elytra://schema/block/{type}` | JSON Schema for each block type |
 | `elytra://schema/query` | Query, rules and operators schema |
 | `elytra://templates/{id}` | Template JSON (data) |
@@ -477,8 +477,8 @@ Agent: → builder_undo({dashboardId:"d-1", steps:1})    ⇐ v4
 | Prompt | Args | Does |
 |---|---|---|
 | `morning_brief` | `date?`, `muteSources?` | Today + overdue + 48 h deadlines + sync health, each with an Open-in link |
-| `plan_my_week` | `weekStart?`, `areas?` | Calendar + deadlines → proposed blocks → optional GCal dry-run |
-| `deadline_review` | `area?`, `days?` | Grouped deadlines with risk flags |
+| `plan_my_week` | `weekStart?`, `topics?` | Calendar + deadlines → proposed blocks → optional GCal dry-run |
+| `deadline_review` | `topic?`, `days?` | Grouped deadlines with risk flags |
 | `build_dashboard` | `goal`, `topic?` | Guides the template → preview → save → publish flow |
 | `weekly_review` | `weekStart?` | Done vs open, what slipped |
 

@@ -22,7 +22,7 @@ After the first build the server was reshaped, phase by phase, into a set of cla
 - `McpClient.register` is not audited: client registrations belong to no workspace.
 - `Integration.removeAllIn` has no live-workspace guard on purpose: the cascade runs it before the workspace is retired, to destroy credentials first, and it is pinned by class to the cascade.
 - `Dashboard#blocks(caller)` has no production caller yet.
-- The purge runs only when invoked directly. There are no schedules, by design (an infra test asserts it), so the 30-day hard delete and the orphan sweeps happen only when someone runs it.
+- The purge runs only when invoked directly. There are no schedules, by design (an infra test asserts it: `server/infra/test/sync.test.ts` counts `AWS::Scheduler::Schedule` at 0), so the 30-day hard delete and the orphan sweeps happen only when someone runs it.
 - Descriptions are never written back to trackers, on purpose (only a preview is stored; D21).
 - Postman has no coverage of the newer routes (`PATCH …/integrations/:iid {mode}`, the primary calendar, `?removeAdded`, `remove-pushed`); the collection was not touched.
 - Plan elements not built, and the three classes still over about 900 lines: see DECISIONS D28.
@@ -38,7 +38,7 @@ After the first build the server was reshaped, phase by phase, into a set of cla
 | 3. Sync | Read-only client (GET plus allow-listed GraphQL queries plus the exact Google token exchange). SSRF guards: netGuard, per-hop redirect checks, connect-time IP check. Fixture transport with relative dates. Engine: per-resource sweep with window, delete-only records, per-record validation, orphan sweep, run hygiene and reaper. Adapters: Jira, ClickUp, Linear, Moodle, Google Drive, Google Calendar, GitHub (repos, issues/PRs, Projects v2 boards). Dispatcher, worker, purge, `sync:local`. |
 | 4. Frontend | New design system (DESIGN.md). Landing, pricing and legal pages. Auth, onboarding and invites. App shell with org switcher and ⌘K. Org settings and members. Dashboard runtime (grid, page vars, autosave with conflict recovery, RTL). All 12 block types. Item sheet. Block editor with live preview. Integrations, templates and agent-keys pages. en and he throughout. |
 | 5. Google Calendar bridge | Signed envelope, public hooks, diff/commit with CalendarLinks, the Apps Script client (gated by `GCAL_BRIDGE_ENABLED`; locally only the mock on :3999), `gcal-sync` dry run, the mock, and `apps-script/Code.gs` with its README. |
-| 6. MCP | v2 SDK, stateless JSON on `/api/mcp` and `/api/mcp/readonly`, plus stdio. `elk_` agent keys, scopes ∩ role, limits, redaction, audit and confirm. 42 tools (read, items, sync, integrations, workspace, builder) with D12 preview-before-write. 9 `todolist://` resources and 5 prompts. |
+| 6. MCP | v2 SDK, stateless JSON on `/api/mcp` and `/api/mcp/readonly`, plus stdio. `elk_` agent keys, scopes ∩ role, limits, redaction, audit and confirm. 48 tools (read, items, sync, integrations, workspace, builder) with D12 preview-before-write. 9 `todolist://` resources and 5 prompts. |
 | 7. Infra and docs | CDK KMS per stage, SQS + DLQ + worker, no schedules (the sync, gcal and purge functions are invoked directly), `/api/mcp` routes without the JWT authorizer, CI workflows (inert until pushed). DECISIONS, DEPLOY-PLAN and this report. |
 
 ## Run it

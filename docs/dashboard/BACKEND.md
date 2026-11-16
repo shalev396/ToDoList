@@ -77,7 +77,7 @@ All responses `{ data }` / `{ message }`. All routes workspace-scoped and checke
 
 **Auth / session** (existing Elytra, unchanged)
 - `POST /api/public/auth/signup | confirm | login | refresh | forgot-password | reset-password`
-- `GET /me`, `PATCH /me`, existing account/export/delete routes
+- `GET /me`, `PUT /me`, existing account/export/delete routes
 
 **Workspaces & sharing**
 - `GET /workspaces` · `POST /workspaces` · `PATCH /workspaces/:wid` · `DELETE /workspaces/:wid` (owner)
@@ -85,7 +85,7 @@ All responses `{ data }` / `{ message }`. All routes workspace-scoped and checke
 - `PATCH /workspaces/:wid/members/:uid` (role) · `DELETE /workspaces/:wid/members/:uid`
 
 **Items** (polymorphic, see DATA.md)
-- `GET /workspaces/:wid/items?type&provider&topic&project&status&due_from&due_to&q&cursor` (mirrored + local)
+- `GET /workspaces/:wid/items?kind&provider&topicId&containerId&status&dueFrom&dueTo&q&cursor&limit` (`limit` 1-100, default 50) (mirrored + local)
 - `GET /workspaces/:wid/items/:id`
 - `POST /workspaces/:wid/items` · `PATCH …/:id` · `DELETE …/:id`: a **local** item is edited and deleted in full. A **mirrored** item's `PATCH` is split by the server (`ItemEdit#split`): the provider fields its integration lists as writable (`writableFields`) are written back to the provider when the integration is `read_write` and the caller owns it (otherwise 409 `integration_read_only` / 403 `integration_not_owner`), and the rest are local overrides in `overlay.overrides` (a `null` clears one). Deleting a mirrored item is 409 with the source link (`openIn`).
 - `GET /workspaces/:wid/facets` → distinct providers/projects/topics/courses for filters (drives UI, no hard-coded lists)
@@ -93,7 +93,7 @@ All responses `{ data }` / `{ message }`. All routes workspace-scoped and checke
 **Views / dashboards / blocks**
 Collections: `Dashboards`, `DashboardVersions`, `Views` (DATA.md §3.11–3.13). Block/dashboard schema and ops are owned by BUILDER.md (Logic Bridge, `server/src/builder/`).
 - `GET|POST /workspaces/:wid/dashboards` · `GET|PATCH|DELETE /workspaces/:wid/dashboards/:id`
-- `PUT …/dashboards/:id/layout` (block positions) · `POST|PATCH|DELETE …/dashboards/:id/blocks/:bid` (block = type + query + display config, stored as data). All writes take `expectedVersion`; mismatch → `409` with the current version.
+- `PUT …/dashboards/:id/layout` (block positions) (a block is type + query + display config, stored as data; blocks change through `ops`, there is no per-block route). All writes take `expectedVersion`; mismatch → `409` with the current version.
 - `POST …/dashboards/:id/ops` (`{expectedVersion, dryRun, ops[]}`, BUILDER.md §6) · `GET …/dashboards/:id/versions` · `POST …/dashboards/:id/{undo,revert,publish}`
 - `GET …/builder/catalog` · `POST …/builder/validate` · `POST …/builder/instantiate` (template → dashboard)
 - `GET|POST /workspaces/:wid/views` · `GET|PATCH|DELETE …/views/:id`

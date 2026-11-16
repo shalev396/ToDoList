@@ -217,7 +217,7 @@ To-dos, issues, tasks, events, assignments, deadlines, files and messages all sh
 Unique on `(integrationId, resource)`. Example cursors: Google Calendar uses `syncToken`, and a `410 Gone` triggers a full resync. Linear uses `updatedAt` with GraphQL `after`. Jira uses `updated >= ` in JQL. ClickUp uses `date_updated_gt`. Moodle polls with no cursor.
 
 ### 3.9 `SyncRuns` (short-lived log)
-`{workspaceId, integrationId, trigger: "manual"|"schedule"|"webhook", startedAt, finishedAt, status, counts:{fetched, inserted, updated, closed, deleted}, error:{code, message (redacted)}, expireAt}`. A TTL index removes runs after 30 days.
+`{workspaceId, integrationId, trigger: "manual"|"schedule"|"webhook"|"calendar_push"|"seed", startedAt, finishedAt, status, counts:{fetched, inserted, updated, closed, deleted}, error:{code, message (redacted)}, expireAt}`. A TTL index removes runs after 30 days.
 
 ### 3.10 `AuditLogs`
 `{workspaceId, actorUserId | "system", actorAgentId (→ AgentKeys, null for UI/system), action: "integration.connect" | "credential.rotate" | "member.invite" | "gcal.write" | "dashboard.update" | "mcp.<tool>" | …, targetType, targetId, ip, userAgent, meta (redacted; MCP calls store `{argsHash, resultStatus}`, never raw args), at}`. Append-only. A TTL index removes entries after 365 days. Audit entries never contain secret values; credentials are referenced by `credentialId` only.
