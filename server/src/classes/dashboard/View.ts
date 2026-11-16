@@ -226,8 +226,10 @@ export class View
 
   // ─── A workspace's end ─────────────────────────────────────────────────────
 
-  /** Deletes every view of a workspace (its deletion). Returns how many. */
+  /** Deletes every view of a workspace (its deletion; refuses a live one). Returns how many. */
   static async removeAllIn(workspaceId: string): Promise<number> {
+    const { Workspace } = await import('../workspace/Workspace.js');
+    await Workspace.requireEnded(workspaceId);
     return (await getViewRepository()).deleteForWorkspace(workspaceId);
   }
 

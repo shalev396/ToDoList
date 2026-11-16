@@ -429,6 +429,14 @@ describe('Dashboard.removeAllIn and View.removeAllIn', () => {
         viz: { kind: 'list' },
       });
     }
+    // The workspace is live: its data is not removed in bulk, whoever asks.
+    await assert.rejects(Dashboard.removeAllIn(t.workspaceId), hasStatus(500));
+    await assert.rejects(View.removeAllIn(t.workspaceId), hasStatus(500));
+    assert.equal((await Dashboard.listOutlines(t.owner)).length, 1);
+    assert.equal((await View.list(t.owner)).length, 1);
+    // The cascade retires the workspace first, and then the removal goes through.
+    const models = await import('../../models/index.js');
+    await (await models.getWorkspaceRepository()).softDelete(t.workspaceId);
     assert.deepEqual(await Dashboard.removeAllIn(t.workspaceId), { dashboards: 2, versions: 3 });
     assert.equal(await View.removeAllIn(t.workspaceId), 1);
     assert.deepEqual(await Dashboard.removeAllIn(t.workspaceId), { dashboards: 0, versions: 0 });

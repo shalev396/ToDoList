@@ -295,6 +295,21 @@ describe('deleteTopic', () => {
   });
 });
 
+describe('removeAllIn', () => {
+  it('refuses a live workspace, and removes the topics of a deleted one', async () => {
+    const ws = await workspace();
+    await Topic.ensureDefaults(ws.id, ['work', 'personal'], 'en');
+    await assert.rejects(
+      Topic.removeAllIn(ws.id),
+      (error: unknown) => (error as { statusCode?: number }).statusCode === 500,
+    );
+    assert.equal((await Topic.idsIn(ws.id)).size, 2, 'the live workspace keeps its topics');
+    await (await models.getWorkspaceRepository()).softDelete(ws.id);
+    assert.equal(await Topic.removeAllIn(ws.id), 2);
+    assert.equal((await Topic.idsIn(ws.id)).size, 0);
+  });
+});
+
 describe('topic lookups', () => {
   it('finds a topic id by slug and checks a topic id belongs to the workspace', async () => {
     const ws = await workspace();

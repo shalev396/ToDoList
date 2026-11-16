@@ -1050,9 +1050,11 @@ export class Dashboard
    * The workspace was deleted (Workspace#delete, an account's end): every dashboard of it goes,
    * soft-deleted ones too, then their histories (dashboards first: a write racing the removal then
    * leaves at most a version, which the purge sweeps). Hard deletes; safe to run again. Counts
-   * only.
+   * only. Refuses (500) a live workspace: the cascade calls it after retiring the workspace.
    */
   static async removeAllIn(workspaceId: string): Promise<{ dashboards: number; versions: number }> {
+    const { Workspace } = await import('../workspace/Workspace.js');
+    await Workspace.requireEnded(workspaceId);
     const dashboards = await (await getDashboardRepository()).deleteForWorkspace(workspaceId);
     const versions = await History.removeAllIn(workspaceId);
     return { dashboards, versions };

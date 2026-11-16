@@ -87,6 +87,13 @@ const GUARDED_NAMES: readonly { pattern: RegExp; allowed: ReadonlySet<string> }[
     pattern: /\bremoveAllIn\b/,
     allowed: new Set([DASHBOARD, HISTORY, VIEW, INTEGRATION, TOPIC, CASCADE]),
   },
+  // Each bulk delete by its class (a workspace's end): the class itself and the cascade, which
+  // retires the workspace first. Each also refuses a live workspace (Workspace.requireEnded).
+  { pattern: /\bTopic\.removeAllIn\b/, allowed: new Set([TOPIC, CASCADE]) },
+  { pattern: /\bDashboard\.removeAllIn\b/, allowed: new Set([DASHBOARD, CASCADE]) },
+  { pattern: /\bView\.removeAllIn\b/, allowed: new Set([DASHBOARD, CASCADE]) },
+  { pattern: /\bHistory\.removeAllIn\b/, allowed: new Set([DASHBOARD]) },
+  { pattern: /\bIntegration\.removeAllIn\b/, allowed: new Set([CASCADE]) },
   { pattern: /\bremoveConnectorEverywhere\b/, allowed: new Set([DASHBOARD, INTEGRATION]) },
   { pattern: /\bremoveOrphans\b/, allowed: new Set([DASHBOARD, TOPIC, PURGE]) },
   { pattern: /\breferencedWorkspaceIds\b/, allowed: new Set([DASHBOARD, HISTORY, VIEW]) },

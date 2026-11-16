@@ -372,9 +372,13 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
   /**
    * The workspace was deleted (the cascade, once its integrations, items, containers and
    * dashboards are gone, before its members): every topic of it, hard-deleted. Topics go with
-   * their workspace. Safe to run again. Returns how many.
+   * their workspace. Safe to run again. Refuses (500) a live workspace: only the cascade (after it
+   * retired the workspace) and removeOrphans (gone ids) call it. Returns how many.
    */
   static async removeAllIn(workspaceId: string): Promise<number> {
+    // Imported on first use: Workspace imports Topic.
+    const { Workspace } = await import('./Workspace.js');
+    await Workspace.requireEnded(workspaceId);
     return (await getTopicRepository()).deleteForWorkspace(workspaceId);
   }
 

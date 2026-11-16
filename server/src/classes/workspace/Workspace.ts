@@ -321,6 +321,18 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
     return new Set(await (await getWorkspaceRepository()).listLiveIds(ids));
   }
 
+  /**
+   * The workspace's end is a fact before a bulk hard delete of its data: throws unless it is gone
+   * or soft-deleted (the cascade retires it first). Read from the primary, ids and deletedAt only
+   * (a lagging secondary could show a new workspace as missing). A bug guard: a live workspace's
+   * data is never swept, whoever calls.
+   */
+  static async requireEnded(workspaceId: string): Promise<void> {
+    if ((await Workspace.liveAmong([workspaceId])).has(workspaceId)) {
+      throw new AppError(500, `Workspace ${workspaceId} is live: its data is not removed in bulk`);
+    }
+  }
+
   /** The workspace the caller acts in. */
   static async load(caller: Caller): Promise<Workspace> {
     const data = await (await getWorkspaceRepository()).findById(caller.workspaceId);
