@@ -3,8 +3,12 @@
  * TimeBlock, ControlBlock), the registry, and one class per block type. Importing this module loads
  * every class, so each is registered before `Block.from` is asked; DocCheck (which checks a
  * document's blocks) and Dashboard (which hands its blocks out as these classes) import it. Not
- * handed on by the dashboard barrel: blocks are checked through DocCheck.
+ * handed on by the dashboard barrel: blocks are checked through DocCheck. Once every class has
+ * registered (the modules above load before this one's body), the registry is sealed: nothing
+ * registers after it (BlockRegistry#seal).
  */
+import { BlockRegistry } from './BlockRegistry.js';
+
 export { Block, type BlockIssue } from './Block.js';
 export { BlockRegistry, type BlockClass, type BlockFactory } from './BlockRegistry.js';
 export {
@@ -34,3 +38,5 @@ export { TimelineBlock } from './TimelineBlock.js';
 export { AgendaBlock } from './AgendaBlock.js';
 export { WorkloadBlock } from './WorkloadBlock.js';
 export { UnknownBlock } from './UnknownBlock.js';
+
+BlockRegistry.instance.seal();

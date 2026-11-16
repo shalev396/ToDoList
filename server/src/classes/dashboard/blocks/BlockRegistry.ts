@@ -6,6 +6,11 @@
  *
  * A type this code does not know (none of BLOCK_TYPES) gets the fallback, UnknownBlock. A known type
  * whose class is not registered is an error, never the fallback: its rules would be skipped.
+ *
+ * Registration happens once (phase 6b review M4): a second class or factory for a type, the same
+ * class's included (a subclass's factory could stand in for it), and a second fallback are
+ * refused, so no module loaded later can swap the rules every later request is checked by. Once
+ * every class has registered, blocks/index.ts seals the registry: nothing registers after that.
  */
 import { BLOCK_TYPES, type BlockType, type Block as BlockJson } from '../../../types/builder.js';
 import type { Block } from './Block.js';
@@ -35,23 +40,50 @@ export class BlockRegistry {
 
   readonly #classes = new Map<BlockType, { cls: BlockClass; factory: BlockFactory }>();
   #fallback: BlockFactory | null = null;
+  #sealed = false;
 
   private constructor() {
     // One instance: BlockRegistry.instance.
   }
 
-  /** The class of `type`. A second, different one is refused. */
+  /** The class of `type`, once: any second registration for the type is refused. */
   register(type: BlockType, cls: BlockClass, factory: BlockFactory): void {
-    const current = this.#classes.get(type);
-    if (current !== undefined && current.cls !== cls) {
+    if (this.#classes.has(type)) {
       throw new Error(`A block class for "${type}" is already registered`);
     }
+    this.#assertOpen(`a block class for "${type}"`);
     this.#classes.set(type, { cls, factory });
   }
 
-  /** The class for the types this code does not know. */
+  /** The class for the types this code does not know, once. */
   registerFallback(factory: BlockFactory): void {
+    if (this.#fallback !== null) throw new Error('The fallback block class is already registered');
+    this.#assertOpen('the fallback block class');
     this.#fallback = factory;
+  }
+
+  /**
+   * Closes the registry once every class has registered (blocks/index.ts, after loading them all):
+   * no class registers after it. An incomplete registry (a type of BLOCK_TYPES without its class,
+   * or no fallback) refuses to close, so a missing class fails as the module loads, not later.
+   */
+  seal(): void {
+    const missing = BLOCK_TYPES.filter((type) => !this.#classes.has(type));
+    if (missing.length > 0 || this.#fallback === null) {
+      throw new Error(
+        `The block registry is incomplete: ${[...missing, ...(this.#fallback === null ? ['the fallback'] : [])].join(', ')}`,
+      );
+    }
+    this.#sealed = true;
+  }
+
+  /** Whether it is closed (seal): every class is in, and nothing more registers. */
+  get isSealed(): boolean {
+    return this.#sealed;
+  }
+
+  #assertOpen(what: string): void {
+    if (this.#sealed) throw new Error(`The block registry is sealed: ${what} cannot register now`);
   }
 
   /** The types with a class, sorted. */

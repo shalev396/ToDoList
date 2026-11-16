@@ -83,13 +83,51 @@ describe('BlockRegistry and Block.from', () => {
     }
   });
 
-  it('refuses a second, different class for a type', () => {
-    assert.throws(
-      () => {
+  it('refuses any second registration: another class, the same class, a second fallback (M4)', () => {
+    // A subclass whose factory would stand in for the list's: no catalog rule, no compile check.
+    class LaxList extends ListBlock {
+      override check(): [] {
+        return [];
+      }
+
+      static make(json: BlockJson): LaxList {
+        return new LaxList(json);
+      }
+    }
+    for (const register of [
+      (): void => {
         BlockRegistry.instance.register('list', TableBlock, (json) => Block.from(json));
       },
-      { message: 'A block class for "list" is already registered' },
+      (): void => {
+        BlockRegistry.instance.register('list', ListBlock, (json) => LaxList.make(json));
+      },
+    ]) {
+      assert.throws(register, { message: 'A block class for "list" is already registered' });
+    }
+    assert.throws(
+      () => {
+        BlockRegistry.instance.registerFallback((json) => LaxList.make(json));
+      },
+      { message: 'The fallback block class is already registered' },
     );
+    assert.equal(Block.from(jsonOf('list')).constructor, ListBlock);
+  });
+
+  it('is sealed once every class is in: nothing registers after it', () => {
+    assert.equal(BlockRegistry.instance.isSealed, true);
+    assert.throws(
+      () => {
+        BlockRegistry.instance.register('brand-new' as BlockType, ListBlock, (json) =>
+          Block.from(json),
+        );
+      },
+      {
+        message: 'The block registry is sealed: a block class for "brand-new" cannot register now',
+      },
+    );
+    // Sealing again checks again, and changes nothing.
+    BlockRegistry.instance.seal();
+    assert.deepEqual(BlockRegistry.instance.types(), [...BLOCK_TYPES].sort());
   });
 
   it('an unknown type gets UnknownBlock, with the issue the document schema reports', () => {
