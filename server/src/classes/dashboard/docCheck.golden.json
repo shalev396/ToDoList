@@ -1016,6 +1016,25 @@
           "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
         }
       }
+    },
+    "a row block with its source link off and hard-coded text": {
+      "parsed": true,
+      "issues": [
+        {
+          "pointer": "/blocks/0/viz",
+          "message": "Unrecognized keys: \"showSource\", \"caption\""
+        }
+      ],
+      "validated": {
+        "ui": {
+          "pointer": "/blocks/0/viz",
+          "message": "Unrecognized keys: \"showSource\", \"caption\""
+        },
+        "mcp": {
+          "pointer": "/blocks/0/viz",
+          "message": "Unrecognized keys: \"showSource\", \"caption\""
+        }
+      }
     }
   },
   "lints": {
@@ -2142,6 +2161,50 @@
           "code": "hardcoded_text",
           "severity": "warning",
           "pointer": "/blocks/0/rules/0/then/badge",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        }
+      ]
+    },
+    "a row block with its source link off and hard-coded text": {
+      "ui": [
+        {
+          "code": "source_link_hidden",
+          "severity": "error",
+          "pointer": "/blocks/0/viz/showSource",
+          "message": "rows always link to their source: this block cannot turn that off"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/0/viz/caption",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        }
+      ],
+      "mcp": [
+        {
+          "code": "source_link_hidden",
+          "severity": "error",
+          "pointer": "/blocks/0/viz/showSource",
+          "message": "rows always link to their source: this block cannot turn that off"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "error",
+          "pointer": "/blocks/0/viz/caption",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        }
+      ],
+      "ui with topics": [
+        {
+          "code": "source_link_hidden",
+          "severity": "error",
+          "pointer": "/blocks/0/viz/showSource",
+          "message": "rows always link to their source: this block cannot turn that off"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/0/viz/caption",
           "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
         }
       ]
@@ -4677,6 +4740,51 @@
         "warnings": []
       }
     },
+    "a row block with its source link off and hard-coded text": {
+      "ui": {
+        "valid": false,
+        "errors": [
+          {
+            "code": "invalid",
+            "pointer": "/blocks/0/viz",
+            "message": "Unrecognized keys: \"showSource\", \"caption\""
+          },
+          {
+            "code": "source_link_hidden",
+            "pointer": "/blocks/0/viz/showSource",
+            "message": "rows always link to their source: this block cannot turn that off"
+          }
+        ],
+        "warnings": [
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/0/viz/caption",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          }
+        ]
+      },
+      "mcp": {
+        "valid": false,
+        "errors": [
+          {
+            "code": "invalid",
+            "pointer": "/blocks/0/viz",
+            "message": "Unrecognized keys: \"showSource\", \"caption\""
+          },
+          {
+            "code": "source_link_hidden",
+            "pointer": "/blocks/0/viz/showSource",
+            "message": "rows always link to their source: this block cannot turn that off"
+          },
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/0/viz/caption",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          }
+        ],
+        "warnings": []
+      }
+    },
     "lint: every lint rule": {
       "ui": {
         "valid": false,
@@ -5797,6 +5905,51 @@
         ],
         "warnings": []
       }
+    },
+    "lint: a row block with its source link off and hard-coded text": {
+      "ui": {
+        "valid": false,
+        "errors": [
+          {
+            "code": "invalid",
+            "pointer": "/blocks/0/viz",
+            "message": "Unrecognized keys: \"showSource\", \"caption\""
+          },
+          {
+            "code": "source_link_hidden",
+            "pointer": "/blocks/0/viz/showSource",
+            "message": "rows always link to their source: this block cannot turn that off"
+          }
+        ],
+        "warnings": [
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/0/viz/caption",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          }
+        ]
+      },
+      "mcp": {
+        "valid": false,
+        "errors": [
+          {
+            "code": "invalid",
+            "pointer": "/blocks/0/viz",
+            "message": "Unrecognized keys: \"showSource\", \"caption\""
+          },
+          {
+            "code": "source_link_hidden",
+            "pointer": "/blocks/0/viz/showSource",
+            "message": "rows always link to their source: this block cannot turn that off"
+          },
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/0/viz/caption",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          }
+        ],
+        "warnings": []
+      }
     }
   },
   "restores": {
@@ -5990,6 +6143,16 @@
         "status": 400,
         "message": "/blocks/0/rules/0/then/badge: hard-coded text: labels come from data or i18n keys; only titles and notes hold text",
         "pointer": "/blocks/0/rules/0/then/badge"
+      }
+    },
+    "a row block with its source link off and hard-coded text": {
+      "person": {
+        "status": 409,
+        "message": "Cannot undo: the result would not be a valid dashboard"
+      },
+      "agent": {
+        "status": 409,
+        "message": "Cannot undo: the result would not be a valid dashboard"
       }
     }
   },

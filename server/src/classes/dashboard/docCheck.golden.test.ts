@@ -2,8 +2,9 @@
  * DocCheck's output, pinned before phase 6b swapped the per-block checks for the Block classes and
  * unchanged by the swap, over every template (both languages), every block type (valid, and
  * failing each catalog rule) and a set of invalid documents:
- * - the issues of `check` (their order, pointers and messages, and whether the document parsed),
- *   the depth refusal and the 50-issue cap included;
+ * - the issues of `check` as it returns them (their order, pointers and messages, their keys and
+ *   the keys' order, and whether the document parsed), the depth refusal and the 50-issue cap
+ *   included;
  * - the lint in each mode (with and without the workspace's topics);
  * - the error `validated` answers in each mode (the first issue, else the first lint error, decides
  *   a write's 400: ui and mcp differ on hard-coded text);
@@ -91,6 +92,16 @@ const HARDCODED_ONLY = documentOf([
   }),
 ]);
 
+/**
+ * A row block whose viz turns its source link off and holds hard-coded text: its lint says the
+ * source link first, then the text (Block#lint: `lintSpecific()` before `lintText()`), which is
+ * the order a builder_validate answer lists them in (phase 6b review M1). The list's viz schema
+ * refuses both keys, so the check has an issue too.
+ */
+const SOURCE_LINK_AND_TEXT = documentOf([
+  blockOf('list', 1, { viz: { kind: 'list', showSource: false, caption: 'Hello' } }),
+]);
+
 /** Documents each failing a different step of `check`, several steps at once where order matters. */
 const INVALID: Readonly<Record<string, unknown>> = {
   'a $ key anywhere': documentOf([], { $where: 1 }),
@@ -161,6 +172,7 @@ const INVALID: Readonly<Record<string, unknown>> = {
   ),
   'passes the check, fails the lint': LINT_FAILING,
   'passes the check, hard-coded text only': HARDCODED_ONLY,
+  'a row block with its source link off and hard-coded text': SOURCE_LINK_AND_TEXT,
 };
 
 /** Documents for the lint alone (each rule, both severities), linted as they are. */
@@ -197,6 +209,7 @@ const LINT_CASES: Readonly<Record<string, DashboardDraft>> = {
   ),
   'passes the check, fails the lint': LINT_FAILING,
   'passes the check, hard-coded text only': HARDCODED_ONLY,
+  'a row block with its source link off and hard-coded text': SOURCE_LINK_AND_TEXT,
 };
 
 /** Ops applied to a small page, each refused or written by the ops write path. */
@@ -255,7 +268,8 @@ function checkOf(input: unknown): CheckOutcome {
   const check = DocCheck.instance.check(input);
   return {
     parsed: check.draft !== null,
-    issues: check.issues.map(({ pointer, message }) => ({ pointer, message })),
+    // As returned: a class that adds a key to an issue, or reorders its keys, changes the golden.
+    issues: check.issues,
     validated: { ui: validatedIn(input, 'ui'), mcp: validatedIn(input, 'mcp') },
   };
 }
@@ -457,6 +471,16 @@ describe('DocCheck: the output phase 6b kept', () => {
     }
     const sourceLinks = golden.lints['every block type, the source link turned off']?.['ui'] ?? [];
     assert.ok(sourceLinks.filter((found) => found.code === 'source_link_hidden').length >= 7);
+    // One block's own lint order: its source link, then its text (M1).
+    const both = 'a row block with its source link off and hard-coded text';
+    assert.deepEqual(
+      (golden.lints[both]?.['mcp'] ?? []).map((found) => found.code),
+      ['source_link_hidden', 'hardcoded_text'],
+    );
+    assert.deepEqual(
+      (golden.validations[`lint: ${both}`]?.['mcp']?.errors ?? []).map((found) => found.pointer),
+      ['/blocks/0/viz', '/blocks/0/viz/showSource', '/blocks/0/viz/caption'],
+    );
     // The same block with a catalog issue and a query issue, and a control's own rule in between.
     const sameBlock = pointersOf('catalog and query issues in one block');
     assert.ok(

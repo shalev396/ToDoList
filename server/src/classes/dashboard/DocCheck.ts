@@ -50,15 +50,33 @@ import {
 import { AppError } from '../../errors/AppError.js';
 import type { DashboardDraft } from '../../types/builder.js';
 import type { DashboardValidation } from '../../types/dashboards.js';
-import { Block } from './blocks/index.js';
+import { Block, type BlockIssue } from './blocks/index.js';
 import { issue, lintIssue } from './dashboardRules.js';
 
-/** One block's issues, their pointers put under the block's: `/blocks/<index>…`. */
-function underBlock<TIssue extends { pointer: string }>(
-  index: number,
-  issues: readonly TIssue[],
-): TIssue[] {
-  return issues.map((found) => ({ ...found, pointer: `/blocks/${String(index)}${found.pointer}` }));
+/** Where block `index` sits in the document: its issues' pointers go under it. */
+function blockPointer(index: number, pointer: string): string {
+  return `/blocks/${String(index)}${pointer}`;
+}
+
+/**
+ * One block's check issues under the block's pointer, each built field by field (pointer, then
+ * message), so a class that returned more, or in another order, changes nothing a caller reads.
+ */
+function checkIssuesUnder(index: number, issues: readonly BlockIssue[]): BlockIssue[] {
+  return issues.map(({ pointer, message }) => ({
+    pointer: blockPointer(index, pointer),
+    message,
+  }));
+}
+
+/** One block's lint findings under the block's pointer, field by field, in the lint's own order. */
+function lintIssuesUnder(index: number, issues: readonly LintIssue[]): LintIssue[] {
+  return issues.map(({ code, severity, pointer, message }) => ({
+    code,
+    severity,
+    pointer: blockPointer(index, pointer),
+    message,
+  }));
 }
 
 export class DocCheck {
@@ -79,7 +97,7 @@ export class DocCheck {
     const { draft } = parsed;
     if (draft === null) return parsed;
     const issues = [
-      ...draft.blocks.flatMap((json, index) => underBlock(index, Block.from(json).check())),
+      ...draft.blocks.flatMap((json, index) => checkIssuesUnder(index, Block.from(json).check())),
       ...variableIssues(draft),
       ...secretIssues(draft),
     ];
@@ -92,7 +110,9 @@ export class DocCheck {
    */
   lint(doc: DashboardDraft, mode: LintMode, topicIds?: ReadonlySet<string>): LintIssue[] {
     const scope: LintScope = { mode, topicIds };
-    return doc.blocks.flatMap((json, index) => underBlock(index, Block.from(json).lint(scope)));
+    return doc.blocks.flatMap((json, index) =>
+      lintIssuesUnder(index, Block.from(json).lint(scope)),
+    );
   }
 
   /**
