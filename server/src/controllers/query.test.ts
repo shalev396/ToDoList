@@ -11,8 +11,9 @@ interface Caller {
   token: string;
 }
 
-const users: Record<'owner' | 'viewer' | 'stranger', Caller> = {
+const users: Record<'owner' | 'editor' | 'viewer' | 'stranger', Caller> = {
   owner: { id: '', token: '' },
+  editor: { id: '', token: '' },
   viewer: { id: '', token: '' },
   stranger: { id: '', token: '' },
 };
@@ -20,6 +21,7 @@ const ids = {
   workspace: '',
   dashboard: '',
   unpublished: '',
+  privateDashboard: '',
   view: '',
   privateView: '',
   otherWorkspace: '',
@@ -68,6 +70,7 @@ before(async () => {
   const models = await import('../models/index.js');
 
   users.owner = await signIn('owner@query.test');
+  users.editor = await signIn('editor@query.test');
   users.viewer = await signIn('viewer@query.test');
   users.stranger = await signIn('stranger@query.test');
 
@@ -84,6 +87,7 @@ before(async () => {
   });
   ids.workspace = workspace.id;
   await memberships.create(workspace.id, { userId: users.owner.id, role: 'owner' });
+  await memberships.create(workspace.id, { userId: users.editor.id, role: 'editor' });
   await memberships.create(workspace.id, { userId: users.viewer.id, role: 'viewer' });
 
   const local = (title: string, topicId: 'work' | 'college' | 'personal'): Promise<unknown> =>
@@ -135,6 +139,13 @@ before(async () => {
     blocks: [listBlock('blk_list_main', byTitle('Draft only'))],
   });
   ids.unpublished = unpublished.id;
+  const privateDashboard = await dashboards.create(workspace.id, {
+    ownerUserId: users.editor.id,
+    title: 'Editor private page',
+    visibility: 'private',
+    blocks: [listBlock('blk_list_main', byTitle('Draft only'))],
+  });
+  ids.privateDashboard = privateDashboard.id;
 
   const view = await views.create(workspace.id, {
     ownerUserId: users.owner.id,
@@ -296,6 +307,21 @@ describe('POST /api/private/workspaces/:wid/query', () => {
     const unpublished = { dashboardId: ids.unpublished, blockId: 'blk_list_main' };
     assert.equal((await query(unpublished)).status, 200);
     assert.equal((await query(unpublished, users.viewer)).status, 404);
+  });
+
+  it('answers a block of another member’s private dashboard exactly like an unknown id', async () => {
+    const body = { dashboardId: ids.privateDashboard, blockId: 'blk_list_main' };
+    // Its own member (an editor) runs it.
+    assert.deepEqual(titles(await query(body, users.editor)), ['Draft only']);
+    const unknown = await query({ dashboardId: 'no-such-dashboard', blockId: 'blk_list_main' });
+    assert.equal(unknown.status, 404);
+    assert.deepEqual(unknown.json, { message: 'Not found' });
+    // The workspace owner and a viewer are other members: same status and same body.
+    for (const caller of [users.owner, users.viewer]) {
+      const reply = await query(body, caller);
+      assert.equal(reply.status, 404);
+      assert.deepEqual(reply.json, unknown.json);
+    }
   });
 
   it('defaults the dashboard vars, which the request vars override', async () => {
