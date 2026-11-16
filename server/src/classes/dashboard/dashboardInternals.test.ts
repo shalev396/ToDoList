@@ -8,6 +8,10 @@
  *   History.of(…) reads and writes a dashboard's versions with no caller, so nothing else may;
  * - only Workspace loads the cascade (classes/workspace/cascade.ts): `new OwnerDeletion(id, actor)`
  *   deletes a workspace, its dashboards included, with no check of its own;
+ * - the dashboard collections are read and written only by their classes (phase 6a review M7): the
+ *   Dashboards repository by Dashboard and NewDashboard, DashboardVersions by History, Views by
+ *   View; any other class asks them (`connectorIdsIn` for ItemPolicy's share facts,
+ *   `softDeleteAllOn` for a deleted topic's pages, `load` and `pageBlock` for QueryTarget);
  * - the seed-only and global operations are named only where they belong:
  *   `listOutlines` (other members' private pages, outlined) by Dashboard, Persona and the seed;
  *   `pinAccount` (an account without a connection test) by Integration and the seed;
@@ -47,6 +51,9 @@ const BLOCK = 'classes/dashboard/blocks/Block.ts';
 const ROW_BLOCK = 'classes/dashboard/blocks/RowBlock.ts';
 const FILTER_BLOCK = 'classes/dashboard/blocks/FilterBlock.ts';
 const ACTION_BLOCK = 'classes/dashboard/blocks/ActionBlock.ts';
+const ITEM_POLICY = 'classes/policies/ItemPolicy.ts';
+const TOPIC = 'classes/workspace/Topic.ts';
+const QUERY_TARGET = 'classes/item/QueryTarget.ts';
 
 /** The steps of the document check, composed by DocCheck alone. */
 const DOCUMENT_STEPS = /\b(refusedInput|parseDraft|variableIssues|secretIssues|finalIssues)\b/;
@@ -61,6 +68,13 @@ const LOADERS: Readonly<Record<string, ReadonlySet<string>>> = {
 
 /** Doors without a caller's checks, and the modules (besides models/** and tests) that may name them. */
 const GUARDED_NAMES: readonly { pattern: RegExp; allowed: ReadonlySet<string> }[] = [
+  // The dashboard collections, each through its own class (models/** is exempt).
+  { pattern: /\bgetDashboardRepository\b/, allowed: new Set([DASHBOARD, NEW_DASHBOARD]) },
+  { pattern: /\bgetDashboardVersionRepository\b/, allowed: new Set([HISTORY]) },
+  { pattern: /\bgetViewRepository\b/, allowed: new Set([VIEW]) },
+  // What another class asks of every dashboard of a workspace, with no caller of its own.
+  { pattern: /\bconnectorIdsIn\b/, allowed: new Set([DASHBOARD, ITEM_POLICY]) },
+  { pattern: /\bsoftDeleteAllOn\b/, allowed: new Set([DASHBOARD, TOPIC]) },
   { pattern: /\blistOutlines\b/, allowed: new Set([DASHBOARD, PERSONA, SEED]) },
   { pattern: /\bpinAccount\b/, allowed: new Set([INTEGRATION, SEED]) },
   {
@@ -143,6 +157,11 @@ describe('the dashboard internals', () => {
     assert.ok(names(ROW_BLOCK, /\blintSourceLink\b/));
     assert.ok(names(FILTER_BLOCK, /\bfilterVariableIssues\b/));
     assert.ok(names(ACTION_BLOCK, /\bactionNameIssues\b/));
+    assert.ok(names(DASHBOARD, /\bgetDashboardRepository\b/));
+    assert.ok(names(HISTORY, /\bgetDashboardVersionRepository\b/));
+    assert.ok(names(VIEW, /\bgetViewRepository\b/));
+    assert.ok(names(ITEM_POLICY, /\bconnectorIdsIn\b/) && names(TOPIC, /\bsoftDeleteAllOn\b/));
+    assert.ok(names(QUERY_TARGET, /\bView\.load\b/) && names(QUERY_TARGET, /\bpageBlock\b/));
   });
 
   it('only their legitimate callers load them, and the guarded names are named only there', () => {
@@ -175,6 +194,36 @@ describe('the dashboard internals', () => {
       'mcp/tools/peek.ts: names \\blistOutlines\\b',
       'routes/private/stray.ts: loads classes/dashboard/History.ts',
       'services/pin.ts: names \\bpinAccount\\b',
+    ]);
+  });
+
+  it('a class that reads a dashboard collection itself is caught (phase 6a review M7)', () => {
+    const tree = new Map(files);
+    tree.set(
+      QUERY_TARGET,
+      `${files.get(QUERY_TARGET) ?? ''}
+import { getViewRepository } from '../../models/index.js';
+export const own = getViewRepository;`,
+    );
+    tree.set(
+      ITEM_POLICY,
+      `${files.get(ITEM_POLICY) ?? ''}
+export const raw = async () => (await import('../../models/index.js')).getDashboardRepository;`,
+    );
+    tree.set(
+      TOPIC,
+      `${files.get(TOPIC) ?? ''}
+export const versions = 'getDashboardVersionRepository';`,
+    );
+    tree.set(
+      'mcp/tools/peek.ts',
+      `export const go = (d: { connectorIdsIn(): void }) => d.connectorIdsIn();`,
+    );
+    assert.deepEqual(violations(tree), [
+      `${QUERY_TARGET}: names ${/\bgetViewRepository\b/.source}`,
+      `${ITEM_POLICY}: names ${/\bgetDashboardRepository\b/.source}`,
+      `${TOPIC}: names ${/\bgetDashboardVersionRepository\b/.source}`,
+      `mcp/tools/peek.ts: names ${/\bconnectorIdsIn\b/.source}`,
     ]);
   });
 

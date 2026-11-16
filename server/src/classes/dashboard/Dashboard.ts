@@ -1,11 +1,11 @@
 /**
  * Dashboards (BUILDER.md §5–§9, DATA.md §3.11–3.12): the life of one dashboard. Read and list;
  * edit with builder ops (validated, linted, versioned, audited); undo, redo and revert through the
- * history; publish; delete. With NewDashboard (making one) the code that reads or writes
- * Dashboards, until Phase 7 / M7 (QueryTarget, ItemPolicy and Topic still read them); History is
- * the only code for DashboardVersions. Collaborators: DashboardConnectors (the connector rules),
- * BlockPreviews (preview rows), DashboardDryRun (a dry run's answer) and
- * DocCheck (the one check of a document).
+ * history; publish; delete. With NewDashboard (making one) the only code that reads or writes
+ * Dashboards, as History is for DashboardVersions and View for Views (dashboardInternals.test.ts):
+ * other classes ask it (QueryTarget, ItemPolicy, Topic). Collaborators: DashboardConnectors (the
+ * connector rules), BlockPreviews (preview rows), DashboardDryRun (a dry run's answer) and DocCheck
+ * (the one check of a document).
  *
  * - Every write names the version it read (`ifVersion`, the API's `expectedVersion`). A stale one
  *   is a ConflictError (409 with the current version), and the write itself is one atomic
