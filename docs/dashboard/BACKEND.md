@@ -124,7 +124,7 @@ Collections: `Dashboards`, `DashboardVersions`, `Views` (DATA.md §3.11–3.13).
   - There are no inbound hook routes: the Apps Script bridge was removed.
 
 **Agent keys** (for MCP, MCP.md §4)
-- `GET|POST /workspaces/:wid/agent-keys` · `DELETE …/agent-keys/:id`. `POST` returns the raw `elk_…` key **once**; only `keyHash` is stored in `AgentKeys`. MCP clients can also sign in with OAuth (`/api/.well-known/*`, `/authorize`, `/token`, `/register`, the consent page behind `/api/private/mcp-oauth/requests/:id`), which creates a grant row in the same collection (MCP.md §4).
+- `GET|POST /workspaces/:wid/agent-keys` · `DELETE …/agent-keys/:id`. `POST` returns the raw `elk_…` key **once**; only `keyHash` is stored in `AgentKeys`. MCP clients can also sign in with OAuth (TodoList is its own authorization server under `/api/mcp/oauth`: authorize, token, register, revoke and the metadata documents; the consent page calls `/api/private/mcp-oauth/requests/:id`), which creates a grant row in the same collection (MCP.md §4).
 
 ---
 

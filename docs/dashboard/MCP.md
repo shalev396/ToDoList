@@ -173,32 +173,68 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 }
 ```
 
-### 7.2 Local items (`items:write`; `provider: "local"` only)
+### 7.2 To-dos and items (`items:write`)
 | Tool | Purpose | Ann. |
 |---|---|---|
-| `create_todo` | Create a local `kind: "todo"` item | D=false |
-| `update_todo` | Patch title, `dueAt`, priority, area, container or note | D=false, I |
+| `create_todo` | Create a local `kind: "todo"` item; optionally also in the caller's own providers (`targets`), or as a recurring event in the workspace calendar (`recurrence`) | D=false, open-world |
+| `update_todo` | Change an item by id: a local to-do's fields, or a **mirrored** item's provider fields (written back) and local overrides | D=false, I, open-world |
 | `complete_todo` | Set `status: done` or `open` | D=false, I |
 | `delete_todo` | Soft delete (`deletedAt`); needs `confirm` | D |
 | `set_overlay` | Pin, hide or annotate a **mirrored** item via DATA.md `overlay.*` (local-only, never written to the provider) | D=false, I |
 
 ```json
-// create_todo.inputSchema
+// create_todo.inputSchema (strict)
 {
   "type": "object",
   "required": ["title"],
   "properties": {
-    "title": { "type": "string", "minLength": 1, "maxLength": 300 },
-    "note": { "type": "string", "maxLength": 5000 },
+    "title": { "type": "string", "minLength": 1 },
+    "note": { "type": "string" },
     "dueAt": { "type": "string", "format": "date-time" },
-    "area": { "enum": ["work", "college", "personal"] },
+    "allDay": { "type": "boolean", "description": "The due date has no time of day" },
+    "topic": { "type": "string", "description": "A topic slug as workspace_get lists them; null: Unsorted" },
     "containerId": { "type": "string" },
     "priority": { "type": "integer", "minimum": 0, "maximum": 4 },
-    "idempotencyKey": { "type": "string", "description": "Makes retries safe" }
+    "idempotencyKey": { "type": "string", "description": "Makes retries safe: the same key gives back the same to-do" },
+    "targets": { "type": "array", "description": "Also create it in these of the caller's own provider integrations (needs confirm and providers:create)" },
+    "recurrence": { "type": "array", "items": { "type": "string" }, "minItems": 1, "maxItems": 5, "description": "An RRULE line: a recurring to-do in the workspace calendar" },
+    "confirm": { "type": "boolean" }
   },
   "additionalProperties": false
 }
 ```
+
+#### `create_todo` and recurrence
+
+A recurring to-do exists **in Google Calendar only**, never as a local to-do:
+
+- `recurrence` is an `RRULE:` line (the schema takes an array of one to five strings, checked by `RecurrenceRule`: `UNTIL` must be a date for an all-day event and a UTC time for a timed one). `dueAt` is required (400 `needs_due_date`) and is its first occurrence.
+- It is created as a **recurring event in the workspace's primary calendar** (the one calendar the workspace owner picked, DATA.md §3.2), and stored at once as that event's item. The answer's `item` is that event; there is no local to-do and no `providerCopies`.
+- It needs the `providers:create` scope and `confirm: true`; it takes no `targets` (400) and no `containerId` (400). Only the owner of the integration the primary calendar is on can create it, and only while that integration is read & write (`integration_not_owner` 403, `integration_read_only` 409; 409 `primary_calendar_unset` when the workspace has none; `provider_writes_off` on demo data; 429 `create_rate_limited`).
+- A `topic` files it and a `priority` is kept as a TodoList override; with an `idempotencyKey`, a retry gives back the same event (`created: false`). If Google created the event and saving it here failed: 409 `created_not_stored`.
+- Without `recurrence`, a to-do made with `targets` is copied to those providers (each result in `providerCopies`); it only ever creates, never edits, closes or deletes at a provider.
+
+#### `update_todo`: local to-dos versus mirrored items
+
+`update_todo` takes `id` and at least one change (`title`, `note`, `dueAt`, `allDay`, `startAt`, `endAt`, `topic`, `containerId`, `priority`, `status`; `null` clears a note, a date, a container or a priority), plus `notifyGuests` and `confirm`. What it does depends on the item:
+
+- **A local to-do:** the change is applied in full (editor or above, any item they can see). No scope beyond `items:write`, no `confirm`. A to-do's title and status cannot be `null`.
+- **A mirrored item** (from Jira, ClickUp, Linear, GitHub or Google Calendar), split field by field by the server, so one call can do both halves:
+  - **Provider fields, written back** when its integration is **read & write**. Which fields, per provider and kind (each definition's `writableFields`): Jira issues title, status, due date, priority; ClickUp tasks title, status, due date, start date, priority; Linear issues title, status, due date, priority; GitHub issues title and status (never pull requests); Google Calendar events title and time (`startAt`, `endAt`, `allDay`). Only the **owner of the integration** may write there (403 `integration_not_owner` for any other member); the call needs the **`providers:create` scope and `confirm: true`**, checked before anything is sent (403 / 400 otherwise). An event with other guests also needs `notifyGuests` (409 `event_has_guests`). A written field's local override is dropped; a field set to what the item already has is not sent.
+  - **TodoList-only overrides**, kept in `overlay.overrides` and never sent: the fields the provider lacks for that item (for example a start date on a Jira issue, or a priority on a Google Calendar event), among title, status, due date, start and priority. They are the item's effective value in lists, queries and MCP summaries (`override ?? source`), and the sync never touches them. **`null` clears one** (a field the provider takes cannot be cleared, only changed). This half needs only `items:write`: it works while the integration is read-only and for any editor who sees the item.
+  - **Anything else** (a note on the source, `topic`, `containerId` of a mirrored item) is edited at its source: the whole call is refused with 409 and the item's "Open in" link. Use `set_overlay` for a pin, hide or private note, and `set_item_attributes` for custom attributes.
+
+Errors a mirrored update can answer (each carries its `code`; the audit log records field names, never values):
+
+| Code | Status | Meaning |
+|---|---|---|
+| `integration_read_only` | 409 | The change needs the provider but its integration is read-only; its owner can switch it to read & write. Nothing was sent. |
+| `field_not_writable` | 422 | The provider does not take that field for this item (Jira has no start date, GitHub's due date from a board, a pull request takes no write-back). Nothing was sent; the answer names the field and where to change it. |
+| `provider_partial_write` | 409 | A write made of several provider calls stopped part-way (Jira's fields, then its transition). The response names what was `written` (saved here and audited), what was refused and what is uncertain, and which local overrides were kept. |
+| `provider_no_answer` | 502 | The change was sent and no answer came back (a timeout or a 5xx): it may or may not have been made there. Check at the provider before retrying; the audit entry is `outcome: unknown`. |
+| `provider_unreachable` | 502 | The provider could not be reached before anything was sent. Nothing changed; try again. |
+| `provider_written_not_stored` | 409 | The provider took the change but saving it here failed: TodoList may show the old value until the next sync. Not a "could not be saved". |
+| `integration_not_owner` | 403 | The provider half belongs to the integration's owner (the item may be shared with you). |
 
 ### 7.3 Sync
 | Tool | Purpose | Scope | Ann. |
