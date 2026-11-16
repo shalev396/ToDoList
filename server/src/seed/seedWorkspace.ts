@@ -5,10 +5,10 @@
  *
  * It goes through the same classes a person's clicks do, acting as the workspace's owner, and
  * reaches the database only through them:
- * 1. one integration per demo account (Integration.connectWithKey), on a stable account
- *    (Integration#pinAccount), marked `demo` (it never syncs, is never tested against its provider
- *    and is never written to: it stays read-only), with a FAKE credential
- *    (Integration#saveCredential: sealed like any other, never stored in plaintext);
+ * 1. one integration per demo account (Integration.connectAllWithKey, at once), on a stable
+ *    account (Integration#pinAccount), marked `demo` (it never syncs, is never tested against its
+ *    provider and is never written to: it stays read-only), with a FAKE credential
+ *    (Integration.saveCredentials, at once: sealed like any other, never stored in plaintext);
  * 2. the demo area rules (`shalev396/*` → personal, `Braude*` → college);
  * 3. local to-dos (Todo.createAll, in one write): overdue, today, later this week and undated;
  * 4. the template dashboards (Dashboard.instantiateAll, at once), published; what exists is
@@ -19,12 +19,14 @@
  *    time zone, so they look exactly like a real sync's. Records without a URL are counted as the
  *    run's failures and never stored, as in any sync.
  *
- * Steps that don't depend on each other run at once, since every query is a round trip to the
- * database (from a local API to a stage's, a long one): 1 (the integrations in demo order, the
- * credentials at once), 2 (after 1) and 3 together; then 4 (the pages in demo order) beside 5.
- * A step that fails is waited out with the rest, so nothing is still writing when the seed
- * throws. What lists in creation order (the integrations, the pages, so the template blocks'
- * connectors) is made in demo order, as before.
+ * Every query is a round trip to the database (from a local API to a stage's, a long one), so
+ * each step writes its rows in one batch (a few dozen round trips in all, not hundreds), and
+ * steps that don't depend on each other run at once: once the topics exist, 3 and the connects
+ * of 1; after the connects, 4 (the pages bind the integrations by id and provider), 2, and the
+ * accounts and credentials of 1; after 1 and 2, 5. A step that fails is waited out with the rest,
+ * so nothing is still writing when the seed throws. What lists in creation order (the
+ * integrations, the pages, so the template blocks' connectors; the to-dos) is written in demo
+ * order, each a millisecond after the one before it, so the order holds within a batch.
  *
  * Idempotent: what exists is found by its natural key (or its seed id) and left as it is, and the
  * syncs leave unchanged items untouched (same hash: no `updatedAt` bump). A to-do its owner
@@ -66,6 +68,7 @@ import {
 import { fakeCredential } from './fakeCredentials.js';
 import { seedId } from './ids.js';
 import { demoDataRefusal } from './stage.js';
+import { settleAll } from '../utils/concurrency.js';
 
 export interface SeedOptions {
   /** The language of the dashboards' titles. Default: en. */
@@ -107,18 +110,6 @@ interface Connected {
   integration: Integration;
 }
 
-/**
- * Waits for every task to end, so none is left running behind a failure; then answers their
- * results in order, or throws the first failure.
- */
-async function allOrFirstFailure<T>(tasks: readonly Promise<T>[]): Promise<T[]> {
-  const settled = await Promise.allSettled(tasks);
-  return settled.map((result) => {
-    if (result.status === 'rejected') throw result.reason;
-    return result.value;
-  });
-}
-
 function connectionOf(spec: DemoIntegration): ConnectionInput {
   return {
     provider: spec.provider,
@@ -138,45 +129,79 @@ function demoAccountId(spec: DemoIntegration): string {
   return isPlaceholderAccountId(planned) ? seedId(`account/${spec.key}`) : planned;
 }
 
-/** The demo integration, found by its account (or as the seed left it unpinned), else connected. */
-async function ensureIntegration(caller: Caller, spec: DemoIntegration): Promise<Integration> {
+/** The owner's demo integration of `spec`, found by its account (or as the seed left it unpinned). */
+function findIntegration(
+  own: readonly Integration[],
+  spec: DemoIntegration,
+): Integration | undefined {
   const accountId = demoAccountId(spec);
-  // The owner's own: an integration belongs to the member who connected it (PERMISSIONS-V2).
-  const existing = (await Integration.listOwn(caller)).filter(
-    (integration) => integration.provider === spec.provider,
-  );
-  const integration =
+  const existing = own.filter((integration) => integration.provider === spec.provider);
+  return (
     existing.find((found) => found.accountId === accountId) ??
-    existing.find(
-      (found) => isPlaceholderAccountId(found.accountId) && found.label === spec.label,
-    ) ??
-    (await Integration.connectWithKey(caller, connectionOf(spec), { demo: true }));
-  if (integration.accountId === accountId) return integration;
-  const pinned = await integration.pinAccount(accountId);
-  if (pinned === null) throw new Error(`seedWorkspace: could not set the ${spec.key} account`);
-  return pinned;
+    existing.find((found) => isPlaceholderAccountId(found.accountId) && found.label === spec.label)
+  );
 }
 
-/** A FAKE credential, through the credential PUT's class, unless the integration has one. */
-async function ensureCredential(caller: Caller, { spec, integration }: Connected): Promise<void> {
-  if (await integration.hasCredential()) return;
-  await (
-    await Integration.findOwn(caller, integration.id)
-  ).saveCredential(caller, fakeCredential(spec.authMethod, spec.key));
+/** The integration on its demo account (Integration#pinAccount, once). */
+async function pinned({ spec, integration }: Connected): Promise<Connected> {
+  const accountId = demoAccountId(spec);
+  if (integration.accountId === accountId) return { spec, integration };
+  const pinnedOne = await integration.pinAccount(accountId);
+  if (pinnedOne === null) throw new Error(`seedWorkspace: could not set the ${spec.key} account`);
+  return { spec, integration: pinnedOne };
 }
 
 /**
- * Every demo integration, in demoData.ts order, each with its credential. They connect one after
- * another, so they list by creation in demo order (the integration lists, the template blocks'
- * connectors); the credentials are saved at once.
+ * Every demo integration, in demoData.ts order. The missing ones connect at once
+ * (Integration.connectAllWithKey) in demo order, so they list by creation in demo order (the
+ * integration lists, the template blocks' connectors).
  */
-async function ensureIntegrations(caller: Caller): Promise<Connected[]> {
-  const connected: Connected[] = [];
-  for (const spec of DEMO_INTEGRATIONS) {
-    connected.push({ spec, integration: await ensureIntegration(caller, spec) });
-  }
-  await allOrFirstFailure(connected.map((entry) => ensureCredential(caller, entry)));
-  return connected;
+async function connectIntegrations(caller: Caller): Promise<Connected[]> {
+  // The owner's own: an integration belongs to the member who connected it (PERMISSIONS-V2).
+  const own = await Integration.listOwn(caller);
+  const found = DEMO_INTEGRATIONS.map((spec) => ({
+    spec,
+    integration: findIntegration(own, spec),
+  }));
+  const added = await Integration.connectAllWithKey(
+    caller,
+    found.flatMap(({ spec, integration }) =>
+      integration === undefined ? [connectionOf(spec)] : [],
+    ),
+    { demo: true },
+  );
+  const remaining = [...added];
+  return found.map(({ spec, integration }) => {
+    const made = integration ?? remaining.shift();
+    if (made === undefined) throw new Error(`seedWorkspace: ${spec.key} was not connected`);
+    return { spec, integration: made };
+  });
+}
+
+/**
+ * The connected integrations on their demo accounts (Integration#pinAccount) and with their
+ * credentials: the ones they lack saved at once (Integration.saveCredentials: FAKE ones, sealed
+ * like any other).
+ */
+async function readyIntegrations(
+  caller: Caller,
+  connected: readonly Connected[],
+): Promise<Connected[]> {
+  const ready = await settleAll(connected.map(pinned));
+  const withCredential = await Integration.withCredentials(
+    caller.workspaceId,
+    ready.map(({ integration }) => integration),
+  );
+  await Integration.saveCredentials(
+    caller,
+    ready
+      .filter(({ integration }) => !withCredential.has(integration.id))
+      .map(({ spec, integration }) => ({
+        integration,
+        body: fakeCredential(spec.authMethod, spec.key),
+      })),
+  );
+  return ready;
 }
 
 /** The ids of the workspace's default topics, by slug (the seed makes sure all three exist). */
@@ -238,22 +263,24 @@ async function ensureTodos(caller: Caller, now: Date, topics: TopicIds): Promise
 
 /**
  * A new workspace without sample data starts minimal (D1): the Personal topic and one empty
- * Personal page. The demo wants all three default topics and its own template pages, so the
- * missing topics are added and that empty page, if nobody has put anything on it, is deleted (its
- * template page replaces it). Answers the default topics' ids.
+ * Personal page. The demo wants all three default topics: the missing ones are added. Answers the
+ * default topics' ids.
  */
-async function leaveMinimalShape(caller: Caller, language: TemplateLanguage): Promise<TopicIds> {
+async function defaultTopics(caller: Caller, language: TemplateLanguage): Promise<TopicIds> {
   const all = await Topic.ensureDefaults(caller.workspaceId, DEFAULT_TOPIC_SLUGS, language);
   const idOf = (slug: DefaultTopicSlug): string => {
     const topic = all.find((entry) => entry.slug === slug);
     if (topic === undefined) throw new Error(`seedWorkspace: no ${slug} topic`);
     return topic.id;
   };
-  const topics: TopicIds = {
-    work: idOf('work'),
-    college: idOf('college'),
-    personal: idOf('personal'),
-  };
+  return { work: idOf('work'), college: idOf('college'), personal: idOf('personal') };
+}
+
+/**
+ * The minimal workspace's empty Personal page, if nobody has put anything on it, is deleted: the
+ * demo's template page replaces it.
+ */
+async function deleteEmptyPage(caller: Caller, topics: TopicIds): Promise<void> {
   const empty = (await Dashboard.listOutlines(caller)).filter(
     (dashboard) =>
       dashboard.templateKey === null &&
@@ -265,7 +292,6 @@ async function leaveMinimalShape(caller: Caller, language: TemplateLanguage): Pr
   for (const dashboard of empty) {
     await (await Dashboard.load(caller, dashboard.id, Dashboard.Operation.delete)).delete(caller);
   }
-  return topics;
 }
 
 /**
@@ -460,36 +486,41 @@ export async function seedWorkspace(
   if (refusal !== null) throw new Error(refusal);
   const ownerId = await Workspace.ownerOf(workspaceId);
   if (ownerId === null) throw new Error('seedWorkspace: no such workspace');
-  const first = await Caller.enter(workspaceId, Actor.user(ownerId));
-  if (first?.role.name !== 'owner') {
-    throw new Error('seedWorkspace: the workspace has no owner');
-  }
-
-  const language = options.language ?? 'en';
-  const topics = await leaveMinimalShape(first, language);
-  // Read again: the caller carries the settings.
   const caller = await Caller.enter(workspaceId, Actor.user(ownerId));
   if (caller?.role.name !== 'owner') {
     throw new Error('seedWorkspace: the workspace has no owner');
   }
-  // The to-dos need only the topics. The rules wait for the integrations: connecting GitHub
-  // appends its own topic rule to the same list ensureTopicRules rewrites.
-  const integrationsDone = ensureIntegrations(caller);
-  const rulesDone = integrationsDone.then(() => ensureTopicRules(caller, topics));
+
+  const language = options.language ?? 'en';
+  const topics = await defaultTopics(caller, language);
+  // The empty page, the to-dos and the connects need only the topics.
+  const emptyPageGone = deleteEmptyPage(caller, topics);
   const todosDone = ensureTodos(caller, now, topics);
-  await Promise.allSettled([integrationsDone, rulesDone, todosDone]);
-  const connected = await integrationsDone;
-  await rulesDone;
-  const todoKeys = await todosDone;
-  // The dashboards bind the owner's integrations, and the syncs file by the topic rules; neither
-  // reads what the other writes.
-  const dashboardsDone = ensureDashboards(caller, language, topics).then(async (count) => {
+  const connectedDone = connectIntegrations(caller);
+  // The dashboards bind the owner's integrations by id and provider: they follow the connects.
+  const dashboardsDone = connectedDone.then(async (connected) => {
+    const count = await ensureDashboards(caller, language, topics);
     await ensureConnectorBlocks(caller, connected, language);
     return count;
   });
-  const runsDone = syncAll(workspaceId, connected, now, caller.settings.timezone);
-  await Promise.allSettled([dashboardsDone, runsDone]);
-  const dashboards = await dashboardsDone;
-  const runs = await runsDone;
+  // The rules wait for the connects too: connecting GitHub appends its own topic rule to the same
+  // list ensureTopicRules rewrites. Beside them, each integration gets its account and credential.
+  const rulesDone = connectedDone.then(() => ensureTopicRules(caller, topics));
+  const readyDone = connectedDone.then((connected) => readyIntegrations(caller, connected));
+  // The syncs file by the rules, on the integrations' accounts; the dashboards never read what
+  // they write.
+  const runsDone = settleAll([readyDone, rulesDone] as const).then(([ready]) =>
+    syncAll(workspaceId, ready, now, caller.settings.timezone),
+  );
+  // A step that fails is waited out with the rest, so nothing is still writing when this throws.
+  const [, todoKeys, , dashboards, , connected, runs] = await settleAll([
+    emptyPageGone,
+    todosDone,
+    connectedDone,
+    dashboardsDone,
+    rulesDone,
+    readyDone,
+    runsDone,
+  ] as const);
   return summarize(caller, connected, runs, todoKeys, dashboards);
 }

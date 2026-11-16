@@ -8,6 +8,7 @@ import {
   type ICredentialRepository,
   type KeyProviderName,
   type SealedCredential,
+  type UpsertSealedCredentialInput,
 } from '../definitions/Credential.js';
 import { setFields, uuidIdField } from './common.js';
 
@@ -115,28 +116,53 @@ function toSealedCredential(doc: CredentialFields): SealedCredential {
   };
 }
 
+/** The write that stores a sealed credential; a new one takes `id`. */
+function sealedUpdate(
+  input: UpsertSealedCredentialInput,
+  id: string,
+): mongoose.UpdateQuery<unknown> {
+  return {
+    $set: {
+      ownerUserId: input.ownerUserId,
+      kind: input.kind,
+      scopes: input.scopes ?? [],
+      expiresAt: input.expiresAt ?? null,
+      enc: input.enc,
+      ...setFields(input, ['rotatedAt']),
+    },
+    // Any replacement moves the version on, so a refresh in flight can't overwrite it.
+    $inc: { version: 1 },
+    $setOnInsert: { _id: id },
+  };
+}
+
 export const CredentialRepository: ICredentialRepository = {
   async upsertSealed(workspaceId, integrationId, input) {
     // A credential for this integration under another workspace makes the insert fail on the
     // unique integrationId index instead of overwriting it.
     const doc = await CredentialMongoModel.findOneAndUpdate(
       { workspaceId, integrationId },
-      {
-        $set: {
-          ownerUserId: input.ownerUserId,
-          kind: input.kind,
-          scopes: input.scopes ?? [],
-          expiresAt: input.expiresAt ?? null,
-          enc: input.enc,
-          ...setFields(input, ['rotatedAt']),
-        },
-        // Any replacement moves the version on, so a refresh in flight can't overwrite it.
-        $inc: { version: 1 },
-        $setOnInsert: { _id: randomUUID() },
-      },
+      sealedUpdate(input, randomUUID()),
       { upsert: true, new: true, runValidators: true },
     ).lean<CredentialMetaFields>();
     return toCredentialMeta(doc);
+  },
+
+  // upsertSealed()'s writes without its `runValidators` (a bulk write has none): Credential seals
+  // what it writes.
+  async upsertSealedMany(workspaceId, entries) {
+    if (entries.length === 0) return 0;
+    const result = await CredentialMongoModel.bulkWrite(
+      entries.map(({ integrationId, id, input }) => ({
+        updateOne: {
+          filter: { workspaceId, integrationId },
+          update: sealedUpdate(input, id),
+          upsert: true,
+        },
+      })),
+      { ordered: true },
+    );
+    return result.upsertedCount;
   },
 
   async replaceSealedIf(workspaceId, integrationId, expectedVersion, enc) {
@@ -157,6 +183,15 @@ export const CredentialRepository: ICredentialRepository = {
       .select('+enc')
       .lean<CredentialFields>();
     return doc ? toSealedCredential(doc) : null;
+  },
+
+  async findMetaMany(workspaceId, integrationIds) {
+    if (integrationIds.length === 0) return [];
+    const docs = await CredentialMongoModel.find({
+      workspaceId,
+      integrationId: { $in: [...integrationIds] },
+    }).lean<CredentialMetaFields[]>();
+    return docs.map(toCredentialMeta);
   },
 
   async findMeta(workspaceId, integrationId) {

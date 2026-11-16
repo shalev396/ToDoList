@@ -307,6 +307,19 @@ export abstract class Integration<
   }
 
   /**
+   * `connectWithKey` for several connections at once, in a handful of round trips whatever their
+   * number (IntegrationConnector#connectAllWithKey: the demo seed's), in the order given: they
+   * list by creation in that order.
+   */
+  static connectAllWithKey(
+    caller: Caller,
+    inputs: readonly ConnectionInput[],
+    options: { demo?: boolean } = {},
+  ): Promise<Integration[]> {
+    return Integration.#connector.connectAllWithKey(caller, inputs, options);
+  }
+
+  /**
    * The ONE way an OAuth result becomes an integration (Google Calendar, GitHub, Jira, ClickUp,
    * Linear): create it for the provider account, or reconnect the one the member has
    * (IntegrationConnector#upsertOAuth: the ownership rules), seal the credential, clear the
@@ -687,6 +700,62 @@ export abstract class Integration<
       lastError: null,
       ...(rotating ? { expiresAt: null } : {}),
     });
+  }
+
+  /**
+   * `saveCredential` for several of the caller's integrations at once, in a handful of round trips
+   * whatever their number (the demo seed's): every secret parsed first (a 400 writes nothing),
+   * then sealed (Credential.sealAll), then every integration's failed runs reset and its status
+   * cleared, each in one write.
+   */
+  static async saveCredentials(
+    caller: Caller,
+    entries: readonly { integration: Integration; body: unknown }[],
+  ): Promise<void> {
+    const parsed = entries.map(({ integration, body }) => {
+      integration.assertOwner(caller);
+      return {
+        integration,
+        secret: integration.auth.parseCredential(integration.authMethod, body),
+      };
+    });
+    if (parsed.length === 0) return;
+    const { workspaceId } = caller;
+    const ids = parsed.map(({ integration }) => integration.id);
+    const rotating = await Credential.sealAll(
+      parsed.map(({ integration, secret }) => ({
+        workspaceId,
+        integrationId: integration.id,
+        provider: integration.provider,
+        ownerUserId: caller.userId,
+        kind: integration.authMethod,
+        secret,
+      })),
+      caller.actor,
+    );
+    // Reconnected, as saveCredential leaves each one: its failed runs and its status, at once.
+    const integrations = await getIntegrationRepository();
+    await Promise.all([
+      SyncCursors.saveAll(
+        workspaceId,
+        ids.map((id) => ({
+          integrationId: id,
+          resource: SyncCursors.RUN,
+          patch: { consecutiveErrors: 0 },
+        })),
+      ),
+      integrations.updateMany(
+        workspaceId,
+        ids.map((id) => ({
+          id,
+          patch: {
+            status: 'active' as const,
+            lastError: null,
+            ...(rotating.has(id) ? { expiresAt: null } : {}),
+          },
+        })),
+      ),
+    ]);
   }
 
   /**
@@ -1224,6 +1293,17 @@ export abstract class Integration<
         await (await getIntegrationRepository()).recordSyncResult(workspaceId, id, result);
       },
     };
+  }
+
+  /** Which of these integrations have a credential saved (one read; nothing is opened). */
+  static async withCredentials(
+    workspaceId: string,
+    integrations: readonly Integration[],
+  ): Promise<Set<string>> {
+    const ids = integrations
+      .filter((integration) => integration.workspaceId === workspaceId)
+      .map((integration) => integration.id);
+    return new Set((await Credential.metaOf(workspaceId, ids)).map((meta) => meta.integrationId));
   }
 
   /** Whether a credential is saved (its metadata: nothing is opened). */

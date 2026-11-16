@@ -64,13 +64,27 @@ export interface ConnectorPort {
 type IntegrationCap = 'member' | 'workspace';
 
 /** A connect within the caps: the new integration, or which cap was full. */
-type WithinCaps = { created: IntegrationData; cap: null } | { created: null; cap: IntegrationCap };
+type WithinCaps =
+  | { created: IntegrationData[]; cap: null }
+  | { created: null; cap: IntegrationCap };
 
 /** MongoDB's E11000: here, an account already connected in the workspace. */
 function isDuplicateKey(error: unknown): boolean {
   return (
     typeof error === 'object' && error !== null && (error as { code?: unknown }).code === 11000
   );
+}
+
+/**
+ * Which input a duplicate account refused (E11000): the first one a batch write refused (its
+ * write error's index; 0 for a single insert), or null for any other error.
+ */
+function duplicateIndex(error: unknown): number | null {
+  const { writeErrors } = (error ?? {}) as { writeErrors?: unknown };
+  const first: unknown = Array.isArray(writeErrors) ? writeErrors[0] : writeErrors;
+  if (!isDuplicateKey(error) && !isDuplicateKey(first)) return null;
+  const { index } = (first ?? {}) as { index?: unknown };
+  return typeof index === 'number' ? index : 0;
 }
 
 export class IntegrationConnector {
@@ -93,35 +107,65 @@ export class IntegrationConnector {
     input: ConnectionInput,
     options: { demo?: boolean } = {},
   ): Promise<Integration> {
+    const [created] = await this.connectAllWithKey(caller, [input], options);
+    if (created === undefined) throw new Error('IntegrationConnector: nothing was connected');
+    return created;
+  }
+
+  /**
+   * `connectWithKey` for several connections at once, in a handful of round trips whatever their
+   * number (the demo seed's): the topics read once, both caps checked for all of them (before and
+   * after, as one connect is), the integrations inserted in one write in the order given (each a
+   * millisecond after the one before it, so they list in that order), each class's connect hook in
+   * that order, then the audit entries in one write. A duplicate account stops it at that one
+   * (409); the ones before it stay connected, as one connect after another would leave them.
+   */
+  async connectAllWithKey(
+    caller: Caller,
+    inputs: readonly ConnectionInput[],
+    options: { demo?: boolean } = {},
+  ): Promise<Integration[]> {
     // Requests route through requireWorkspace(minRole) too; the class checks again for MCP.
     caller.require('editor');
     const workspaceId = caller.workspaceId;
-    if (options.demo !== true) assertUserConnectable(input.provider);
-    const plan = requireDefinition(input.provider).planConnection(input);
-    if (plan.topicId !== undefined && plan.topicId !== null) {
-      await Topic.assertOf(workspaceId, plan.topicId);
-    }
-    const topicId =
-      plan.topicId === undefined
-        ? ((await Topic.bySlug(workspaceId, plan.defaultTopic))?.id ?? null)
-        : plan.topicId;
+    const plans = inputs.map((input) => {
+      if (options.demo !== true) assertUserConnectable(input.provider);
+      return requireDefinition(input.provider).planConnection(input);
+    });
+    if (plans.length === 0) return [];
+    await Topic.assertAllOf(workspaceId, [
+      ...new Set(plans.flatMap(({ topicId }) => topicId ?? [])),
+    ]);
+    const bySlug = plans.some(({ topicId }) => topicId === undefined)
+      ? new Map((await Topic.list(workspaceId)).map((topic) => [topic.slug, topic.id]))
+      : new Map<string, string>();
+    const planned = plans.map((plan) => ({
+      plan,
+      topicId: plan.topicId === undefined ? (bySlug.get(plan.defaultTopic) ?? null) : plan.topicId,
+    }));
     let result: WithinCaps;
     try {
-      result = await IntegrationConnector.#createWithinCaps(workspaceId, {
-        connectedBy: caller.userId,
-        ownerUserId: caller.userId,
-        provider: plan.provider,
-        accountId: plan.accountId,
-        label: plan.label,
-        authMethod: plan.authMethod,
-        topicId,
-        config: plan.config,
-        status: 'error',
-        lastError: { ...CREDENTIAL_MISSING },
-        ...(options.demo === true ? { demo: true } : {}),
-      });
+      result = await IntegrationConnector.#createWithinCaps(
+        workspaceId,
+        caller.userId,
+        planned.map(({ plan, topicId }) => ({
+          connectedBy: caller.userId,
+          ownerUserId: caller.userId,
+          provider: plan.provider,
+          accountId: plan.accountId,
+          label: plan.label,
+          authMethod: plan.authMethod,
+          topicId,
+          config: plan.config,
+          status: 'error',
+          lastError: { ...CREDENTIAL_MISSING },
+          ...(options.demo === true ? { demo: true } : {}),
+        })),
+      );
     } catch (error) {
-      if (isDuplicateKey(error)) {
+      const duplicate = duplicateIndex(error);
+      const plan = duplicate === null ? undefined : planned[duplicate]?.plan;
+      if (plan !== undefined) {
         throw new AppError(
           409,
           `You already connected this ${plan.provider} account (${plan.label}) in this workspace`,
@@ -138,11 +182,15 @@ export class IntegrationConnector {
           : `A workspace can have at most ${String(LIMITS.integrationsPerWorkspace)} integrations`,
       );
     }
-    return this.#created(caller, result.created, {
-      provider: plan.provider,
-      topicId,
-      authMethod: plan.authMethod,
-    });
+    return this.#createdAll(
+      caller,
+      result.created.map((data, index) => {
+        const entry = planned[index];
+        if (entry === undefined) throw new Error('IntegrationConnector: a connection is missing');
+        const { plan, topicId } = entry;
+        return { data, meta: { provider: plan.provider, topicId, authMethod: plan.authMethod } };
+      }),
+    );
   }
 
   /**
@@ -175,21 +223,25 @@ export class IntegrationConnector {
     if (!caller.role.atLeast('editor')) throw new OAuthFailure('oauth_not_editor');
     const topicId = (await Topic.bySlug(workspaceId, conn.topicSlug))?.id ?? null;
     try {
-      const result = await IntegrationConnector.#createWithinCaps(workspaceId, {
-        connectedBy: caller.userId,
-        ownerUserId: caller.userId,
-        provider: conn.provider,
-        accountId: conn.accountId,
-        label: conn.label,
-        authMethod: 'oauth',
-        topicId,
-        config: conn.config,
-        status: 'error',
-        lastError: { ...CREDENTIAL_MISSING },
-      });
+      const result = await IntegrationConnector.#createWithinCaps(workspaceId, caller.userId, [
+        {
+          connectedBy: caller.userId,
+          ownerUserId: caller.userId,
+          provider: conn.provider,
+          accountId: conn.accountId,
+          label: conn.label,
+          authMethod: 'oauth',
+          topicId,
+          config: conn.config,
+          status: 'error',
+          lastError: { ...CREDENTIAL_MISSING },
+        },
+      ]);
       // createWithinCaps, as the OAuth callback answers a full cap: `oauth_limit`.
       if (result.cap !== null) throw new OAuthFailure('oauth_limit');
-      const integration = await this.#created(caller, result.created, {
+      const [data] = result.created;
+      if (data === undefined) throw new Error('IntegrationConnector: nothing was created');
+      const integration = await this.#created(caller, data, {
         provider: conn.provider,
         topicId,
         authMethod: 'oauth',
@@ -197,7 +249,7 @@ export class IntegrationConnector {
       return { integration, created: true };
     } catch (error) {
       // The member connected the same account meanwhile (another tab): that one is reconnected.
-      if (!isDuplicateKey(error)) throw error;
+      if (duplicateIndex(error) === null) throw error;
       const raced = await find();
       if (raced === null) throw error;
       return reconnectable(raced);
@@ -210,12 +262,36 @@ export class IntegrationConnector {
     data: IntegrationData,
     meta: Record<string, unknown>,
   ): Promise<Integration> {
-    const created = this.#port.from(data);
-    await AuditLog.record(caller, this.#port.createdAction, created, {
-      ...meta,
-      ...(await this.#port.onConnected(created)),
-    });
+    const [created] = await this.#createdAll(caller, [{ data, meta }]);
+    if (created === undefined) throw new Error('IntegrationConnector: nothing was created');
     return created;
+  }
+
+  /**
+   * Each new integration's class runs its connect hook, in order; then every create is audited,
+   * in one write.
+   */
+  async #createdAll(
+    caller: Caller,
+    created: readonly { data: IntegrationData; meta: Record<string, unknown> }[],
+  ): Promise<Integration[]> {
+    const connected: { integration: Integration; meta: Record<string, unknown> }[] = [];
+    for (const { data, meta } of created) {
+      const integration = this.#port.from(data);
+      connected.push({
+        integration,
+        meta: { ...meta, ...(await this.#port.onConnected(integration)) },
+      });
+    }
+    await AuditLog.recordAll(
+      caller,
+      connected.map(({ integration, meta }) => ({
+        action: this.#port.createdAction,
+        target: integration,
+        meta,
+      })),
+    );
+    return connected.map(({ integration }) => integration);
   }
 
   /**
@@ -229,37 +305,39 @@ export class IntegrationConnector {
     extra: number,
   ): Promise<IntegrationCap | null> {
     const integrations = await getIntegrationRepository();
-    if (
-      (await integrations.countActiveForOwner(workspaceId, ownerUserId)) + extra >
-      LIMITS.integrationsPerUserPerWorkspace
-    ) {
-      return 'member';
-    }
-    if ((await integrations.countActive(workspaceId)) + extra > LIMITS.integrationsPerWorkspace) {
-      return 'workspace';
-    }
+    // Both counts at once; the member's cap is answered first.
+    const [own, all] = await Promise.all([
+      integrations.countActiveForOwner(workspaceId, ownerUserId),
+      integrations.countActive(workspaceId),
+    ]);
+    if (own + extra > LIMITS.integrationsPerUserPerWorkspace) return 'member';
+    if (all + extra > LIMITS.integrationsPerWorkspace) return 'workspace';
     return null;
   }
 
   /**
-   * A new integration, inserted only within both caps even when connects race (there are no
-   * transactions here): check, insert, then count again with the new one included. Over a cap,
-   * the new integration is soft-deleted again and the full cap comes back instead. Racers may all
-   * back out, but the caps are never exceeded: the last of any set of kept integrations to count
-   * would have seen them all. The insert's own errors (a duplicate account) propagate. Every new
-   * integration is read-only: `mode` is never an input.
+   * New integrations of one member, inserted only within both caps even when connects race
+   * (there are no transactions here): check with all of them, insert them, then count again with
+   * them included. Over a cap, the new ones are soft-deleted again and the full cap comes back
+   * instead. Racers may all back out, but the caps are never exceeded: the last of any set of kept
+   * integrations to count would have seen them all. The insert's own errors (a duplicate account)
+   * propagate. Every new integration is read-only: `mode` is never an input.
    */
   static async #createWithinCaps(
     workspaceId: string,
-    input: Omit<CreateIntegrationInput, 'mode'> & { ownerUserId: string },
+    ownerUserId: string,
+    inputs: readonly Omit<CreateIntegrationInput, 'mode'>[],
   ): Promise<WithinCaps> {
-    const full = await IntegrationConnector.#capExceeded(workspaceId, input.ownerUserId, 1);
+    const full = await IntegrationConnector.#capExceeded(workspaceId, ownerUserId, inputs.length);
     if (full !== null) return { created: null, cap: full };
     const integrations = await getIntegrationRepository();
-    const created = await integrations.create(workspaceId, { ...input, mode: Mode.read.name });
-    const exceeded = await IntegrationConnector.#capExceeded(workspaceId, input.ownerUserId, 0);
+    const created = await integrations.createMany(
+      workspaceId,
+      inputs.map((input) => ({ ...input, mode: Mode.read.name })),
+    );
+    const exceeded = await IntegrationConnector.#capExceeded(workspaceId, ownerUserId, 0);
     if (exceeded === null) return { created, cap: null };
-    await integrations.softDelete(workspaceId, created.id);
+    for (const integration of created) await integrations.softDelete(workspaceId, integration.id);
     return { created: null, cap: exceeded };
   }
 }

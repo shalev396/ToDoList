@@ -11,6 +11,7 @@ import {
   HELD_INTEGRATION_STATUSES,
   INTEGRATION_TABLE_NAME,
   PENDING_ACCOUNT_PREFIX,
+  type CreateIntegrationInput,
   type IIntegrationRepository,
   type IntegrationData,
   type IntegrationPatch,
@@ -111,29 +112,52 @@ function toIntegrationData(doc: IntegrationFields): IntegrationData {
   };
 }
 
+/** A new integration's document (the schema fills in what it leaves out). */
+function integrationDoc(
+  workspaceId: string,
+  input: CreateIntegrationInput,
+): Record<string, unknown> {
+  return {
+    workspaceId,
+    connectedBy: input.connectedBy,
+    ownerUserId: input.ownerUserId ?? input.connectedBy,
+    provider: input.provider,
+    accountId: input.accountId,
+    label: input.label,
+    authMethod: input.authMethod,
+    topicId: input.topicId,
+    ...setFields(input, [
+      'mode',
+      'config',
+      'credentialId',
+      'status',
+      'lastError',
+      'expiresAt',
+      'color',
+      'demo',
+    ]),
+  };
+}
+
 export const IntegrationRepository: IIntegrationRepository = {
   async create(workspaceId, input) {
-    const doc = await IntegrationMongoModel.create({
-      workspaceId,
-      connectedBy: input.connectedBy,
-      ownerUserId: input.ownerUserId ?? input.connectedBy,
-      provider: input.provider,
-      accountId: input.accountId,
-      label: input.label,
-      authMethod: input.authMethod,
-      topicId: input.topicId,
-      ...setFields(input, [
-        'mode',
-        'config',
-        'credentialId',
-        'status',
-        'lastError',
-        'expiresAt',
-        'color',
-        'demo',
-      ]),
-    });
+    const doc = await IntegrationMongoModel.create(integrationDoc(workspaceId, input));
     return toIntegrationData(doc);
+  },
+
+  async createMany(workspaceId, inputs, at = new Date()) {
+    if (inputs.length === 0) return [];
+    const docs = await IntegrationMongoModel.insertMany(
+      inputs.map(
+        (input, index) =>
+          new IntegrationMongoModel({
+            ...integrationDoc(workspaceId, input),
+            createdAt: new Date(at.getTime() + index),
+          }),
+      ),
+      { ordered: true },
+    );
+    return docs.map((doc) => toIntegrationData(doc));
   },
 
   async findById(workspaceId, id) {
@@ -190,6 +214,21 @@ export const IntegrationRepository: IIntegrationRepository = {
       { new: true, runValidators: true },
     ).lean<IntegrationFields>();
     return doc ? toIntegrationData(doc) : null;
+  },
+
+  // update()'s writes without its `runValidators` (a bulk write has none): the classes write
+  // statuses and ids they know.
+  async updateMany(workspaceId, updates) {
+    if (updates.length === 0) return;
+    await IntegrationMongoModel.bulkWrite(
+      updates.map(({ id, patch }) => ({
+        updateOne: {
+          filter: { _id: id, workspaceId, deletedAt: null },
+          update: { $set: setFields(patch, PATCH_KEYS) },
+        },
+      })),
+      { ordered: true },
+    );
   },
 
   async replacePendingAccount(workspaceId, id, accountId) {

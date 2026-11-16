@@ -12,11 +12,17 @@
  *
  * KMS envelope encryption is unchanged (services/crypto/envelope.ts, stageKeyProvider.ts).
  */
+import { randomUUID } from 'node:crypto';
+
 import { Actor, type ActorRef } from '../base/Actor.js';
 import { AuditTarget } from '../base/AuditTarget.js';
-import { AuditLog } from '../AuditLog.js';
+import { AuditLog, type AuditScope } from '../AuditLog.js';
 import { AppError } from '../../errors/AppError.js';
-import type { CredentialData } from '../../models/definitions/Credential.js';
+import type {
+  CredentialData,
+  UpsertSealedCredentialInput,
+} from '../../models/definitions/Credential.js';
+import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { getCredentialRepository, getIntegrationRepository } from '../../models/index.js';
 import { open, seal, type EncBlob } from '../../services/crypto/envelope.js';
 import {
@@ -27,6 +33,7 @@ import {
 import { stageKeyProvider } from '../../services/crypto/stageKeyProvider.js';
 import { logger } from '../../services/logger.js';
 import { ProviderHttpError } from '../../sync/errors.js';
+import { settleAll } from '../../utils/concurrency.js';
 import type { Provider } from '../../types/domain.js';
 import type { SecretJson } from './auth/AuthStrategy.js';
 import type { OAuthAuth } from './auth/OAuthAuth.js';
@@ -119,48 +126,183 @@ export class Credential<TSecret extends SecretJson = SecretJson> {
    * (its address and user agent; none for a seed or a test). 404 for an unknown integration.
    */
   static async seal(input: SealInput, actor?: ActorRef): Promise<void> {
-    const { workspaceId, integrationId, provider } = input;
+    const { workspaceId, integrationId } = input;
     const integrations = await getIntegrationRepository();
     const integration = await integrations.findById(workspaceId, integrationId);
+    Credential.#check(input, integration);
+    const credentials = await getCredentialRepository();
+    const replacing = (await credentials.findMeta(workspaceId, integrationId)) !== null;
+    const enc = await Credential.#encrypt(input);
+    const stored = await credentials.upsertSealed(
+      workspaceId,
+      integrationId,
+      Credential.#sealedInput(input, enc, replacing),
+    );
+    if (integration?.credentialId !== stored.id) {
+      await integrations.update(workspaceId, integrationId, { credentialId: stored.id });
+    }
+    await AuditLog.record(
+      Credential.#auditScope(input, actor),
+      ...Credential.#auditOf(input, stored.id, replacing),
+    );
+  }
+
+  /**
+   * `seal` for several credentials of one owner in one workspace, in a handful of round trips
+   * whatever their number (the demo seed's): the integrations and the stored credentials read
+   * once, every secret sealed at once (each under its own data key), then the credentials, the
+   * integrations' links and the audit entries each written at once, in the order given. Answers
+   * the integrations whose credential it replaced.
+   */
+  static async sealAll(inputs: readonly SealInput[], actor?: ActorRef): Promise<Set<string>> {
+    const first = inputs[0];
+    if (first === undefined) return new Set();
+    const { workspaceId, ownerUserId } = first;
+    if (
+      inputs.some((input) => input.workspaceId !== workspaceId || input.ownerUserId !== ownerUserId)
+    ) {
+      throw new Error('Credential.sealAll: one owner’s credentials in one workspace at a time');
+    }
+    const ids = inputs.map(({ integrationId }) => integrationId);
+    const [integrations, credentials] = await Promise.all([
+      getIntegrationRepository(),
+      getCredentialRepository(),
+    ]);
+    // The integrations and their stored credentials, read at once.
+    const [found, metas] = await Promise.all([
+      integrations.listByIdsIncludingDeleted(workspaceId, ids),
+      credentials.findMetaMany(workspaceId, ids),
+    ]);
+    const live = new Map(
+      found
+        .filter((integration) => integration.deletedAt === null)
+        .map((integration) => [integration.id, integration]),
+    );
+    for (const input of inputs) Credential.#check(input, live.get(input.integrationId) ?? null);
+    const stored = new Map(metas.map((meta) => [meta.integrationId, meta.id]));
+    const sealed = await Promise.all(
+      inputs.map(async (input) => {
+        const replacing = stored.has(input.integrationId);
+        const enc = await Credential.#encrypt(input);
+        return {
+          input,
+          replacing,
+          integrationId: input.integrationId,
+          id: stored.get(input.integrationId) ?? randomUUID(),
+          sealed: Credential.#sealedInput(input, enc, replacing),
+        };
+      }),
+    );
+    const added = await credentials.upsertSealedMany(
+      workspaceId,
+      sealed.map(({ integrationId, id, sealed: input }) => ({ integrationId, id, input })),
+    );
+    // A credential stored meanwhile kept its own id: then the ids are read again before linking.
+    const expected = sealed.filter(({ replacing }) => !replacing).length;
+    const idOf =
+      added === expected
+        ? new Map(sealed.map(({ integrationId, id }) => [integrationId, id]))
+        : new Map(
+            (await credentials.findMetaMany(workspaceId, ids)).map((meta) => [
+              meta.integrationId,
+              meta.id,
+            ]),
+          );
+    // The integrations' links and the audit entries: at once.
+    await settleAll([
+      integrations.updateMany(
+        workspaceId,
+        sealed.flatMap(({ integrationId }) => {
+          const credentialId = idOf.get(integrationId);
+          return credentialId === undefined ||
+            live.get(integrationId)?.credentialId === credentialId
+            ? []
+            : [{ id: integrationId, patch: { credentialId } }];
+        }),
+      ),
+      AuditLog.recordAll(
+        Credential.#auditScope(first, actor),
+        sealed.map(({ input, integrationId, replacing }) => {
+          const [action, target, meta] = Credential.#auditOf(
+            input,
+            idOf.get(integrationId) ?? '',
+            replacing,
+          );
+          return { action, target, meta };
+        }),
+      ),
+    ] as const);
+    return new Set(
+      sealed.flatMap(({ integrationId, replacing }) => (replacing ? [integrationId] : [])),
+    );
+  }
+
+  /** 404 for an unknown integration; a provider not its own, or an empty secret, refused. */
+  static #check(input: SealInput, integration: IntegrationData | null): void {
     if (integration === null) throw new AppError(404, 'Integration not found');
-    if (integration.provider !== provider) {
+    if (integration.provider !== input.provider) {
       throw new Error('Credential.seal: the provider is not the integration’s');
     }
     const values = Object.values(input.secret);
     if (values.length === 0 || !values.every((value) => typeof value === 'string')) {
       throw new AppError(400, 'A secret is a non-empty set of text values');
     }
+  }
 
-    const credentials = await getCredentialRepository();
-    const replacing = (await credentials.findMeta(workspaceId, integrationId)) !== null;
+  /** The secret sealed under a fresh data key, bound to its workspace, integration and provider. */
+  static async #encrypt(input: SealInput): Promise<EncBlob> {
+    const { workspaceId, integrationId, provider } = input;
     const plaintext = Buffer.from(JSON.stringify(input.secret), 'utf8');
-    let enc: EncBlob;
     try {
-      enc = await seal(plaintext, { workspaceId, integrationId, provider }, stageKeyProvider());
+      return await seal(plaintext, { workspaceId, integrationId, provider }, stageKeyProvider());
     } finally {
       plaintext.fill(0);
     }
-    const stored = await credentials.upsertSealed(workspaceId, integrationId, {
+  }
+
+  /** What is stored of a sealed credential (`rotatedAt` when it replaces one). */
+  static #sealedInput(
+    input: SealInput,
+    enc: EncBlob,
+    replacing: boolean,
+  ): UpsertSealedCredentialInput {
+    return {
       ownerUserId: input.ownerUserId,
       kind: input.kind,
       scopes: input.scopes ?? [],
       expiresAt: input.expiresAt ?? null,
       enc,
       ...(replacing ? { rotatedAt: new Date() } : {}),
-    });
-    if (integration.credentialId !== stored.id) {
-      await integrations.update(workspaceId, integrationId, { credentialId: stored.id });
-    }
-    // No secret data (DATA.md §3.10): the credential is referenced by its id only.
-    await AuditLog.record(
-      {
-        workspaceId,
-        actor: Actor.user(input.ownerUserId, { ip: actor?.ip, userAgent: actor?.userAgent }),
-      },
+    };
+  }
+
+  /** Who sealed it: the owner, from `actor`'s request (its address and user agent). */
+  static #auditScope(input: SealInput, actor?: ActorRef): AuditScope {
+    return {
+      workspaceId: input.workspaceId,
+      actor: Actor.user(input.ownerUserId, { ip: actor?.ip, userAgent: actor?.userAgent }),
+    };
+  }
+
+  /** The audit entry: no secret data (DATA.md §3.10), the credential referenced by its id only. */
+  static #auditOf(
+    input: SealInput,
+    credentialId: string,
+    replacing: boolean,
+  ): [string, AuditTarget, Record<string, unknown>] {
+    return [
       replacing ? 'credential.rotate' : 'integration.connect',
-      AuditTarget.integration(integrationId),
-      { credentialId: stored.id, provider, kind: input.kind },
-    );
+      AuditTarget.integration(input.integrationId),
+      { credentialId, provider: input.provider, kind: input.kind },
+    ];
+  }
+
+  /** The credential's metadata of each of these integrations that has one (one read). */
+  static async metaOf(
+    workspaceId: string,
+    integrationIds: readonly string[],
+  ): Promise<CredentialData[]> {
+    return (await getCredentialRepository()).findMetaMany(workspaceId, integrationIds);
   }
 
   /** The credential's metadata (kind, scopes, dates; never the ciphertext), or null: none yet. */

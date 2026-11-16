@@ -103,6 +103,16 @@ export interface SyncResultPatch {
 
 export interface IIntegrationRepository {
   create(workspaceId: string, input: CreateIntegrationInput): Promise<IntegrationData>;
+  /**
+   * create() for each input, in one write, in order, each created a millisecond after the one
+   * before it (from `at`, default now), so they list by creation in that order. A duplicate account
+   * stops the write there (E11000, as create's), the inputs before it written.
+   */
+  createMany(
+    workspaceId: string,
+    inputs: readonly CreateIntegrationInput[],
+    at?: Date,
+  ): Promise<IntegrationData[]>;
   /** Soft-deleted integrations are not found. */
   findById(workspaceId: string, id: string): Promise<IntegrationData | null>;
   /** A soft-deleted one too (see `deletedAt`): a disconnect that stopped part-way resumes. */
@@ -122,6 +132,11 @@ export interface IIntegrationRepository {
     ids: readonly string[],
   ): Promise<IntegrationData[]>;
   update(workspaceId: string, id: string, patch: IntegrationPatch): Promise<IntegrationData | null>;
+  /** update() for each integration, in one write, in order (no integration is answered). */
+  updateMany(
+    workspaceId: string,
+    updates: readonly { id: string; patch: IntegrationPatch }[],
+  ): Promise<void>;
   /**
    * The one change of account: a `pending:` placeholder (PENDING_ACCOUNT_PREFIX) becomes the real
    * account, once, when the first connection test succeeds. Null when the integration is missing,

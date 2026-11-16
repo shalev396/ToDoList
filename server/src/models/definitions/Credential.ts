@@ -62,6 +62,14 @@ export interface ICredentialRepository {
     input: UpsertSealedCredentialInput,
   ): Promise<CredentialData>;
   /**
+   * upsertSealed() for each entry, in one write, in order; a new credential takes `id`. How many
+   * were new (no answer per credential). Same caveat as upsertSealed.
+   */
+  upsertSealedMany(
+    workspaceId: string,
+    entries: readonly { integrationId: string; id: string; input: UpsertSealedCredentialInput }[],
+  ): Promise<number>;
+  /**
    * Replaces the sealed secret only while the credential is still at `expectedVersion` (then the
    * version goes up by one): false when someone else replaced it first. An OAuth refresh uses it
    * so two refreshes at once never overwrite each other's rotated refresh token.
@@ -75,6 +83,8 @@ export interface ICredentialRepository {
   /** The only method that returns `enc`: for the credential vault. */
   findSealed(workspaceId: string, integrationId: string): Promise<SealedCredential | null>;
   findMeta(workspaceId: string, integrationId: string): Promise<CredentialData | null>;
+  /** findMeta() of each of these integrations that has a credential (one read). */
+  findMetaMany(workspaceId: string, integrationIds: readonly string[]): Promise<CredentialData[]>;
   /** Records a use (`lastUsedAt`) without touching `updatedAt`: the vault calls it on decrypt. */
   touch(workspaceId: string, integrationId: string, at: Date): Promise<void>;
   /** Hard delete. False when there was nothing to delete. */
