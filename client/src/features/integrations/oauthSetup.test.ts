@@ -62,6 +62,7 @@ const cap = (
   authMethods: ['oauth'],
   picker: null,
   revokesOnDisconnect: false,
+  needsWriteScope: false,
   revokePage: null,
   canCreate: false,
   canUpdate: false,
@@ -83,6 +84,7 @@ const response: OAuthProvidersResponse = {
     cap('jira', {
       authMethods: ['oauth', 'api_token_basic'],
       picker: 'sites',
+      needsWriteScope: true,
       revokePage: 'https://id.atlassian.com/manage-profile/apps',
       canCreate: true,
       canUpdate: true,
@@ -103,6 +105,7 @@ const response: OAuthProvidersResponse = {
     cap('linear', {
       authMethods: ['oauth', 'personal_api_key'],
       revokesOnDisconnect: true,
+      needsWriteScope: true,
       revokePage: 'https://linear.app/settings/account/security',
       canCreate: true,
       canUpdate: true,

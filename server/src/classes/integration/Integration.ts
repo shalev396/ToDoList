@@ -275,7 +275,8 @@ export abstract class Integration<
 
   /**
    * What each connectable provider can do and how it connects, read from its class: its
-   * definition (auth methods, picker, revoke page, coming soon, the fields a write-back sends) and
+   * definition (auth methods, picker, revoke page, the write scopes its OAuth grant needs, coming
+   * soon, the fields a write-back sends) and
    * the contracts its class implements (ResourcePicker, Revocable, CreateFunnel, TaskProvider or
    * CalendarProvider for a write-back). In the order of CONNECTABLE_PROVIDERS.
    */
@@ -294,6 +295,7 @@ export abstract class Integration<
           authMethods: definition.userAuthMethods,
           picker: isResourcePicker(can) ? definition.picker : null,
           revokesOnDisconnect: isRevocable(can),
+          needsWriteScope: (definition.auth.oauth?.writeScopes.length ?? 0) > 0,
           revokePage: definition.revokePage,
           canCreate: isCreateFunnel(can) && definition.create !== null,
           canUpdate,

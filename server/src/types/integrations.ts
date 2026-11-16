@@ -221,6 +221,12 @@ export interface ProviderCapabilities {
   picker: 'sites' | 'workspaces' | 'calendars' | null;
   /** TodoList hands the OAuth grant back to the provider when it is disconnected. */
   revokesOnDisconnect: boolean;
+  /**
+   * Its OAuth grant needs an extra scope to write back (Jira `write:jira-work`, Linear `write`:
+   * the definition's `writeScopes`), so reconnecting a read & write connection asks for it. False
+   * where a grant gives what it gives (GitHub, ClickUp) or there is no OAuth sign-in.
+   */
+  needsWriteScope: boolean;
   /** Where a user revokes the app themselves when TodoList doesn't (null: nowhere to point). */
   revokePage: string | null;
   /** An item can be created there from a to-do ("Also create in"). */
