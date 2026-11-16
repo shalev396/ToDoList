@@ -306,6 +306,42 @@ describe('seedWorkspace', () => {
     );
   });
 
+  it('makes one provider’s accounts and one topic’s pages in demo order (they list by creation)', async () => {
+    const byCreation = (rows: Doc[]): Doc[] =>
+      [...rows].sort(
+        (a, b) => (a['createdAt'] as Date).getTime() - (b['createdAt'] as Date).getTime(),
+      );
+    const strictlyLater = (rows: Doc[]): boolean => {
+      const times = rows.map((row) => (row['createdAt'] as Date).getTime());
+      return times.every((time, index) => index === 0 || time > (times[index - 1] ?? Infinity));
+    };
+
+    // The summary is in demoData.ts order: github-user, then github-org.
+    const github = byCreation(await docs('Integrations', { workspaceId, provider: 'github' }));
+    assert.deepEqual(
+      github.map((row) => row._id),
+      first.integrations
+        .filter((entry) => entry.provider === 'github')
+        .map((entry) => entry.integrationId),
+    );
+    assert.ok(strictlyLater(github));
+
+    const dashboards = await docs('Dashboards', { workspaceId, deletedAt: null });
+    for (const slug of ['work', 'college', 'personal'] as const) {
+      const pages = byCreation(
+        dashboards.filter((row) => (row['scope'] as Doc)['topicId'] === ids[slug]),
+      );
+      assert.deepEqual(
+        pages.map((row) => row['templateKey']),
+        demo.DEMO_DASHBOARDS.filter((entry) => entry.topic === slug).map(
+          (entry) => entry.templateKey,
+        ),
+        slug,
+      );
+      assert.ok(strictlyLater(pages), slug);
+    }
+  });
+
   it('a second run changes nothing: the same summary, no updatedAt bumped, nothing added', async () => {
     const watched = ['Items', 'Containers', 'Dashboards', 'Credentials', 'Workspaces'] as const;
     const before = new Map<string, Record<string, string>>();

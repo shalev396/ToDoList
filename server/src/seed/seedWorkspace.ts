@@ -18,6 +18,13 @@
  *    workspace's time zone, so they look exactly like a real sync's. Records without a URL are
  *    counted as the run's failures and never stored, as in any sync.
  *
+ * Steps that don't depend on each other run at once, since every query is a round trip to the
+ * database (from a local API to a stage's, a long one): 1 (each provider's accounts in demo order,
+ * the providers at once), 2 and 3 together; then 4 (each topic's pages in template order, the
+ * topics at once) beside 5. A step that fails is waited out with the rest, so nothing is still
+ * writing when the seed throws. What lists in creation order (one provider's connections, one
+ * topic's pages) is still made in demo order.
+ *
  * Idempotent: what exists is found by its natural key (or its seed id) and left as it is, and the
  * syncs leave unchanged items untouched (same hash: no `updatedAt` bump). A to-do its owner
  * deleted stays deleted. Nothing here prints, logs or returns a secret.
@@ -99,6 +106,38 @@ interface Connected {
   integration: Integration;
 }
 
+/**
+ * Waits for every task to end, so none is left running behind a failure; then answers their
+ * results in order, or throws the first failure.
+ */
+async function allOrFirstFailure<T>(tasks: readonly Promise<T>[]): Promise<T[]> {
+  const settled = await Promise.allSettled(tasks);
+  return settled.map((result) => {
+    if (result.status === 'rejected') throw result.reason;
+    return result.value;
+  });
+}
+
+/**
+ * `task` for every entry at once, except that entries with the same key run one after another, in
+ * their order (one provider's connections, one topic's pages: they list in creation order).
+ * Answers in the entries' order, as allOrFirstFailure does.
+ */
+async function inOrderPerKey<T, R>(
+  entries: readonly T[],
+  keyOf: (entry: T) => string,
+  task: (entry: T) => Promise<R>,
+): Promise<R[]> {
+  const tails = new Map<string, Promise<unknown>>();
+  const runs = entries.map((entry) => {
+    const key = keyOf(entry);
+    const run = (tails.get(key) ?? Promise.resolve()).then(() => task(entry));
+    tails.set(key, run);
+    return run;
+  });
+  return allOrFirstFailure(runs);
+}
+
 function connectionOf(spec: DemoIntegration): ConnectionInput {
   return {
     provider: spec.provider,
@@ -143,6 +182,23 @@ async function ensureCredential(caller: Caller, { spec, integration }: Connected
   await (
     await Integration.findOwn(caller, integration.id)
   ).saveCredential(caller, fakeCredential(spec.authMethod, spec.key));
+}
+
+/**
+ * Every demo integration, in demoData.ts order, each with its credential. The providers connect at
+ * once; one provider's accounts connect in demo order, as its cards list them by creation.
+ */
+async function ensureIntegrations(caller: Caller): Promise<Connected[]> {
+  const connected = await inOrderPerKey(
+    DEMO_INTEGRATIONS,
+    (spec) => spec.provider,
+    async (spec): Promise<Connected> => ({
+      spec,
+      integration: await ensureIntegration(caller, spec),
+    }),
+  );
+  await allOrFirstFailure(connected.map((entry) => ensureCredential(caller, entry)));
+  return connected;
 }
 
 /** The ids of the workspace's default topics, by slug (the seed makes sure all three exist). */
@@ -233,7 +289,10 @@ async function leaveMinimalShape(caller: Caller, language: TemplateLanguage): Pr
   return topics;
 }
 
-/** The demo dashboards from their templates (published: the owner creates them). */
+/**
+ * The demo dashboards from their templates (published: the owner creates them). The topics' pages
+ * are made at once; one topic's in demo order, as its pages list by creation.
+ */
 async function ensureDashboards(
   caller: Caller,
   language: TemplateLanguage,
@@ -241,23 +300,27 @@ async function ensureDashboards(
 ): Promise<number> {
   const existing = await Dashboard.listOutlines(caller);
   const templates = new Map(listTemplates().map((template) => [template.key, template]));
-  for (const demo of DEMO_DASHBOARDS) {
-    const template = templates.get(demo.templateKey);
-    if (template === undefined) throw new Error(`seedWorkspace: no template ${demo.templateKey}`);
-    const topicId = demo.topic === undefined ? null : topics[demo.topic];
-    const found = existing.some(
-      (dashboard) =>
-        dashboard.templateKey === template.key &&
-        dashboard.scope.topicId === topicId &&
-        dashboard.scope.page === template.scope.page,
-    );
-    if (found) continue;
-    await Dashboard.instantiate(caller, {
-      templateKey: template.key,
-      language,
-      ...(topicId === null ? {} : { scope: { topicId } }),
-    });
-  }
+  await inOrderPerKey(
+    DEMO_DASHBOARDS,
+    (demo) => demo.topic ?? 'main',
+    async (demo): Promise<void> => {
+      const template = templates.get(demo.templateKey);
+      if (template === undefined) throw new Error(`seedWorkspace: no template ${demo.templateKey}`);
+      const topicId = demo.topic === undefined ? null : topics[demo.topic];
+      const found = existing.some(
+        (dashboard) =>
+          dashboard.templateKey === template.key &&
+          dashboard.scope.topicId === topicId &&
+          dashboard.scope.page === template.scope.page,
+      );
+      if (found) return;
+      await Dashboard.instantiate(caller, {
+        templateKey: template.key,
+        language,
+        ...(topicId === null ? {} : { scope: { topicId } }),
+      });
+    },
+  );
   return DEMO_DASHBOARDS.length;
 }
 
@@ -349,7 +412,7 @@ async function syncAll(
   now: Date,
   timeZone: string,
 ): Promise<SyncRunSummary[]> {
-  const settled = await Promise.allSettled(
+  return allOrFirstFailure(
     connected.map(async ({ spec, integration }) => {
       const transport = await fixtureReplay(integration.provider, spec.fixtureSet, now, timeZone);
       return Integration.runSync(integration.id, {
@@ -363,10 +426,6 @@ async function syncAll(
       });
     }),
   );
-  return settled.map((result) => {
-    if (result.status === 'rejected') throw result.reason;
-    return result.value;
-  });
 }
 
 async function summarize(
@@ -377,29 +436,33 @@ async function summarize(
   dashboards: number,
 ): Promise<SeedSummary> {
   const { workspaceId } = caller;
-  const integrations: SeededIntegration[] = [];
-  for (const [index, { spec, integration }] of connected.entries()) {
-    const run = runs[index];
-    if (run === undefined) throw new Error('seedWorkspace: a sync result is missing');
-    integrations.push({
-      key: spec.key,
-      provider: integration.provider,
-      label: integration.label,
-      integrationId: integration.id,
-      topicId: integration.topicId,
-      status: run.status,
-      error: run.error?.code ?? null,
-      items: await Item.countLiveOf(workspaceId, integration.id),
-      containers: await Container.countLiveOf(workspaceId, integration.id),
-      failed: run.counts.failed,
-    });
-  }
-  return {
-    workspaceId,
-    integrations,
-    localTodos: await Todo.countLiveWithKeys(caller, todoKeys),
-    dashboards,
-  };
+  const counted = Promise.all(
+    connected.map(async ({ spec, integration }, index): Promise<SeededIntegration> => {
+      const run = runs[index];
+      if (run === undefined) throw new Error('seedWorkspace: a sync result is missing');
+      const [items, containers] = await Promise.all([
+        Item.countLiveOf(workspaceId, integration.id),
+        Container.countLiveOf(workspaceId, integration.id),
+      ]);
+      return {
+        key: spec.key,
+        provider: integration.provider,
+        label: integration.label,
+        integrationId: integration.id,
+        topicId: integration.topicId,
+        status: run.status,
+        error: run.error?.code ?? null,
+        items,
+        containers,
+        failed: run.counts.failed,
+      };
+    }),
+  );
+  const [integrations, localTodos] = await Promise.all([
+    counted,
+    Todo.countLiveWithKeys(caller, todoKeys),
+  ]);
+  return { workspaceId, integrations, localTodos, dashboards };
 }
 
 /**
@@ -420,22 +483,30 @@ export async function seedWorkspace(
     throw new Error('seedWorkspace: the workspace has no owner');
   }
 
-  const topics = await leaveMinimalShape(first, options.language ?? 'en');
+  const language = options.language ?? 'en';
+  const topics = await leaveMinimalShape(first, language);
   // Read again: the caller carries the settings.
   const caller = await Caller.enter(workspaceId, Actor.user(ownerId));
   if (caller?.role.name !== 'owner') {
     throw new Error('seedWorkspace: the workspace has no owner');
   }
-  const connected: Connected[] = [];
-  for (const spec of DEMO_INTEGRATIONS) {
-    const integration = await ensureIntegration(caller, spec);
-    await ensureCredential(caller, { spec, integration });
-    connected.push({ spec, integration });
-  }
-  await ensureTopicRules(caller, topics);
-  const todoKeys = await ensureTodos(caller, now, topics);
-  const dashboards = await ensureDashboards(caller, options.language ?? 'en', topics);
-  await ensureConnectorBlocks(caller, connected, options.language ?? 'en');
-  const runs = await syncAll(connected, now, caller.settings.timezone);
+  // Steps 1 to 3 need only the topics.
+  const integrationsDone = ensureIntegrations(caller);
+  const rulesDone = ensureTopicRules(caller, topics);
+  const todosDone = ensureTodos(caller, now, topics);
+  await Promise.allSettled([integrationsDone, rulesDone, todosDone]);
+  const connected = await integrationsDone;
+  await rulesDone;
+  const todoKeys = await todosDone;
+  // The dashboards bind the owner's integrations, and the syncs file by the topic rules; neither
+  // reads what the other writes.
+  const dashboardsDone = ensureDashboards(caller, language, topics).then(async (count) => {
+    await ensureConnectorBlocks(caller, connected, language);
+    return count;
+  });
+  const runsDone = syncAll(connected, now, caller.settings.timezone);
+  await Promise.allSettled([dashboardsDone, runsDone]);
+  const dashboards = await dashboardsDone;
+  const runs = await runsDone;
   return summarize(caller, connected, runs, todoKeys, dashboards);
 }
