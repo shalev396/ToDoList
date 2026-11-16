@@ -25,9 +25,10 @@ It is updated every phase.
 | 5     | `SyncRun` state machine, `SyncCursor`/`SyncCursors`, `Integration.sync()` (template method) with `SyncEngine`, `Calendar` + `PushPlan` + `PushCommit`; the dispatcher, worker and purge on the classes                                                                                                                                                               | **built** |
 | 6a    | `Dashboard` + `NewDashboard` (`History<T>`, `HistoryTrail`, `Layout`, `DashboardOutline`, `DocCheck`, `DashboardConnectors`, `BlockPreviews`, `DashboardDryRun`), `View` + `Query`, `Persona`, `Operation`, `ConnectLink`, `AuditLog.page`; the seed through classes; the cascade and the purge remove dashboards and views; `AgentKey` (built with the MCP sign-in) | **built** |
 | 6b    | The `Block` hierarchy behind `DocCheck`: abstract `Block` (template methods `check` and `lint`), `DataBlock`/`TimeBlock`/`ControlBlock`, `QueryBlock`, `RowBlock`, the 14 types and `UnknownBlock`, `BlockRegistry`; builder ops check through `DocCheck` (`ApplyOpsContext.check`)                                                                                  | **built** |
-| 7     | The legacy list emptied, dead services deleted                                                                                                                                                                                                                                                                                                                       | planned   |
+| 7a    | The legacy list deleted (`class-boundary.mjs`; the plan’s end check as a test), the test-only shims deleted, `QueryTarget`, `ItemPolicy` and `Topic` through `Dashboard` and `View`, `Dashboard#blocks()` and `pageBlock`, topics go with their workspace (the cascade, the purge, a migration), the phase 6b review’s hardening                                     | **built** |
+| 7b    | DATA.md, DECISIONS.md, REPORT.md and this page final                                                                                                                                                                                                                                                                                                                 | planned   |
 
-**How the boundary is held.** `server/legacy-db-importers.mjs` names:
+**How the boundary is held.** `server/class-boundary.mjs` names:
 
 - the database modules (the models' barrel, `models/mongoose/**`, `models/sequelize/**`, the
   connection `config/database.ts` and its providers `config/providers/**`) and packages
@@ -35,17 +36,20 @@ It is updated every phase.
 - the places allowed to load them (classes, models, the connection, migrations, tests);
 - the entry points and jobs that may open the connection and nothing else (`lambda.ts`,
   `local.ts`, `stageMaintenance.ts`);
-- the test helpers production code never loads (`src/testing/**`, `__tests__/**`);
-- `LEGACY_DB_IMPORTERS`, the modules that still reach the database until their phase moves them:
-  **empty since phase 6a** (6 after phase 5; 15 after phase 4a; 20 after phase 3; 23 after phase
-  2a; 24 after phase 1; 35 after phase 0, down from 42). The empty list stays until phase 7
-  deletes it, because ESLint and the boundary test read it.
+- the test helpers production code never loads (`src/testing/**`, `__tests__/**`).
+
+There are no exceptions. The list of modules still reaching the database directly
+(`LEGACY_DB_IMPORTERS`, 42 at the start, shrinking every phase, empty since phase 6a) is gone, and
+with it `server/legacy-db-importers.mjs` (phase 7a).
 
 ESLint (`@typescript-eslint/no-restricted-imports`, type imports allowed) and
 `src/classes/classBoundary.test.ts` (which also resolves paths, sees dynamic imports and names
 `get…Repository` getters) read that one module. The test also holds that only `AuditLog` names the
-audit log's repository, and fails on a legacy entry that no longer needs to be there, so the list
-only shrinks.
+audit log's repository, and runs the plan's end check as `git grep` would, on the raw text: outside
+the allowed places, no file of `server/src`, `scripts/` or `infra/` names a `get…Repository`
+getter or imports a database package, not even for its types. `dashboardInternals.test.ts` pins
+each dashboard collection to its class (Dashboards to `Dashboard` and `NewDashboard`,
+DashboardVersions to `History`, Views to `View`).
 
 ## 1. Base layer, people and permissions
 
@@ -1464,6 +1468,8 @@ classDiagram
     +createPage(caller, input)$
     +update(caller, id, input)$
     +delete(caller, id)$
+    +removeAllIn(workspaceId)$ number
+    +removeOrphans()$ number
   }
   WorkspaceEntity <|-- Member
   WorkspaceEntity <|-- Invite
@@ -1488,6 +1494,7 @@ classDiagram
     #removeItems()
     #removeContainers()
     #removeDashboards()
+    #removeTopics()
     #endMemberships()
     #recordAudit()
     #notifyConnectedMembers()
@@ -1504,6 +1511,7 @@ classDiagram
   WorkspaceTeardown ..> Integration : removeAllIn
   WorkspaceTeardown ..> Dashboard : removeAllIn
   WorkspaceTeardown ..> View : removeAllIn
+  WorkspaceTeardown ..> Topic : removeAllIn
   class Integration
   class Dashboard
   class View
@@ -1560,19 +1568,22 @@ How the pieces work, in short:
 - **Cascade.** `WorkspaceTeardown.run` is the template: integrations (credentials first, checked
   gone), the workspace row, items, containers, the dashboards with their histories and the saved
   views (`Dashboard.removeAllIn`, `View.removeAllIn`: hard deletes, dashboards before their
-  versions, phase 6a; the classes are loaded first, by `prepare`), invites and members,
-  the `workspace.delete` audit entry, then the emails. The two subclasses differ only in the audit
+  versions, phase 6a; the classes are loaded first, by `prepare`), the topics (`Topic.removeAllIn`,
+  hard deletes, phase 7a: topics go with their workspace), invites and members, the
+  `workspace.delete` audit entry, then the emails. The two subclasses differ only in the audit
   meta (`{}` or `{reason: 'account_deleted'}`), so an account's end removes them too. The
-  `2026-11-15-orphaned-dashboards` migration removes, once, what workspaces deleted before phase 6a
-  left behind.
+  `2026-11-15-orphaned-dashboards` and `2026-11-16-orphaned-topics` migrations remove, once, what
+  workspaces deleted before those steps left behind; the purge sweeps what a request in flight
+  writes afterwards (`Dashboard.removeOrphans`, `Topic.removeOrphans`).
 - **Registry.** `Member` and the cascade import `Integration` from `integration/index.js`, which
   registers every provider class; `IntegrationRegistry.create` throws for a connectable provider
   without a class instead of using the fallback. `registry.test.ts` holds it in fresh processes.
 - **Statics over ids.** `Member.update/remove/leave` and `Topic.update/delete` are statics so the
   role check (403) still comes before any lookup (404), as in the old services. `Invite` loads a
   pending invite after the owner check, then acts on it.
-- **Topic delete.** It unsets the topic through `Integration.unsetTopicIn`; the item and container
-  halves still use their repositories until Phase 4 gives them classes.
+- **Topic delete.** Each class unsets the topic on its own (`Item`, `Container` and
+  `Integration.unsetTopicIn`), and `Dashboard.softDeleteAllOn(topic)` deletes its pages (phase
+  7a; it wrote the Dashboards repository itself before).
 - **Join link.** `JoinLink` seals the token with the stage key, bound to the workspace (the crypto
   of the old `joinLinkVault`, unchanged); only its hash is searchable.
 - **Attributes and topic rules.** `AttributeDefinition` is one subclass per type (what a value may
@@ -1581,7 +1592,8 @@ How the pieces work, in short:
 
 ## 6. Dashboards and views (phases 6a and 6b, built)
 
-`classes/dashboard/`. A dashboard's blocks are stored as plain JSON. `DocCheck` is the one place a
+`classes/dashboard/`. A dashboard's blocks are stored as plain JSON, and handed out as their Block
+classes (`blocks()`, `pageBlock`). `DocCheck` is the one place a
 document is checked and linted: it runs the builder's document-level steps (`validate.ts`) and asks
 each block's own class (`Block.from(json).check()` and `.lint(scope)`, the Block hierarchy below)
 for the rest. Every write comes through it, builder ops included (`ApplyOpsContext.check`), except
@@ -1610,6 +1622,10 @@ classDiagram
     +removeConnectorEverywhere(caller, integration)$ number
     +removeAllIn(workspaceId)$ counts
     +removeOrphans()$ counts
+    +connectorIdsIn(workspaceId)$ string[]
+    +softDeleteAllOn(topic)$ number
+    +blocks() Block[]
+    +pageBlock(caller, blockId) PageBlock
     +view(caller, options) DashboardView
     +versions(caller, options) DashboardVersionView[]
     +save(caller, doc, ifVersion, {summary}) number
@@ -1758,6 +1774,7 @@ classDiagram
     +lint(scope) LintIssue[]
   }
   DocCheck ..> Block : per block
+  Dashboard *-- Block : blocks()
 
   class View {
     +Audit$
@@ -1817,8 +1834,9 @@ classDiagram
 ### The Block hierarchy (phase 6b)
 
 `classes/dashboard/blocks/`. One class per block type of the catalog (`BLOCK_TYPES`, 14), each an
-immutable value object over the block's JSON. DocCheck is its one caller; the dashboard barrel does
-not hand it on.
+immutable value object over the block's JSON. DocCheck checks a document's blocks through them,
+and Dashboard hands its blocks out as them (`blocks()`, `pageBlock`, phase 7a); the dashboard
+barrel does not hand them on.
 
 ```mermaid
 classDiagram
@@ -1830,23 +1848,25 @@ classDiagram
   class Block {
     <<abstract>>
     +capabilities$ BlockCapability[]
-    +type* BlockType
+    +type* string
     +id
     +title
     +from(json)$ Block
     +check() BlockIssue[]
     +lint(scope) LintIssue[]
     +toJSON() BlockJson
-    #catalogIssues() BlockIssue[]
+    -catalogIssues() BlockIssue[]
     #checkSpecific() BlockIssue[]
-    #queryIssues() BlockIssue[]
+    -queryIssues() BlockIssue[]
     #lintSpecific() LintIssue[]
   }
   class BlockRegistry {
     singleton: type to class
     +instance$
-    +register(type, cls, factory)
-    +registerFallback(factory)
+    +register(type, cls, factory) once
+    +registerFallback(factory) once
+    +seal()
+    +isSealed
     +types() BlockType[]
     +classOf(type) BlockClass
     +create(json) Block
@@ -1857,7 +1877,7 @@ classDiagram
   }
   class DataBlock {
     <<interface>>
-    +query() Query
+    +query() Query | null
     +savedViewId
   }
   class TimeBlock {
@@ -1904,9 +1924,14 @@ classDiagram
   }
   class UnknownBlock {
     a type this code does not know
-    #catalogIssues() the schema's type issue
+    +check() the schema's type issue
+  }
+  class Dashboard {
+    +blocks() Block[]
+    +pageBlock(caller, blockId)
   }
   DocCheck ..> Block : from(json).check(), .lint(scope)
+  Dashboard ..> Block : from(json)
   Block ..> BlockRegistry : from
   Block *-- Query : embedded query
   Block <|-- QueryBlock
@@ -1934,6 +1959,7 @@ classDiagram
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
   class DocCheck:::built
+  class Dashboard:::built
   class Block:::built
   class BlockRegistry:::built
   class Query:::built
@@ -1963,9 +1989,11 @@ classDiagram
   query rule: a data block has a query or a saved view, any other takes none), then
   `checkSpecific()`, then the embedded query compiled against the whitelist (`Query#compileIssue`,
   never run). `lint(scope)` is the field paths, then `lintSpecific()`, then the text. Pointers are
-  relative to the block; DocCheck puts them under `/blocks/<i>`. The document schema (each block's
-  shape included) runs before, in DocCheck, and stops the check, so a block reaches its class
-  well-formed.
+  relative to the block; DocCheck puts them under `/blocks/<i>`, building each issue field by field.
+  The document schema (each block's shape included) runs before, in DocCheck, and stops the check,
+  so a block reaches its class well-formed. The shared steps are `Block`'s own (private: only the
+  hooks `checkSpecific` and `lintSpecific` are overridable); `UnknownBlock`, a Null Object, answers
+  the whole check instead (phase 7a).
 - **The rules stay pure.** The classes only choose and order them: `vizIssues`, `queryRuleIssues`,
   `filterVariableIssues`, `actionNameIssues` (`builder/catalog.ts`), `lintFields`,
   `lintSourceLink`, `lintText` (`builder/lint.ts`). The document-level steps (`refusedInput`,
@@ -1976,12 +2004,14 @@ classDiagram
   source-link lint of the row-rendering types is `RowBlock`'s hook, and the filter and action rules
   are `FilterBlock`'s and `ActionBlock`'s.
 - **Registry.** Each class registers itself (a factory: the constructors are not public) when its
-  module loads, and `blocks/index.ts` loads them all. `Block.from` freezes what it makes. A type
-  outside `BLOCK_TYPES` gets `UnknownBlock`, whose one issue is the schema's own for `/type` (as
-  `UnknownAttribute` does for attributes); a known type without a class is an error, never the
-  fallback.
+  module loads, and `blocks/index.ts` loads them all, then seals the registry (phase 7a): each
+  type, and the fallback, registers once (a second factory, even for the same class, is refused),
+  an incomplete registry refuses to seal, and nothing registers after it. `Block.from` freezes
+  what it makes. A type outside `BLOCK_TYPES` gets `UnknownBlock`, whose `type` is the string as
+  given and whose one issue is the schema's own for `/type` (as `UnknownAttribute` does for
+  attributes); a known type without a class is an error, never the fallback.
 - **Contracts.** `DataBlock` (`query()`: the embedded query as a `Query`, or null when the block
-  reads a saved view; `savedViewId`), `TimeBlock` (`range`: its query's date range), `ControlBlock`
+  reads a saved view, or its query is stored as null; `savedViewId`), `TimeBlock` (`range`: its query's date range), `ControlBlock`
   (`controls()`: `{sets}` for a filter, `{runs}` for an action). Each class declares them in
   `static capabilities`; `blocks.test.ts` holds the classes, the guards (`isDataBlock`,
   `isTimeBlock`, `isControlBlock`) and the catalog (`requiredQuery`) to one table.
@@ -2172,6 +2202,35 @@ classDiagram
 
 The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
 SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
+
+## What phase 7a built (the boundary without exceptions, the backlog)
+
+- **The boundary.** `server/legacy-db-importers.mjs` is now `server/class-boundary.mjs`, without
+  `LEGACY_DB_IMPORTERS`; ESLint ignores only the allowed places, and `classBoundary.test.ts` runs
+  the plan's end check on the raw text (see "How the boundary is held").
+- **Dead code deleted.** `services/accessFilter.ts` and `services/workspaceContext.ts` (one-line
+  delegates to `ItemPolicy` and `Caller.enter` that only tests called; production imported a type
+  alone), the `types/index.ts` and `utils/index.ts` barrels (no importer, the client included),
+  and `sync/hash.ts`'s re-export of `stableStringify`. Every other module under `services/`,
+  `sync/` and `gcal/` is still loaded from `lambda.ts`, `local.ts` or `scripts/`; the
+  `testing/*Calls.ts` shims stay, each one line over a class.
+- **Dashboards through their classes** (phase 6a review M7). `QueryTarget` reads a saved view
+  through `View.load` and a block through `Dashboard.load` and `Dashboard#pageBlock` (the draft
+  for editors, the published copy for viewers), with no repository and no rule of its own;
+  `ItemPolicy` asks `Dashboard.connectorIdsIn` for the share facts and `Topic.delete` asks
+  `Dashboard.softDeleteAllOn(topic)`. `dashboardInternals.test.ts` pins the three repositories to
+  their classes.
+- **`Dashboard#blocks()`**: the draft's blocks as their classes, the plan's composition (storage
+  stays JSON).
+- **Topics go with their workspace** (the owner's ruling on N9): the cascade's topics step
+  (`Topic.removeAllIn`, after the dashboards, before the members), the purge's
+  `Topic.removeOrphans` (reads from the primary, ids only; `PurgeResult.orphanedTopics`), and the
+  `2026-11-16-orphaned-topics` migration for what earlier deletions left.
+- **Phase 6b review.** M1 (the golden pins one block's lint order), M2 (only `Dashboard` reaches the
+  builder's `applyOps`), M3 (DocCheck builds each issue field by field; the golden records the check
+  issues as returned), M4 (the registry registers once and is sealed), M5 (one
+  `utils/deepFreeze.ts`), M6 (the catalog's defaults deep-frozen, `add_view` clones them, the pure
+  rules unit-tested in `builder/rules.test.ts`), and the nits above.
 
 ## What phase 6a built (dashboards, views, connect links, the audit page; the list emptied)
 
@@ -2677,8 +2736,8 @@ their caller's actor. Jobs and the sync write as the system, without an origin.
 
 Rules that still live in a service until their phase moves them into a class:
 
-| Rule                                                        | Where                                                                   | Moves with              |
-| ----------------------------------------------------------- | ----------------------------------------------------------------------- | ----------------------- |
-| A private saved view is its owner's alone                   | `View#isVisibleTo` (phase 6a); `QueryTarget` (the view path) repeats it | done (phase 6a)         |
-| Only your own local to-do is copied to a provider           | `services/providerCreate/service.ts` (`loadTodo`)                       | `Todo.copyTo` (phase 4) |
-| Agent-key visibility and revoking (owner or the key's user) | `services/agentKeys.ts`, through `WorkspacePolicy`                      | `AgentKey` (phase 6)    |
+| Rule                                                        | Where                                                                    | Moves with              |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------- |
+| A private saved view is its owner's alone                   | `View#isVisibleTo` (phase 6a); `QueryTarget` asks `View.load` (phase 7a) | done (phase 7a)         |
+| Only your own local to-do is copied to a provider           | `services/providerCreate/service.ts` (`loadTodo`)                        | `Todo.copyTo` (phase 4) |
+| Agent-key visibility and revoking (owner or the key's user) | `services/agentKeys.ts`, through `WorkspacePolicy`                       | `AgentKey` (phase 6)    |
