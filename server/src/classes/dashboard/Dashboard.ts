@@ -264,7 +264,7 @@ export class Dashboard
     return this.data.published !== null;
   }
 
-  /** The draft's blocks, as stored (plain JSON until phase 6b). */
+  /** The draft's blocks, as stored: plain JSON (DocCheck checks each through its Block class). */
   get blocks(): readonly unknown[] {
     return this.data.blocks;
   }

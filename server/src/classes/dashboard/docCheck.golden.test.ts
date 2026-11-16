@@ -1,7 +1,7 @@
 /**
- * DocCheck's output, pinned before phase 6b swaps the per-block checks for the Block classes:
- * over every template (both languages), every block type (valid, and failing each catalog rule)
- * and a set of invalid documents:
+ * DocCheck's output, pinned before phase 6b swapped the per-block checks for the Block classes and
+ * unchanged by the swap, over every template (both languages), every block type (valid, and
+ * failing each catalog rule) and a set of invalid documents:
  * - the issues of `check` (their order, pointers and messages, and whether the document parsed),
  *   the depth refusal and the 50-issue cap included;
  * - the lint in each mode (with and without the workspace's topics);
@@ -368,7 +368,7 @@ function snapshot(): Snapshot {
   return { checks, lints, validations, restores, ops };
 }
 
-describe('DocCheck: the output phase 6b must keep', () => {
+describe('DocCheck: the output phase 6b kept', () => {
   it('matches docCheck.golden.json: issues, their order, lint per mode, the 400 a write answers', () => {
     const actual = snapshot();
     if (process.env['UPDATE_DOCCHECK_GOLDEN'] === '1') {
