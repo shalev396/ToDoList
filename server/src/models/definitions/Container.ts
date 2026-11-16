@@ -104,6 +104,11 @@ export interface IContainerRepository {
     resources: readonly string[],
     options?: SweepOptions,
   ): Promise<number>;
+  /** How many live containers (hidden ones too) each of these integrations has (one read). */
+  countLiveByIntegration(
+    workspaceId: string,
+    integrationIds: readonly string[],
+  ): Promise<Map<string, number>>;
   /** Whether any container (a deleted one too) belongs to one of these integrations. */
   existsForIntegrations(workspaceId: string, integrationIds: readonly string[]): Promise<boolean>;
   /** Sets `deletedAt` (default now) on this integration's live containers. Returns how many. */

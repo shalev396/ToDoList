@@ -130,6 +130,23 @@ export abstract class Item
     return Item.countLive(workspaceId, { integrationId });
   }
 
+  /** countLiveOf of each of these integrations, in one read. */
+  static async countLiveOfEach(
+    workspaceId: string,
+    integrationIds: readonly string[],
+  ): Promise<Map<string, number>> {
+    const counts = new Map(integrationIds.map((id) => [id, 0]));
+    if (integrationIds.length === 0) return counts;
+    const rows = await (
+      await getItemRepository()
+    ).aggregate<{ _id: unknown; n: number }>(workspaceId, [
+      { $match: { integrationId: { $in: [...integrationIds] }, deletedAt: null } },
+      { $group: { _id: '$integrationId', n: { $sum: 1 } } },
+    ]);
+    for (const { _id, n } of rows) if (typeof _id === 'string') counts.set(_id, n);
+    return counts;
+  }
+
   /** How many live items match a stored-field filter (internal: the counts above build it). */
   protected static async countLive(
     workspaceId: string,

@@ -23,8 +23,11 @@ const NOW = new Date('2026-11-12T09:00:00.000Z');
 /** The delay of every round trip; 0 by default (the count does not depend on it). */
 const ROUND_TRIP_MS = Number(process.env['SEED_ROUND_TRIP_MS'] ?? '0');
 
-/** Commands a seed may send. Before its writes were batched it sent 475. */
-const BUDGET = 480;
+/**
+ * Commands a seed may send. Before its writes were batched it sent 475 (45.6 s with 150 ms a round
+ * trip); batched, 73 (about 7 s).
+ */
+const BUDGET = 75;
 
 /** The driver's own commands: handshakes and session clean-up, never the seed's. */
 const HOUSEKEEPING: ReadonlySet<string> = new Set([

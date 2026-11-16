@@ -130,6 +130,14 @@ export class Container
     return (await (await getContainerRepository()).list(workspaceId, { integrationId })).length;
   }
 
+  /** countLiveOf of each of these integrations, in one read. */
+  static async countLiveOfEach(
+    workspaceId: string,
+    integrationIds: readonly string[],
+  ): Promise<Map<string, number>> {
+    return (await getContainerRepository()).countLiveByIntegration(workspaceId, integrationIds);
+  }
+
   /** A topic was deleted: its containers become Unsorted (Topic.delete). Returns how many. */
   static async unsetTopicIn(workspaceId: string, topicId: string): Promise<number> {
     return (await getContainerRepository()).unsetTopic(workspaceId, topicId);

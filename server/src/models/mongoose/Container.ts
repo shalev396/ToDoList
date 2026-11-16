@@ -189,6 +189,17 @@ export const ContainerRepository: IContainerRepository = {
     return result.modifiedCount;
   },
 
+  async countLiveByIntegration(workspaceId, integrationIds) {
+    const counts = new Map(integrationIds.map((id) => [id, 0]));
+    if (integrationIds.length === 0) return counts;
+    const rows = await ContainerMongoModel.aggregate<{ _id: string; n: number }>([
+      { $match: { workspaceId, integrationId: { $in: [...integrationIds] }, deletedAt: null } },
+      { $group: { _id: '$integrationId', n: { $sum: 1 } } },
+    ]);
+    for (const { _id, n } of rows) counts.set(_id, n);
+    return counts;
+  },
+
   async existsForIntegrations(workspaceId, integrationIds) {
     if (integrationIds.length === 0) return false;
     const found = await ContainerMongoModel.exists({

@@ -444,32 +444,29 @@ async function summarize(
   dashboards: number,
 ): Promise<SeedSummary> {
   const { workspaceId } = caller;
-  const counted = Promise.all(
-    connected.map(async ({ spec, integration }, index): Promise<SeededIntegration> => {
-      const run = runs[index];
-      if (run === undefined) throw new Error('seedWorkspace: a sync result is missing');
-      const [items, containers] = await Promise.all([
-        Item.countLiveOf(workspaceId, integration.id),
-        Container.countLiveOf(workspaceId, integration.id),
-      ]);
-      return {
-        key: spec.key,
-        provider: integration.provider,
-        label: integration.label,
-        integrationId: integration.id,
-        topicId: integration.topicId,
-        status: run.status,
-        error: run.error?.code ?? null,
-        items,
-        containers,
-        failed: run.counts.failed,
-      };
-    }),
-  );
-  const [integrations, localTodos] = await Promise.all([
-    counted,
+  const ids = connected.map(({ integration }) => integration.id);
+  // Counted at once, in one read each.
+  const [items, containers, localTodos] = await Promise.all([
+    Item.countLiveOfEach(workspaceId, ids),
+    Container.countLiveOfEach(workspaceId, ids),
     Todo.countLiveWithKeys(caller, todoKeys),
   ]);
+  const integrations = connected.map(({ spec, integration }, index): SeededIntegration => {
+    const run = runs[index];
+    if (run === undefined) throw new Error('seedWorkspace: a sync result is missing');
+    return {
+      key: spec.key,
+      provider: integration.provider,
+      label: integration.label,
+      integrationId: integration.id,
+      topicId: integration.topicId,
+      status: run.status,
+      error: run.error?.code ?? null,
+      items: items.get(integration.id) ?? 0,
+      containers: containers.get(integration.id) ?? 0,
+      failed: run.counts.failed,
+    };
+  });
   return { workspaceId, integrations, localTodos, dashboards };
 }
 
