@@ -78,8 +78,7 @@ const providers: RequestHandler = async (req, res): Promise<void> => {
 const resources: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
   const data: ListOAuthResourcesResponseData = await listOAuthResources(
-    request.workspace,
-    request.user.id,
+    request.caller,
     routeParam(req, 'iid'),
   );
   res.success(data);

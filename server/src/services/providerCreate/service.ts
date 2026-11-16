@@ -14,9 +14,7 @@ import type {
   CreateOptionsResponseData,
   CreateTargetsResponseData,
 } from '../../types/providerCreate.js';
-import type { ActorRef } from '../../classes/base/Actor.js';
-import { Caller, type WorkspaceContext } from '../../classes/base/Caller.js';
-import { Actor } from '../../classes/base/Actor.js';
+import type { Caller } from '../../classes/base/Caller.js';
 import { Integration, isCreateFunnel } from '../../classes/integration/index.js';
 import { isCreatableProvider, Todo } from '../../classes/item/index.js';
 import { ItemPolicy } from '../../classes/policies/ItemPolicy.js';
@@ -30,17 +28,13 @@ export type { CreatableProvider };
  * The caller's own integrations that can create items, one chip each. `writable` is false when
  * nothing can be created there now: read-only (`mode`), or creating is off for it on this server.
  */
-export async function listCreateTargets(
-  ctx: WorkspaceContext,
-  userId: string,
-): Promise<CreateTargetsResponseData> {
-  const caller = Caller.fromContext(ctx, Actor.user(userId));
+export async function listCreateTargets(caller: Caller): Promise<CreateTargetsResponseData> {
   const targets: CreateTargetsResponseData['targets'] = [];
   for (const integration of await Integration.listVisible(caller)) {
     const { provider } = integration;
     if (
       !isCreatableProvider(provider) ||
-      !integration.isOwnedBy(userId) ||
+      !integration.isOwnedBy(caller.userId) ||
       integration.status !== 'active'
     ) {
       continue;
@@ -67,12 +61,10 @@ export async function listCreateTargets(
  * be written to now: 409 `provider_writes_off` (demo data, fixtures), 409 `integration_read_only`.
  */
 export async function createOptions(
-  ctx: WorkspaceContext,
-  userId: string,
+  caller: Caller,
   integrationId: string,
   query: CreateOptionsQuery,
 ): Promise<CreateOptionsResponseData> {
-  const caller = Caller.fromContext(ctx, Actor.user(userId));
   caller.require('editor');
   const integration = await Integration.findOwn(caller, integrationId);
   if (!isCreatableProvider(integration.provider) || !isCreateFunnel(integration)) {
@@ -105,11 +97,10 @@ export async function createOptions(
  * calendar event without a due date. Everything the provider decides comes back as an outcome.
  */
 export async function createCopy(
-  ctx: WorkspaceContext,
-  actor: ActorRef,
+  caller: Caller,
   todoId: string,
   body: CreateCopyRequestBody,
   now: Date = new Date(),
 ): Promise<CreateCopyOutcome> {
-  return Todo.copyOwn(Caller.fromContext(ctx, actor), todoId, body, now);
+  return Todo.copyOwn(caller, todoId, body, now);
 }

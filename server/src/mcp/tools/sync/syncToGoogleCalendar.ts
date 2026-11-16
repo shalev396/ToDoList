@@ -5,7 +5,7 @@ import type { PlanNarrowing } from '../../../classes/calendar/PushPlan.js';
 import { gcalSync } from '../../../services/gcalSync.js';
 import { Integration } from '../../../classes/integration/index.js';
 import { Workspace } from '../../../classes/workspace/index.js';
-import { toolCaller } from '../../auth/principal.js';
+import { toolCaller, userCaller } from '../../auth/principal.js';
 import { RuleGroupSchema } from '../../../types/builder.js';
 import { defineTool } from '../../tool.js';
 
@@ -86,7 +86,7 @@ export const syncToGoogleCalendar = defineTool({
           'itemFilter and range apply to a dry run only: the push follows the integration filter.',
         );
       }
-      const plan = await gcalSync(ctx.workspace, ctx.principal.userId, {
+      const plan = await gcalSync(userCaller(ctx), {
         integrationId: integration.id,
         confirm: false,
         ...(narrowed ? { narrowing } : {}),
@@ -109,7 +109,7 @@ export const syncToGoogleCalendar = defineTool({
         preview: true,
       };
     }
-    const queued = await gcalSync(ctx.workspace, ctx.principal.userId, {
+    const queued = await gcalSync(userCaller(ctx), {
       integrationId: integration.id,
       confirm: true,
     });

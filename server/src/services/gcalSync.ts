@@ -14,8 +14,7 @@
  */
 import { z } from 'zod';
 
-import { Actor } from '../classes/base/Actor.js';
-import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
+import type { Caller } from '../classes/base/Caller.js';
 import {
   Integration,
   isCalendarProvider,
@@ -52,12 +51,10 @@ export interface GcalSyncInput {
  * read & write (409 `integration_read_only`, before anything is planned or recorded).
  */
 export async function gcalSync(
-  ctx: WorkspaceContext,
-  userId: string,
+  caller: Caller,
   input: GcalSyncInput,
   now: Date = new Date(),
 ): Promise<GcalDryRun | GcalConfirmed> {
-  const caller = Caller.fromContext(ctx, Actor.user(userId));
   const integration = await Integration.findOwn(caller, input.integrationId);
   // Its way of connecting must be able to write (the OAuth grant, never the demo's service account).
   if (!isCalendarProvider(integration) || !integration.canCreate) {

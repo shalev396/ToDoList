@@ -66,8 +66,7 @@ const callback: RequestHandler = async (req, res): Promise<void> => {
 const calendars: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
   const data: ListGoogleCalendarsResponseData = await listGoogleCalendars(
-    request.workspace,
-    request.user.id,
+    request.caller,
     routeParam(req, 'iid'),
   );
   res.success(data);

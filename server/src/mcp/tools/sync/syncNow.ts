@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { AppError } from '../../../errors/AppError.js';
 import { Integration } from '../../../classes/integration/index.js';
-import { toolCaller } from '../../auth/principal.js';
+import { toolCaller, userCaller } from '../../auth/principal.js';
 import { requestIntegrationSync } from '../../../services/syncRuns.js';
 import { defineTool } from '../../tool.js';
 import { IntegrationId } from './views.js';
@@ -51,11 +51,7 @@ export const syncNow = defineTool({
     const skipped: Skipped[] = [];
     for (const integrationId of ids) {
       try {
-        const outcome = await requestIntegrationSync(
-          ctx.workspace,
-          ctx.principal.userId,
-          integrationId,
-        );
+        const outcome = await requestIntegrationSync(userCaller(ctx), integrationId);
         if ('runId' in outcome) runIds.push(outcome.runId);
         else {
           skipped.push({

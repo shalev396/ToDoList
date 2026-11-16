@@ -19,17 +19,13 @@ const COOLDOWN_MINUTES = Math.round(LIMITS.manualSyncIntervalMs / 60_000);
 
 const syncAll: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
-  const data: SyncAllResponseData = await requestWorkspaceSync(request.workspace, request.user.id);
+  const data: SyncAllResponseData = await requestWorkspaceSync(request.caller);
   res.success(data, 202);
 };
 
 const syncIntegration: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
-  const outcome = await requestIntegrationSync(
-    request.workspace,
-    request.user.id,
-    routeParam(req, 'iid'),
-  );
+  const outcome = await requestIntegrationSync(request.caller, routeParam(req, 'iid'));
   if ('retryAfterMs' in outcome) {
     res.set('Retry-After', String(Math.ceil(outcome.retryAfterMs / 1000)));
     res.error(
@@ -45,11 +41,7 @@ const syncIntegration: RequestHandler = async (req, res): Promise<void> => {
 const listRuns: RequestHandler = async (req, res): Promise<void> => {
   const query = parseOr400(SyncRunsQuery, req.query);
   const request = req as WorkspaceRequest;
-  const data: ListSyncRunsResponseData = await listSyncRuns(
-    request.workspace,
-    request.user.id,
-    query,
-  );
+  const data: ListSyncRunsResponseData = await listSyncRuns(request.caller, query);
   res.success(data);
 };
 

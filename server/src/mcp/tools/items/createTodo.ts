@@ -130,7 +130,7 @@ export const createTodo = defineTool({
         .digest('base64url')
         .slice(0, 40);
       try {
-        const outcome = await createCopy(ctx.workspace, toolCaller(ctx).actor, item.id, {
+        const outcome = await createCopy(toolCaller(ctx), item.id, {
           requestId,
           integrationId,
           target,

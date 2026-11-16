@@ -6,6 +6,7 @@ import {
   SYNC_RUNS_DEFAULT_LIMIT,
   SYNC_RUNS_MAX_LIMIT,
 } from '../../../services/syncRuns.js';
+import { userCaller } from '../../auth/principal.js';
 import { defineTool } from '../../tool.js';
 import { IntegrationId, RunId, RunView, toRunView } from './views.js';
 
@@ -37,10 +38,10 @@ export const getSyncStatus = defineTool({
   minRole: 'viewer',
   async handler(ctx, input) {
     if (input.runId !== undefined) {
-      const run = await getSyncRun(ctx.workspace, ctx.principal.userId, input.runId);
+      const run = await getSyncRun(userCaller(ctx), input.runId);
       return { output: { runs: [toRunView(run)] }, target: { type: 'sync_run', id: run.id } };
     }
-    const runs = await listSyncRuns(ctx.workspace, ctx.principal.userId, {
+    const runs = await listSyncRuns(userCaller(ctx), {
       integrationId: input.integrationId,
       limit: input.limit,
     });

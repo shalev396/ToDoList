@@ -8,8 +8,14 @@
  *   from `Caller.enter`; the tool and resource helpers rebuild a caller from it, narrowed to a
  *   read tool's topics where asked): principal.ts, resources.ts, tools/itemViews.ts,
  *   tools/builder/common.ts, tools/integrations/startConnect.ts;
- * - the services the REST controllers call with `req.workspace`, which requireWorkspace set from
- *   `Caller.enter`: gcalSync, oauth/service, providerCreate/service, syncRuns, workspaceQuery.
+ * - the one REST service still handed a context, `runWorkspaceQuery` (workspaceQuery.ts; its
+ *   context also feeds the field registry and the compile context, and a dozen suites call it).
+ *   The other REST services take the controller's `req.caller`, so they cannot be handed a made-up
+ *   role, and their audit entries carry the request's ip and user agent (final review m1).
+ *
+ * The MCP helpers that mint a Caller from a context (`toolCaller`, `userCaller`, `itemCaller`,
+ * `itemReads`, `builderCaller`) export the same power under other names: they are named only under
+ * mcp/, and `runWorkspaceQuery` only by its controller and the MCP tools.
  *
  * Why a pin and not a check inside fromContext: those contexts are legitimately copied on the way
  * (`caller.context` hands out a copy; a read tool narrows `{...workspace, onlyTopics}`), so an
@@ -31,12 +37,29 @@ const FROM_CONTEXT_CALLERS: ReadonlySet<string> = new Set([
   'mcp/tools/itemViews.ts',
   'mcp/tools/builder/common.ts',
   'mcp/tools/integrations/startConnect.ts',
-  'services/gcalSync.ts',
-  'services/oauth/service.ts',
-  'services/providerCreate/service.ts',
-  'services/syncRuns.ts',
   'services/workspaceQuery.ts',
 ]);
+
+/** Helpers that mint a Caller from a context: MCP modules only. */
+const MCP_MINTS = /\b(?:toolCaller|userCaller|itemCaller|itemReads|builderCaller)\b/;
+/** The context-taking query service: its module, its controller, and the MCP tools. */
+const QUERY_SERVICE = /\brunWorkspaceQuery\b/;
+const QUERY_CALLERS: ReadonlySet<string> = new Set([
+  'services/workspaceQuery.ts',
+  'controllers/query.ts',
+]);
+
+/** Every module that names one of the helpers without being allowed to, sorted. */
+function helperStrays(files: ReadonlyMap<string, string>): string[] {
+  const found: string[] = [];
+  for (const [file, source] of files) {
+    if (isTest(file) || file.startsWith('mcp/')) continue;
+    const text = nameText(scan(source));
+    if (MCP_MINTS.test(text)) found.push(`${file}: mcp helper`);
+    if (QUERY_SERVICE.test(text) && !QUERY_CALLERS.has(file)) found.push(`${file}: query`);
+  }
+  return found.sort();
+}
 
 const DOOR = /\bfromContext\b/;
 
@@ -90,6 +113,26 @@ describe('Caller.fromContext is pinned to its callers', () => {
       'controllers/alias.ts',
       'routes/private/stray.ts',
       'services/lazy.ts',
+    ]);
+  });
+
+  it('the MCP helpers and the query service are named only where allowed', () => {
+    assert.deepEqual(helperStrays(files), []);
+    const tree = new Map(files);
+    tree.set(
+      'services/viewerAsOwner.ts',
+      `import { itemCaller } from '../mcp/tools/itemViews.js';`,
+    );
+    tree.set(
+      'controllers/sneaky.ts',
+      `import { toolCaller as t } from '../mcp/auth/principal.js';`,
+    );
+    tree.set('routes/run.ts', `import { runWorkspaceQuery } from '../services/workspaceQuery.js';`);
+    tree.set('mcp/tools/ok.ts', `import { userCaller } from '../auth/principal.js';`);
+    assert.deepEqual(helperStrays(tree), [
+      'controllers/sneaky.ts: mcp helper',
+      'routes/run.ts: query',
+      'services/viewerAsOwner.ts: mcp helper',
     ]);
   });
 });

@@ -15,8 +15,7 @@
  */
 import { z } from 'zod';
 
-import { Actor } from '../classes/base/Actor.js';
-import { Caller, type WorkspaceContext } from '../classes/base/Caller.js';
+import type { Caller } from '../classes/base/Caller.js';
 import { Integration, type SyncRequestOutcome } from '../classes/integration/index.js';
 import { SyncRun } from '../classes/sync/SyncRun.js';
 import type { SyncRunView } from '../types/integrations.js';
@@ -38,11 +37,9 @@ export type { SyncRequestOutcome } from '../classes/integration/index.js';
  * old.
  */
 export async function requestIntegrationSync(
-  ctx: WorkspaceContext,
-  userId: string,
+  caller: Caller,
   integrationId: string,
 ): Promise<SyncRequestOutcome> {
-  const caller = Caller.fromContext(ctx, Actor.user(userId));
   return (await Integration.findOwn(caller, integrationId)).requestSync(caller);
 }
 
@@ -51,11 +48,8 @@ export async function requestIntegrationSync(
  * Those waiting for them or synced manually less than the interval ago are skipped. 503 only when
  * nothing could be queued because the queue failed.
  */
-export async function requestWorkspaceSync(
-  ctx: WorkspaceContext,
-  userId: string,
-): Promise<{ runIds: string[] }> {
-  return Integration.requestSyncAll(Caller.fromContext(ctx, Actor.user(userId)));
+export async function requestWorkspaceSync(caller: Caller): Promise<{ runIds: string[] }> {
+  return Integration.requestSyncAll(caller);
 }
 
 // ─── History (SyncRun#toView: counts as named numbers, an error as a code and its fixed
@@ -71,12 +65,10 @@ export interface ListSyncRunsInput {
  * isn't theirs), newest first.
  */
 export async function listSyncRuns(
-  ctx: WorkspaceContext,
-  userId: string,
+  caller: Caller,
   input: ListSyncRunsInput,
 ): Promise<SyncRunView[]> {
   const limit = Math.min(input.limit ?? SYNC_RUNS_DEFAULT_LIMIT, SYNC_RUNS_MAX_LIMIT);
-  const caller = Caller.fromContext(ctx, Actor.user(userId));
   const integrations =
     input.integrationId === undefined
       ? await Integration.listOwn(caller)
@@ -88,12 +80,7 @@ export async function listSyncRuns(
  * One run, by id (the handle "sync now" gave), of one of the member's own integrations; 404
  * otherwise: another member's, another workspace's, or since disconnected.
  */
-export async function getSyncRun(
-  ctx: WorkspaceContext,
-  userId: string,
-  runId: string,
-): Promise<SyncRunView> {
-  const caller = Caller.fromContext(ctx, Actor.user(userId));
+export async function getSyncRun(caller: Caller, runId: string): Promise<SyncRunView> {
   const run = await SyncRun.get(caller, runId);
   await Integration.findOwn(caller, run.integrationId);
   return run.toView();

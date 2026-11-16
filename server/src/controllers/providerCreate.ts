@@ -16,8 +16,8 @@ import { parseOr400, routeParam } from '../utils/validation.js';
 
 /** Editor: the caller's own integrations that can create items, one chip each. */
 const targets: RequestHandler = async (req, res): Promise<void> => {
-  const { workspace, user } = req as WorkspaceRequest;
-  const data: CreateTargetsResponseData = await listCreateTargets(workspace, user.id);
+  const { caller } = req as WorkspaceRequest;
+  const data: CreateTargetsResponseData = await listCreateTargets(caller);
   res.set('Cache-Control', 'no-store');
   res.success(data);
 };
@@ -25,10 +25,9 @@ const targets: RequestHandler = async (req, res): Promise<void> => {
 /** Editor: one funnel step's choices. */
 const options: RequestHandler = async (req, res): Promise<void> => {
   const query = parseOr400(CreateOptionsQuerySchema, req.query);
-  const { workspace, user } = req as WorkspaceRequest;
+  const { caller } = req as WorkspaceRequest;
   const data: CreateOptionsResponseData = await createOptions(
-    workspace,
-    user.id,
+    caller,
     routeParam(req, 'iid'),
     query,
   );
@@ -39,13 +38,8 @@ const options: RequestHandler = async (req, res): Promise<void> => {
 /** Editor: creates a to-do's copy in one of the caller's own providers. */
 const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateCopyBody, req.body);
-  const { workspace, caller } = req as WorkspaceRequest;
-  const data: CreateCopyResponseData = await createCopy(
-    workspace,
-    caller.actor,
-    routeParam(req, 'id'),
-    body,
-  );
+  const { caller } = req as WorkspaceRequest;
+  const data: CreateCopyResponseData = await createCopy(caller, routeParam(req, 'id'), body);
   res.set('Cache-Control', 'no-store');
   res.success(data);
 };

@@ -7,8 +7,7 @@
  */
 import { z } from 'zod';
 
-import { Actor } from '../../classes/base/Actor.js';
-import { Caller, type WorkspaceContext } from '../../classes/base/Caller.js';
+import type { Caller } from '../../classes/base/Caller.js';
 import {
   GoogleCalendarIntegration,
   Integration,
@@ -74,11 +73,9 @@ export function asOAuthProvider(value: string): OAuthProviderId | null {
  * or when the provider refused the grant (reconnect); 502 when it does not answer.
  */
 export async function listOAuthResources(
-  ctx: WorkspaceContext,
-  userId: string,
+  caller: Caller,
   integrationId: string,
 ): Promise<OAuthResource[]> {
-  const caller = Caller.fromContext(ctx, Actor.user(userId));
   const integration = await Integration.findOwn(caller, integrationId);
   const { provider } = integration;
   if (!picksFrom(integration, 'sites') && !picksFrom(integration, 'workspaces')) {
@@ -104,11 +101,9 @@ export async function listOAuthResources(
  * or when Google refuses the grant (reconnect); 502 when Google does not answer.
  */
 export async function listGoogleCalendars(
-  ctx: WorkspaceContext,
-  userId: string,
+  caller: Caller,
   integrationId: string,
 ): Promise<GoogleCalendarEntry[]> {
-  const caller = Caller.fromContext(ctx, Actor.user(userId));
   const integration = await Integration.findOwn(caller, integrationId);
   if (!picksFrom(integration, 'calendars')) {
     throw new AppError(409, 'Only a Google Calendar connected with Google lists its calendars');

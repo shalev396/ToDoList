@@ -8,7 +8,7 @@ import { parseOr400 } from '../utils/validation.js';
 const run: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(GcalSyncBody, req.body);
   const request = req as WorkspaceRequest;
-  const outcome = await gcalSync(request.workspace, request.user.id, body);
+  const outcome = await gcalSync(request.caller, body);
   if (outcome.dryRun) {
     const data: GcalSyncResponseData = { dryRun: true, counts: outcome.counts };
     res.success(data);
