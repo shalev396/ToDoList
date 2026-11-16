@@ -18,7 +18,11 @@ import {
   type TemplateLanguage,
 } from '../../builder/templates.js';
 import { localizeViewTemplate } from '../../builder/viewTemplates.js';
-import type { DashboardData } from '../../models/definitions/Dashboard.js';
+import type {
+  CreateDashboardInput as CreateDashboardRow,
+  DashboardData,
+} from '../../models/definitions/Dashboard.js';
+import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { getDashboardRepository } from '../../models/index.js';
 import type { Block, DashboardDraft, Layouts } from '../../types/builder.js';
 import type { BlockPreview, IntegrationShare } from '../../types/dashboards.js';
@@ -87,6 +91,26 @@ export interface CreatePreview {
   templateKey: string | null;
   preview: Record<string, BlockPreview>;
   shares: IntegrationShare[];
+}
+
+/** A create from a template, as `write` takes it. */
+function createInputOf(input: InstantiateDashboardInput): CreateDashboardInput {
+  return {
+    fromTemplate: input.templateKey,
+    language: input.language,
+    scope: input.scope,
+    shareIntegrations: input.shareIntegrations,
+  };
+}
+
+/** A new dashboard's first history entry's summary. */
+function createdSummary(templateKey: string | null): string {
+  return templateKey === null ? 'create' : `create ${templateKey}`;
+}
+
+/** A new dashboard's `dashboard.create` audit meta. */
+function createdMeta(version: number, templateKey: string | null): Record<string, unknown> {
+  return { version, templateKey };
 }
 
 /** The first draft and its template key, before the member's integrations are bound. */
@@ -161,14 +185,24 @@ export class NewDashboard {
     const caller = this.#caller;
     DASHBOARD_OPERATIONS.create.assert(caller);
     const planned = initialDraft(input);
+    const bindable =
+      planned.templateKey === null
+        ? []
+        : await DashboardConnectors.of(caller).bindable(input.shareIntegrations !== false);
+    return this.#checked(planned, bindable);
+  }
+
+  /**
+   * The first draft bound to `bindable` (a template's blocks, ruling 16) and checked as a write
+   * checks it.
+   */
+  #checked(
+    planned: { draft: DashboardDraft; templateKey: string | null },
+    bindable: readonly IntegrationData[],
+  ): { draft: DashboardDraft; templateKey: string | null } {
     const { templateKey } = planned;
     const initial =
-      templateKey === null
-        ? planned.draft
-        : bindTemplateConnectors(
-            planned.draft,
-            await DashboardConnectors.of(caller).bindable(input.shareIntegrations !== false),
-          );
+      templateKey === null ? planned.draft : bindTemplateConnectors(planned.draft, [...bindable]);
     // A group page (one course, one project) belongs to one topic; project@1 leaves it to the caller.
     if (initial.scope.page === 'group' && initial.scope.topicId === null) {
       throw new OpValidationError(
@@ -176,7 +210,7 @@ export class NewDashboard {
         'scope.topicId required: a group page belongs to one topic',
       );
     }
-    return { draft: DocCheck.instance.validated(initial, lintModeOf(caller)), templateKey };
+    return { draft: DocCheck.instance.validated(initial, lintModeOf(this.#caller)), templateKey };
   }
 
   /**
@@ -209,7 +243,105 @@ export class NewDashboard {
     await DashboardConnectors.of(caller).assert([], draft.blocks);
     const { actor } = caller;
     const dashboards = await getDashboardRepository();
-    const created = await dashboards.create(caller.workspaceId, {
+    const created = await dashboards.create(caller.workspaceId, this.#stored(draft, templateKey));
+    ItemPolicy.forget(caller.workspaceId);
+    await History.of<DashboardDraft>(caller.workspaceId, created.id).start(
+      created.version,
+      draft,
+      actor,
+      createdSummary(templateKey),
+    );
+    const result = autoPublishes(caller)
+      ? ((await dashboards.setPublished(
+          caller.workspaceId,
+          created.id,
+          created.version,
+          publishedCopy(draft),
+        )) ?? created)
+      : created;
+    await AuditLog.record(
+      caller,
+      DASHBOARD_AUDIT.create,
+      AuditTarget.of('dashboard', created.id),
+      createdMeta(created.version, templateKey),
+    );
+    return result;
+  }
+
+  /**
+   * New dashboards as `write` makes each, in a handful of round trips whatever their number: the
+   * member's integrations, the topics and the blocks' connectors read once; the dashboards, their
+   * first history entries, an owner's publish and the audit entries each written at once. They
+   * are created in the order given (each a millisecond after the one before it), so they list in
+   * that order. Answers their ids.
+   */
+  async writeAll(inputs: readonly CreateDashboardInput[]): Promise<string[]> {
+    const caller = this.#caller;
+    DASHBOARD_OPERATIONS.create.assert(caller);
+    if (inputs.length === 0) return [];
+    const connectors = DashboardConnectors.of(caller);
+    const bindable = new Map<boolean, Promise<IntegrationData[]>>();
+    const plans: { draft: DashboardDraft; templateKey: string | null }[] = [];
+    for (const input of inputs) {
+      const planned = initialDraft(input);
+      const share = input.shareIntegrations !== false;
+      if (planned.templateKey !== null && !bindable.has(share)) {
+        bindable.set(share, connectors.bindable(share));
+      }
+      const own = planned.templateKey === null ? [] : await (bindable.get(share) ?? []);
+      plans.push(this.#checked(planned, own));
+    }
+    const { workspaceId, actor } = caller;
+    await Topic.assertAllOf(workspaceId, [
+      ...new Set(plans.flatMap(({ draft }) => draft.scope.topicId ?? [])),
+    ]);
+    await connectors.assertEach(plans.map(({ draft }) => draft.blocks));
+    const dashboards = await getDashboardRepository();
+    const created = await dashboards.createMany(
+      workspaceId,
+      plans.map(({ draft, templateKey }) => this.#stored(draft, templateKey)),
+    );
+    ItemPolicy.forget(workspaceId);
+    const written = created.map((data, index) => {
+      const plan = plans[index];
+      if (plan === undefined) throw new Error('NewDashboard.writeAll: a dashboard is missing');
+      return { data, ...plan };
+    });
+    await History.startAll<DashboardDraft>(
+      workspaceId,
+      written.map(({ data, draft, templateKey }) => ({
+        documentId: data.id,
+        version: data.version,
+        doc: draft,
+        author: actor,
+        summary: createdSummary(templateKey),
+      })),
+    );
+    if (autoPublishes(caller)) {
+      await dashboards.setPublishedMany(
+        workspaceId,
+        written.map(({ data, draft }) => ({
+          id: data.id,
+          version: data.version,
+          snapshot: publishedCopy(draft),
+        })),
+      );
+    }
+    await AuditLog.recordAll(
+      caller,
+      written.map(({ data, templateKey }) => ({
+        action: DASHBOARD_AUDIT.create,
+        target: AuditTarget.of('dashboard', data.id),
+        meta: createdMeta(data.version, templateKey),
+      })),
+    );
+    return created.map(({ id }) => id);
+  }
+
+  /** What a new dashboard stores of its checked draft, as the caller's. */
+  #stored(draft: DashboardDraft, templateKey: string | null): CreateDashboardRow {
+    const { actor } = this.#caller;
+    return {
       ownerUserId: actor.userId,
       title: draft.title,
       scope: { ...draft.scope, groupVar: draft.scope.groupVar ?? null },
@@ -220,38 +352,23 @@ export class NewDashboard {
       importance: draft.importance ?? null,
       views: draft.views ?? [],
       updatedBy: { userId: actor.userId, agentId: actor.agentId },
-    });
-    ItemPolicy.forget(caller.workspaceId);
-    await History.of<DashboardDraft>(caller.workspaceId, created.id).start(
-      created.version,
-      draft,
-      actor,
-      templateKey === null ? 'create' : `create ${templateKey}`,
-    );
-    const result = autoPublishes(caller)
-      ? ((await dashboards.setPublished(
-          caller.workspaceId,
-          created.id,
-          created.version,
-          publishedCopy(draft),
-        )) ?? created)
-      : created;
-    await AuditLog.record(caller, DASHBOARD_AUDIT.create, AuditTarget.of('dashboard', created.id), {
-      version: created.version,
-      templateKey,
-    });
-    return result;
+    };
   }
 
   /** A new dashboard from a template (`POST …/builder/instantiate`): `write`, the key's pointer named. */
   async writeFromTemplate(input: InstantiateDashboardInput): Promise<DashboardData> {
+    return NewDashboard.#templateKeyPointer(() => this.write(createInputOf(input)));
+  }
+
+  /** New dashboards from templates, as `writeAll` makes them; the key's pointer named. */
+  async writeAllFromTemplates(inputs: readonly InstantiateDashboardInput[]): Promise<string[]> {
+    return NewDashboard.#templateKeyPointer(() => this.writeAll(inputs.map(createInputOf)));
+  }
+
+  /** A template key's problem, as the instantiate request names it (`/templateKey`). */
+  static async #templateKeyPointer<T>(write: () => Promise<T>): Promise<T> {
     try {
-      return await this.write({
-        fromTemplate: input.templateKey,
-        language: input.language,
-        scope: input.scope,
-        shareIntegrations: input.shareIntegrations,
-      });
+      return await write();
     } catch (error) {
       if (error instanceof OpValidationError && error.pointer === '/fromTemplate') {
         throw new OpValidationError('/templateKey', error.reason);

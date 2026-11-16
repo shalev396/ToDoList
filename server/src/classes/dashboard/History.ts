@@ -26,7 +26,10 @@ import {
 } from '../../builder/history.js';
 import type { PatchOperation } from '../../builder/ops.js';
 import { AppError } from '../../errors/AppError.js';
-import type { DashboardVersionData } from '../../models/definitions/DashboardVersion.js';
+import type {
+  DashboardVersionData,
+  DashboardVersionEntry,
+} from '../../models/definitions/DashboardVersion.js';
 import { getDashboardVersionRepository } from '../../models/index.js';
 import { KEEP_VERSIONS, SNAPSHOT_EVERY } from './limits.js';
 import { deepFreeze } from '../../utils/deepFreeze.js';
@@ -43,6 +46,15 @@ let newTrail: <TDoc>(entries: readonly DashboardVersionData[]) => HistoryTrail<T
 export interface HistoryAuthor {
   readonly userId: string;
   readonly agentId: string | null;
+}
+
+/** A new document's first entry (History.startAll): which document, its state, by whom. */
+export interface HistoryStart<TDoc> {
+  documentId: string;
+  version: number;
+  doc: TDoc;
+  author: HistoryAuthor;
+  summary: string;
 }
 
 /** One write, as the history records it. */
@@ -205,8 +217,34 @@ export class History<TDoc> {
   async start(version: number, doc: TDoc, author: HistoryAuthor, summary: string): Promise<void> {
     await (
       await getDashboardVersionRepository()
-    ).append(this.#workspaceId, {
-      dashboardId: this.#documentId,
+    ).append(this.#workspaceId, History.#first(this.#documentId, version, doc, author, summary));
+  }
+
+  /** `start` of several new documents of a workspace, in one write, in order. */
+  static async startAll<TDoc>(
+    workspaceId: string,
+    starts: readonly HistoryStart<TDoc>[],
+  ): Promise<void> {
+    await (
+      await getDashboardVersionRepository()
+    ).appendMany(
+      workspaceId,
+      starts.map(({ documentId, version, doc, author, summary }) =>
+        History.#first(documentId, version, doc, author, summary),
+      ),
+    );
+  }
+
+  /** A new document's first entry: no patch, the whole state as its snapshot. */
+  static #first(
+    documentId: string,
+    version: number,
+    doc: unknown,
+    author: HistoryAuthor,
+    summary: string,
+  ): DashboardVersionEntry {
+    return {
+      dashboardId: documentId,
       version,
       patch: [],
       inverse: [],
@@ -214,7 +252,7 @@ export class History<TDoc> {
       actorUserId: author.userId,
       actorAgentId: author.agentId,
       summary,
-    });
+    };
   }
 
   /** Appends one write's entry, with a snapshot on every SNAPSHOT_EVERY-th version. */

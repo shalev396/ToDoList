@@ -36,6 +36,8 @@ export interface IDashboardVersionRepository {
    * `findById`.
    */
   append(workspaceId: string, entry: DashboardVersionEntry): Promise<DashboardVersionData>;
+  /** append() for each entry, in one write, in order. */
+  appendMany(workspaceId: string, entries: readonly DashboardVersionEntry[]): Promise<void>;
   /** Newest first. */
   list(workspaceId: string, dashboardId: string, limit: number): Promise<DashboardVersionData[]>;
   findByVersion(

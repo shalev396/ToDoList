@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import {
   DASHBOARD_VERSION_TABLE_NAME,
   type DashboardVersionData,
+  type DashboardVersionEntry,
   type IDashboardVersionRepository,
 } from '../definitions/DashboardVersion.js';
 import { setFields, uuidIdField } from './common.js';
@@ -55,18 +56,31 @@ function toDashboardVersionData(doc: DashboardVersionFields): DashboardVersionDa
   };
 }
 
+/** The stored document of one entry (the schema fills in what it leaves out). */
+function versionDoc(workspaceId: string, entry: DashboardVersionEntry): Record<string, unknown> {
+  return {
+    workspaceId,
+    dashboardId: entry.dashboardId,
+    version: entry.version,
+    patch: entry.patch,
+    inverse: entry.inverse,
+    actorUserId: entry.actorUserId,
+    ...setFields(entry, ['snapshot', 'actorAgentId', 'summary', 'at']),
+  };
+}
+
 export const DashboardVersionRepository: IDashboardVersionRepository = {
   async append(workspaceId, entry) {
-    const doc = await DashboardVersionMongoModel.create({
-      workspaceId,
-      dashboardId: entry.dashboardId,
-      version: entry.version,
-      patch: entry.patch,
-      inverse: entry.inverse,
-      actorUserId: entry.actorUserId,
-      ...setFields(entry, ['snapshot', 'actorAgentId', 'summary', 'at']),
-    });
+    const doc = await DashboardVersionMongoModel.create(versionDoc(workspaceId, entry));
     return toDashboardVersionData(doc);
+  },
+
+  async appendMany(workspaceId, entries) {
+    if (entries.length === 0) return;
+    await DashboardVersionMongoModel.insertMany(
+      entries.map((entry) => new DashboardVersionMongoModel(versionDoc(workspaceId, entry))),
+      { ordered: true },
+    );
   },
 
   async list(workspaceId, dashboardId, limit) {

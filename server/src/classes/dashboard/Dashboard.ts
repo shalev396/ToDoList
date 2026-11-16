@@ -379,6 +379,18 @@ export class Dashboard
     );
   }
 
+  /**
+   * New dashboards from templates (`instantiate` for each), in a handful of round trips: created
+   * in the order given (each a millisecond after the one before it), so they list in that order.
+   * Answers their ids (the demo seed's pages).
+   */
+  static instantiateAll(
+    caller: Caller,
+    inputs: readonly InstantiateDashboardInput[],
+  ): Promise<string[]> {
+    return NewDashboard.for(caller).writeAllFromTemplates(inputs);
+  }
+
   /** What instantiating these templates would share (NewDashboard#templateShares). */
   static templateShares(
     caller: Caller,

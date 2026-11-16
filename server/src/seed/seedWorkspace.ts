@@ -11,8 +11,8 @@
  *    (Integration#saveCredential: sealed like any other, never stored in plaintext);
  * 2. the demo area rules (`shalev396/*` → personal, `Braude*` → college);
  * 3. local to-dos (Todo.createAll, in one write): overdue, today, later this week and undated;
- * 4. the template dashboards (Dashboard.instantiate), published; what exists is found by its
- *    outline (Dashboard.listOutlines);
+ * 4. the template dashboards (Dashboard.instantiateAll, at once), published; what exists is
+ *    found by its outline (Dashboard.listOutlines);
  * 5. one fixture sync per integration (trigger `seed`), all together (Integration.syncTogether:
  *    each run replayed in memory, then every run's rows written at once): the items are the
  *    adapters' recorded fixtures, their relative dates resolved against `now` in the workspace's
@@ -269,8 +269,8 @@ async function leaveMinimalShape(caller: Caller, language: TemplateLanguage): Pr
 }
 
 /**
- * The demo dashboards from their templates (published: the owner creates them), one after another
- * in demo order, as the pages list by creation.
+ * The demo dashboards from their templates (published: the owner creates them), the missing ones
+ * at once (Dashboard.instantiateAll) in demo order, as the pages list by creation.
  */
 async function ensureDashboards(
   caller: Caller,
@@ -279,7 +279,7 @@ async function ensureDashboards(
 ): Promise<number> {
   const existing = await Dashboard.listOutlines(caller);
   const templates = new Map(listTemplates().map((template) => [template.key, template]));
-  for (const demo of DEMO_DASHBOARDS) {
+  const missing = DEMO_DASHBOARDS.flatMap((demo) => {
     const template = templates.get(demo.templateKey);
     if (template === undefined) throw new Error(`seedWorkspace: no template ${demo.templateKey}`);
     const topicId = demo.topic === undefined ? null : topics[demo.topic];
@@ -289,13 +289,12 @@ async function ensureDashboards(
         dashboard.scope.topicId === topicId &&
         dashboard.scope.page === template.scope.page,
     );
-    if (found) continue;
-    await Dashboard.instantiate(caller, {
-      templateKey: template.key,
-      language,
-      ...(topicId === null ? {} : { scope: { topicId } }),
-    });
-  }
+    if (found) return [];
+    return [
+      { templateKey: template.key, language, ...(topicId === null ? {} : { scope: { topicId } }) },
+    ];
+  });
+  await Dashboard.instantiateAll(caller, missing);
   return DEMO_DASHBOARDS.length;
 }
 

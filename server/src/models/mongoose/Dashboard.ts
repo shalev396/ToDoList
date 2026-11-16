@@ -4,6 +4,7 @@ import { VAR_NAME_PATTERN } from '../../types/builder.js';
 import { DASHBOARD_PAGES, VISIBILITIES } from '../../types/domain.js';
 import {
   DASHBOARD_TABLE_NAME,
+  type CreateDashboardInput,
   type DashboardData,
   type DashboardReplacement,
   type IDashboardRepository,
@@ -123,25 +124,45 @@ function toDashboardData(doc: DashboardFields): DashboardData {
   };
 }
 
+/** A new dashboard's document (the schema fills in what it leaves out). */
+function dashboardDoc(workspaceId: string, input: CreateDashboardInput): Record<string, unknown> {
+  return {
+    workspaceId,
+    ownerUserId: input.ownerUserId,
+    title: input.title,
+    scope: setFields(input.scope ?? {}, ['topicId', 'containerId', 'page', 'groupVar']),
+    ...setFields(input, [
+      'templateKey',
+      'visibility',
+      'vars',
+      'layouts',
+      'blocks',
+      'importance',
+      'views',
+      'updatedBy',
+    ]),
+  };
+}
+
 export const DashboardRepository: IDashboardRepository = {
   async create(workspaceId, input) {
-    const doc = await DashboardMongoModel.create({
-      workspaceId,
-      ownerUserId: input.ownerUserId,
-      title: input.title,
-      scope: setFields(input.scope ?? {}, ['topicId', 'containerId', 'page', 'groupVar']),
-      ...setFields(input, [
-        'templateKey',
-        'visibility',
-        'vars',
-        'layouts',
-        'blocks',
-        'importance',
-        'views',
-        'updatedBy',
-      ]),
-    });
+    const doc = await DashboardMongoModel.create(dashboardDoc(workspaceId, input));
     return toDashboardData(doc);
+  },
+
+  async createMany(workspaceId, inputs, at = new Date()) {
+    if (inputs.length === 0) return [];
+    const docs = await DashboardMongoModel.insertMany(
+      inputs.map(
+        (input, index) =>
+          new DashboardMongoModel({
+            ...dashboardDoc(workspaceId, input),
+            createdAt: new Date(at.getTime() + index),
+          }),
+      ),
+      { ordered: true },
+    );
+    return docs.map((doc) => toDashboardData(doc));
   },
 
   async findById(workspaceId, id) {
@@ -214,6 +235,26 @@ export const DashboardRepository: IDashboardRepository = {
       { new: true, runValidators: true },
     ).lean<DashboardFields>();
     return doc ? toDashboardData(doc) : null;
+  },
+
+  // setPublished()'s writes without its `runValidators` (a bulk write has none): the snapshots
+  // are the drafts a create just checked.
+  async setPublishedMany(workspaceId, entries) {
+    if (entries.length === 0) return;
+    for (const { version } of entries) {
+      if (!Number.isInteger(version)) {
+        throw new TypeError('setPublishedMany: version must be an integer');
+      }
+    }
+    await DashboardMongoModel.bulkWrite(
+      entries.map(({ id, version, snapshot }) => ({
+        updateOne: {
+          filter: { _id: id, workspaceId, version, deletedAt: null },
+          update: { $set: { published: snapshot, publishedVersion: version } },
+        },
+      })),
+      { ordered: true },
+    );
   },
 
   async softDelete(workspaceId, id) {

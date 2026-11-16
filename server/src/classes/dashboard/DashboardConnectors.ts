@@ -110,14 +110,61 @@ export class DashboardConnectors {
    * it is, or be removed (returned, to be audited); a gone one may only be removed.
    */
   async check(before: readonly unknown[], next: readonly unknown[]): Promise<ConnectorCheck> {
-    const { added, removed } = connectorChanges(before, next);
-    if (added.length === 0 && removed.length === 0) return { refused: null, foreignRemovals: [] };
-    const ids = [...new Set([...added, ...removed].map((change) => change.integrationId))];
-    const known = new Map<string, IntegrationData>(
+    const changes = connectorChanges(before, next);
+    return this.#judge(changes, await this.#known([changes]));
+  }
+
+  /**
+   * `assert` for several new documents at once (nothing before; one read of their integrations):
+   * the first refused add of any of them throws, its pointer within its own document.
+   */
+  async assertEach(documents: readonly (readonly unknown[])[]): Promise<void> {
+    const changes = documents.map((next) => connectorChanges([], next));
+    const known = await this.#known(changes);
+    for (const [index, next] of documents.entries()) {
+      const change = changes[index];
+      if (change === undefined) continue;
+      const { refused } = this.#judge(change, known);
+      if (refused !== null) throw DashboardConnectors.#refusal(next, refused);
+    }
+  }
+
+  /** A refused add: 404 `integration_not_found`, pointing at it in `next` (never 403). */
+  static #refusal(next: readonly unknown[], refused: ConnectorChange): AppError {
+    return new AppError(
+      404,
+      `${DashboardConnectors.pointerOf(next, refused)}: ${CONNECTOR_REFUSED}`,
+      {
+        code: 'integration_not_found',
+      },
+    );
+  }
+
+  /** The integrations these changes add or remove (deleted ones too), by id: one read. */
+  async #known(
+    changes: readonly { added: ConnectorChange[]; removed: ConnectorChange[] }[],
+  ): Promise<Map<string, IntegrationData>> {
+    const ids = [
+      ...new Set(
+        changes.flatMap(({ added, removed }) =>
+          [...added, ...removed].map((change) => change.integrationId),
+        ),
+      ),
+    ];
+    if (ids.length === 0) return new Map();
+    return new Map(
       (
         await (await getIntegrationRepository()).listByIdsIncludingDeleted(this.#workspaceId, ids)
       ).map((integration) => [integration.id, integration]),
     );
+  }
+
+  /** The check of one change against the integrations it names (`known`). */
+  #judge(
+    { added, removed }: { added: ConnectorChange[]; removed: ConnectorChange[] },
+    known: ReadonlyMap<string, IntegrationData>,
+  ): ConnectorCheck {
+    if (added.length === 0 && removed.length === 0) return { refused: null, foreignRemovals: [] };
     /** A live integration of this workspace, or undefined (unknown, another's workspace, gone). */
     const live = (id: string): IntegrationData | undefined => {
       const integration = known.get(id);
@@ -140,13 +187,7 @@ export class DashboardConnectors {
   /** The check for a write: 404 `integration_not_found` on a refused add (never 403). */
   async assert(before: readonly unknown[], next: readonly unknown[]): Promise<ForeignRemoval[]> {
     const { refused, foreignRemovals } = await this.check(before, next);
-    if (refused !== null) {
-      throw new AppError(
-        404,
-        `${DashboardConnectors.pointerOf(next, refused)}: ${CONNECTOR_REFUSED}`,
-        { code: 'integration_not_found' },
-      );
-    }
+    if (refused !== null) throw DashboardConnectors.#refusal(next, refused);
     return foreignRemovals;
   }
 

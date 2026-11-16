@@ -99,6 +99,15 @@ export interface DashboardFilter {
 export interface IDashboardRepository {
   /** Starts at version 1. */
   create(workspaceId: string, input: CreateDashboardInput): Promise<DashboardData>;
+  /**
+   * create() for each input, in one write, in order, each created a millisecond after the one
+   * before it (from `at`, default now), so they list by creation in that order.
+   */
+  createMany(
+    workspaceId: string,
+    inputs: readonly CreateDashboardInput[],
+    at?: Date,
+  ): Promise<DashboardData[]>;
   /** Soft-deleted dashboards are not found. */
   findById(workspaceId: string, id: string): Promise<DashboardData | null>;
   /** Not soft-deleted, oldest first. */
@@ -132,6 +141,11 @@ export interface IDashboardRepository {
     version: number,
     snapshot: DashboardSnapshot,
   ): Promise<DashboardData | null>;
+  /** setPublished() for each entry, in one write, in order (no dashboard is answered). */
+  setPublishedMany(
+    workspaceId: string,
+    entries: readonly { id: string; version: number; snapshot: DashboardSnapshot }[],
+  ): Promise<void>;
   /** Sets `deletedAt`. False when there was nothing to delete. */
   softDelete(workspaceId: string, id: string): Promise<boolean>;
   /**
