@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import { TOPIC_COLOURS, TOPIC_ICONS } from '../../types/topics.js';
 import {
   TOPIC_TABLE_NAME,
+  type CreateTopicInput,
   type ITopicRepository,
   type TopicData,
   type TopicPatch,
@@ -47,19 +48,39 @@ function toTopicData(doc: TopicFields): TopicData {
   };
 }
 
+/** A new topic's document (the schema fills in what it leaves out). */
+function topicDoc(workspaceId: string, input: CreateTopicInput): Record<string, unknown> {
+  return {
+    ...(input.id === undefined ? {} : { _id: input.id }),
+    workspaceId,
+    name: input.name,
+    slug: input.slug,
+    icon: input.icon ?? null,
+    colour: input.colour ?? null,
+    order: input.order,
+    createdBy: input.createdBy ?? null,
+  };
+}
+
 export const TopicRepository: ITopicRepository = {
   async create(workspaceId, input) {
-    const doc = await TopicMongoModel.create({
-      ...(input.id === undefined ? {} : { _id: input.id }),
-      workspaceId,
-      name: input.name,
-      slug: input.slug,
-      icon: input.icon ?? null,
-      colour: input.colour ?? null,
-      order: input.order,
-      createdBy: input.createdBy ?? null,
-    });
+    const doc = await TopicMongoModel.create(topicDoc(workspaceId, input));
     return toTopicData(doc.toObject());
+  },
+
+  async createMany(workspaceId, inputs, at = new Date()) {
+    if (inputs.length === 0) return [];
+    const docs = await TopicMongoModel.insertMany(
+      inputs.map(
+        (input, index) =>
+          new TopicMongoModel({
+            ...topicDoc(workspaceId, input),
+            createdAt: new Date(at.getTime() + index),
+          }),
+      ),
+      { ordered: true },
+    );
+    return docs.map((doc) => toTopicData(doc.toObject()));
   },
 
   async findById(workspaceId, id) {

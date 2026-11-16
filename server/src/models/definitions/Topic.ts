@@ -42,6 +42,16 @@ export interface TopicPatch {
 export interface ITopicRepository {
   /** Throws a duplicate-key error (code 11000) when the slug or the id is taken. */
   create(workspaceId: string, input: CreateTopicInput): Promise<TopicData>;
+  /**
+   * create() for each input, in one write, in order, each created a millisecond after the one
+   * before it (from `at`, default now). A taken slug or id stops it there (code 11000), the inputs
+   * before it written.
+   */
+  createMany(
+    workspaceId: string,
+    inputs: readonly CreateTopicInput[],
+    at?: Date,
+  ): Promise<TopicData[]>;
   findById(workspaceId: string, id: string): Promise<TopicData | null>;
   findBySlug(workspaceId: string, slug: string): Promise<TopicData | null>;
   /** In sidebar order: `order`, then oldest first. */

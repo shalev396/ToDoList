@@ -13,7 +13,11 @@
  *   (removeAllIn, the cascade's topics step).
  */
 import { AppError } from '../../errors/AppError.js';
-import type { TopicData, TopicPatch } from '../../models/definitions/Topic.js';
+import type {
+  CreateTopicInput as CreateTopicRow,
+  TopicData,
+  TopicPatch,
+} from '../../models/definitions/Topic.js';
 import { getTopicRepository, getWorkspaceRepository } from '../../models/index.js';
 import { sha256Hex } from '../../services/crypto/hashing.js';
 import {
@@ -213,25 +217,40 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
     const existing = await repository.list(workspaceId);
     const taken = new Set(existing.map((topic) => topic.slug));
     let order = existing.reduce((max, topic) => Math.max(max, topic.order), -1);
+    const missing: CreateTopicRow[] = [];
     for (const slug of slugs) {
       if (taken.has(slug)) continue;
       const topic = DEFAULT_TOPICS.find((entry) => entry.slug === slug);
       if (topic === undefined) continue;
       order += 1;
       taken.add(slug);
-      try {
-        await repository.create(workspaceId, {
-          id: Topic.defaultId(workspaceId, slug),
-          name: topic.names[language],
-          slug,
-          icon: topic.icon,
-          order,
-        });
-      } catch (error) {
-        if (!isDuplicateKey(error)) throw error;
-      }
+      missing.push({
+        id: Topic.defaultId(workspaceId, slug),
+        name: topic.names[language],
+        slug,
+        icon: topic.icon,
+        order,
+      });
     }
+    if (missing.length === 0) return existing.map((data) => new Topic(data));
+    try {
+      // One write, in order; then the list is what the database would answer (its order).
+      const created = await repository.createMany(workspaceId, missing);
+      return [...existing, ...created].sort(Topic.#listed).map((data) => new Topic(data));
+    } catch (error) {
+      if (!isDuplicateKey(error)) throw error;
+    }
+    // A concurrent run made some of them: the workspace's topics as they are now.
     return (await repository.list(workspaceId)).map((data) => new Topic(data));
+  }
+
+  /** The repository's list order: by `order`, then by creation, then by id. */
+  static #listed(a: TopicData, b: TopicData): number {
+    return (
+      a.order - b.order ||
+      a.createdAt.getTime() - b.createdAt.getTime() ||
+      (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+    );
   }
 
   // ─── Changes (editors and up) ────────────────────────────────────────────
