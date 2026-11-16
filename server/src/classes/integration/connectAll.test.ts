@@ -99,6 +99,9 @@ describe('Integration.connectAllWithKey and saveCredentials', () => {
         alone.owner,
         fakeCredential(connection.authMethod as 'api_token_basic', `key-${String(index)}`),
       );
+      // The dump ranks rows by createdAt: one-by-one connects in the same millisecond would tie,
+      // where the batch's never do. Let the clock move on before the next one.
+      await new Promise((resolve) => setTimeout(resolve, 2));
     }
 
     const [a, b] = await Promise.all([

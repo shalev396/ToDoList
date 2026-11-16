@@ -68,7 +68,12 @@ describe('Dashboard.instantiateAll', () => {
       { templateKey: 'project@1', language: 'he', scope: { topicId: topics['personal'] } },
     ];
     const ids = await Dashboard.instantiateAll(together.owner, inputs(together.topics));
-    for (const input of inputs(alone.topics)) await Dashboard.instantiate(alone.owner, input);
+    for (const input of inputs(alone.topics)) {
+      await Dashboard.instantiate(alone.owner, input);
+      // The dump ranks rows by createdAt: one-by-one pages made in the same millisecond would
+      // tie, where the batch's never do. Let the clock move on before the next one.
+      await new Promise((resolve) => setTimeout(resolve, 2));
+    }
 
     const [a, b] = await Promise.all([
       dumpWorkspace(together.workspaceId),

@@ -92,6 +92,9 @@ async function setup(
         config: spec.config ?? {},
       }),
     );
+    // The dump ranks rows by createdAt: two made in the same millisecond would tie in one
+    // workspace and not in its twin. Let the clock move on before the next one.
+    await new Promise((resolve) => setTimeout(resolve, 2));
   }
   return { workspaceId: workspace.id, integrations };
 }
