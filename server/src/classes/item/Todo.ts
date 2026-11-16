@@ -202,7 +202,7 @@ export class Todo
     if (!(await (await getItemRepository()).softDelete(this.workspaceId, this.id))) {
       throw new AppError(404, 'Not found');
     }
-    await CalendarLinks.in(this.workspaceId).onItemDeleted(this.id);
+    await CalendarLinks.in(this.workspaceId).onItemDeleted(this.id, caller);
   }
 
   /** H5: created in one of the caller's own providers too (TodoCopy). */

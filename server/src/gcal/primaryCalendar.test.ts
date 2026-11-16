@@ -359,6 +359,31 @@ describe('the push goes to the primary calendar', () => {
     });
   });
 
+  it('a member’s delete of their to-do: its event goes, audited as that member (address, user agent), not the owner', async () => {
+    const made = await as(editor, 'POST', '/items', {
+      title: 'The editor’s to-do, deleted later',
+      dueAt: new Date(Date.now() + 5 * 86_400_000).toISOString(),
+    });
+    assert.equal(made.status, 201, made.text);
+    const mine = data(made.body)['id'] as string;
+    await push();
+    assert.ok(eventIds(created).includes(eventIdFor(mine)));
+    const before = writes();
+    const removed = await as(editor, 'DELETE', `/items/${mine}`);
+    assert.equal(removed.status, 204, removed.text);
+    assert.deepEqual(since(before), [`DELETE ${calendarPath(created)}/events/${eventIdFor(mine)}`]);
+    const [entry] = await (
+      await models.getAuditLogRepository()
+    ).list(wid, { action: 'integration.write' }, 1);
+    assert.ok(entry !== undefined);
+    assert.deepEqual(entry.meta, { operation: 'event.delete', itemId: mine });
+    assert.equal(entry.actorUserId, editorId, 'the member who deleted the to-do');
+    assert.notEqual(entry.actorUserId, ownerId);
+    assert.equal(entry.targetId, iid);
+    assert.equal(typeof entry.ip, 'string', 'with the request’s address');
+    assert.equal(typeof entry.userAgent, 'string', 'and its user agent');
+  });
+
   it('read-only suspends it: shown so, never pushed; read & write again resumes it', async () => {
     await setMode('read');
     const shown = await as(owner, 'GET', '/primary-calendar');

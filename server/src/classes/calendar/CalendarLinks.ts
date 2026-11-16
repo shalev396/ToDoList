@@ -2,7 +2,8 @@
  * What happens to the push's links when something around them changes outside a push (a push's
  * own links are its Calendar's): right after a to-do is deleted, each event TodoList pushed for it
  * goes at once, through its integration's own write session and checks (deleteLinkedEvent), as
- * that integration's owner (the push is theirs).
+ * that integration's owner (the push is theirs); the audit entry names the member who deleted the
+ * to-do, with their address and user agent.
  */
 import { Actor } from '../base/Actor.js';
 import { Caller } from '../base/Caller.js';
@@ -29,10 +30,11 @@ export class CalendarLinks {
    * link whose integration is read-only, gone, or whose owner left stays (its next push removes the
    * event, once it can); a delete with no answer keeps its claim, which the integration's next push,
    * clean-up or look at its pushed events reconciles once 10 minutes old; any other failure is
-   * logged and never fails the delete, which already happened. Returns how many events were
+   * logged and never fails the delete, which already happened. `deletedBy`: the member who deleted
+   * it, whom each `integration.write` (`event.delete`) entry names. Returns how many events were
    * deleted.
    */
-  async onItemDeleted(itemId: string): Promise<number> {
+  async onItemDeleted(itemId: string, deletedBy: Caller): Promise<number> {
     const workspaceId = this.#workspaceId;
     let deleted = 0;
     try {
@@ -49,7 +51,7 @@ export class CalendarLinks {
         const owner = await Caller.enter(workspaceId, Actor.user(integration.ownerUserId));
         if (owner === null) continue;
         try {
-          await integration.deleteLinkedEvent(owner, { itemId });
+          await integration.deleteLinkedEvent(owner, { itemId }, deletedBy);
           deleted += 1;
         } catch (error) {
           left(link.integrationId, error);

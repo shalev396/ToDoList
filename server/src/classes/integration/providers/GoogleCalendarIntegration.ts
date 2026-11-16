@@ -607,7 +607,11 @@ export class GoogleCalendarIntegration
    * (#deleteLink, EventClaim). Audited as `integration.write` (`event.delete`) right after Google
    * takes it (with `outcome: 'unknown'` when Google did not answer and a read could not say).
    */
-  async deleteLinkedEvent(caller: Caller, link: LinkedItemRef): Promise<void> {
+  async deleteLinkedEvent(
+    caller: Caller,
+    link: LinkedItemRef,
+    deletedBy: Caller = caller,
+  ): Promise<void> {
     this.assertOwner(caller);
     const itemId = (link as { itemId?: unknown }).itemId;
     if (typeof itemId !== 'string' || itemId === '') throw new NotFoundError();
@@ -616,7 +620,7 @@ export class GoogleCalendarIntegration
     if (found === null || !CalendarLink.isOwnLive(found)) {
       throw new NotFoundError();
     }
-    await this.#deleteLink(caller, found);
+    await this.#deleteLink(caller, found, deletedBy);
   }
 
   /**
@@ -899,7 +903,11 @@ export class GoogleCalendarIntegration
    * no time budget: gone or cancelled settles it; anything else, a failed read included, keeps
    * the claim) and answered as before (502, audited `outcome: 'unknown'`).
    */
-  async #deleteLink(caller: Caller, link: CalendarLinkData): Promise<void> {
+  async #deleteLink(
+    caller: Caller,
+    link: CalendarLinkData,
+    auditAs: Caller = caller,
+  ): Promise<void> {
     const calendarId = checkedId('calendarId', link.calendarId, 'link');
     const eventId = checkedId('eventId', link.googleEventId, 'link');
     this.assertWritable(caller);
@@ -925,11 +933,11 @@ export class GoogleCalendarIntegration
     }
     if (lost !== null && lost.reading !== 'made') {
       // Kept for the sweep: it may still land.
-      await this.recordWrite(caller, { ...meta, outcome: 'unknown' });
+      await this.recordWrite(auditAs, { ...meta, outcome: 'unknown' });
       throw calendarFailure(lost.error, true);
     }
     // Made: audited first, then settled (a settle that fails leaves it for the sweep).
-    await this.recordWrite(caller, meta);
+    await this.recordWrite(auditAs, meta);
     await claim.settle();
   }
 

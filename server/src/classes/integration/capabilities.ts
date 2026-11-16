@@ -214,9 +214,11 @@ export interface CalendarProvider extends CreateFunnel {
    * An event TodoList pushed, deleted by its CalendarLink of this integration (the live
    * `to_google` link of the item it was pushed for, whose event id is the one TodoList gives that
    * item: 404 otherwise); the link is tombstoned. For the push's clean-up (an item deleted, a
-   * disconnect).
+   * disconnect). `deletedBy`: the member whose delete of the to-do this follows; the audit entry
+   * names them, with their address and user agent, while the integration's owner (`caller`) still
+   * opens the write session. Without it the entry names `caller`.
    */
-  deleteLinkedEvent(caller: Caller, link: LinkedItemRef): Promise<void>;
+  deleteLinkedEvent(caller: Caller, link: LinkedItemRef, deletedBy?: Caller): Promise<void>;
   /**
    * A calendar of TodoList's own, named `name` (Google's `calendars.insert`, which needs the
    * `calendar.app.created` scope: a grant without it is 409 `scope_missing`). It is read from
