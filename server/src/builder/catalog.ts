@@ -43,6 +43,7 @@ import {
 } from '../types/domain.js';
 import type { AttributeDef, AttributeType } from '../types/attributes.js';
 import { toPointer } from './errors.js';
+import { deepFreeze } from '../utils/deepFreeze.js';
 
 // ─── Fields ─────────────────────────────────────────────────────────────────
 
@@ -243,7 +244,7 @@ export function lookupField(
 // ─── Blocks ─────────────────────────────────────────────────────────────────
 
 export interface BlockCatalogEntry {
-  /** What a new block of this type starts with (BUILDER.md §4). */
+  /** What a new block of this type starts with (BUILDER.md §4): frozen, so a block clones it. */
   defaults: Partial<Block>;
   /** Default size on the 12-column `lg` grid, for auto-placement (ops.ts scales it for md, sm). */
   size: GridSize;
@@ -438,6 +439,11 @@ export const BLOCK_CATALOG: Readonly<Record<BlockType, BlockCatalogEntry>> = {
     },
   },
 };
+
+// Every request of a warm Lambda shares these defaults: frozen at every depth, so nothing changes
+// them in place (a new block takes a clone: describeCatalog, the ops). The viz schemas are not
+// frozen: zod fills its internals lazily.
+for (const entry of Object.values(BLOCK_CATALOG)) deepFreeze(entry.defaults);
 
 export interface CatalogIssue {
   pointer: string;

@@ -671,13 +671,15 @@ class Editor {
       const config: ViewConfig = op.config ?? {};
       const { viz, ...fields } = config;
       const blockId = this.freshId();
+      // A copy: the catalog's defaults are shared (and frozen); the block owns its viz.
+      const defaults = structuredClone(entry.defaults);
       this.state.blocks.push({
         id: blockId,
         title: op.title ?? '',
         type: blockType,
-        ...structuredClone(entry.defaults),
+        ...defaults,
         ...fields,
-        viz: { ...entry.defaults.viz, ...viz },
+        viz: { ...defaults.viz, ...viz },
       });
       blockIds.push(blockId);
       if (config.query === undefined) this.scopeToTopic(blockId);
