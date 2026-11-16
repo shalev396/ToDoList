@@ -78,7 +78,8 @@ export const TopicRepository: ITopicRepository = {
             createdAt: new Date(at.getTime() + index),
           }),
       ),
-      { ordered: true },
+      // Unordered: a taken slug (a concurrent run's) never stops the topics after it.
+      { ordered: false },
     );
     return docs.map((doc) => toTopicData(doc.toObject()));
   },

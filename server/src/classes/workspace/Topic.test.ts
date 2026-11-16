@@ -78,6 +78,39 @@ describe('ensureDefaultTopics', () => {
     const again = await Topic.ensureDefaults(ws.id, ['work', 'college', 'personal'], 'en');
     assert.equal(again.length, 3);
   });
+
+  it('a default a concurrent run made first never stops the ones after it', async () => {
+    const ws = await workspace();
+    const repository = await models.getTopicRepository();
+    // The concurrent run's `work` lands after this run read the list.
+    await repository.create(ws.id, {
+      id: Topic.defaultId(ws.id, 'work'),
+      name: 'Work',
+      slug: 'work',
+      order: 0,
+    });
+    const original = Object.getOwnPropertyDescriptor(repository, 'list');
+    assert.ok(original);
+    const list = repository.list.bind(repository);
+    let reads = 0;
+    Object.assign(repository, {
+      list: async (workspaceId: string) => {
+        reads += 1;
+        return reads === 1 ? [] : list(workspaceId);
+      },
+    });
+    try {
+      const all = await Topic.ensureDefaults(ws.id, ['work', 'college', 'personal'], 'en');
+      assert.deepEqual(all.map((topic) => topic.slug).sort(), ['college', 'personal', 'work']);
+    } finally {
+      Object.defineProperty(repository, 'list', original);
+    }
+    assert.deepEqual((await Topic.list(ws.id)).map((topic) => topic.slug).sort(), [
+      'college',
+      'personal',
+      'work',
+    ]);
+  });
 });
 
 describe('createTopic', () => {

@@ -238,6 +238,7 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
       const created = await repository.createMany(workspaceId, missing);
       return [...existing, ...created].sort(Topic.#listed).map((data) => new Topic(data));
     } catch (error) {
+      // The others were still written (an unordered write): only a taken slug is forgiven.
       if (!isDuplicateKey(error)) throw error;
     }
     // A concurrent run made some of them: the workspace's topics as they are now.

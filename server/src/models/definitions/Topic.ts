@@ -44,8 +44,8 @@ export interface ITopicRepository {
   create(workspaceId: string, input: CreateTopicInput): Promise<TopicData>;
   /**
    * create() for each input, in one write, in order, each created a millisecond after the one
-   * before it (from `at`, default now). A taken slug or id stops it there (code 11000), the inputs
-   * before it written.
+   * before it (from `at`, default now). A taken slug or id is skipped: every other input is
+   * written, then a duplicate-key error (code 11000) is thrown.
    */
   createMany(
     workspaceId: string,
