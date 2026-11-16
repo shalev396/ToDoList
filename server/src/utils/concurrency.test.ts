@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { runWithConcurrency } from './concurrency.js';
+import { runWithConcurrency, settleAll } from './concurrency.js';
 
 describe('runWithConcurrency', () => {
   it('returns results in input order even when later items finish first', async () => {
@@ -46,5 +46,30 @@ describe('runWithConcurrency', () => {
       ),
       /boom/,
     );
+  });
+});
+
+describe('settleAll', () => {
+  it('answers every result in order', async () => {
+    const out = await settleAll([delay(20).then(() => 'slow'), Promise.resolve(2)] as const);
+    assert.deepEqual(out, ['slow', 2]);
+  });
+
+  it('waits for every task before it throws, and throws the first failure by position', async () => {
+    const finished: string[] = [];
+    const later = delay(30).then(() => {
+      finished.push('later');
+      throw new Error('second by position, last to fail');
+    });
+    const sooner = delay(5).then(() => {
+      finished.push('sooner');
+      throw new Error('third by position, first to fail');
+    });
+    const fine = delay(15).then(() => {
+      finished.push('fine');
+      return 1;
+    });
+    await assert.rejects(settleAll([fine, later, sooner] as const), /second by position/);
+    assert.deepEqual(finished.sort(), ['fine', 'later', 'sooner']);
   });
 });
