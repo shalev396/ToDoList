@@ -100,11 +100,11 @@ def test_the_confirmation_code_comes_from_the_inbox(mail):
     assert mailtm.poll_inbox_and_get_code("t") == "482913"
 
 
-def test_no_code_within_a_minute_is_an_error(mail):
-    mail.answers = [_answer(200, {"hydra:member": []}) for _ in range(10)]
-    with pytest.raises(RuntimeError, match="No confirmation code"):
+def test_no_code_within_the_poll_window_is_an_error(mail):
+    mail.answers = [_answer(200, {"hydra:member": []}) for _ in range(30)]
+    with pytest.raises(RuntimeError, match="No confirmation code received within 150s"):
         mailtm.poll_inbox_and_get_code("t")
-    assert len(mail.paths) == 7  # at 12 s, then every 8 s up to 60 s
+    assert len(mail.paths) == 19  # at 12 s, then every 8 s to 148 s, and a last look at 150 s
 
 
 def test_the_invite_path_comes_from_the_invitees_inbox(mail):

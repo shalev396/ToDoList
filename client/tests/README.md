@@ -232,7 +232,7 @@ Tests that create users (sign up, login flow, profile flows) use [Mail.tm](https
 
 - Backend API running
 - Network access to api.mail.tm
-- Initial 12s wait for email delivery (first poll), then a look every 8 s, for up to a minute
+- Initial 12s wait for email delivery (first poll), then a look every 8 s, for up to 150 s (in CI, with every worker signing up at once, a confirmation email has taken over a minute)
 
 Mail.tm is free and shared, and answers 429 when an address sends too much (GitHub runners share addresses). [`tests/helpers/mailtm.py`](helpers/mailtm.py) makes every Mail.tm call through [`tests/mailtm_client`](mailtm_client/README.md), a portable package: no project imports, so it can be copied into other projects as is. All the pytest workers on the machine share one rate limit there (a lock file and a state file in the temp dir): 6 calls a second at most, where Mail.tm allows 8 per IP address. A 429 pauses every worker, for its `Retry-After` or else an exponential backoff with jitter, then the call is retried (up to 7 calls and 2 minutes of waiting). The active domain is looked up once for all workers. Several machines behind one address need a lower `MAILTM_RATE` each (see the package README).
 

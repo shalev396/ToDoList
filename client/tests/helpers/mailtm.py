@@ -20,11 +20,12 @@ import requests
 from tests.mailtm_client import AddressTaken, MailTmClient, MailTmTimeout, message_text
 
 MAILTM_BASE = "https://api.mail.tm"
-# A confirmation email takes about 5 to 15 seconds through SES: look after 12 s, then every 8 s,
-# for up to a minute in all.
+# A confirmation email usually takes 5 to 15 seconds through SES, but in CI, with every worker
+# signing up at once, it has taken over a minute: look after 12 s, then every 8 s, for up to
+# 150 s in all (about 18 looks, far under Mail.tm's rate limit).
 POLL_INITIAL_DELAY = 12
 POLL_RETRY_DELAY = 8
-POLL_TIMEOUT = 60
+POLL_TIMEOUT = 150
 
 _CODE = re.compile(r"\b(\d{6})\b")
 _INVITE_PATH = re.compile(r"/(?:en|he)/invites/[A-Za-z0-9_%-]+")
