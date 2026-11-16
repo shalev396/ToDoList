@@ -83,8 +83,9 @@ export function sendUnauthorized(
  * Express middleware: authenticates the agent key or grant token for this endpoint (`resourceOf`),
  * or answers 401. Without a well-formed key nothing is looked up and nothing is spent: the 401
  * challenge is how a client finds sign-in. `failures` (the per-address failed-authentication
- * budget) is spent only after a well-formed key is looked up and fails, so it never stands in the
- * way of a key that authenticates, whatever its address's count; over its budget it answers 429
+ * budget) is spent only after a well-formed key is looked up and is unknown (an expired or revoked
+ * key or grant exists, so it answers 401 unspent), so it never stands in the way of a key that
+ * authenticates, whatever its address's count; over its budget it answers 429
  * itself, still with the challenge, so a client can refresh or sign in once it has waited.
  */
 export function createMcpAuth(
@@ -98,7 +99,7 @@ export function createMcpAuth(
       sendUnauthorized(res, presented, req.body, resource);
       return;
     }
-    const agent = await authenticateAgentKey(key, new Date(), Actor.originOf(req));
+    const { agent, known } = await AgentKey.lookup(key, new Date(), Actor.originOf(req));
     // A sign-in grant is for one endpoint (its token audience); a key (resource null) is for both.
     if (agent !== null && (agent.resource === null || agent.resource === resource)) {
       setRequestAgent(res, agent);
@@ -106,7 +107,8 @@ export function createMcpAuth(
       return;
     }
     res.set('WWW-Authenticate', challengeFor(true, resource));
-    if (await failures.spend(req, res)) {
+    // A token we issued (expired or revoked now) is no guess: 401 so the client refreshes, unspent.
+    if (known || (await failures.spend(req, res))) {
       sendUnauthorized(res, true, req.body, resource);
     }
   };

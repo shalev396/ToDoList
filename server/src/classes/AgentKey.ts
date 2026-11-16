@@ -255,22 +255,35 @@ export class AgentKey
     now: Date,
     origin: ActorOrigin,
   ): Promise<AuthenticatedAgent | null> {
-    if (!AGENT_BEARER_PATTERN.test(raw)) return null;
+    return (await AgentKey.lookup(raw, now, origin)).agent;
+  }
+
+  /**
+   * authenticate, plus whether the token exists at all (`known`): an expired or revoked key or
+   * grant is known, so a refused one is not a guess; only an unknown token is.
+   */
+  static async lookup(
+    raw: string,
+    now: Date,
+    origin: ActorOrigin,
+  ): Promise<{ agent: AuthenticatedAgent | null; known: boolean }> {
+    if (!AGENT_BEARER_PATTERN.test(raw)) return { agent: null, known: false };
     const keys = await getAgentKeyRepository();
     const data = await keys.findByHash(hashAgentKey(raw));
-    if (data === null) return null;
+    if (data === null) return { agent: null, known: false };
+    const refused = { agent: null, known: true };
     const key = new AgentKey(data);
-    if (!key.isUsable(now)) return null;
+    if (!key.isUsable(now)) return refused;
     if (data.accessExpiresAt !== null && data.accessExpiresAt.getTime() <= now.getTime()) {
-      return null;
+      return refused;
     }
     const agent = await resolvePrincipal(data, origin);
-    if (agent === null) return null;
+    if (agent === null) return refused;
     const lastUsed = key.lastUsedAt?.getTime() ?? null;
     if (lastUsed === null || now.getTime() - lastUsed >= TOUCH_INTERVAL_MS) {
       await keys.touch(key.workspaceId, key.id, now);
     }
-    return agent;
+    return { agent, known: true };
   }
 
   // --- OAuth grants -----------------------------------------------------------

@@ -6,9 +6,11 @@
  *   /api/mcp/readonly. It runs before mcpAuth and is keyed by the credential itself (its SHA-256),
  *   so agents behind one egress address (a hosted assistant) don't share a budget, and a key over
  *   its budget is refused without a database lookup. A request with no well-formed credential
- *   is not counted here: mcpAuth refuses it without a lookup.
+ *   is not counted here: mcpAuth refuses it without a lookup. A sign-in grant's access token
+ *   changes on every refresh (rotateGrant replaces the key hash), so its per-key budget restarts
+ *   on each refresh; the bound is API Gateway's MCP route throttle. Personal keys keep one budget.
  * - AuthFailureLimit: failed authentications per client address. mcpAuth spends it only when a
- *   well-formed key was looked up and failed (an expired or revoked grant counts too), so it never
+ *   well-formed key was looked up and is unknown (an expired or revoked one exists: 401, no spend), so it never
  *   holds off a key that authenticates (hosted assistants share egress addresses). Over the
  *   budget, a failed key gets 429 instead of 401, still with the `WWW-Authenticate` challenge, so
  *   a client stuck on a bad key backs off (Retry-After) and can still start sign-in. It neither

@@ -185,7 +185,7 @@ describe('the failed-authentication limit', () => {
   it('without a well-formed key: the 401 challenge, no lookup and no spend', async () => {
     const { AgentKey } = await import('../../classes/AgentKey.js');
     const spends = mock.method(limiter.AuthFailureLimit.prototype, 'spend');
-    const lookups = mock.method(AgentKey, 'authenticate');
+    const lookups = mock.method(AgentKey, 'lookup');
     try {
       for (const authorization of [undefined, 'Bearer nope', 'Basic test', 'elk_x']) {
         for (let i = 0; i <= AUTH_FAILURE_CAP; i += 1) {
@@ -200,6 +200,37 @@ describe('the failed-authentication limit', () => {
     } finally {
       spends.mock.restore();
       lookups.mock.restore();
+    }
+  });
+
+  it('an expired or revoked key exists: 401 with the challenge, nothing spent, even over the budget', async () => {
+    const expired = await insertAgentKey({
+      workspaceId: team.workspace.id,
+      userId: team.owner.id,
+      scopes: ['workspace:read'],
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+    const revoked = await insertAgentKey({
+      workspaceId: team.workspace.id,
+      userId: team.owner.id,
+      scopes: ['workspace:read'],
+      revoked: true,
+    });
+    const spends = mock.method(limiter.AuthFailureLimit.prototype, 'spend');
+    try {
+      // An unknown key spends: past the cap it is a 429.
+      for (let i = 0; i <= AUTH_FAILURE_CAP; i += 1) await post('/spare/api/mcp', newRawKey());
+      assert.equal((await post('/spare/api/mcp', newRawKey())).status, 429);
+      const before = spends.mock.callCount();
+      for (const raw of [expired.raw, revoked.raw, expired.raw]) {
+        const response = await post('/spare/api/mcp', raw);
+        assert.equal(response.status, 401);
+        assert.match(response.headers.get('www-authenticate') ?? '', CHALLENGE);
+        assert.match(response.headers.get('www-authenticate') ?? '', /error="invalid_token"/);
+      }
+      assert.equal(spends.mock.callCount(), before, 'a known key spends nothing');
+    } finally {
+      spends.mock.restore();
     }
   });
 
