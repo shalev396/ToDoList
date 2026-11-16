@@ -24,6 +24,10 @@
  *   and the per-block rules (vizIssues, queryRuleIssues, filterVariableIssues, actionNameIssues,
  *   lintFields, lintSourceLink, lintText) only by the Block classes that apply them, so no write
  *   validates a dashboard any other way (phase 6a review R1);
+ * - only Dashboard loads the builder's `applyOps` (builder/ops.ts), which writes what its
+ *   `check` lets through: Dashboard#applyOps hands it DocCheck, so no other caller can hand it a
+ *   check that passes anything (phase 6b review M2). Nothing else imports that binding, imports
+ *   the module whole (`* as`, a dynamic import) or re-exports from it;
  * - no barrel hands History or the cascade on (`export *` included), and no module re-exports one.
  * A type-only import is erased, so it loads nothing and is allowed anywhere. Every dynamic import
  * takes one string literal (vaultImports.test.ts), so this graph sees every edge.
@@ -55,6 +59,7 @@ const ACTION_BLOCK = 'classes/dashboard/blocks/ActionBlock.ts';
 const ITEM_POLICY = 'classes/policies/ItemPolicy.ts';
 const TOPIC = 'classes/workspace/Topic.ts';
 const QUERY_TARGET = 'classes/item/QueryTarget.ts';
+const OPS = 'builder/ops.ts';
 
 /** The steps of the document check, composed by DocCheck alone. */
 const DOCUMENT_STEPS = /\b(refusedInput|parseDraft|variableIssues|secretIssues|finalIssues)\b/;
@@ -101,6 +106,22 @@ const GUARDED_NAMES: readonly { pattern: RegExp; allowed: ReadonlySet<string> }[
   { pattern: /\bactionNameIssues\b/, allowed: new Set([CATALOG, ACTION_BLOCK]) },
 ];
 
+/** Who may load the builder's applyOps (besides tests): the one caller that hands it DocCheck. */
+const APPLY_OPS_LOADERS: ReadonlySet<string> = new Set([DASHBOARD]);
+
+/**
+ * Whether an edge to builder/ops.ts can reach `applyOps`: the binding named in its clause, the
+ * module whole (a namespace import, a dynamic import), or any re-export from it.
+ */
+function reachesApplyOps(edge: { kind: string; clause: string }): boolean {
+  return (
+    edge.kind === 'export' ||
+    edge.kind === 'dynamic' ||
+    edge.clause.startsWith('*') ||
+    /\bapplyOps\b/.test(edge.clause)
+  );
+}
+
 /** The load gate, by name: History.of is how a trail is read and written. */
 const HISTORY_NAMES = /\bHistory\.of\b|\bHistoryTrail\b/;
 
@@ -117,6 +138,9 @@ function violations(files: ReadonlyMap<string, string>): string[] {
     for (const edge of edgesOf(file, importsIn(scanned), exists)) {
       // A package, or a dynamic import of no single literal (vaultImports.test refuses those).
       if (edge.target === null) continue;
+      if (edge.target === OPS && !edge.typeOnly && reachesApplyOps(edge)) {
+        if (!APPLY_OPS_LOADERS.has(file)) found.push(`${file}: reaches applyOps of ${OPS}`);
+      }
       const loaders = LOADERS[edge.target];
       if (loaders === undefined || edge.typeOnly) continue;
       if (edge.kind === 'export') found.push(`${file}: re-exports ${edge.target}`);
@@ -163,6 +187,14 @@ describe('the dashboard internals', () => {
     assert.ok(names(VIEW, /\bgetViewRepository\b/));
     assert.ok(names(ITEM_POLICY, /\bconnectorIdsIn\b/) && names(TOPIC, /\bsoftDeleteAllOn\b/));
     assert.ok(names(QUERY_TARGET, /\bView\.load\b/) && names(QUERY_TARGET, /\bpageBlock\b/));
+    assert.ok(
+      edgesOf(DASHBOARD, importsIn(scan(files.get(DASHBOARD) ?? '')), (file) =>
+        files.has(file),
+      ).some((edge) => edge.target === OPS && reachesApplyOps(edge)),
+      'Dashboard imports applyOps',
+    );
+    // And it hands applyOps the one document check.
+    assert.ok(names(DASHBOARD, /check: \(draft\) => DocCheck\.instance\.check\(draft\)/));
   });
 
   it('only their legitimate callers load them, and the guarded names are named only there', () => {
@@ -195,6 +227,38 @@ describe('the dashboard internals', () => {
       'mcp/tools/peek.ts: names \\blistOutlines\\b',
       'routes/private/stray.ts: loads classes/dashboard/History.ts',
       'services/pin.ts: names \\bpinAccount\\b',
+    ]);
+  });
+
+  it('only Dashboard reaches the builder’s applyOps: a second caller with a check of its own is caught (M2)', () => {
+    const tree = new Map(files);
+    tree.set(
+      'mcp/tools/rawOps.ts',
+      `import { applyOps } from '../../builder/ops.js';
+export const go = (d: never) => applyOps(d, [], { check: (x) => ({ draft: x as never, issues: [] }), newBlockId: () => 'b', templates: () => null });`,
+    );
+    tree.set(
+      'seed/aliased.ts',
+      `import { applyOps as run } from '../builder/ops.js';\nexport { run };`,
+    );
+    tree.set('migrations/whole.ts', `import * as ops from '../builder/ops.js';\nexport { ops };`);
+    tree.set('builder/barrel.ts', `export { applyOps } from './ops.js';`);
+    tree.set(
+      'jobs/lazy.ts',
+      `export async function go() {\n  return (await import('../builder/ops.js')).applyOps;\n}`,
+    );
+    // Other names of the module, and types, are anyone's.
+    tree.set(
+      'builder/other.ts',
+      `import { newBlockId, type Op } from './ops.js';\nexport { newBlockId };\nexport type { Op };`,
+    );
+    tree.set('classes/item/types.ts', `import type { applyOps } from '../../builder/ops.js';`);
+    assert.deepEqual(violations(tree), [
+      'builder/barrel.ts: reaches applyOps of builder/ops.ts',
+      'jobs/lazy.ts: reaches applyOps of builder/ops.ts',
+      'mcp/tools/rawOps.ts: reaches applyOps of builder/ops.ts',
+      'migrations/whole.ts: reaches applyOps of builder/ops.ts',
+      'seed/aliased.ts: reaches applyOps of builder/ops.ts',
     ]);
   });
 
