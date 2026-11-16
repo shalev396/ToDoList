@@ -14,11 +14,11 @@ import { blockDefaultSize, blockEntry } from '@/features/dashboards/registry';
 import { EmptyIcon, EmptyState } from '@/features/shell/EmptyState';
 import { PageContainer, PageHeader } from '@/features/shell/PageHeader';
 import {
+  cardTopicId,
   miniLayout,
   miniRows,
   needsTopic,
   pathForScope,
-  suggestedTopicId,
 } from '@/features/templates/preview';
 import { useTemplateShareConfirm } from '@/features/templates/useTemplateShareConfirm';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
@@ -68,7 +68,10 @@ function TemplateCard({ template, topics }: { template: TemplateSummary; topics:
   const navigate = useNavigate();
   const create = useCreateDashboard(workspace?.id ?? '');
   const shareConfirm = useTemplateShareConfirm(workspace?.id ?? '');
-  const [topicId, setTopicId] = useState(() => suggestedTopicId(template.key, topics));
+  // Null until a topic is picked here: till then the card follows the suggestion, which can
+  // only be made once the workspace's topics have loaded.
+  const [picked, setPicked] = useState<string | null>(null);
+  const topicId = cardTopicId(template.key, topics, picked);
   const [error, setError] = useState<string | null>(null);
   const lang = language === 'he' ? 'he' : 'en';
   const title = template.titles[lang];
@@ -135,7 +138,7 @@ function TemplateCard({ template, topics }: { template: TemplateSummary; topics:
           <SelectField
             id={`topic-${template.key}`}
             value={topicId}
-            onValueChange={setTopicId}
+            onValueChange={setPicked}
             options={[
               { value: '', label: t('templates.topicPlaceholder') },
               ...topics.map((topic) => ({ value: topic.id, label: topic.name })),

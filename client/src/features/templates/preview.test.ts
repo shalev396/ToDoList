@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { DashboardScope } from '@api-types/builder.ts';
-import { miniLayout, miniRows, needsTopic, pathForScope, suggestedTopicId } from './preview.ts';
+import {
+  cardTopicId,
+  miniLayout,
+  miniRows,
+  needsTopic,
+  pathForScope,
+  suggestedTopicId,
+} from './preview.ts';
 
 const sizes = { filter: { w: 12, h: 3 }, list: { w: 4, h: 8 }, table: { w: 12, h: 8 } } as const;
 const sizeOf = (type: string) => sizes[type as keyof typeof sizes];
@@ -63,5 +70,14 @@ describe('template destination', () => {
     assert.equal(suggestedTopicId('college-course@1', TOPICS), 't-college');
     assert.equal(suggestedTopicId('personal@1', TOPICS), '');
     assert.equal(suggestedTopicId('project@1', TOPICS), '');
+  });
+
+  it('suggests from the topics as they are now, until one is picked', () => {
+    // The card can be drawn before the workspace's topics arrive: the suggestion follows them.
+    assert.equal(cardTopicId('work@1', [], null), '');
+    assert.equal(cardTopicId('work@1', TOPICS, null), 't-work');
+    // A pick is kept whatever the topics do, "Choose a page" ('') included.
+    assert.equal(cardTopicId('work@1', TOPICS, 't-college'), 't-college');
+    assert.equal(cardTopicId('work@1', TOPICS, ''), '');
   });
 });

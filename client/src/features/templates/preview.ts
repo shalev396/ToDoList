@@ -76,3 +76,16 @@ export function suggestedTopicId(
   const slug = name === 'college-course' ? 'college' : name;
   return topics.find((topic) => topic.slug === slug)?.id ?? '';
 }
+
+/**
+ * The topic a template card makes its page in: the one picked on the card (`picked`, null until
+ * then), else the suggestion from the topics as they are now. The topics can arrive after the
+ * card is drawn, so the suggestion is worked out again each time, never kept from the first draw.
+ */
+export function cardTopicId(
+  templateKey: string,
+  topics: readonly { id: string; slug: string }[],
+  picked: string | null,
+): string {
+  return picked ?? suggestedTopicId(templateKey, topics);
+}
