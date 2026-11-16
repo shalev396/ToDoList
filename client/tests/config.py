@@ -13,3 +13,8 @@ FORGOT_PASSWORD_TIMEOUT = 50_000  # Cognito forgot-password API + redirect (can 
 # Creating a workspace with demo data in the app: a seed of a few hundred queries, each a round trip
 # from the local API to the stage's database. The app's own request gives up at 30 s (src/api/instance.ts).
 DEMO_SEED_TIMEOUT = 30_000
+# The app gives up on any request after 30 s (src/api/instance.ts), so by then a save has answered
+# and a loading state has ended, one way or the other. Waits on a request the page sends itself
+# use it: in CI the local API reaches the stage's database across regions, and one request can
+# take several seconds there.
+APP_REQUEST_TIMEOUT = 30_000
