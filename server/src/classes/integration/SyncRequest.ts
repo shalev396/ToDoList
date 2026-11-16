@@ -1,7 +1,8 @@
 /**
  * "Sync now" for one integration (Integration#requestSync and Integration.requestSyncAll's
  * collaborator): whether it waits for its owner (as the dispatcher sees it), how long until a
- * manual sync is allowed again, and queueing the run.
+ * manual sync is allowed again, and queueing the run; `requestAll` does it for each of a
+ * caller's integrations.
  */
 import type { Caller } from '../base/Caller.js';
 import { SyncRun, type SyncRunOwner } from '../sync/SyncRun.js';
@@ -62,6 +63,34 @@ export class SyncRequest {
       .reduce<number>((newest, run) => Math.max(newest, run.createdAt.getTime()), 0);
     if (newestManual === 0) return 0;
     return Math.max(0, newestManual + LIMITS.manualSyncIntervalMs - Date.now());
+  }
+
+  /**
+   * "Sync now" for every integration the caller owns here and can sync (Integration.requestSyncAll
+   * hands over each one's subject). Those waiting for them or synced manually less than the
+   * interval ago are skipped. 503 only when nothing could be queued because the queue failed.
+   */
+  static async requestAll(
+    caller: Caller,
+    subjects: readonly SyncSubject[],
+  ): Promise<{ runIds: string[] }> {
+    const runIds: string[] = [];
+    let queueFailures = 0;
+    for (const subject of subjects) {
+      const request = new SyncRequest(subject);
+      if ((await request.hold()) !== null) continue;
+      if ((await request.manualWait()) > 0) continue;
+      try {
+        runIds.push(await request.enqueue(caller));
+      } catch (error) {
+        if (!(error instanceof AppError)) throw error;
+        queueFailures += 1;
+      }
+    }
+    if (runIds.length === 0 && queueFailures > 0) {
+      throw new AppError(503, 'Could not queue the sync. Try again later.');
+    }
+    return { runIds };
   }
 
   /**

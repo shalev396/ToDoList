@@ -78,20 +78,11 @@ import type {
 import type { AuthKind, AuthStrategy, SecretJson } from './auth/AuthStrategy.js';
 import { OAuthAuth } from './auth/OAuthAuth.js';
 import { UnofferedAuth } from './auth/UnofferedAuth.js';
-import {
-  isAddedContentRemover,
-  isCalendarProvider,
-  type AddedRemoval,
-  isCreateFunnel,
-  isResourcePicker,
-  isRevocable,
-  isTaskProvider,
-} from './capabilities.js';
+import { isAddedContentRemover, type AddedRemoval, isRevocable } from './capabilities.js';
 import type { TestableAdapter, TestRateLimited } from './connectionTest.js';
 import { ConnectionTester, type LearnedSetting, type TestSubject } from './ConnectionTester.js';
 import { Credential } from './Credential.js';
 import {
-  DEFINITIONS,
   strategyForMethod,
   type ConnectionInput,
   type IntegrationDefinition,
@@ -278,34 +269,11 @@ export abstract class Integration<
    * definition (auth methods, picker, revoke page, the write scopes its OAuth grant needs, coming
    * soon, the fields a write-back sends) and
    * the contracts its class implements (ResourcePicker, Revocable, CreateFunnel, TaskProvider or
-   * CalendarProvider for a write-back). In the order of CONNECTABLE_PROVIDERS.
+   * CalendarProvider for a write-back). In the order of CONNECTABLE_PROVIDERS. The registry
+   * reads them (IntegrationRegistry#capabilities).
    */
   static capabilitiesOf(): ProviderCapabilities[] {
-    return DEFINITIONS.flatMap((definition) => {
-      const cls = IntegrationRegistry.instance.classOf(definition.provider);
-      // Every definition has its class (the definitions test): a missing one is a wiring mistake.
-      if (cls === null)
-        throw new Error(`No integration class is registered for ${definition.provider}`);
-      const can = cls.prototype;
-      const canUpdate =
-        (isTaskProvider(can) || isCalendarProvider(can)) && definition.writableFields.length > 0;
-      return [
-        {
-          provider: definition.provider,
-          authMethods: definition.userAuthMethods,
-          picker: isResourcePicker(can) ? definition.picker : null,
-          revokesOnDisconnect: isRevocable(can),
-          needsWriteScope: (definition.auth.oauth?.writeScopes.length ?? 0) > 0,
-          revokePage: definition.revokePage,
-          canCreate: isCreateFunnel(can) && definition.create !== null,
-          canUpdate,
-          writableFields: canUpdate ? [...definition.writableFields] : [],
-          writableKinds: canUpdate ? [...definition.writableKinds] : [],
-          reachableStatuses: canUpdate ? [...definition.reachableStatuses] : [],
-          comingSoon: definition.comingSoon,
-        },
-      ];
-    });
+    return IntegrationRegistry.instance.capabilities();
   }
 
   static #owned(caller: Caller, data: IntegrationData | null): Integration {
@@ -774,23 +742,11 @@ export abstract class Integration<
    * because the queue failed.
    */
   static async requestSyncAll(caller: Caller): Promise<{ runIds: string[] }> {
-    const runIds: string[] = [];
-    let queueFailures = 0;
-    for (const integration of await Integration.listOwn(caller)) {
-      const request = new SyncRequest(integration.#syncSubject());
-      if ((await request.hold()) !== null) continue;
-      if ((await request.manualWait()) > 0) continue;
-      try {
-        runIds.push(await request.enqueue(caller));
-      } catch (error) {
-        if (!(error instanceof AppError)) throw error;
-        queueFailures += 1;
-      }
-    }
-    if (runIds.length === 0 && queueFailures > 0) {
-      throw new AppError(503, 'Could not queue the sync. Try again later.');
-    }
-    return { runIds };
+    const owned = await Integration.listOwn(caller);
+    return SyncRequest.requestAll(
+      caller,
+      owned.map((integration) => integration.#syncSubject()),
+    );
   }
 
   // ─── The sync (a template method; the engine is its collaborator) ────────

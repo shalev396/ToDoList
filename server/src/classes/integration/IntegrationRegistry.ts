@@ -1,6 +1,14 @@
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { Provider } from '../../types/domain.js';
-import { definitionOf } from './definitions/index.js';
+import type { ProviderCapabilities } from '../../types/integrations.js';
+import {
+  isCalendarProvider,
+  isCreateFunnel,
+  isResourcePicker,
+  isRevocable,
+  isTaskProvider,
+} from './capabilities.js';
+import { DEFINITIONS, definitionOf } from './definitions/index.js';
 import type { IntegrationDefinition } from './definitions/IntegrationDefinition.js';
 import type { Integration } from './Integration.js';
 
@@ -69,6 +77,39 @@ export class IntegrationRegistry {
   /** Every provider class, in the order they registered. */
   classes(): ProviderClass[] {
     return [...this.#classes.values()].map(({ cls }) => cls);
+  }
+
+  /**
+   * What each connectable provider can do and how it connects (Integration.capabilitiesOf), read
+   * from its registered class: its definition and the contracts its class implements. In the
+   * order of CONNECTABLE_PROVIDERS.
+   */
+  capabilities(): ProviderCapabilities[] {
+    return DEFINITIONS.flatMap((definition) => {
+      const cls = this.classOf(definition.provider);
+      // Every definition has its class (the definitions test): a missing one is a wiring mistake.
+      if (cls === null)
+        throw new Error(`No integration class is registered for ${definition.provider}`);
+      const can = cls.prototype;
+      const canUpdate =
+        (isTaskProvider(can) || isCalendarProvider(can)) && definition.writableFields.length > 0;
+      return [
+        {
+          provider: definition.provider,
+          authMethods: definition.userAuthMethods,
+          picker: isResourcePicker(can) ? definition.picker : null,
+          revokesOnDisconnect: isRevocable(can),
+          needsWriteScope: (definition.auth.oauth?.writeScopes.length ?? 0) > 0,
+          revokePage: definition.revokePage,
+          canCreate: isCreateFunnel(can) && definition.create !== null,
+          canUpdate,
+          writableFields: canUpdate ? [...definition.writableFields] : [],
+          writableKinds: canUpdate ? [...definition.writableKinds] : [],
+          reachableStatuses: canUpdate ? [...definition.reachableStatuses] : [],
+          comingSoon: definition.comingSoon,
+        },
+      ];
+    });
   }
 
   /** The provider's class made from `data`. */
