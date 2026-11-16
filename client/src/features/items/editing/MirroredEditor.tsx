@@ -30,7 +30,7 @@ import { cn } from '@/lib/utils';
 import { pathTo, ROUTES } from '@/router/routes';
 import { integrationAnchor } from '@/features/integrations/anchor';
 import { isOAuthSignIn } from '@/features/integrations/oauthSetup';
-import { rememberConsentReturn } from '../create/useCopyRunner';
+import { forgetConsentReturn, rememberConsentReturn } from '../create/consentReturn';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { ItemDetail, OverridableField, UpdateItemRequestBody } from '@api-types/api-contracts';
 import type { ItemStatus } from '@api-types/domain';
@@ -108,6 +108,8 @@ function AllowEdits({ item, source }: { item: ItemDetail; source: string }) {
       );
       window.location.assign(data.authorizeUrl);
     } catch (failure) {
+      // No round trip will answer the marker: a later `?connected=` must not jump to this item.
+      forgetConsentReturn();
       setStarting(false);
       setProblem(errorMessage(t, failure, 'connect.oauth.startFailed'));
     }

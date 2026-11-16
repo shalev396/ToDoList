@@ -4,6 +4,7 @@ import { errorMessage } from '@/api/errors';
 import { useCreateCopy } from '@/api/queries/providerCreate';
 import { startProviderOAuth } from '@/api/services/integrationService';
 import { useLanguage } from '@/hooks/useLanguage';
+import { forgetConsentReturn, rememberConsentReturn } from './consentReturn';
 import { isDone, toTarget, type FunnelState } from './funnel';
 import { nextAttempt, type Phase } from './retry';
 import { writeRemembered } from './remembered';
@@ -21,48 +22,6 @@ export interface Result {
 
 const newId = (): string => crypto.randomUUID().replaceAll('-', '').slice(0, 32);
 export const newRequestId = newId;
-
-/** Where the user returns to after consenting: the to-do and the target to preselect. */
-const RETURN_KEY = 'todolist-create-return';
-
-export interface ConsentReturn {
-  todoId: string;
-  integrationId: string;
-  path: string;
-  /** Select that integration in the to-do's "Also create in" (false: the item's own sign-in). */
-  preselect?: boolean;
-}
-
-export function rememberConsentReturn(value: ConsentReturn): void {
-  try {
-    sessionStorage.setItem(RETURN_KEY, JSON.stringify(value));
-  } catch {
-    /* a convenience */
-  }
-}
-
-export function takeConsentReturn(): ConsentReturn | null {
-  try {
-    const raw = sessionStorage.getItem(RETURN_KEY);
-    if (raw === null) {
-      return null;
-    }
-    sessionStorage.removeItem(RETURN_KEY);
-    const parsed = JSON.parse(raw) as Partial<ConsentReturn>;
-    return typeof parsed.todoId === 'string' &&
-      typeof parsed.integrationId === 'string' &&
-      typeof parsed.path === 'string'
-      ? {
-          todoId: parsed.todoId,
-          integrationId: parsed.integrationId,
-          path: parsed.path,
-          preselect: parsed.preselect !== false,
-        }
-      : null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Runs the copies of one to-do and keeps their results: every target at once, Retry by the rules of
@@ -180,6 +139,8 @@ export function useCopyRunner(workspaceId: string, userId: string, todoId: () =>
       );
       window.location.assign(data.authorizeUrl);
     } catch (failure) {
+      // No round trip will answer the marker: a later `?connected=` must not jump to this to-do.
+      forgetConsentReturn();
       patch(integrationId, (current) => ({
         ...current,
         phase: { kind: 'error', message: errorMessage(t, failure, 'connect.oauth.startFailed') },
