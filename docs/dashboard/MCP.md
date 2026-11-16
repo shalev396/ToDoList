@@ -27,7 +27,7 @@
 | **Server** | Your app exposing capabilities | `https://<domain>/api/mcp` |
 | **Client / host** | The agent app that connects | Claude, Grok Bot, Cursor |
 | **Tools** | Functions the AI can call, each with a JSON Schema input and an optional output schema | `list_today`, `create_todo`, `builder_add_block` |
-| **Resources** | Read-only data addressed by URI, loaded as context | `elytra://dashboard/{id}`, `elytra://schema/block/chart` |
+| **Resources** | Read-only data addressed by URI, loaded as context | `todolist://dashboard/{id}`, `todolist://schema/block/chart` |
 | **Prompts** | Reusable, user-triggered templates (slash commands) | `/morning_brief`, `/plan_my_week` |
 | **Transport** | How messages travel | **stdio** (local subprocess) or **Streamable HTTP** (remote URL) |
 
@@ -248,7 +248,7 @@ Errors a mirrored update can answer (each carries its `code`; the audit log reco
 {
   "type": "object",
   "properties": {
-    "itemFilter": { "$ref": "elytra://schema/query#/$defs/where" },
+    "itemFilter": { "$ref": "todolist://schema/query#/$defs/where" },
     "range": { "type": "object", "properties": {
       "from": { "type": "string", "format": "date" }, "to": { "type": "string", "format": "date" } } },
     "dryRun": { "type": "boolean", "default": true }
@@ -333,7 +333,7 @@ Goal: an agent can do in Elytra what Remi did in Notion. That covers creating th
 **Safety model:** agents edit a **draft**. Every write makes an immutable `DashboardVersions` entry. Every write tool takes `expectedVersion` (optimistic concurrency against UI edits) and `dryRun`. Publishing is a separate scope, so the default agent can't change what Shalev sees without his click.
 
 ### 8.3 Query and conditions (Mixpanel-style composition)
-Same shape as FRONTEND.md §4, served as `elytra://schema/query`:
+Same shape as FRONTEND.md §4, served as `todolist://schema/query`:
 ```json
 {
   "source": "items",
@@ -371,9 +371,9 @@ Same shape as FRONTEND.md §4, served as `elytra://schema/query`:
         "type": { "enum": ["list","table","kanban","calendar","chart","clock","counter","deadlines","note","filter","action"] },
         "title": { "type": "string", "maxLength": 80 },
         "gridPos": { "type": "object", "properties": { "x": {"type":"integer"}, "y": {"type":"integer"}, "w": {"type":"integer"}, "h": {"type":"integer"} } },
-        "query": { "$ref": "elytra://schema/query" },
+        "query": { "$ref": "todolist://schema/query" },
         "rules": { "type": "array", "maxItems": 10 },
-        "viz": { "type": "object", "description": "Validated against elytra://schema/block/{type}" },
+        "viz": { "type": "object", "description": "Validated against todolist://schema/block/{type}" },
         "listen": { "type": "array", "items": { "type": "string", "pattern": "^\\$page\\." } }
       }
     },
@@ -463,15 +463,15 @@ Agent: → builder_undo({dashboardId:"d-1", steps:1})    ⇐ v4
 **Resources** (read-only, `cacheScope: "private"`, short `ttlMs`):
 | URI | Content |
 |---|---|
-| `elytra://workspace/current` | Workspace, settings, the agent's scopes |
-| `elytra://dashboard/{id}` (`?draft=1`) | Dashboard config |
-| `elytra://dashboard/{id}/versions` | Version list |
-| `elytra://item/{id}` | `ItemSummary` |
-| `elytra://facets` | Providers, topics, containers |
-| `elytra://schema/block/{type}` | JSON Schema for each block type |
-| `elytra://schema/query` | Query, rules and operators schema |
-| `elytra://templates/{id}` | Template JSON (data) |
-| `elytra://integrations/status` | Status metadata only (§5.3) |
+| `todolist://workspace/current` | Workspace, settings, the agent's scopes |
+| `todolist://dashboard/{id}` (`?draft=1`) | Dashboard config |
+| `todolist://dashboard/{id}/versions` | Version list |
+| `todolist://item/{id}` | `ItemSummary` |
+| `todolist://facets` | Providers, topics, containers |
+| `todolist://schema/block/{type}` | JSON Schema for each block type |
+| `todolist://schema/query` | Query, rules and operators schema |
+| `todolist://templates/{id}` | Template JSON (data) |
+| `todolist://integrations/status` | Status metadata only (§5.3) |
 
 **Prompts:**
 | Prompt | Args | Does |
