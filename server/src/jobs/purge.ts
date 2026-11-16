@@ -6,7 +6,8 @@
  * - hard-deletes Items and Containers soft-deleted more than 30 days ago (swept by a sync, deleted
  *   at the source, or deleted by a user), in every workspace;
  * - removes the dashboards, versions and views of workspaces that are gone or deleted
- *   (Dashboard.removeOrphans: what a request in flight wrote after its workspace's cascade).
+ *   (Dashboard.removeOrphans: what a request in flight wrote after its workspace's cascade), and
+ *   their topics (Topic.removeOrphans).
  *
  * Global maintenance on purpose: it runs from the `purge` direct-invoke action only (lambda.ts),
  * through the classes' explicitly global reads and writes: SyncRun.reapStuck (the reaper) and
@@ -17,6 +18,7 @@ import { Dashboard } from '../classes/dashboard/Dashboard.js';
 import { Integration } from '../classes/integration/index.js';
 import { SyncedRows } from '../classes/sync/SyncedRows.js';
 import { SyncRun } from '../classes/sync/SyncRun.js';
+import { Topic } from '../classes/workspace/Topic.js';
 import { logger } from '../services/logger.js';
 
 export const PURGE_AFTER_DAYS = 30;
@@ -36,6 +38,8 @@ export interface PurgeResult {
   timedOutRuns: number;
   /** What deleted workspaces had left: dashboards (deleted ones too), versions, views. */
   orphanedDashboards: { dashboards: number; versions: number; views: number };
+  /** And their topics. */
+  orphanedTopics: number;
 }
 
 /**
@@ -67,5 +71,6 @@ export async function purgeDeleted(now: Date = new Date()): Promise<PurgeResult>
   const before = new Date(now.getTime() - PURGE_AFTER_DAYS * DAY_MS);
   const { items, containers } = await SyncedRows.purgeDeletedBefore(before);
   const orphanedDashboards = await Dashboard.removeOrphans();
-  return { before, items, containers, timedOutRuns, orphanedDashboards };
+  const orphanedTopics = await Topic.removeOrphans();
+  return { before, items, containers, timedOutRuns, orphanedDashboards, orphanedTopics };
 }

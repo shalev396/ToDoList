@@ -98,6 +98,48 @@ describe('the sweep reads the primary, ids only', () => {
     );
   });
 
+  it('Topic.removeOrphans: the id list and the Workspaces lookup from the primary, ids only', async () => {
+    const { Topic } = await import('../../classes/workspace/Topic.js');
+    await mongoose.connection.collection('Topics').insertOne({
+      _id: 'topic-orphan' as never,
+      workspaceId: 'w-gone-topics',
+      name: 'Orphan',
+      slug: 'orphan',
+      order: 0,
+    });
+    const { seen, error } = await spied(async () => {
+      await Topic.removeOrphans();
+    });
+    assert.equal(error, undefined);
+    const distincts = seen.filter((read) => read.distinct === 'workspaceId');
+    assert.deepEqual(
+      distincts.map(({ model, mode }) => ({ model, mode })),
+      [{ model: 'Topic', mode: 'primary' }],
+    );
+    const lookup = seen.filter((read) => read.model === 'Workspace');
+    assert.deepEqual(
+      lookup.map(({ mode, projection }) => ({ mode, projection })),
+      [{ mode: 'primary', projection: { _id: 1 } }],
+    );
+  });
+
+  it('a failed workspace lookup rejects the topics sweep and deletes nothing', async () => {
+    const { Topic } = await import('../../classes/workspace/Topic.js');
+    const topics = mongoose.connection.collection('Topics');
+    await topics.insertOne({
+      _id: 'topic-kept' as never,
+      workspaceId: 'w-unknown-topics',
+      name: 'Kept',
+      slug: 'kept',
+      order: 0,
+    });
+    const { error } = await spied(async () => {
+      await Topic.removeOrphans();
+    }, 'Workspace');
+    assert.ok(error instanceof Error && error.message === 'read failed');
+    assert.equal(await topics.countDocuments({ _id: 'topic-kept' as never }), 1);
+  });
+
   it('a failed workspace lookup rejects the sweep and deletes nothing', async () => {
     const { Dashboard } = await import('../../classes/dashboard/Dashboard.js');
     const dashboards = mongoose.connection.collection('Dashboards');

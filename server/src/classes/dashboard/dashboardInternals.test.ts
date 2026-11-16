@@ -17,7 +17,8 @@
  *   `pinAccount` (an account without a connection test) by Integration and the seed;
  *   `removeAllIn` (a workspace's hard deletes) by the classes that own them and the cascade;
  *   `removeConnectorEverywhere` by Dashboard and Integration#stopSharing;
- *   `removeOrphans` and `referencedWorkspaceIds` (global sweeps) by their classes and the purge;
+ *   `removeOrphans` and `referencedWorkspaceIds` (global sweeps) by their classes (Dashboard,
+ *   Topic, History, View) and the purge;
  * - the dashboard document check has one composer: the steps of the document (the builder's
  *   refusedInput, parseDraft, variableIssues, secretIssues, finalIssues) are named only by DocCheck,
  *   and the per-block rules (vizIssues, queryRuleIssues, filterVariableIssues, actionNameIssues,
@@ -82,7 +83,7 @@ const GUARDED_NAMES: readonly { pattern: RegExp; allowed: ReadonlySet<string> }[
     allowed: new Set([DASHBOARD, HISTORY, VIEW, INTEGRATION, TOPIC, CASCADE]),
   },
   { pattern: /\bremoveConnectorEverywhere\b/, allowed: new Set([DASHBOARD, INTEGRATION]) },
-  { pattern: /\bremoveOrphans\b/, allowed: new Set([DASHBOARD, PURGE]) },
+  { pattern: /\bremoveOrphans\b/, allowed: new Set([DASHBOARD, TOPIC, PURGE]) },
   { pattern: /\breferencedWorkspaceIds\b/, allowed: new Set([DASHBOARD, HISTORY, VIEW]) },
   // The repository's global id list: the sweep's classes only (models/** is exempt).
   { pattern: /\blistWorkspaceIds\b/, allowed: new Set([DASHBOARD, HISTORY, VIEW, TOPIC]) },

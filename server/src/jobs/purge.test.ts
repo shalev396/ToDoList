@@ -108,6 +108,7 @@ describe('purgeDeleted', () => {
       containers: 4,
       timedOutRuns: 0,
       orphanedDashboards: NO_ORPHANS,
+      orphanedTopics: 0,
     });
     for (const workspaceId of ['w-purge-a', 'w-purge-b']) {
       const kept = ['deleted-29d', 'deleted-30d', 'live'];
@@ -122,6 +123,7 @@ describe('purgeDeleted', () => {
       containers: 0,
       timedOutRuns: 0,
       orphanedDashboards: NO_ORPHANS,
+      orphanedTopics: 0,
     });
   });
 });
@@ -177,6 +179,31 @@ describe('purgeDeleted: what deleted workspaces left of their dashboards', () =>
       1,
     );
     assert.deepEqual((await purgeDeleted(NOW)).orphanedDashboards, NO_ORPHANS);
+  });
+});
+
+describe('purgeDeleted: what deleted workspaces left of their topics', () => {
+  it('removes the topics of a deleted or missing workspace, and none of a live one', async () => {
+    const m = await import('../models/index.js');
+    const workspaces = await m.getWorkspaceRepository();
+    const topics = await m.getTopicRepository();
+    const gone = await workspaces.create({ name: 'Gone', slug: 'topics-gone', ownerId: 'u-owner' });
+    const live = await workspaces.create({ name: 'Live', slug: 'topics-live', ownerId: 'u-owner' });
+    await workspaces.softDelete(gone.id);
+    // A page made by a request that landed after its workspace's cascade ran.
+    for (const workspaceId of [gone.id, live.id, 'w-topics-never-existed']) {
+      await topics.create(workspaceId, { name: 'Late', slug: 'late', order: 0 });
+    }
+
+    const { purgeDeleted } = await import('./purge.js');
+    assert.equal((await purgeDeleted(NOW)).orphanedTopics, 2);
+    assert.deepEqual(await topics.list(gone.id), []);
+    assert.deepEqual(await topics.list('w-topics-never-existed'), []);
+    assert.deepEqual(
+      (await topics.list(live.id)).map((topic) => topic.slug),
+      ['late'],
+    );
+    assert.equal((await purgeDeleted(NOW)).orphanedTopics, 0);
   });
 });
 

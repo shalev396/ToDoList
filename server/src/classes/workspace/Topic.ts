@@ -377,4 +377,24 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
   static async removeAllIn(workspaceId: string): Promise<number> {
     return (await getTopicRepository()).deleteForWorkspace(workspaceId);
   }
+
+  /**
+   * The purge's sweep, the 2026-11-16-orphaned-topics migration's rule run nightly: the topics of
+   * every workspace that is gone or soft-deleted (what a request in flight made after its
+   * workspace's cascade ran). Which workspaces those are is read from the primary, ids only
+   * (TopicRepository.listWorkspaceIds, Workspace.liveAmong), so a new workspace a lagging
+   * secondary doesn't show yet is never taken for gone; a failed read deletes nothing. Global
+   * maintenance: only the purge calls it (dashboardInternals.test.ts). Returns how many.
+   */
+  static async removeOrphans(): Promise<number> {
+    // Imported on first use: Workspace imports Topic.
+    const { Workspace } = await import('./Workspace.js');
+    const referenced = await (await getTopicRepository()).listWorkspaceIds();
+    const live = await Workspace.liveAmong(referenced);
+    let removed = 0;
+    for (const workspaceId of referenced.filter((id) => !live.has(id))) {
+      removed += await Topic.removeAllIn(workspaceId);
+    }
+    return removed;
+  }
 }
