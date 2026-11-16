@@ -13,7 +13,7 @@ import requests
 from axe_playwright_python.sync_playwright import Axe
 from playwright.sync_api import Page, expect
 
-from tests.config import NORMAL_TIMEOUT
+from tests.config import APP_REQUEST_TIMEOUT, NORMAL_TIMEOUT
 from tests.helpers.animations import wait_for_fade_in
 from tests.helpers.dashboards import apply_ops, get_dashboard, list_dashboards
 from tests.helpers.users import pooled_user
@@ -121,7 +121,9 @@ def _open(page: Page, base_url: str, user, path: str = "/en/dashboard") -> None:
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, path)
     expect(page.get_by_role("article", name=LIST, exact=True)).to_be_visible(timeout=NORMAL_TIMEOUT)
-    expect(page.locator('article[aria-busy="true"]')).to_have_count(0, timeout=NORMAL_TIMEOUT)
+    # Ten blocks over the demo data, a /query each: every one has answered (or failed) within the
+    # app's own request timeout.
+    expect(page.locator('article[aria-busy="true"]')).to_have_count(0, timeout=APP_REQUEST_TIMEOUT)
 
 
 def _block(page: Page, title: str):
@@ -251,7 +253,7 @@ def test_messy_titles_never_overflow_a_phone(page: Page, base_url: str, api_base
     page.set_viewport_size(PHONE)
     open_as(page, base_url, user, "/en/dashboard")
     expect(_block(page, LIST)).to_be_visible(timeout=NORMAL_TIMEOUT)
-    expect(page.locator('article[aria-busy="true"]')).to_have_count(0, timeout=NORMAL_TIMEOUT)
+    expect(page.locator('article[aria-busy="true"]')).to_have_count(0, timeout=APP_REQUEST_TIMEOUT)
     # The list shows its first 7 rows and the rest sit behind "Show all" (a dialog), so where the
     # messy row is depends on what the other tests left open. Look where it is, not where it was.
     show_all = _block(page, LIST).get_by_role("button", name=re.compile("^Show all"))
@@ -295,5 +297,5 @@ def test_axe_dark_hebrew(page: Page, base_url: str, demo):
     page.evaluate("() => localStorage.setItem('todolist-ui-theme', 'dark')")
     page.reload(wait_until="load")
     expect(page.locator("article").first).to_be_visible(timeout=NORMAL_TIMEOUT)
-    expect(page.locator('article[aria-busy="true"]')).to_have_count(0, timeout=NORMAL_TIMEOUT)
+    expect(page.locator('article[aria-busy="true"]')).to_have_count(0, timeout=APP_REQUEST_TIMEOUT)
     _assert_clean(page)
