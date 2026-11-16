@@ -61,7 +61,7 @@ function integration(
 const where = (...rules: unknown[]): unknown => ({ combinator: 'and', rules });
 
 describe('in the migrations list', () => {
-  it('owners, then former members’ integrations, then block connectors, after importance; the Drive clean-up, then the primary calendar, then its read calendar; the old calendar claims answered; orphaned dashboards', async () => {
+  it('owners, then former members’ integrations, then block connectors, after importance; the Drive clean-up, then the primary calendar, then its read calendar; the old calendar claims answered; orphaned dashboards, then orphaned topics', async () => {
     const { MIGRATIONS } = await import('./index.js');
     assert.deepEqual(
       MIGRATIONS.map(({ id }) => id),
@@ -81,6 +81,8 @@ describe('in the migrations list', () => {
         '2026-11-15-calendar-link-delete-answered',
         // Dashboards, versions and views of workspaces deleted before the cascade removed them.
         '2026-11-15-orphaned-dashboards',
+        // And their topics, before the cascade's topics step.
+        '2026-11-16-orphaned-topics',
       ],
     );
   });
