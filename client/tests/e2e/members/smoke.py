@@ -221,7 +221,7 @@ def test_a_member_sees_who_has_access_read_only(
 
 
 def test_anyone_with_the_link_joins_as_a_viewer(
-    page: Page, base_url: str, api_base_url: str, fresh_owner
+    page: Page, base_url: str, api_base_url: str, fresh_owner, browser_context_args
 ):
     """General access: the owner turns on "Anyone with the link" (Can view); a second user, with
     no invite, opens the link and becomes a viewer. Reset kills the old link;
@@ -243,7 +243,9 @@ def test_anyone_with_the_link_joins_as_a_viewer(
     assert page.evaluate("() => navigator.clipboard.readText()") == link
 
     guest = pooled_user(api_base_url, "member")
-    guest_page = page.context.browser.new_context().new_page()
+    # The test's own context arguments: on a deployed dev/qa site they carry the WAF gate's
+    # basic-auth credentials (conftest.py), without which the join page never loads.
+    guest_page = page.context.browser.new_context(**browser_context_args).new_page()
     try:
         sign_in(guest_page, base_url, guest)
         guest_page.goto(link.replace(re.match(r"https?://[^/]+", link).group(0), base_url), wait_until="load")
