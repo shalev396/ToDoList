@@ -69,6 +69,9 @@ _MEASURE = """
       seen.add(el);
       if (el.closest('[aria-hidden="true"], [inert]')) continue;
       if (!el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue;
+      // Nothing takes a tap outside an open modal (Radix sets pointer-events: none around it). A
+      // live region there, such as a toast, is not aria-hidden, so it is skipped here.
+      if (getComputedStyle(el).pointerEvents === 'none') continue;
       // What a finger can land on to work the control:
       // - a visually hidden input (the week-start radios): its label; a hidden control without
       //   one is skipped (a skip link appears on keyboard focus, not on touch);
