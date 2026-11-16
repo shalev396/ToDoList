@@ -40,13 +40,13 @@ function boundaryRule(modules) {
   return [
     'error',
     {
-      paths: DB_PACKAGES.map((name) => ({ name, message: DB_MESSAGE, allowTypeImports: true })),
+      // A database package is never imported here, not even for its types; a model's types are.
+      paths: DB_PACKAGES.map((name) => ({ name, message: DB_MESSAGE })),
       patterns: [
         testHelperPattern,
         {
           regex: `^(${DB_PACKAGES.map(escapeRegex).join('|')})/`,
           message: DB_MESSAGE,
-          allowTypeImports: true,
         },
         ...modules.map((module) => ({
           regex: specifierPattern(module),
@@ -104,7 +104,7 @@ export default tseslint.config(
   },
   {
     // Outside the allowed places, nothing loads the database.
-    files: ['src/**/*.ts'],
+    files: ['src/**/*.ts', 'scripts/**/*.ts', 'infra/**/*.ts'],
     ignores: DB_ALLOWED,
     rules: { '@typescript-eslint/no-restricted-imports': boundaryRule(DB_MODULES) },
   },

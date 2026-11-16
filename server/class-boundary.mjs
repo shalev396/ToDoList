@@ -1,8 +1,9 @@
 /**
  * The class boundary (docs/design/CLASSES.md): only classes touch the database. A module outside
- * DB_ALLOWED may not load a DB_MODULES module or a DB_PACKAGES package at run time (type-only
- * imports are fine: they are erased), and may not name a get…Repository getter. Production code
- * never loads a TEST_HELPERS module.
+ * DB_ALLOWED may not load a DB_MODULES module at run time (a type-only import of a model is fine:
+ * it is erased), may not import a DB_PACKAGES package at all (not even for its types), and may
+ * not name a get…Repository getter. scripts/ and infra/ are outside DB_ALLOWED too. Production
+ * code never loads a TEST_HELPERS module.
  *
  * Read by eslint.config.js (no-restricted-imports) and src/classes/classBoundary.test.ts (which
  * also resolves paths, sees dynamic imports and names, and greps the raw text), so both hold the

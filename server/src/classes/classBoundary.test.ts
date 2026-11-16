@@ -2,8 +2,8 @@
  * The class boundary (docs/design/CLASSES.md), as a test over the import graph of server/src,
  * with the lists of class-boundary.mjs:
  * - outside DB_ALLOWED, no module loads a database module (the models, the connection and its
- *   providers) or a database package at run time, statically or dynamically (a type-only import
- *   is erased, so it is fine), and none names a get…Repository getter. The entry points and jobs
+ *   providers) at run time, statically or dynamically, or a database package at all (a type-only
+ *   import of a model is erased, so it is fine; one of a database package is not), and none names a get…Repository getter. The entry points and jobs
  *   (DB_BOOTSTRAP) may load the connection itself, nothing else;
  * - production code (anything outside TEST_FILES) never loads a test helper;
  * - only classes/AuditLog.ts (besides models/** and tests) names the audit log's repository;
@@ -92,7 +92,8 @@ function findingsOf(file: string, source: string, exists: (file: string) => bool
   const database: string[] = [];
   const testHelpers: string[] = [];
   for (const edge of edgesOf(file, importsIn(scanned), exists)) {
-    if (edge.typeOnly) continue;
+    // A type-only import of a model is erased; one of a database package is refused too.
+    if (edge.typeOnly && !isDatabasePackage(edge.specifier)) continue;
     const target = edge.target === null ? null : `${SRC_PREFIX}${edge.target}`;
     const how = `${edge.kind} of ${edge.specifier ?? '?'}`;
     const opensConnection = target === DB_CONNECTION && isBootstrap(self);
@@ -149,17 +150,38 @@ export function boundaryViolations(files: ReadonlyMap<string, string>): string[]
 const SERVER = fileURLToPath(new URL('../../', import.meta.url));
 
 /** The trees the end check reads (relative to server/): the code, its scripts and its infra. */
-const RAW_ROOTS = ['src', 'scripts', 'infra/bin', 'infra/lib', 'infra/functions'];
+const RAW_ROOTS = ['src', 'scripts', 'lambda', 'infra/bin', 'infra/lib', 'infra/functions'];
 const RAW_SOURCE = /\.(?:[cm]?[jt]s)$/;
 
 /** A get…Repository getter, named anywhere: code, a comment or a string. */
 const RAW_REPOSITORY = /\bget[A-Z]\w*Repository\b/;
-/** An import of a database package (`from`, `import`, `import()` or `require()`), any kind. */
+/** What may follow `from`, `import`, `import(` or `require(`: a comment between is skipped. */
 const QUOTE = `['"\`]`;
+const RAW_IMPORT_OPEN = String.raw`(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)(?:/\*[^]*?\*/\s*)*`;
+/** An import of a database package (`from`, `import`, `import()` or `require()`), any kind. */
 const RAW_DB_IMPORT = new RegExp(
-  `(?:\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\bimport\\s+|\\brequire\\s*\\(\\s*)${QUOTE}` +
-    `((?:${DB_PACKAGES.join('|')})(?:/[^'"\`]*)?)${QUOTE}`,
+  `${RAW_IMPORT_OPEN}${QUOTE}((?:${DB_PACKAGES.join('|')})(?:/[^'"\`]*)?)${QUOTE}`,
 );
+/** An import of the models' barrel or a model, or of the connection or its providers. */
+const RAW_DB_MODULE_IMPORT = new RegExp(
+  RAW_IMPORT_OPEN +
+    QUOTE +
+    String.raw`((?:[^'"` +
+    '`' +
+    String.raw`]*/)?(?:models/(?:index|mongoose/|sequelize/)|config/(?:database|providers/))[^'"` +
+    '`' +
+    String.raw`]*)` +
+    QUOTE,
+  'g',
+);
+/** The connection, which DB_BOOTSTRAP loads. */
+const RAW_CONNECTION = /(?:^|\/)config\/database(?:\.[jt]s)?$/;
+
+/** Whether the statement that holds `text[at]` is `import type …` or `export type …`. */
+function isTypeOnlyStatement(text: string, at: number): boolean {
+  const start = Math.max(text.lastIndexOf('import', at), text.lastIndexOf('export', at));
+  return start >= 0 && /^(?:import|export)\s+type\b/.test(text.slice(start, at));
+}
 
 /** Every source file under RAW_ROOTS, keyed by its path relative to server/ (forward slashes). */
 function rawTree(): Map<string, string> {
@@ -179,8 +201,10 @@ function rawTree(): Map<string, string> {
 
 /**
  * The plan's end check on the raw text, no scanner (what `git grep` would print): every file
- * outside DB_ALLOWED that names a get…Repository getter or imports a database package, with why.
- * Stricter than the import graph on purpose: a comment, a string or a type-only import counts.
+ * outside DB_ALLOWED that names a get…Repository getter, imports a database package (not even for
+ * its types), or loads a model, the models' barrel, the connection or its providers (a type-only
+ * import of a model is fine; DB_BOOTSTRAP may load the connection), with why.
+ * Stricter than the import graph on purpose: a comment or a string counts.
  */
 export function rawFindings(files: ReadonlyMap<string, string>): string[] {
   const found: string[] = [];
@@ -190,6 +214,12 @@ export function rawFindings(files: ReadonlyMap<string, string>): string[] {
     if (getter !== null) found.push(`${serverPath}: names ${getter[0]}`);
     const imported = RAW_DB_IMPORT.exec(text);
     if (imported !== null) found.push(`${serverPath}: imports ${imported[1] ?? ''}`);
+    for (const module of text.matchAll(RAW_DB_MODULE_IMPORT)) {
+      const specifier = module[1] ?? '';
+      if (isTypeOnlyStatement(text, module.index)) continue;
+      if (RAW_CONNECTION.test(specifier) && isBootstrap(serverPath)) continue;
+      found.push(`${serverPath}: imports ${specifier}`);
+    }
   }
   return found.sort();
 }
@@ -240,7 +270,8 @@ describe('the class boundary, on synthetic trees', () => {
         'services/i.ts': `import { MongoClient } from 'mongodb';`,
         'services/j.ts': `import mongooseLib from 'mongoose/lib/index.js';`,
         'services/k.ts': `const { getMongoose } = await import('../config/providers/mongoose.js');`,
-        'services/types.ts': `import type { Sequelize } from 'sequelize';\nimport type { Pool } from 'pg';`,
+        'services/l.ts': `import type { Sequelize } from 'sequelize';`,
+        'services/m.ts': `import type { Pool } from 'pg';`,
       }),
       [
         'src/services/a.ts',
@@ -254,6 +285,8 @@ describe('the class boundary, on synthetic trees', () => {
         'src/services/i.ts',
         'src/services/j.ts',
         'src/services/k.ts',
+        'src/services/l.ts',
+        'src/services/m.ts',
       ],
     );
   });
@@ -311,7 +344,7 @@ describe('the class boundary, on synthetic trees', () => {
   it('allows type-only imports and the allowed places', () => {
     assert.deepEqual(
       flagged({
-        'services/types.ts': `import type { ItemData } from '../models/index.js';\nimport type mongoose from 'mongoose';\nexport type { ItemData } from '../models/index.js';`,
+        'services/types.ts': `import type { ItemData } from '../models/index.js';\nexport type { ItemData } from '../models/index.js';`,
         'services/inline.ts': `import {\n  type ItemData,\n  type IItemRepository,\n} from '../models/index.js';`,
         'classes/Thing.ts': `import { getItemRepository } from '../models/index.js';`,
         'models/mongoose/Other.ts': `import mongoose from 'mongoose';`,
@@ -383,17 +416,33 @@ describe('the end check, as git grep runs it', () => {
           ['src/services/f.ts', `import 'sequelize';`],
           ['scripts/g.ts', `import { MongoClient } from 'mongodb';`],
           ['infra/lib/h.ts', `export * from 'mongoose';`],
+          ['scripts/i.ts', `import { ItemMongoModel } from '../src/models/mongoose/Item.js';`],
+          ['scripts/j.ts', `const m = await import('../src/models/index.js');`],
+          ['infra/lib/k.ts', `import { initDB } from '../../src/config/database.js';`],
+          ['scripts/l.ts', `import { getMongoose } from '../src/config/providers/mongoose.js';`],
+          ['scripts/m.ts', `const m = await import(/* later */ 'mongoose');`],
+          ['src/services/n.ts', `import { initDB } from '../config/database.js';`],
+          ['src/lambda.ts', `import { resetDatabase } from './models/index.js';`],
+          ['lambda/o.mjs', `import mongoose from 'mongoose';`],
         ]),
       ),
       [
         'infra/lib/h.ts: imports mongoose',
+        'infra/lib/k.ts: imports ../../src/config/database.js',
+        'lambda/o.mjs: imports mongoose',
         'scripts/g.ts: imports mongodb',
+        'scripts/i.ts: imports ../src/models/mongoose/Item.js',
+        'scripts/j.ts: imports ../src/models/index.js',
+        'scripts/l.ts: imports ../src/config/providers/mongoose.js',
+        'scripts/m.ts: imports mongoose',
         'src/jobs/b.ts: names getSyncRunRepository',
+        'src/lambda.ts: imports ./models/index.js',
         'src/services/a.ts: names getItemRepository',
         'src/services/c.ts: imports mongoose',
         'src/services/d.ts: imports mongoose/lib/index.js',
         'src/services/e.ts: imports pg',
         'src/services/f.ts: imports sequelize',
+        'src/services/n.ts: imports ../config/database.js',
       ],
     );
   });
@@ -412,6 +461,18 @@ describe('the end check, as git grep runs it', () => {
           ['src/mcp/__tests__/helpers/team.ts', `import mongoose from 'mongoose';`],
           ['src/config/environment.ts', `if (isMongo) return 'mongoose';`],
           ['src/types/env.d.ts', `export type DatabaseProvider = 'sequelize' | 'mongoose';`],
+          ['src/lambda.ts', `import { initDB } from './config/database.js';`],
+          ['src/local.ts', `const { initDB } = await import('./config/database.js');`],
+          [
+            'src/services/stageMaintenance.ts',
+            `import { resetDatabase } from '../config/database.js';`,
+          ],
+          ['src/services/types.ts', `import type { ItemData } from '../models/index.js';`],
+          ['src/services/defs.ts', `import { ItemSchema } from '../models/definitions/item.js';`],
+          [
+            'infra/lib/config.ts',
+            `/** Mongo connections (config/providers/mongoose.ts maxPoolSize). */`,
+          ],
         ]),
       ),
       [],
