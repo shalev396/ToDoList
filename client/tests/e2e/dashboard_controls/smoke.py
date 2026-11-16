@@ -84,10 +84,11 @@ def test_action_buttons(page: Page, base_url: str, api_base_url: str, fresh_owne
         ],
     )
     open_as(page, base_url, user, "/en/dashboard")
-    # Without a connected Google Calendar the button is off, with the reason as its title.
+    # It pushes the workspace calendar only: without one chosen the button is off, with the reason
+    # as its title.
     calendar = page.get_by_role("button", name="Sync to calendar")
     expect(calendar).to_be_disabled(timeout=NORMAL_TIMEOUT)
-    expect(calendar).to_have_attribute("title", "Connect Google Calendar first.")
+    expect(calendar).to_have_attribute("title", "Choose the workspace calendar first")
     # Sync now answers 202 and settles on a status.
     page.get_by_role("button", name="Sync now").click()
     expect(
@@ -200,7 +201,8 @@ def test_new_todo_repeat_needs_the_workspace_calendar(
     expect(sheet.locator("[data-weekday=TU]")).to_have_attribute("aria-pressed", "true")
     # Google counts the first event, so the due date's day can't be unticked.
     expect(sheet.locator("[data-weekday=TU]")).to_have_attribute("aria-disabled", "true")
-    sheet.locator("[data-weekday=TU]").click()
+    # Playwright never clicks an aria-disabled control by itself: forced, the tap is ignored.
+    sheet.locator("[data-weekday=TU]").click(force=True)
     expect(sheet.locator("[data-weekday=TU]")).to_have_attribute("aria-pressed", "true")
     sheet.locator("[data-weekday=TH]").click()
     expect(sheet.get_by_label("Repeat", exact=True)).to_have_text("Weekly on Tuesday and Thursday")

@@ -38,6 +38,13 @@ def _add_member(api_base_url: str, owner, workspace_id: str, role: str = "viewer
     return member
 
 
+def _shown_name(api_base_url: str, owner, workspace_id: str, member) -> str:
+    """The member's name as the list shows it (and names its controls): their profile name, else
+    their email."""
+    row = next(m for m in _members(api_base_url, owner, workspace_id) if m["email"] == member.email)
+    return row["name"] or member.email
+
+
 def _open_share(page: Page):
     """Opens the Share dialog of the members page and returns it."""
     page.get_by_role("button", name="Share", exact=True).click()
@@ -130,7 +137,7 @@ def test_owner_changes_a_role(page: Page, base_url: str, api_base_url: str, fres
     member = _add_member(api_base_url, user, workspace["id"])
     open_as(page, base_url, user, "/en/settings/members", h1="Settings")
     dialog = _open_share(page)
-    name = member.email.split("@")[0]
+    name = _shown_name(api_base_url, user, workspace["id"], member)
 
     expect(dialog.get_by_role("button", name=re.compile(rf"^Topics {re.escape(name)} sees"))).to_have_count(0)
     choose(dialog.get_by_label(f"Role of {name}"), "Can edit")
@@ -146,7 +153,7 @@ def test_owner_removes_a_member(page: Page, base_url: str, api_base_url: str, fr
     member = _add_member(api_base_url, user, workspace["id"])
     open_as(page, base_url, user, "/en/settings/members", h1="Settings")
     dialog = _open_share(page)
-    name = member.email.split("@")[0]
+    name = _shown_name(api_base_url, user, workspace["id"], member)
     dialog.get_by_role("button", name=f"Remove {name}").click()
     page.get_by_role("alertdialog").get_by_role("button", name="Remove").click()
     expect(page.get_by_text(f"{name} was removed")).to_be_visible(timeout=NORMAL_TIMEOUT)

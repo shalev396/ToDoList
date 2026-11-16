@@ -108,7 +108,8 @@ def test_edit_profile_flow(page: Page, app_url: str, shared_test_user):
     page.get_by_role("button", name="Save Changes").click(timeout=NORMAL_TIMEOUT)
     page.wait_for_load_state("networkidle")
     expect(page).to_have_url(f"{app_url}/profile", timeout=NORMAL_TIMEOUT)
-    expect(page.get_by_text(unique_name)).to_be_visible(timeout=NORMAL_TIMEOUT)
+    # The page's own copy: the sidebar's account button shows the new name too.
+    expect(page.get_by_role("main").get_by_text(unique_name)).to_be_visible(timeout=NORMAL_TIMEOUT)
 
 
 def test_export_data_flow(page: Page, app_url: str, shared_test_user):

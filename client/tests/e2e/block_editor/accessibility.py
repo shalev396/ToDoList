@@ -43,7 +43,10 @@ def test_integrations_and_keys_he_dark(page: Page, base_url: str, api_base_url: 
     open_as(page, base_url, user, "/he/integrations")
     expect(page.locator("[data-integration-card]").first).to_be_visible(timeout=NORMAL_TIMEOUT)
     _assert_clean(page)
-    page.get_by_role("button", name="חיבור").first.click()
+    # "Connect" signs in with the provider (OAuth first); the form is behind "use a token instead".
+    fallback = page.locator("[data-token-fallback]").first
+    fallback.locator("summary").click()
+    fallback.locator("[data-use-token]").click()
     expect(page.get_by_role("dialog")).to_be_visible()
     _assert_clean(page)
     page.keyboard.press("Escape")
