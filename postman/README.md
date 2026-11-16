@@ -60,6 +60,7 @@ Thirteen requests (Setup 2-4, 6, 7 and the Signup and Forgot Password flows) cal
 - **Spacing:** the `beforeRequest` script keeps at least 1.5 s between mail.tm calls (`mailtmLastCallAt`).
 - **429 retry:** the `afterResponse` script waits for `Retry-After` (seconds, 0-60) or else 2, 4, 8, 16, then 30 s, and re-runs the same request. It retries at most 5 times per request (counter `mailtm429:<request name>`), then lets the request's own assertions fail.
 - **No false failures:** while a 429 is being retried the guard sets `mailtmRetrying` to `1`, and the request skips its assertions and side effects (polls do not advance `pollRetryCount`). Any other response resets the counter and the flag.
+- **Refused usernames:** mail.tm rejects some random usernames as "not valid" (422). The two "Create Mail.tm Account" requests then run again, which generates a new random address, at most twice (counter `mailtm422:<request name>`), skipping the refused attempt's assertions the same way.
 
 ## Collection Structure
 

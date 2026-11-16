@@ -69,7 +69,26 @@ scripts:
           if (!mtRetrying) pm.collectionVariables.unset(mtKey);
           pm.collectionVariables.set('mailtmRetrying', mtRetrying ? '1' : '0');
       }
-      if (pm.response.code !== 429 || pm.collectionVariables.get('mailtmRetrying') !== '1') {
+      // mail.tm refuses some random usernames as "not valid" (422): run this request again, which
+      // generates a new random address. At most twice, and never on top of a 429 retry.
+      {
+          const mtNameKey = 'mailtm422:' + pm.info.requestName;
+          const mtNameTries = parseInt(pm.collectionVariables.get(mtNameKey) || '0', 10) || 0;
+          if (pm.response.code === 422 && mtNameTries < 2 && pm.collectionVariables.get('mailtmRetrying') !== '1') {
+              console.log('mail.tm refused the generated address (422), retry ' + (mtNameTries + 1) + '/2 with a new one');
+              pm.collectionVariables.set(mtNameKey, String(mtNameTries + 1));
+              if (typeof pm.execution !== 'undefined' && pm.execution.setNextRequest) {
+                  pm.execution.setNextRequest(pm.info.requestName);
+                  pm.collectionVariables.set('mailtmRetrying', '1');
+              } else if (typeof postman !== 'undefined' && postman.setNextRequest) {
+                  postman.setNextRequest(pm.info.requestName);
+                  pm.collectionVariables.set('mailtmRetrying', '1');
+              }
+          } else if (pm.response.code !== 422) {
+              pm.collectionVariables.unset(mtNameKey);
+          }
+      }
+      if (pm.collectionVariables.get('mailtmRetrying') !== '1') {
           if (pm.response.code !== 201) {
               console.log('Mail.tm Error Response:', pm.response.text());
           }
