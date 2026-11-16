@@ -45,7 +45,7 @@ import {
   type PatchOperation,
 } from '../../builder/ops.js';
 import { bindTemplateConnectors } from '../../builder/connectors.js';
-import { localizeTemplate, type TemplateLanguage } from '../../builder/templates.js';
+import { localizeTemplate } from '../../builder/templates.js';
 import { localizeViewTemplate } from '../../builder/viewTemplates.js';
 import { AppError } from '../../errors/AppError.js';
 import { ConflictError } from '../../errors/ConflictError.js';
@@ -76,9 +76,8 @@ import type {
   DashboardView,
   DashboardWriteResult,
   IntegrationShare,
-  JsonPatchOperation,
 } from '../../types/dashboards.js';
-import type { DashboardPage, Visibility } from '../../types/domain.js';
+import type { Visibility } from '../../types/domain.js';
 import { AuditTarget } from '../base/AuditTarget.js';
 import type { Caller } from '../base/Caller.js';
 import type { Auditable, Owned, SoftDeletable, Versioned } from '../base/contracts.js';
@@ -114,6 +113,17 @@ import {
   type CreatePreview,
   type InstantiateDashboardInput,
 } from './NewDashboard.js';
+import type {
+  DashboardListFilter,
+  DashboardOpsInput,
+  DashboardOpsResult,
+  DashboardPatchInput,
+  PageBlock,
+  PublishInput,
+  RevertInput,
+  SaveChange,
+  UndoInput,
+} from './dashboardInputs.js';
 import type { Operation } from './Operation.js';
 
 const DEFAULT_HISTORY_PAGE = 50;
@@ -124,70 +134,17 @@ const STOP_SHARING_ATTEMPTS = 5;
 /** Only these parts of a draft take an RFC 6902 patch: the scope stays as it is. */
 const PATCHABLE_PATH = /^\/(title|vars|layouts|blocks|importance|views)(\/|$)/;
 
-// Optional inputs also accept `undefined`, so a parsed request body (zod) passes as it is.
-
-export interface DashboardOpsInput {
-  expectedVersion: number;
-  /** Ops as received: each is parsed (OpValidationError at `/ops/<i>/…`). */
-  ops: readonly unknown[];
-  dryRun?: boolean | undefined;
-  /** Dry run: preview rows per block, 0 to CAPS.previewRows (default 20, or 5 for agents). */
-  previewRows?: number | undefined;
-  /** The language apply_template uses for titles. Default: en. */
-  language?: TemplateLanguage | undefined;
-  /** false: templates bind only the integrations already shared ("Create without them"). */
-  shareIntegrations?: boolean | undefined;
-}
-
-export type DashboardOpsResult = DashboardWriteResult | DashboardDryRunResult;
-
-export interface DashboardPatchInput {
-  expectedVersion: number;
-  /** RFC 6902 operations on the draft: /title, /vars, /layouts, /blocks, /importance and /views only. */
-  patch: readonly JsonPatchOperation[];
-  dryRun?: boolean | undefined;
-  previewRows?: number | undefined;
-}
-
-export interface UndoInput {
-  expectedVersion: number;
-  steps?: number | undefined;
-}
-
-export interface RevertInput {
-  expectedVersion: number;
-  toVersion: number;
-}
-
-export interface PublishInput {
-  expectedVersion: number;
-  /** An agent publishes only with the builder:publish scope, which the MCP layer checks. */
-  allowAgentPublish?: boolean | undefined;
-  /** Every check, nothing published: the result the publish would have. */
-  dryRun?: boolean | undefined;
-}
-
-export interface DashboardListFilter {
-  /** A topic's id; null: the main dashboard. */
-  topicId?: string | null | undefined;
-  page?: DashboardPage | undefined;
-}
-
-/** One block as a caller sees it, with what running its query takes (Dashboard#pageBlock). */
-export interface PageBlock {
-  /** Where it sits in its copy's blocks: error pointers name it (`/blocks/<index>/query`). */
-  readonly index: number;
-  readonly block: Block;
-  /** The copy's page variables: what its `$page` references default to. */
-  readonly vars: Readonly<Record<string, unknown>>;
-  /** The copy's importance preset, as stored (checked before use). */
-  readonly importance: unknown;
-}
-
-/** What a caller's `save` says of its write: only its summary. */
-export interface SaveChange {
-  readonly summary: string;
-}
+export type {
+  DashboardListFilter,
+  DashboardOpsInput,
+  DashboardOpsResult,
+  DashboardPatchInput,
+  PageBlock,
+  PublishInput,
+  RevertInput,
+  SaveChange,
+  UndoInput,
+} from './dashboardInputs.js';
 
 /**
  * One write of a whole next document, as the private commit takes it: only this class's own,
