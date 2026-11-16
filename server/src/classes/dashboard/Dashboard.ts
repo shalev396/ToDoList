@@ -919,6 +919,28 @@ export class Dashboard
     await AuditLog.record(caller, Dashboard.Audit.delete, this, {});
   }
 
+  // ─── What other classes ask of every dashboard ─────────────────────────────
+
+  /**
+   * Every connector id on a block of the workspace's live dashboards, draft and published copy
+   * alike (`local` too, when a block reads to-dos): the share facts ItemPolicy resolves on every
+   * request (share-on-attach, PERMISSIONS-V2). No caller: it decides what each member may see, so
+   * only ItemPolicy names it (dashboardInternals.test.ts).
+   */
+  static async connectorIdsIn(workspaceId: string): Promise<string[]> {
+    return (await getDashboardRepository()).listConnectorIds(workspaceId);
+  }
+
+  /**
+   * A topic is being deleted (Topic.delete): its pages go with it, every live dashboard scoped to
+   * it (its topic page and its group pages), soft-deleted. It takes the loaded topic, and checks
+   * nothing of its own: Topic.delete checked the role first, and only Topic names it
+   * (dashboardInternals.test.ts). Returns how many.
+   */
+  static async softDeleteAllOn(topic: Topic): Promise<number> {
+    return (await getDashboardRepository()).softDeleteForTopic(topic.workspaceId, topic.id);
+  }
+
   // ─── Stop sharing, and a workspace's end ───────────────────────────────────
 
   /**

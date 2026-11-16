@@ -12,11 +12,7 @@
  */
 import { AppError } from '../../errors/AppError.js';
 import type { TopicData, TopicPatch } from '../../models/definitions/Topic.js';
-import {
-  getDashboardRepository,
-  getTopicRepository,
-  getWorkspaceRepository,
-} from '../../models/index.js';
+import { getTopicRepository, getWorkspaceRepository } from '../../models/index.js';
 import { sha256Hex } from '../../services/crypto/hashing.js';
 import {
   DEFAULT_TOPICS,
@@ -343,20 +339,19 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
   static async delete(caller: Caller, topicId: string): Promise<DeletedTopic> {
     assertEditor(caller, 'delete pages');
     const workspaceId = caller.workspaceId;
-    // Imported on first use: the integration and item classes import Topic, so a static import is
-    // a cycle. Each class unsets the topic on its own (polymorphic: Item, Container, Integration).
+    // Imported on first use: the dashboard, integration and item classes import Topic, so a static
+    // import is a cycle. Each class unsets the topic on its own (polymorphic: Item, Container,
+    // Integration); Dashboard deletes the topic's pages.
     const { Integration } = await import('../integration/index.js');
     const { Container, Item } = await import('../item/index.js');
+    const { Dashboard } = await import('../dashboard/Dashboard.js');
     const repository = await getTopicRepository();
     const found = await repository.findById(workspaceId, topicId);
     if (found === null) throw new AppError(404, 'Not found');
     const topic = new Topic(found);
-    const [dashboards, workspaces] = await Promise.all([
-      getDashboardRepository(),
-      getWorkspaceRepository(),
-    ]);
+    const workspaces = await getWorkspaceRepository();
     const result: DeletedTopic = {
-      dashboards: await dashboards.softDeleteForTopic(workspaceId, topicId),
+      dashboards: await Dashboard.softDeleteAllOn(topic),
       items: await Item.unsetTopicIn(workspaceId, topicId),
       containers: await Container.unsetTopicIn(workspaceId, topicId),
       integrations: await Integration.unsetTopicIn(workspaceId, topicId),

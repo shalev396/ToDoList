@@ -18,11 +18,7 @@ import { NotFoundError } from '../../errors/NotFoundError.js';
 import { MirroredItemError } from '../../errors/MirroredItemError.js';
 import type { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
-import {
-  getContainerRepository,
-  getDashboardRepository,
-  getIntegrationRepository,
-} from '../../models/index.js';
+import { getContainerRepository, getIntegrationRepository } from '../../models/index.js';
 import { forgetForRequest, memoForRequest } from '../../services/requestMemo.js';
 import { LOCAL_CONNECTOR } from '../../types/builder.js';
 import type { Provider, Visibility } from '../../types/domain.js';
@@ -102,10 +98,11 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
 
   /** Connector ids on any block of the workspace (`local` included when a block reads to-dos). */
   static async sharedConnectorIds(workspaceId: string): Promise<ReadonlySet<string>> {
-    return memoForRequest(
-      memoKey(workspaceId, 'shared'),
-      async () => new Set(await (await getDashboardRepository()).listConnectorIds(workspaceId)),
-    );
+    return memoForRequest(memoKey(workspaceId, 'shared'), async () => {
+      // Imported on first use: Dashboard imports this class (a write forgets the share facts).
+      const { Dashboard } = await import('../dashboard/Dashboard.js');
+      return new Set(await Dashboard.connectorIdsIn(workspaceId));
+    });
   }
 
   /** Whether the integration is shared: a connector on some block of its workspace. */
