@@ -323,8 +323,8 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
 
   /**
    * The workspace's end is a fact before a bulk hard delete of its data: throws unless it is gone
-   * or soft-deleted (the cascade retires it first). Read from the primary, ids and deletedAt only
-   * (a lagging secondary could show a new workspace as missing). A bug guard: a live workspace's
+   * or soft-deleted (the cascade retires it first). Read from the primary, ids only, filtered on
+   * `deletedAt` (a lagging secondary could show a new workspace as missing). A bug guard: a live workspace's
    * data is never swept, whoever calls.
    */
   static async requireEnded(workspaceId: string): Promise<void> {

@@ -93,13 +93,14 @@ describe('the sweep reads the primary, ids only', () => {
       'View',
     ]);
     for (const read of distincts) assert.equal(read.mode, 'primary', read.model);
-    // The sweep's lookup, then one more per class bulk delete (Workspace.requireEnded): all of
-    // them from the primary, ids only.
+    // Exactly: the sweep's lookup, then the live-workspace guard (Workspace.requireEnded) of each
+    // bulk delete the one gone workspace gets (Dashboard.removeAllIn, View.removeAllIn; History's
+    // runs under Dashboard's): 1 + 2. Drop a guard and this fails. All from the primary, ids only.
     const lookup = seen.filter((read) => read.model === 'Workspace');
-    assert.ok(lookup.length >= 1);
-    for (const read of lookup) {
-      assert.deepEqual({ mode: read.mode, projection: read.projection }, ONLY_IDS_FROM_PRIMARY);
-    }
+    assert.deepEqual(
+      lookup.map(({ mode, projection }) => ({ mode, projection })),
+      [ONLY_IDS_FROM_PRIMARY, ONLY_IDS_FROM_PRIMARY, ONLY_IDS_FROM_PRIMARY],
+    );
   });
 
   it('Topic.removeOrphans: the id list and the Workspaces lookup from the primary, ids only', async () => {
@@ -120,13 +121,13 @@ describe('the sweep reads the primary, ids only', () => {
       distincts.map(({ model, mode }) => ({ model, mode })),
       [{ model: 'Topic', mode: 'primary' }],
     );
-    // The sweep's lookup, then one more per class bulk delete (Workspace.requireEnded): all of
-    // them from the primary, ids only.
+    // Exactly: the sweep's lookup, then Topic.removeAllIn's live-workspace guard
+    // (Workspace.requireEnded) for the one gone workspace: 1 + 1. Drop the guard and this fails.
     const lookup = seen.filter((read) => read.model === 'Workspace');
-    assert.ok(lookup.length >= 1);
-    for (const read of lookup) {
-      assert.deepEqual({ mode: read.mode, projection: read.projection }, ONLY_IDS_FROM_PRIMARY);
-    }
+    assert.deepEqual(
+      lookup.map(({ mode, projection }) => ({ mode, projection })),
+      [ONLY_IDS_FROM_PRIMARY, ONLY_IDS_FROM_PRIMARY],
+    );
   });
 
   it('a failed workspace lookup rejects the topics sweep and deletes nothing', async () => {
