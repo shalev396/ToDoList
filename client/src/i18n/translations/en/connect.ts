@@ -95,6 +95,18 @@ export const connect = {
     partial: 'Synced with some errors',
     failed: 'Sync failed',
     unknownError: 'The sync hit a problem. Try again later.',
+    /** What only a sync run reports (status.ts SYNC_RUN_ERROR_CODES); the rest use testCodes. */
+    errors: {
+      adapter_error: 'The sync couldn’t read this source. Try again later.',
+      invalid_data: 'Some items from the provider couldn’t be saved.',
+      listing_too_large: 'This source has too many items to sync. Narrow its settings.',
+      enqueue_failed: 'The sync couldn’t start. Try again in a few minutes.',
+      integration_deleted: 'The connection was removed before the sync finished.',
+      skipped_paused: 'Skipped: this connection is paused.',
+      skipped_expired: 'Skipped: this connection’s credential has expired. Replace it.',
+      timeout: 'The sync took too long and stopped. Try again later.',
+      calendar_unreachable: 'Google Calendar didn’t answer. Try again later.',
+    },
     counts: {
       fetched: 'Fetched {{n}}',
       inserted: 'added {{n}}',

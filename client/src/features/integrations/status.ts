@@ -18,6 +18,30 @@ export function needsRenewalHint(expiresAt: string | Date | null, now: Date): bo
   return days !== null && days <= RENEWAL_HINT_DAYS;
 }
 
+/**
+ * The error codes only a sync run reports: the server's SyncRun codes beyond the connection
+ * test's (SYNC_ERROR_MESSAGES), and the calendar push's `calendar_unreachable`. Each has its own
+ * copy under `connect.run.errors`; every other code is a connection-test code (`connect.testCodes`).
+ */
+export const SYNC_RUN_ERROR_CODES = [
+  'adapter_error',
+  'invalid_data',
+  'listing_too_large',
+  'enqueue_failed',
+  'integration_deleted',
+  'skipped_paused',
+  'skipped_expired',
+  'timeout',
+  'calendar_unreachable',
+] as const;
+
+/** The i18n key of a run's error code: its own copy, or the connection-test copy of that code. */
+export function syncRunErrorKey(code: string): string {
+  return (SYNC_RUN_ERROR_CODES as readonly string[]).includes(code)
+    ? `connect.run.errors.${code}`
+    : `connect.testCodes.${code}`;
+}
+
 /** A run that is still going: poll while one is. */
 export function isRunActive(run: Pick<SyncRunView, 'status'>): boolean {
   return run.status === 'queued' || run.status === 'running';

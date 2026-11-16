@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { CircleAlert, CircleCheck, LoaderCircle } from 'lucide-react';
 import type { SyncRunView } from '@api-types/integrations';
-import { isRunActive } from './status';
+import { isRunActive, syncRunErrorKey } from './status';
 
 const COUNT_KEYS = ['fetched', 'inserted', 'updated', 'deleted', 'failed'] as const;
 
@@ -35,7 +35,7 @@ export function SyncStatus({ run }: { run: SyncRunView }) {
       )}
       {run.error === null ? null : (
         <p className="text-destructive">
-          {t(`connect.testCodes.${run.error.code}`, {
+          {t(syncRunErrorKey(run.error.code), {
             defaultValue: t('connect.run.unknownError'),
           })}
         </p>
