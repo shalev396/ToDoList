@@ -194,6 +194,24 @@
   --error-text: var(--destructive);
 }
 
+/*
+ * A toast's close button is sonner's 20px circle on the toast's corner. On a touch screen its
+ * target is 44px (DESIGN.md "44px touch targets"): an invisible square centred on the circle, part
+ * of the button, so a tap on it closes the toast while the circle looks the same. On a phone it
+ * stays on screen because DirectionalToaster keeps toasts 20px from the sides.
+ */
+@media (pointer: coarse) {
+  [data-sonner-toast] [data-close-button]::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

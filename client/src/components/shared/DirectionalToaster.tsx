@@ -15,9 +15,15 @@ export function DirectionalToaster() {
       position={position}
       richColors
       closeButton
-      // Sonner's defaults (24px / 16px) plus the home indicator inset in the Home Screen web app
+      // Sonner's defaults (24px / 16px) plus the home indicator inset in the Home Screen web app.
+      // On a phone the sides are 20px, not 16px: the close button sits on the toast's corner, and
+      // its 44px touch target (index.css) is centred on it, so it needs 20px to stay on screen.
       offset={{ bottom: 'calc(24px + env(safe-area-inset-bottom))' }}
-      mobileOffset={{ bottom: 'calc(16px + env(safe-area-inset-bottom))' }}
+      mobileOffset={{
+        bottom: 'calc(16px + env(safe-area-inset-bottom))',
+        left: '20px',
+        right: '20px',
+      }}
     />
   );
 }
