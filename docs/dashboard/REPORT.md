@@ -4,6 +4,23 @@
 
 The first build was on branch `local/dashboard` (now `dev`), built on a template import of Elytra `main@e382dc5` (see DECISIONS.md D1). The build plan was a process document and is no longer kept. Decisions and build rulings are in `DECISIONS.md`, the deploy steps (none executed) in `DEPLOY-PLAN.md`.
 
+## The OOP redesign (2026-11-14 to 2026-11-16)
+
+After the first build the server was reshaped, phase by phase, into a set of classes (plan: `.superpowers/sdd/2026-11-14-oop-redesign/plan.md`; the class reference is [`docs/design/CLASSES.md`](../design/CLASSES.md); the decisions are D20 to D27 in `DECISIONS.md`). What it delivered, in one place:
+
+- **Classes are the only database access.** `services/*`, `sync/runSync.ts`, `gcal/plan.ts` and `gcal/commit.ts` moved behind `Integration`, `Workspace`, the `Item` hierarchy, `Dashboard`, `View`, `SyncRun`/`SyncEngine`, `Calendar`/`PushPlan`/`PushCommit`, `AgentKey` and the rest. The list of modules still touching the database (42 at the start) is gone; a test holds the boundary with no exceptions.
+- **The read-only gate and write-back.** Every provider connection starts read-only; one choke point (`Integration#withWriteSession`) guards every write. A read-and-write integration writes a mirrored item's provider fields back (item sheet and MCP `update_todo`); TodoList-only fields are overlay overrides.
+- **One primary calendar per workspace**, a fixed push rule, a planned date, and clean-ups that never touch what TodoList did not add; event claims keep a TodoList delete from being read as the user's.
+- **Topics replace the fixed areas**, and dashboards and topics are deleted with their workspace.
+- **MCP sign-in (OAuth)** for agents next to keys, built by a parallel session (`AgentKey`, `McpClient`, `McpAuthorization`).
+- **Tests at the end of phase 7a:** server unit 3234, infra 163, client unit 694, 282 browser tests collected. The gate tests (class boundary, write paths, read-only, vault and adapter secrets, sync and dashboard internals, the golden `DocCheck`) are listed in CLASSES.md section 9.
+
+**Known limitations** (stated plainly, none is a regression):
+
+- A calendar move whose DELETE half gets no answer (or a 429) leaves the old event in Google, untracked: the move's create half re-points the item's one link, so neither a push nor "Remove" sees the old event again; only "Also remove" at disconnect clears it. Backlog (R3-M2): leave the row on the old calendar until the delete half succeeded.
+- PERMISSIONS-V2 ruling 12, case F (a move's claim on the old calendar no longer exists after the move, so another integration adopting that event in the same moments can read the move's delete as the user's).
+- The persona dry run can reveal that another member's private topic page exists. It cannot be reached today, because no route makes a dashboard private.
+
 ## What was built
 
 | Phase | Delivered |
@@ -113,7 +130,7 @@ Known flaky tests (parked): `dashboard_grid::test_block_menu_moves_with_the_keyb
   - The reaper doesn't bump `consecutiveErrors`.
   - `softDeleteBySource` is scoped by account rather than integration id.
 - **Product**
-  - Google-native event edits are not written back.
+  - Google-native event edits: a read-and-write Google Calendar integration now writes title and start/end back (phase 2b); everything else a Google event carries stays read-only.
   - The calendar picker takes ids as text.
   - Cross-integration duplicates: a personal board card linking an org issue.
   - The counter `showDelta` has no data source.

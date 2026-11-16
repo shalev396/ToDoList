@@ -2,7 +2,7 @@
 
 # BACKEND.md — Elytra personal dashboard API
 
-Status: **draft / design only**. Nothing deployed. Elytra repo is read-only input (`shalev396/Elytra`, `main` @ `e382dc5`, 2026-10-09).
+Status: **built and deployed** (dev). The architecture below is the original design, kept current where the build differs; the code is organised around classes (`server/src/classes/`, see [CLASSES.md](../design/CLASSES.md)): controllers, routes and MCP tools are thin and call a class, and only classes touch the database. Elytra's repo is read-only input (`shalev396/Elytra`, `main` @ `e382dc5`, 2026-10-09).
 Companion docs: `DATA.md` (MongoDB model: **DATA.md wins on any naming conflict**; collections below use its PascalCase plural names and UUID string ids), `FRONTEND.md`, `BUILDER.md`, `MCP.md`, `OVERVIEW.md`.
 
 ---
@@ -56,7 +56,7 @@ ApiFn ──"Sync to Google Calendar"──> Google Calendar API (the user's own
 Invites ──> SES directly from the request
 ```
 
-- **ApiFn**: one Lambda (one role, two layers, one log group), 5 minute timeout. Provider secrets are decrypted here only for `test connection`, the sync jobs and the calendar push, via `decryptForSync` (see §6).
+- **ApiFn**: one Lambda (one role, two layers, one log group), 5 minute timeout. Provider secrets are decrypted here only for `test connection`, the sync jobs and the calendar push, through the `Credential` class, only from an `Integration`'s read or write session (see §6).
 - **Background jobs**: there is no queue or worker function. A failed job is retried by Lambda's asynchronous invoke (two retries) and then dropped; the run shows `failed`. Maintenance actions (`sync-dispatch`, `gcal-dispatch`, `purge`) run only on a direct invoke.
 - **No schedules for now**: no EventBridge rule exists. Bringing back one schedule (sync dispatch and purge) before prod is a TODO.md item.
 - **Secrets**: `DATABASE_URL` is an environment variable of the stage. One **KMS CMK per stage** for credential envelope encryption. **All per-user secrets live encrypted in the `Credentials` collection (DATA.md §3.5)**; app-level secrets (OAuth client secrets) live in AWS Secrets Manager, in one secret per stage, `todolist-<stage>-app-secrets`.
@@ -85,10 +85,10 @@ All responses `{ data }` / `{ message }`. All routes workspace-scoped and checke
 - `PATCH /workspaces/:wid/members/:uid` (role) · `DELETE /workspaces/:wid/members/:uid`
 
 **Items** (polymorphic, see DATA.md)
-- `GET /workspaces/:wid/items?type&provider&area&project&status&due_from&due_to&q&cursor` (mirrored + local)
+- `GET /workspaces/:wid/items?type&provider&topic&project&status&due_from&due_to&q&cursor` (mirrored + local)
 - `GET /workspaces/:wid/items/:id`
-- `POST /workspaces/:wid/items` · `PATCH …/:id` · `DELETE …/:id` → **local items only**; mirrored items return `409` with the source link (edit at source).
-- `GET /workspaces/:wid/facets` → distinct providers/projects/areas/courses for filters (drives UI, no hard-coded lists)
+- `POST /workspaces/:wid/items` · `PATCH …/:id` · `DELETE …/:id`: a **local** item is edited and deleted in full. A **mirrored** item's `PATCH` is split by the server (`ItemEdit#split`): the provider fields its integration lists as writable (`writableFields`) are written back to the provider when the integration is `read_write` and the caller owns it (otherwise 409 `integration_read_only` / 403 `integration_not_owner`), and the rest are local overrides in `overlay.overrides` (a `null` clears one). Deleting a mirrored item is 409 with the source link (`openIn`).
+- `GET /workspaces/:wid/facets` → distinct providers/projects/topics/courses for filters (drives UI, no hard-coded lists)
 
 **Views / dashboards / blocks**
 Collections: `Dashboards`, `DashboardVersions`, `Views` (DATA.md §3.11–3.13). Block/dashboard schema and ops are owned by BUILDER.md (Logic Bridge, `server/src/builder/`).
@@ -101,7 +101,7 @@ Collections: `Dashboards`, `DashboardVersions`, `Views` (DATA.md §3.11–3.13).
   - `{ "savedQueryId": "<Views id>" }` or `{ "dashboardId": "…", "blockId": "…" }` (the saved block query), or
   - `{ "draft": { …FRONTEND.md §4 query JSON… } }` (an unsaved editor/agent draft, for preview),
 
-  plus optional `"vars": { "$page.area": "work", "$page.provider": "jira", "$page.range": "this_week" }` = **runtime cross-block filter values**, and `"preview": true` (caps at 20 rows, 2 s timeout, never writes). Response: `{ rows | groups, total, appliedVars, warnings[] }`. Every row carries `source.url` for "Open in <provider>".
+  plus optional `"vars": { "$page.topic": "work", "$page.provider": "jira", "$page.range": "this_week" }` = **runtime cross-block filter values**, and `"preview": true` (caps at 20 rows, 2 s timeout, never writes). Response: `{ rows | groups, total, appliedVars, warnings[] }`. Every row carries `source.url` for "Open in <provider>".
 
 **Integrations**
 - `GET /workspaces/:wid/integrations` → `[{ id, provider, accountLabel, status: "connected"|"expired"|"error", expiresAt, lastSyncAt }]`. **That is the whole shape**: no token, no masked hint, no last-4, no prefix. Sanitized error details live on `GET /sync-runs`.
@@ -113,21 +113,24 @@ Collections: `Dashboards`, `DashboardVersions`, `Views` (DATA.md §3.11–3.13).
 - `POST /workspaces/:wid/sync` (all) · `POST /integrations/:id/sync` → creates a queued run, starts the background job and returns `{ runId }` (`202`)
 - `GET /sync-runs?integrationId&limit` → status, counts, sanitized error
 
-**Sync to Google Calendar** (the one sanctioned two-way sync, OAuth only)
-- `POST /workspaces/:wid/gcal-sync` body `{ itemFilter, dryRun? }` → the Logic Bridge diffs in-scope items against `CalendarLinks`, then ApiFn pushes through the Google Calendar API with the integration's OAuth connection. The target calendar comes from `Integrations.config`, not the request.
-  - **Auth:** the refresh token is read from `Credentials` via `decryptForSync`. Idempotent via deterministic event ids and `extendedProperties.private.origin`.
+**Primary calendar** (the owner's choice of where dated items are pushed)
+- `GET|PUT|DELETE /workspaces/:wid/primary-calendar`: the workspace's one primary calendar (`settings.primaryCalendar`), set by the workspace owner from a read & write Google Calendar integration they own. `POST …/integrations/:iid/remove-pushed` removes what a push added, on request only.
+
+**Sync to Google Calendar** (the two-way sync, OAuth only, once the integration is read & write)
+- `POST /workspaces/:wid/gcal-sync` body `{ integrationId, confirm? }` (a dry run unless `confirm`) → the Logic Bridge diffs the dated items its owner may see against `CalendarLinks`, then ApiFn pushes through the Google Calendar API with the integration's OAuth connection. Only the integration the primary calendar is on pushes (409 `calendar_not_primary` for any other); the target calendar is the workspace's primary calendar, not a request field.
+  - **Auth:** the refresh token is opened by `Credential` inside the integration's write session. Idempotent via deterministic event ids and `extendedProperties.private.origin`.
   - Events changed in Google are pulled back on the next push (with echo, last-write-wins and tombstone handling).
   - Every write is recorded in `AuditLogs` (`action: "gcal.write"`) and counted in `SyncRuns`.
   - There are no inbound hook routes: the Apps Script bridge was removed.
 
 **Agent keys** (for MCP, MCP.md §4)
-- `GET|POST /workspaces/:wid/agent-keys` · `DELETE …/agent-keys/:id`. `POST` returns the raw `elk_…` key **once**; only `keyHash` is stored in `AgentKeys`.
+- `GET|POST /workspaces/:wid/agent-keys` · `DELETE …/agent-keys/:id`. `POST` returns the raw `elk_…` key **once**; only `keyHash` is stored in `AgentKeys`. MCP clients can also sign in with OAuth (`/api/.well-known/*`, `/authorize`, `/token`, `/register`, the consent page behind `/api/private/mcp-oauth/requests/:id`), which creates a grant row in the same collection (MCP.md §4).
 
 ---
 
-## 5. Sync jobs (one-way mirror into the app)
+## 5. Sync jobs (the mirror into the app)
 
-| Provider | Auth (static) | Pulls | Area rule |
+| Provider | Auth | Pulls | Topic rule |
 |---|---|---|---|
 | Google Calendar (personal) | Google OAuth | events in window | by calendar |
 | Jira | API token + email (basic) — expires ≤ 365 d | issues assigned/watched, JQL `updated >= lastCursor` | Work |
@@ -139,9 +142,9 @@ Collections: `Dashboards`, `DashboardVersions`, `Views` (DATA.md §3.11–3.13).
 Rules:
 1. **Upsert by source key** `{workspaceId, source.provider, source.accountId, source.externalId}` (unique index, DATA.md §4/§6). Store `source.updatedAtSource` and `source.hash`; skip no-op writes (only `lastSeenAt` is bumped).
 2. **Closed-at-source**: status mapped to `done`/`cancelled` with `closedAt` (item kept). Items missing from a full sweep get `deletedAt` (soft delete), hard-deleted 30 days later (DATA.md §4).
-3. **Never write back** to any provider. Sync HTTP clients are GET-only by construction (wrapper refuses non-GET except Moodle/GraphQL read calls which are POST — allow-listed queries only). **The one sanctioned exception** is the two-way sync with the user's personal Google Calendar through Google OAuth (§4), which lives in the `gcal/` module, never in the generic sync client, and is audit-logged.
+3. **Sync never writes.** The sync's HTTP clients are GET-only by construction (a wrapper refuses non-GET except allow-listed GraphQL reads). Writing to a provider is a separate path: every connection starts read-only, and only its owner can switch it to read & write; then provider writes (a create, a write-back, the calendar push) go through `Integration#withWriteSession`, the one gate that refuses demo data and read-only integrations, using the writers under `classes/integration/writers/` (`writePaths.test.ts` pins every call site). Every write is audit-logged.
 4. **Source link** on every item: `source: { provider, url, externalId }` → "Open in <provider>" buttons. The sync job fails the item (not the run) if no URL can be built.
-5. **Area classification** (data, not code): project/repo/space name contains his name (e.g. `shalev396/*`) → `personal`; Moodle → `college`; else → `work`. Pattern list lives in workspace settings.
+5. **Topic classification** (data, not code): a container whose name matches a rule in `settings.topicRules` (e.g. `shalev396/*`) goes to that topic; otherwise the integration's topic; otherwise Unsorted. Rules live in workspace settings.
 6. **AutoDS included**: no provider/project exclusion in the app. The "AutoDS mute" applies only to Remi's assistant messages, never to API/data.
 7. Cursor per integration × resource in `SyncStates` (`cursor`/`syncToken`, `lastFullSyncAt`) + one `SyncRuns` doc per run with counts.
 8. **Slack: out of scope** for the app (AI uses it via MCP).
@@ -151,7 +154,7 @@ Rules:
 ## 6. Token handling — HARD RULE
 
 - **Encrypt at rest**: envelope encryption. Per credential: `KMS GenerateDataKey` → AES-256-GCM encrypt token with random 96-bit IV, AAD = `workspaceId|integrationId|provider`. Store `{ciphertext, iv, authTag, encryptedDataKey, kmsKeyId, v}` only. Plaintext data key discarded immediately.
-- **One sanctioned decrypt path** (DATA.md §3.5): `CredentialVault.decryptForSync(integrationId)` for outbound calls (sync jobs, `test connection`, the calendar push). Plaintext is scoped to a single function call; never cached on module scope, never written to disk or the DB. A unit test fails if any other module (including `server/src/mcp/**`) imports the vault.
+- **One sanctioned decrypt path** (DATA.md §3.5): the `Credential` class (`classes/integration/Credential.ts`), reached only through an `Integration`'s read and write sessions, for outbound calls (sync jobs, `test connection`, write-back, the calendar push). Plaintext is scoped to a single function call; never cached on module scope, never written to disk or the DB. `vaultImports.test.ts` fails if any other module (including `server/src/mcp/**`) imports it, and `adapterSecrets.test.ts` that an adapter names a secret.
 - IAM: the function role gets `kms:Decrypt` with an encryption-context condition. ApiFn gets `GenerateDataKey` for saving.
 - **Never returned** in any form, to the user, UI, logs or agents: Mongoose `select: false` on `enc` + a `toJSON` transform that deletes it; the integration DTO is built from an allow-list: `{id, provider, accountLabel, status, expiresAt, lastSyncAt}`. **No `tokenHint`, no last-4, no prefix.**
 - **Log redaction**: one logger wrapper replaces `console.*`; redacts keys matching `/token|secret|authorization|password|key|cookie/i` and values matching known token shapes (`pk_…`, `lin_api_…`, `ATATT…`, `Bearer …`). Provider error bodies are reduced to `{provider, status, code}` before logging or storing as `lastError`.
@@ -167,7 +170,7 @@ Rules:
 - **AutoDS**: included in all data/views (muted only in Remi's messages).
 - **Personal vs Work**: by project name containing his name (`shalev396/*`), data-driven rule.
 - **College** = Moodle courses/assignments/events.
-- **Sources of truth** = providers; every provider is one-way into the app. Exceptions: `local` items (owned by the app) and the **one sanctioned two-way sync with Google Calendar through OAuth** (audit-logged).
+- **Sources of truth** = providers; the sync mirrors them into the app. Writes back to a provider happen only for a read & write integration through the write gate (§5 rule 3). `local` items are owned by the app, and Google Calendar has the two-way push to the workspace's primary calendar (audit-logged).
 - Google Calendar uses OAuth (a separate Google app, see INTEGRATIONS-SETUP.md). Long-lived tokens for the rest (Linear key, ClickUp `pk_`, Jira API token ≤365 d, Moodle web service token).
 
 ---
@@ -176,21 +179,22 @@ Rules:
 
 ```
 server/src/
-  routes/private/{workspaces,items,dashboards,views,query,integrations,sync,agentKeys}.ts
-  controllers/{workspaces,items,dashboards,views,query,integrations,sync,agentKeys}.ts
-  models/definitions/{Workspace,Membership,Invite,Integration,Credential,Item,Container,SyncState,SyncRun,AuditLog,Dashboard,DashboardVersion,View,AgentKey,CalendarLink}.ts
-  builder/                           # Logic Bridge (BUILDER.md): schema, catalog, compile, ops, lint
-  services/crypto/credentialVault.ts # decryptForSync (the only decrypt path)
-  models/mongoose/…same…
-  services/crypto/envelope.ts        # KMS + AES-256-GCM
-  services/logger.ts                 # redacting logger
-  services/areaRules.ts              # personal/work/college
-  sync/dispatcher.ts                 # sync-dispatch action (direct invoke)
-  sync/worker.ts                     # runs one background job (sync-run, gcal-run)
-  sync/providers/{gcal,jira,clickup,linear,moodle,github}.ts  # fetch + map → Item
-  sync/http.ts                       # read-only client, retry/backoff
-  gcal/                              # Google Calendar OAuth push and pull (the one write path)
-server/infra/lib/constructs/…             # one function and role, KMS CMK (no queue, worker or schedule)
+  classes/                           # the object model (CLASSES.md): the only code that touches the database
+    base/ policies/ integration/ item/ workspace/ calendar/ sync/ dashboard/ mcp/
+    AgentKey.ts AuditLog.ts ConnectLink.ts User.ts Media.ts
+  routes/ controllers/               # thin: parse input, call a class, toView()
+  models/{definitions,mongoose}/     # repository interfaces and Mongoose models (used by classes only)
+  migrations/                        # data migrations run by sync-db (frozen raw scripts)
+  builder/                           # Logic Bridge (BUILDER.md): schema, catalog, compile, ops, lint (pure)
+  mcp/                               # MCP server: tools, auth, OAuth metadata, pipeline
+  services/crypto/                   # envelope (KMS + AES-256-GCM), key providers, hashing
+  services/                          # pure helpers, zod schemas, the logger, invite delivery, stage maintenance
+  sync/                              # dispatcher, worker, read-only HTTP client, provider adapters, fixtures
+  gcal/                              # diff (pure) and the scheduled push entry
+  jobs/                              # purge, seed
+  seed/                              # the demo workspace, through classes
+server/class-boundary.mjs            # what may load the database (ESLint + classBoundary.test.ts)
+server/infra/lib/constructs/…        # one function and role, KMS CMK (no queue, worker or schedule)
 ```
 
 ## 9. Env / config
@@ -201,7 +205,7 @@ Deploy files hold only `AWS_ACCOUNT_ID`, `CERTIFICATE_ARN`, `WAF_WEB_ACL_ARN`, `
 
 - Same as Elytra: `npm run dev` (Express on :3000 against the deployed `dev` stack: its Cognito, database and resources). There is no offline mode and no local database.
 - Background jobs run in-process in the local API.
-- Provider fixtures for unit tests (mapping + area rules): no live calls in CI.
+- Provider fixtures for unit tests (mapping + topic rules): no live calls in CI.
 
 ## 11. Deploy tool
 
