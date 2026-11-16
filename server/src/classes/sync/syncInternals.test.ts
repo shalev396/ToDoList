@@ -12,6 +12,8 @@
  * - the global writes and reads are named only where they belong: `purgeDeletedBefore` by
  *   SyncedRows and the purge, `reapStuck` and `listRunningStartedBefore` by SyncRun and the purge
  *   (the models implement them);
+ * - the batched fixture replays are the demo seed's alone: `syncTogether` is named only by
+ *   Integration and the seed, `executeTogether` only by the engine and Integration;
  * - no barrel hands either internal module on (`export *` included), and no module re-exports one.
  * A type-only import is erased, so it loads nothing and is allowed anywhere. Every dynamic import
  * takes one string literal (vaultImports.test.ts), so this graph sees every edge.
@@ -25,6 +27,7 @@ const ENGINE = 'classes/sync/SyncEngine.ts';
 const ROWS = 'classes/sync/SyncedRows.ts';
 const INTEGRATION = 'classes/integration/Integration.ts';
 const PURGE = 'jobs/purge.ts';
+const SEED = 'seed/seedWorkspace.ts';
 /** TodoList's claim on an event before its delete: an unguarded tombstone write by id. */
 const CLAIM = 'classes/calendar/EventClaim.ts';
 const GOOGLE = 'classes/integration/providers/GoogleCalendarIntegration.ts';
@@ -44,6 +47,9 @@ const GLOBAL_NAMES: readonly { pattern: RegExp; allowed: ReadonlySet<string> }[]
     pattern: /\b(?:reapStuck|listRunningStartedBefore)\b/,
     allowed: new Set(['classes/sync/SyncRun.ts', PURGE]),
   },
+  // The demo seed's batched fixture replays, and nothing else's.
+  { pattern: /\bsyncTogether\b/, allowed: new Set([INTEGRATION, SEED]) },
+  { pattern: /\bexecuteTogether\b/, allowed: new Set([ENGINE, INTEGRATION]) },
 ];
 
 const isTest = (file: string): boolean =>
@@ -86,6 +92,10 @@ describe('the sync internals', () => {
     assert.ok(loads(INTEGRATION, ENGINE));
     assert.ok(loads(PURGE, ROWS));
     assert.ok(loads(ENGINE, ROWS));
+    // The seed's batch is named where it is used.
+    const names = (file: string, pattern: RegExp): boolean =>
+      pattern.test(nameText(scan(files.get(file) ?? '')));
+    assert.ok(names(SEED, /\bsyncTogether\b/) && names(INTEGRATION, /\bexecuteTogether\b/));
   });
 
   it('only their legitimate callers load them, and the global operations are named only there', () => {
@@ -112,12 +122,17 @@ describe('the sync internals', () => {
       `export async function go() {\n  const { EventClaim } = await import('../classes/calendar/EventClaim.js');\n  return EventClaim;\n}`,
     );
     tree.set('classes/sync/barrel.ts', `export * from './SyncedRows.js';`);
+    tree.set(
+      'services/syncAll.ts',
+      `export const go = (i: { syncTogether(): void }) => i.syncTogether();`,
+    );
     assert.deepEqual(violations(tree), [
       'classes/sync/barrel.ts: re-exports classes/sync/SyncedRows.ts',
       'controllers/lazy.ts: loads classes/calendar/EventClaim.ts',
       'mcp/tools/engine.ts: re-exports classes/sync/SyncEngine.ts',
       'routes/private/stray.ts: loads classes/sync/SyncedRows.ts',
       'services/purgeAll.ts: names \\bpurgeDeletedBefore\\b',
+      'services/syncAll.ts: names \\bsyncTogether\\b',
     ]);
   });
 

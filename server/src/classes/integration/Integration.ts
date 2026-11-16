@@ -833,8 +833,9 @@ export abstract class Integration<
   }
 
   /**
-   * Syncs of several integrations of one workspace at once, each started by a trigger (the demo
-   * seed's fixture replays): each as `runSync` would run it, by id, the runs written together
+   * The demo seed's fixture replays only (trigger `seed`, mode `fixtures`; anything else is
+   * refused, and syncInternals.test.ts pins its one caller): syncs of several integrations of one
+   * workspace at once, each as `runSync` would run it, by id, the runs written together
    * (SyncEngine.executeTogether). The integrations and the workspace are read at once; one that is
    * gone, held or in a gone workspace is handled as `runSync` handles it. Answers in the order of
    * `requests`.
@@ -843,6 +844,10 @@ export abstract class Integration<
     workspaceId: string,
     requests: readonly { integrationId: string; options: TriggeredSyncOptions }[],
   ): Promise<SyncRunSummary[]> {
+    // A live batch would fetch a refused run twice, and its replay reads no disconnect mid-run.
+    if (requests.some(({ options }) => options.trigger !== 'seed' || options.mode !== 'fixtures')) {
+      throw new Error('Integration.syncTogether: only the demo seed’s fixture replays');
+    }
     const integrations = await getIntegrationRepository();
     const liveOf = async (ids: readonly string[]): Promise<Map<string, IntegrationData>> =>
       new Map(

@@ -406,6 +406,26 @@ describe('Integration.syncTogether', () => {
     );
   });
 
+  it('refuses anything but the demo seed’s fixture replays, before opening a run', async () => {
+    const specs: Spec[] = [{ label: 'any', transport: () => fixtureSet('v1') }];
+    const { workspaceId, integrations } = await setup('Refused modes', specs);
+    const integrationId = integrations[0]?.id ?? '';
+    for (const options of [
+      { trigger: 'manual', mode: 'fixtures' },
+      { trigger: 'seed', mode: 'live' },
+    ] as const) {
+      await assert.rejects(
+        Integration.syncTogether(workspaceId, [{ integrationId, options }]),
+        /only the demo seed/,
+      );
+    }
+    const models = await import('../../models/index.js');
+    const runs = await (
+      await models.getSyncRunRepository()
+    ).listForIntegration(workspaceId, integrationId, 10);
+    assert.deepEqual(runs, []);
+  });
+
   it('never leaves the machine', () => {
     assert.deepEqual(guard.externalHosts(), []);
   });
