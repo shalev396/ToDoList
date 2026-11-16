@@ -127,6 +127,32 @@ describe('a per-address limit (the public surfaces)', () => {
   });
 });
 
+describe('MCP sign-in discovery in the app', () => {
+  it('counts each request once, per address, across every discovery document', async () => {
+    const paths = [
+      '/api/mcp/oauth/.well-known/oauth-authorization-server',
+      '/api/mcp/oauth/.well-known/openid-configuration',
+      '/api/mcp/oauth/resource-metadata',
+      '/api/mcp/oauth/resource-metadata/readonly',
+      '/api/mcp/oauth/jwks',
+      '/.well-known/oauth-authorization-server/api/mcp/oauth',
+      '/.well-known/openid-configuration/api/mcp/oauth',
+      '/.well-known/oauth-protected-resource/api/mcp',
+      '/.well-known/oauth-protected-resource/api/mcp/readonly',
+    ];
+    let remaining: number | null = null;
+    for (const path of paths) {
+      const response = await fetch(`${base}${path}`);
+      await response.arrayBuffer();
+      assert.equal(response.status, 200, path);
+      assert.equal(response.headers.get('ratelimit-limit'), '1000', path);
+      const now = Number(response.headers.get('ratelimit-remaining'));
+      if (remaining !== null) assert.equal(now, remaining - 1, path);
+      remaining = now;
+    }
+  });
+});
+
 describe('/api/private in the app', () => {
   it('refuses an over-budget user before the user is looked up, and only that user', async () => {
     const lookups = mock.method(User, 'findByCognitoSub', () => Promise.resolve(null));

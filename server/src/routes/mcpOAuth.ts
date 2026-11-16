@@ -2,7 +2,12 @@ import { Router, type ErrorRequestHandler, type RequestHandler } from 'express';
 
 import { McpOAuthController } from '../controllers/index.js';
 import { OAuthError } from '../errors/OAuthError.js';
-import { mcpOAuthLimiter, mcpTokenLimiter, oauthLimiter } from '../middlewares/rateLimit.js';
+import {
+  discoveryLimiter,
+  mcpOAuthLimiter,
+  mcpTokenLimiter,
+  oauthLimiter,
+} from '../middlewares/rateLimit.js';
 
 /**
  * MCP sign-in, the agent's side (OAuth 2.1 with PKCE). Public: no Cognito, no `{ data }` envelope;
@@ -33,14 +38,26 @@ router.use(noStore);
 
 // ─── Discovery ──────────────────────────────────────────────────────────────
 
-router.get('/.well-known/oauth-authorization-server', McpOAuthController.authorizationServer);
-router.get('/.well-known/openid-configuration', McpOAuthController.authorizationServer);
-router.get('/resource-metadata', McpOAuthController.protectedResource(false));
+router.get(
+  '/.well-known/oauth-authorization-server',
+  discoveryLimiter,
+  McpOAuthController.authorizationServer,
+);
+router.get(
+  '/.well-known/openid-configuration',
+  discoveryLimiter,
+  McpOAuthController.authorizationServer,
+);
+router.get('/resource-metadata', discoveryLimiter, McpOAuthController.protectedResource(false));
 // The OpenID discovery form names a key set; no ID tokens are issued, so it is empty.
-router.get('/jwks', (_req, res) => {
+router.get('/jwks', discoveryLimiter, (_req, res) => {
   res.json({ keys: [] });
 });
-router.get('/resource-metadata/readonly', McpOAuthController.protectedResource(true));
+router.get(
+  '/resource-metadata/readonly',
+  discoveryLimiter,
+  McpOAuthController.protectedResource(true),
+);
 
 // ─── Endpoints ──────────────────────────────────────────────────────────────
 
@@ -64,11 +81,24 @@ export { router as mcpOAuthRouter };
 
 const wellKnown = Router();
 wellKnown.use(noStore);
-wellKnown.get('/oauth-authorization-server/api/mcp/oauth', McpOAuthController.authorizationServer);
-wellKnown.get('/openid-configuration/api/mcp/oauth', McpOAuthController.authorizationServer);
-wellKnown.get('/oauth-protected-resource/api/mcp', McpOAuthController.protectedResource(false));
+wellKnown.get(
+  '/oauth-authorization-server/api/mcp/oauth',
+  discoveryLimiter,
+  McpOAuthController.authorizationServer,
+);
+wellKnown.get(
+  '/openid-configuration/api/mcp/oauth',
+  discoveryLimiter,
+  McpOAuthController.authorizationServer,
+);
+wellKnown.get(
+  '/oauth-protected-resource/api/mcp',
+  discoveryLimiter,
+  McpOAuthController.protectedResource(false),
+);
 wellKnown.get(
   '/oauth-protected-resource/api/mcp/readonly',
+  discoveryLimiter,
   McpOAuthController.protectedResource(true),
 );
 

@@ -74,3 +74,10 @@ export const mcpTokenLimiter = limiter(600);
 
 /** OAuth callbacks (/api/public/oauth), per address: a browser lands there once per connection. */
 export const oauthLimiter = limiter(60);
+
+/**
+ * MCP sign-in's discovery documents (routes/mcpOAuth.ts: authorization-server and protected-resource
+ * metadata, the empty key set), per address. Static and public, and hosted agents fetch them from
+ * shared vendor addresses on every sign-in and refresh: generous.
+ */
+export const discoveryLimiter = limiter(1000);
