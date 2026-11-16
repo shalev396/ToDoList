@@ -29,7 +29,8 @@ export function userKey(req: Request, res: Response): string {
  * Every API surface gets its own instance (its own in-memory counter): one Lambda serves them
  * all, and a shared counter would add public, private and dev traffic into a single budget.
  *
- * Always on; only a test turns them off (config/testSwitches.ts).
+ * Always on; only a test (config/testSwitches.ts) or the local server's `--no-rate-limits`
+ * (config/localSwitches.ts) turns them off, never a Lambda.
  */
 export function limiter(max: number, keyGenerator: KeyGenerator = ipKey): RateLimitRequestHandler {
   return rateLimit({

@@ -5,13 +5,18 @@ installConsoleRedaction();
 
 import { existsSync } from 'node:fs';
 import express from 'express';
-import { isStage, resolveRegion, STAGES } from '../infra/lib/constants.js';
+import { resolveRegion } from '../infra/lib/constants.js';
 import { readStackOutputs } from '../infra/lib/stack-outputs.js';
+import { turnRateLimitsOffForLocalServer } from './config/localSwitches.js';
+import { parseLocalArgs, type LocalServerArgs } from './devtools/localArgs.js';
 
 /**
  * Local dev server — the same Express app the Lambda serves, on http://localhost:3000.
  *
- * Usage: tsx watch src/local.ts --stage dev
+ * Usage: tsx watch src/local.ts --stage dev [--no-rate-limits]
+ *
+ * `--no-rate-limits` turns the in-app rate limits off for this process (config/localSwitches.ts):
+ * CI's browser tests send everything from 127.0.0.1. A Lambda has no such switch.
  *
  * Inputs: DOMAIN_NAME and DATABASE_URL, from the shell or server/.env.<stage>.
  * Everything else (Cognito ids, assets bucket, KMS key) is read from the deployed todolist-<stage>
@@ -21,11 +26,17 @@ import { readStackOutputs } from '../infra/lib/stack-outputs.js';
 
 const PORT = 3000;
 
-const stageFlag = process.argv.indexOf('--stage');
-const stage = stageFlag === -1 ? 'dev' : process.argv[stageFlag + 1];
-if (!isStage(stage)) {
-  console.error(`Invalid --stage "${String(stage)}". Expected one of: ${STAGES.join(', ')}`);
+let args: LocalServerArgs;
+try {
+  args = parseLocalArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
+}
+const { stage } = args;
+if (!args.rateLimits) {
+  turnRateLimitsOffForLocalServer();
+  console.warn('[local] in-app rate limits are OFF for this process (--no-rate-limits)');
 }
 
 const envFile = `.env.${stage}`;

@@ -1,4 +1,5 @@
 import type { DatabaseProvider, Env } from '../types/env.d.ts';
+import { rateLimitsOffForLocalServer } from './localSwitches.js';
 import { rateLimitsOffForTests } from './testSwitches.js';
 
 /**
@@ -60,9 +61,12 @@ export class Environment {
     return process.env.DOMAIN_NAME;
   }
 
-  /** In-app rate limits are always on; only a test turns them off (config/testSwitches.ts). */
+  /**
+   * In-app rate limits are always on. Only a test (config/testSwitches.ts) or the local server's
+   * `--no-rate-limits` (config/localSwitches.ts) turns them off, never a Lambda.
+   */
   get rateLimitEnabled(): boolean {
-    return !rateLimitsOffForTests();
+    return !rateLimitsOffForTests() && !rateLimitsOffForLocalServer();
   }
 
   /** The destructive reset-db action is allowed on every stage except prod. */

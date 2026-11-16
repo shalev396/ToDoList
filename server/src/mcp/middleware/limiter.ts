@@ -11,7 +11,8 @@
  *   what keeps key guessing from turning into a query flood.
  *
  * Counters are in memory, per Lambda instance, like the other limiters (middlewares/rateLimit.ts),
- * and always on (only a test turns them off, config/testSwitches.ts).
+ * and always on (only a test, config/testSwitches.ts, or the local server's `--no-rate-limits`,
+ * config/localSwitches.ts, turns them off).
  */
 import { isIPv6 } from 'node:net';
 import type { Request, Response } from 'express';
