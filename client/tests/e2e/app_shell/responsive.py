@@ -11,7 +11,6 @@ from tests.helpers.select import choose
 from tests.helpers.workspaces import (
     accept_invite,
     create_invite,
-    create_workspace,
     invite_path,
     invite_token,
     sign_in,
@@ -73,7 +72,9 @@ def test_tap_targets_signed_out(touch_page: Page, base_url: str):
     assert not stale_allowed(), f"Allow-list entries no page needed: {stale_allowed()}"
 
 
-def test_tap_targets_onboarding_and_invite(touch_page: Page, base_url: str, api_base_url: str, fresh_user):
+def test_tap_targets_onboarding_and_invite(
+    touch_page: Page, base_url: str, api_base_url: str, fresh_user, new_workspace
+):
     page = touch_page
     problems = []
     sign_in(page, base_url, fresh_user)
@@ -83,7 +84,9 @@ def test_tap_targets_onboarding_and_invite(touch_page: Page, base_url: str, api_
     problems += small_targets(page, "onboarding")
 
     owner = pooled_user(api_base_url, "owner")
-    workspace = create_workspace(api_base_url, owner, "Tap Lab", timezone="Asia/Jerusalem")
+    # Deleted after the test: a workspace left behind is the one the app opens for this account
+    # in its later tests (the oldest, when none is stored).
+    workspace = new_workspace(owner, "Tap Lab", timezone="Asia/Jerusalem")
     invite = create_invite(api_base_url, owner, workspace["id"], fresh_user.email)
     page.goto(f"{base_url}{invite_path(invite['inviteUrl'])}", wait_until="load")
     expect(page.get_by_role("button", name="Accept invite")).to_be_visible(timeout=NORMAL_TIMEOUT)

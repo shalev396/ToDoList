@@ -17,7 +17,7 @@ from tests.config import NORMAL_TIMEOUT
 from tests.helpers.animations import wait_for_fade_in
 from tests.helpers.dashboards import apply_ops, get_dashboard, list_dashboards
 from tests.helpers.users import pooled_user
-from tests.helpers.workspaces import create_workspace, delete_workspace, open_as
+from tests.helpers.workspaces import create_workspace, delete_workspace, forget_left_behind, open_as
 from tests.viewports import DESKTOP_VIEWPORT
 
 PHONE = {"width": 320, "height": 800}
@@ -87,6 +87,7 @@ def _blocks() -> list:
 def demo(api_base_url):
     """(user, workspace id): a new workspace with demo data and a dashboard of the data blocks."""
     user = pooled_user(api_base_url, "demo")
+    forget_left_behind(api_base_url, user)
     workspace = create_workspace(
         api_base_url, user, "Data blocks", loadDemoData=True, timezone="Asia/Jerusalem"
     )

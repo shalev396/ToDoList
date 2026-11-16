@@ -242,11 +242,14 @@ def new_workspace(api_base_url):
     """Factory `new_workspace(user, name, **extra)`: creates a workspace through the API and
     deletes it when the test ends. A user may own only a few workspaces at once, and the pooled
     accounts serve a whole run, so nothing a test creates may outlive it."""
-    from tests.helpers.workspaces import create_workspace, delete_workspace
+    from tests.helpers.workspaces import create_workspace, delete_workspace, forget_left_behind
 
     created: list = []
 
     def make(user, name: str = "E2E workspace", **extra):
+        if all(owner.email != user.email for owner, _ in created):
+            # The test's first workspace of this account: none of an earlier test's may remain.
+            forget_left_behind(api_base_url, user)
         workspace = create_workspace(api_base_url, user, name, **extra)
         created.append((user, workspace["id"]))
         return workspace

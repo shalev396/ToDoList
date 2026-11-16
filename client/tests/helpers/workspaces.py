@@ -45,15 +45,46 @@ def get_workspace(api_base_url: str, user, workspace_id: str) -> dict:
     raise AssertionError(f"Workspace {workspace_id} is not in the user's workspaces")
 
 
+# Seconds a create may take. The suite's API runs locally against a deployed stage's database, so
+# every query is a long round trip (about 100 ms from a laptop, more from CI's runners), and four
+# workers create at once. Demo data is a seed of a few hundred queries (server/src/seed): it gets
+# a minute. A create is never retried here.
+CREATE_TIMEOUT = 30
+DEMO_CREATE_TIMEOUT = 60
+
+# Accounts one of whose creates timed out here. The server may still have made that workspace, and
+# with nothing stored the app opens an account's oldest workspace, so the next test would open the
+# one left behind instead of its own: forget_left_behind deletes it first.
+_TIMED_OUT: set = set()
+
+
 def create_workspace(api_base_url: str, user, name: str, **extra: Any) -> dict:
     """POST /private/workspaces; the new workspace becomes the user's default."""
-    response = requests.post(
-        f"{api_base_url}/private/workspaces",
-        json={"name": name, **extra},
-        headers=_headers(user),
-        timeout=15,
-    )
+    timeout = DEMO_CREATE_TIMEOUT if extra.get("loadDemoData") else CREATE_TIMEOUT
+    try:
+        response = requests.post(
+            f"{api_base_url}/private/workspaces",
+            json={"name": name, **extra},
+            headers=_headers(user),
+            timeout=timeout,
+        )
+    except requests.Timeout:
+        _TIMED_OUT.add((api_base_url, user.email))
+        raise
     return _check(response, f"Creating workspace {name!r}")
+
+
+def forget_left_behind(api_base_url: str, user) -> None:
+    """After a create of this account timed out (see _TIMED_OUT), deletes every workspace it owns;
+    otherwise does nothing. Only for a pooled account about to get the workspace a test or a
+    module owns, while it owns no other on purpose."""
+    key = (api_base_url, user.email)
+    if key not in _TIMED_OUT:
+        return
+    for entry in list_workspaces(api_base_url, user):
+        if entry["role"] == "owner":
+            delete_workspace(api_base_url, user, entry["workspace"]["id"])
+    _TIMED_OUT.discard(key)
 
 
 DEFAULT_TOPIC_NAMES = {"work": "Work", "college": "College", "personal": "Personal"}
@@ -213,6 +244,7 @@ def demo_workspace(api_base_url: str):
     from tests.helpers.users import pooled_user
 
     user = pooled_user(api_base_url, "demo")
+    forget_left_behind(api_base_url, user)
     workspace = create_workspace(
         api_base_url, user, "Demo workspace", timezone="Asia/Jerusalem", loadDemoData=True
     )
