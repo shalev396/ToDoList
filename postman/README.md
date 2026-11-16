@@ -53,6 +53,14 @@ postman collection run "postman/collections/TodoList API" --environment "postman
 
 Configure `baseUrl` in each environment file (Local: `postman/environments/TodoList Local.environment.yaml`, QA: `postman/environments/TodoList QA.environment.yaml`). The collection `postman/collections/TodoList API/.resources/definition.yaml` also has a `baseUrl` variable — keep it in sync with your QA environment.
 
+## Mail.tm Rate Limits
+
+Thirteen requests (Setup 2-4, 6, 7 and the Signup and Forgot Password flows) call `api.mail.tm`, which allows 8 requests per second per IP and also sends `RateLimit-Policy: 10; w=60` on some endpoints. CI runners share egress IPs, so a 429 can happen even when the run is slow, and a missed 429 on a poll means the signup code never arrives and every later step fails. The collection-level scripts in `.resources/definition.yaml` handle this for `api.mail.tm` requests only:
+
+- **Spacing:** a `beforeRequest` script keeps at least 1.5 s between mail.tm calls (`mailtmLastCallAt`).
+- **429 retry:** an `afterResponse` script waits for `Retry-After` (seconds, 0-60) or else 2, 4, 8, 16, then 30 s, and re-runs the same request. It retries at most 5 times per request (counter `mailtm429:<request name>`), then lets the request's own assertions fail.
+- **No false failures:** while a 429 is being retried the script sets `mailtmRetrying` to `1`, and each of the 13 requests skips its assertions and side effects (polls do not advance `pollRetryCount`). Any other response resets the counter and the flag.
+
 ## Collection Structure
 
 The collection runs sequentially in this order:
