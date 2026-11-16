@@ -6,9 +6,10 @@
  *   /api/mcp/readonly. Keyed by the authenticated key's id, so agents behind one egress address
  *   (a hosted assistant) don't share a budget; by the address only if no agent was authenticated.
  * - AuthFailureLimit: failed authentications per client address. mcpAuth spends it only when a
- *   key fails, and checks it before looking a key up: an address that has used its budget up gets
- *   429 for every key, a good one too, until the window turns, without a database read. That is
- *   what keeps key guessing from turning into a query flood.
+ *   key fails, after the lookup, so it counts nothing else and never holds off a key that
+ *   authenticates: hosted assistants share egress addresses, and an expired grant counts as a
+ *   failure, so a busy shared address must not lock out every member's valid key. Over the budget,
+ *   a failed key gets 429 instead of 401; that keeps key guessing from turning into a query flood.
  *
  * Counters are in memory, per Lambda instance, like the other limiters (middlewares/rateLimit.ts),
  * and always on (only a test, config/testSwitches.ts, or the local server's `--no-rate-limits`,
@@ -102,34 +103,22 @@ export function addressKey(ip: string | undefined): string {
 /** What mcpAuth asks of a failed-authentication budget (AuthFailureLimit is the real one). */
 export interface AuthFailureBudget {
   /**
-   * True when this request's address has no failures left: answer it (spend) before any lookup.
-   * Counts nothing, and is never true while the rate limits are off.
+   * Counts one failed authentication: true within the budget, false when it answered 429 itself.
+   * mcpAuth calls it only after a key failed, so a key that authenticates never spends it.
    */
-  exhausted(req: Request): Promise<boolean>;
-  /** Counts one failed authentication: true within the budget, false when it answered 429 itself. */
   spend(req: Request, res: Response): Promise<boolean>;
 }
 
 /** Failed authentications per client address (an IPv6 address by its /56). */
 export class AuthFailureLimit implements AuthFailureBudget {
-  readonly #max: number;
   readonly #counter: RateLimitRequestHandler;
 
   constructor(limit: Limit = AUTH_FAILURE_LIMIT) {
-    this.#max = limit.max;
     this.#counter = limiter(
       limit,
       'Too many failed authentications from this address. Try again later.',
       (req) => addressKey(req.ip),
     );
-  }
-
-  async exhausted(req: Request): Promise<boolean> {
-    if (!environment.rateLimitEnabled) return false;
-    const used = await this.#counter.getKey(addressKey(req.ip));
-    if (used === undefined) return false;
-    const windowOpen = used.resetTime === undefined || used.resetTime.getTime() > Date.now();
-    return windowOpen && used.totalHits >= this.#max;
   }
 
   spend(req: Request, res: Response): Promise<boolean> {

@@ -75,22 +75,15 @@ export function sendUnauthorized(
 
 /**
  * Express middleware: authenticates the agent key or grant token for this endpoint (`resourceOf`),
- * or answers 401. `failures` is the per-address failed-authentication budget:
- * - checked first, so an address that has used it up gets 429 without a key lookup (no database
- *   read), whatever key it sends;
- * - spent only when the key fails, so a key that authenticates never uses it up.
+ * or answers 401. `failures` (the per-address failed-authentication budget) is spent only after
+ * the key is looked up and fails, so it counts failures alone and never stands in the way of a key
+ * that authenticates, whatever its address's count; over its budget, it answers 429 itself.
  */
 export function createMcpAuth(
   failures: AuthFailureBudget,
   resourceOf: (req: Request) => string,
 ): RequestHandler {
   return async (req, res, next): Promise<void> => {
-    // Spent already when the address was over its budget but the window turned meanwhile.
-    let spent = false;
-    if (await failures.exhausted(req)) {
-      if (!(await failures.spend(req, res))) return;
-      spent = true;
-    }
     const { presented, key } = bearerKey(req.headers.authorization);
     const resource = resourceOf(req);
     const agent =
@@ -101,7 +94,7 @@ export function createMcpAuth(
       next();
       return;
     }
-    if (spent || (await failures.spend(req, res))) {
+    if (await failures.spend(req, res)) {
       sendUnauthorized(res, presented, req.body, resource);
     }
   };

@@ -2,16 +2,15 @@
  * Rate limits (MCP.md §3): over the per-agent cap the answer is a JSON-RPC error (429), counted
  * per agent key across /api/mcp and /api/mcp/readonly, without touching other keys; failed
  * authentications are limited per address (an IPv6 address by its /56), and only failed ones are
- * counted: keys that authenticate never use the budget up. An address that has used it up gets
- * 429 for every key, a good one too, before any key is looked up. The router runs at /api/mcp
- * and /spare/api/mcp with tiny caps (each its own budgets), and at /default/api/mcp with the real
- * ones.
+ * counted, after the key is looked up: a key that authenticates never spends the budget and is
+ * never held off by it, even from an address over it (hosted assistants share addresses). The
+ * router runs at /api/mcp and /spare/api/mcp with tiny caps (each its own budgets), and at
+ * /default/api/mcp with the real ones.
  */
 import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Request, Response } from 'express';
 
-import type { AgentKey as AgentKeyClass } from '../../classes/AgentKey.js';
 import type * as Principal from '../auth/principal.js';
 import type * as Limiter from '../middleware/limiter.js';
 import type { TestKey } from './helpers/agentKeys.js';
@@ -23,7 +22,6 @@ let h: McpHarness;
 let team: Team;
 let limiter: typeof Limiter;
 let principal: typeof Principal;
-let AgentKey: typeof AgentKeyClass;
 
 const AGENT_CAP = 4;
 const AUTH_FAILURE_CAP = 2;
@@ -69,7 +67,6 @@ before(async () => {
   team = await newTeam('limiter');
   limiter = await import('../middleware/limiter.js');
   principal = await import('../auth/principal.js');
-  ({ AgentKey } = await import('../../classes/AgentKey.js'));
 });
 
 after(async () => {
@@ -138,40 +135,58 @@ describe('the per-agent limit', () => {
 });
 
 describe('the failed-authentication limit', () => {
-  it('counts failures only: keys that authenticate never use the budget up', async () => {
+  it('counts failures only: a key that authenticates never spends the budget', async () => {
     const agent = await key();
-    for (let i = 0; i < AUTH_FAILURE_CAP + 2; i += 1) {
-      assert.equal((await post('/spare/api/mcp', agent.raw)).status, 200, `good key ${String(i)}`);
+    const spends = mock.method(limiter.AuthFailureLimit.prototype, 'spend');
+    try {
+      for (let i = 0; i < AUTH_FAILURE_CAP; i += 1) {
+        assert.equal(
+          (await post('/spare/api/mcp', agent.raw)).status,
+          200,
+          `good key ${String(i)}`,
+        );
+      }
+      assert.equal(spends.mock.callCount(), 0, 'a good key spends nothing');
+      for (let i = 0; i < AUTH_FAILURE_CAP; i += 1) {
+        assert.equal(
+          (await post('/spare/api/mcp', newRawKey())).status,
+          401,
+          `bad key ${String(i)}`,
+        );
+        assert.equal(
+          (await post('/spare/api/mcp', agent.raw)).status,
+          200,
+          `then good ${String(i)}`,
+        );
+      }
+      assert.equal(spends.mock.callCount(), AUTH_FAILURE_CAP, 'one spend per failure, no more');
+      // The budget holds exactly the failures: the next one is over it.
+      assert.equal((await post('/spare/api/mcp', newRawKey())).status, 429);
+      assert.equal(spends.mock.callCount(), AUTH_FAILURE_CAP + 1);
+    } finally {
+      spends.mock.restore();
     }
-    for (let i = 0; i < AUTH_FAILURE_CAP; i += 1) {
-      assert.equal((await post('/spare/api/mcp', newRawKey())).status, 401, `bad key ${String(i)}`);
-    }
-    assert.equal((await post('/spare/api/mcp', newRawKey())).status, 429);
   });
 
-  it('holds off every key from an address over its budget, without looking one up', async () => {
+  it('over the budget: a failed key gets 429, a valid key from the same address still gets in', async () => {
     for (let i = 0; i < AUTH_FAILURE_CAP; i += 1) {
       assert.equal((await post('/api/mcp', newRawKey())).status, 401);
     }
+    const limited = await post('/api/mcp', newRawKey());
+    assert.equal(limited.status, 429);
+    assert.notEqual(limited.headers.get('retry-after'), null);
+    assert.equal(
+      (JSON.parse(limited.text) as { error: { message: string } }).error.message,
+      'Too many failed authentications from this address. Try again later.',
+    );
     const good = await key();
-    const lookups = mock.method(AgentKey, 'authenticate');
-    try {
-      const limited = await post('/api/mcp', newRawKey());
-      assert.equal(limited.status, 429);
-      assert.notEqual(limited.headers.get('retry-after'), null);
-      assert.equal(
-        (JSON.parse(limited.text) as { error: { message: string } }).error.message,
-        'Too many failed authentications from this address. Try again later.',
-      );
-      assert.equal((await post('/api/mcp', good.raw)).status, 429);
-      assert.equal((await post('/api/mcp/readonly', good.raw)).status, 429);
-      assert.equal(lookups.mock.callCount(), 0);
-    } finally {
-      lookups.mock.restore();
-    }
+    assert.equal((await post('/api/mcp', good.raw)).status, 200);
+    assert.equal((await post('/api/mcp/readonly', good.raw)).status, 200);
+    // Still over it for the next failure: the valid key neither spent nor reset the budget.
+    assert.equal((await post('/api/mcp', newRawKey())).status, 429);
   });
 
-  it('with the real cap: 50 bad keys, then the address waits, even with a valid key', async () => {
+  it('with the real cap: 50 bad keys, then a valid key from the same address still gets in', async () => {
     for (let i = 0; i < 50; i += 1) {
       assert.equal(
         (await post('/default/api/mcp', newRawKey())).status,
@@ -180,7 +195,8 @@ describe('the failed-authentication limit', () => {
       );
     }
     assert.equal((await post('/default/api/mcp', newRawKey())).status, 429);
-    assert.equal((await post('/default/api/mcp', (await key()).raw)).status, 429);
+    assert.equal((await post('/default/api/mcp', (await key()).raw)).status, 200);
+    assert.equal((await post('/default/api/mcp', newRawKey())).status, 429);
   });
 });
 

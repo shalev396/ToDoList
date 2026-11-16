@@ -10,11 +10,11 @@
  *   - 2025 (initialize handshake): a Streamable HTTP transport per request, with
  *     `sessionIdGenerator: undefined` and JSON responses.
  *
- * The chain, per request: mcpAuth (an address over its failed-authentication limit gets 429 before
- * any lookup; key → principal; only a failed key counts against that limit) → agentLimiter (per
- * agent) → request checks → scope guard (refused
- * calls are audited) → MCP (only the tools the principal may call; per call: confirm → handler →
- * secret guard → audit) → the secret guard again, over the whole JSON-RPC response.
+ * The chain, per request: mcpAuth (key → principal; only a failed key counts against its address's
+ * failed-authentication limit, and a valid key is never held off by it) → agentLimiter (per agent)
+ * → request checks → scope guard (refused calls are audited) → MCP (only the tools the principal
+ * may call; per call: confirm → handler → secret guard → audit) → the secret guard again, over the
+ * whole JSON-RPC response.
  */
 import {
   Router,
