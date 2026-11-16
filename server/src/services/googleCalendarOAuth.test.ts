@@ -302,6 +302,7 @@ describe('GET /api/public/oauth/google-calendar/callback', () => {
       assert.equal(res.location, `/en/integrations?oauth_error=${code}`);
       assert.ok(!res.location.includes(state) && !res.location.includes('FAKE-code'));
       assert.match(res.setCookie, /todolist_oauth=;/);
+      assert.match(res.setCookie, /Expires=Thu, 01 Jan 1970/);
       assert.match(res.setCookie, /Path=\/api\/public\/oauth/);
       assert.match(res.setCookie, /; HttpOnly(;|$)/i);
       assert.match(res.setCookie, /; Secure(;|$)/i);
