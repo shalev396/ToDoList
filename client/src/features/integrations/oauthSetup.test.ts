@@ -18,6 +18,7 @@ import {
   revokePageOf,
   revokesOnDisconnect,
   reconnectAsksWrite,
+  resourcePickerOf,
 } from './oauthSetup.ts';
 import { isComingSoon, PROVIDER_ORDER } from './providers.ts';
 
@@ -135,17 +136,23 @@ const response: OAuthProvidersResponse = {
 };
 const caps = (provider: string) => capabilitiesOf(response, provider);
 
-describe('reconnectAsksWrite: only where a write scope exists', () => {
-  it('asks for write on a read & write Jira or Linear connection', () => {
-    assert.equal(reconnectAsksWrite('jira', 'read_write'), true);
-    assert.equal(reconnectAsksWrite('linear', 'read_write'), true);
+describe('reconnectAsksWrite: only where the server says a write scope exists', () => {
+  it('asks for write on a read & write Jira or Linear connection (needsWriteScope)', () => {
+    assert.equal(reconnectAsksWrite(caps('jira'), 'read_write'), true);
+    assert.equal(reconnectAsksWrite(caps('linear'), 'read_write'), true);
   });
 
   it('never for GitHub or ClickUp (nothing to ask for), nor for a read-only connection', () => {
-    assert.equal(reconnectAsksWrite('github', 'read_write'), false);
-    assert.equal(reconnectAsksWrite('clickup', 'read_write'), false);
-    assert.equal(reconnectAsksWrite('jira', 'read'), false);
-    assert.equal(reconnectAsksWrite('google_calendar', 'read_write'), false);
+    assert.equal(reconnectAsksWrite(caps('github'), 'read_write'), false);
+    assert.equal(reconnectAsksWrite(caps('clickup'), 'read_write'), false);
+    assert.equal(reconnectAsksWrite(caps('jira'), 'read'), false);
+    assert.equal(reconnectAsksWrite(caps('google_calendar'), 'read_write'), false);
+  });
+
+  it('follows the capability, not the provider’s name; nothing before the answer has arrived', () => {
+    assert.equal(reconnectAsksWrite(cap('github', { needsWriteScope: true }), 'read_write'), true);
+    assert.equal(reconnectAsksWrite(cap('jira', { needsWriteScope: false }), 'read_write'), false);
+    assert.equal(reconnectAsksWrite(undefined, 'read_write'), false);
   });
 });
 
@@ -160,6 +167,15 @@ describe('capabilities from the providers answer', () => {
     for (const provider of ['linear', 'github', 'google_calendar', 'moodle']) {
       assert.ok(!hasResourcePicker(caps(provider)), provider);
     }
+  });
+  it('the resource dialog picks what the capability names: sites, workspaces, or nothing', () => {
+    assert.equal(resourcePickerOf(caps('jira')), 'sites');
+    assert.equal(resourcePickerOf(caps('clickup')), 'workspaces');
+    for (const provider of ['linear', 'github', 'google_calendar', 'moodle']) {
+      assert.equal(resourcePickerOf(caps(provider)), null, provider);
+    }
+    assert.equal(resourcePickerOf(cap('linear', { picker: 'sites' })), 'sites');
+    assert.equal(resourcePickerOf(undefined), null);
   });
   it('revokes on disconnect for Linear (and Google Calendar), not for the rest', () => {
     assert.ok(revokesOnDisconnect(caps('linear')) && revokesOnDisconnect(caps('google_calendar')));

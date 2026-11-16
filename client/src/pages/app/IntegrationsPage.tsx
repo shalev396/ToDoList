@@ -36,10 +36,10 @@ import {
   hasOAuthSignIn,
   capabilitiesOf,
   comingSoonOf,
-  hasResourcePicker,
   hasTokenFallback,
   isOAuthSignIn,
   reconnectAsksWrite,
+  resourcePickerOf,
   oauthMode,
 } from '@/features/integrations/oauthSetup';
 import { PROVIDER_ORDER } from '@/features/integrations/providers';
@@ -205,6 +205,11 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
   const infoOf = (provider: ConnectableProvider) =>
     oauthProviders.data?.providers.find((entry) => entry.provider === provider);
   const capsOf = (provider: ConnectableProvider) => capabilitiesOf(oauthProviders.data, provider);
+  /** What the open resource dialog picks, as the server's capabilities say (null: nothing). */
+  const resourcePicker =
+    dialog?.kind === 'resources'
+      ? resourcePickerOf(capsOf(dialog.integration.provider as ConnectableProvider))
+      : null;
   const modeOf = (provider: ConnectableProvider) =>
     hasOAuthSignIn(provider)
       ? oauthMode(infoOf(provider), oauthProviders.isPending)
@@ -401,7 +406,11 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
                   : undefined
               }
               onReconnect={(entry) =>
-                void startOAuth(provider, entry.id, reconnectAsksWrite(provider, entry.mode))
+                void startOAuth(
+                  provider,
+                  entry.id,
+                  reconnectAsksWrite(capsOf(provider), entry.mode),
+                )
               }
             />
           ),
@@ -417,13 +426,12 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
           }}
         />
       ) : dialog?.kind === 'resources' ? (
-        hasResourcePicker(capsOf(dialog.integration.provider as ConnectableProvider)) &&
-        (dialog.integration.provider === 'jira' || dialog.integration.provider === 'clickup') ? (
+        resourcePicker !== null ? (
           <OAuthResourcePicker
             key={dialog.integration.id}
             workspaceId={workspace.id}
             integration={dialog.integration}
-            kind={dialog.integration.provider}
+            picker={resourcePicker}
             onClose={() => {
               setDialog(null);
             }}

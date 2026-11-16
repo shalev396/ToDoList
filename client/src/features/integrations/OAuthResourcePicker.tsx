@@ -22,11 +22,16 @@ import { Skeleton } from '@/components/ui/skeleton';
 import type { IntegrationStatusView } from '@api-types/api-contracts';
 import type { OAuthResource } from '@api-types/integrations';
 
-type Kind = 'jira' | 'clickup';
+/** What the grant lets its owner pick (the server's `picker` capability). */
+type Picker = 'sites' | 'workspaces';
 
-/** The ids the stored settings read: Jira sites by cloud id, ClickUp by workspace id (all when unset). */
-function chosenIds(kind: Kind, config: Record<string, unknown>, all: OAuthResource[]): string[] {
-  if (kind === 'jira') {
+/** The ids the stored settings read: sites by cloud id (Jira), workspaces by id (ClickUp; all when unset). */
+function chosenIds(
+  picker: Picker,
+  config: Record<string, unknown>,
+  all: OAuthResource[],
+): string[] {
+  if (picker === 'sites') {
     const sites = config['sites'];
     return Array.isArray(sites)
       ? (sites as { cloudId?: string }[]).flatMap((site) => site.cloudId ?? [])
@@ -45,14 +50,15 @@ function chosenIds(kind: Kind, config: Record<string, unknown>, all: OAuthResour
 export function OAuthResourcePicker({
   workspaceId,
   integration,
-  kind,
+  picker,
   onClose,
 }: {
   workspaceId: string;
   integration: IntegrationStatusView;
-  kind: Kind;
+  picker: Picker;
   onClose: () => void;
 }) {
+  const provider = integration.provider;
   const { t } = useTranslation();
   const resources = useOAuthResources(workspaceId, integration.id);
   const config = useIntegrationConfig(workspaceId, integration.id);
@@ -65,7 +71,7 @@ export function OAuthResourcePicker({
     edited ??
     (stored === undefined || resources.data === undefined
       ? null
-      : chosenIds(kind, stored, resources.data));
+      : chosenIds(picker, stored, resources.data));
   const loadError = resources.error ?? config.error;
 
   const save = async () => {
@@ -74,7 +80,7 @@ export function OAuthResourcePicker({
     }
     const picked = resources.data.filter((resource) => chosen.includes(resource.id));
     const next =
-      kind === 'jira'
+      picker === 'sites'
         ? {
             ...stored,
             sites: picked.map((site) => ({
@@ -105,10 +111,10 @@ export function OAuthResourcePicker({
         }
       }}
     >
-      <DialogContent data-resource-picker={kind}>
+      <DialogContent data-resource-picker={provider}>
         <DialogHeader>
-          <DialogTitle>{t(`connect.resources.${kind}.title`)}</DialogTitle>
-          <DialogDescription>{t(`connect.resources.${kind}.description`)}</DialogDescription>
+          <DialogTitle>{t(`connect.resources.${provider}.title`)}</DialogTitle>
+          <DialogDescription>{t(`connect.resources.${provider}.description`)}</DialogDescription>
         </DialogHeader>
         {loadError !== null ? (
           <FormError>{errorMessage(t, loadError, 'connect.resources.loadFailed')}</FormError>

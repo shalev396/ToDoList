@@ -27,15 +27,15 @@ export function isOAuthSignIn(provider: string): provider is OAuthSignInProvider
 }
 
 /**
- * The sign-in providers whose grant needs an extra scope to write back (Jira `write:jira-work`,
- * Linear `write`: their definitions' `writeScopes`). Only their reconnect asks for it
- * (`includeWrite`); GitHub and ClickUp grant what they grant (the server ignores it for them).
+ * Whether a reconnect should ask for the write scope: a read & write connection whose provider's
+ * grant needs one to write back (the server's `needsWriteScope`: Jira `write:jira-work`, Linear
+ * `write`). GitHub and ClickUp grant what they grant; unknown capabilities ask for nothing.
  */
-const WRITE_SCOPE_PROVIDERS: readonly string[] = ['jira', 'linear'];
-
-/** Whether a reconnect should ask for the write scope: a read & write Jira or Linear connection. */
-export function reconnectAsksWrite(provider: string, mode: 'read' | 'read_write'): boolean {
-  return mode === 'read_write' && WRITE_SCOPE_PROVIDERS.includes(provider);
+export function reconnectAsksWrite(
+  caps: ProviderCapabilities | undefined,
+  mode: 'read' | 'read_write',
+): boolean {
+  return mode === 'read_write' && caps?.needsWriteScope === true;
 }
 
 /** Every provider that signs in with OAuth: those four, and Google Calendar (its own routes). */
@@ -75,9 +75,16 @@ export function capabilitiesOf(
   return response?.capabilities?.find((entry) => entry.provider === provider);
 }
 
+/** What a provider's OAuth grant lets its owner pick in the resource dialog: Jira sites, ClickUp workspaces; null: nothing (Google Calendar has its own picker). */
+export function resourcePickerOf(
+  caps: ProviderCapabilities | undefined,
+): 'sites' | 'workspaces' | null {
+  return caps?.picker === 'sites' || caps?.picker === 'workspaces' ? caps.picker : null;
+}
+
 /** Providers whose OAuth grant has resources to choose from after connecting (Jira sites, ClickUp workspaces). */
 export function hasResourcePicker(caps: ProviderCapabilities | undefined): boolean {
-  return caps?.picker === 'sites' || caps?.picker === 'workspaces';
+  return resourcePickerOf(caps) !== null;
 }
 
 /** Providers whose grant we revoke on disconnect; for the others the user revokes on the provider's page. */
