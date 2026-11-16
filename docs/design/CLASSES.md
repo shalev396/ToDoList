@@ -6,27 +6,23 @@ controllers and MCP tools stay thin functions (parse input → call a class → 
 helpers (zod schemas, the builder's compiler, `gcal/diff`, the HTTP client, crypto primitives)
 stay pure modules.
 
-This page is the map of the **full target design** (plan: `.superpowers/sdd/2026-11-14-oop-redesign/plan.md`).
-It is updated every phase.
+This page is the class reference of the server **as built** (the OOP redesign, plan:
+`.superpowers/sdd/2026-11-14-oop-redesign/plan.md`, finished in phase 7). Every class, interface
+and `implements` shown exists in `server/src`; in the diagrams green is built, and nothing is
+drawn that is not. Sections 1 to 8 are the reference; section 9 lists the gate
+tests that keep it true; the "What phase … built" sections after it are the build notes, kept for
+the reasons behind a rule.
 
-- **Built** (exists in the code): green, solid border.
-- **Planned**: grey, dashed border, with the phase that builds it.
-
-| Phase | What it builds                                                                                                                                                                                                                                                                                                                                                       | State     |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| 0     | Base layer (`Entity`, `WorkspaceEntity`, contracts), `Actor`, `Caller`, `Role`, `AuditTarget`, `Policy` + 4 policies, `AuditLog`, the error hierarchy, shared hashing; the class-boundary lint rule and test                                                                                                                                                         | **built** |
-| 1     | `Integration` base, `Credential`, auth strategies, read and write sessions, the read-only gate (`Mode`); the provider subclasses wrapping today's code, `TaskProvider`/`CalendarProvider`, `IntegrationRegistry`                                                                                                                                                     | **built** |
-| 2a    | The one `static definition` per provider (`IntegrationDefinition`), headers from the auth strategy to the adapters, `OAuthFlow` (Google merged), `ResourcePicker`, capabilities to the client, `Integration`'s collaborators                                                                                                                                         | **built** |
-| 2W    | Write-back (phase 2b): `TaskProvider.updateTask` and each definition's `writableFields`, `CalendarProvider` update/delete event, create calendar, recurrence (`RecurrenceRule`); `BoardProvider` stays planned                                                                                                                                                       | **built** |
-| 3     | `Workspace` aggregate, `Member`, `Invite`, `Topic`, their value objects, the cascade template; `User` calls `Workspace.deleteAccountCascade`                                                                                                                                                                                                                         | **built** |
-| PC    | The calendar phase: the workspace's `PrimaryCalendar` (value object in `WorkspaceSettings`, `PrimaryCalendarStatus`), the fixed push rule, `PlannedAt`, a pushed event deleted with its to-do, "Also remove everything TodoList added" (`AddedContentRemover`), block connector scopes                                                                               | **built** |
-| 4a    | Server: the `Item` hierarchy (`Todo`, `MirroredItem`, `TaskItem`, `PullRequest`, `CalendarEvent`), `Container`, `ItemQuery`, `QueryTarget`, `ProviderFields`, `CreateQuota`, `TodoCopy`; overlay overrides and effective values; the split edit; recurring to-dos                                                                                                    | **built** |
-| 4b    | Client: the item sheet's editing and hints, the Repeat control, copy fixes; server: the primary calendar is always read, `ItemDetail.sourceValues`                                                                                                                                                                                                                   | **built** |
-| 5     | `SyncRun` state machine, `SyncCursor`/`SyncCursors`, `Integration.sync()` (template method) with `SyncEngine`, `Calendar` + `PushPlan` + `PushCommit`; the dispatcher, worker and purge on the classes                                                                                                                                                               | **built** |
-| 6a    | `Dashboard` + `NewDashboard` (`History<T>`, `HistoryTrail`, `Layout`, `DashboardOutline`, `DocCheck`, `DashboardConnectors`, `BlockPreviews`, `DashboardDryRun`), `View` + `Query`, `Persona`, `Operation`, `ConnectLink`, `AuditLog.page`; the seed through classes; the cascade and the purge remove dashboards and views; `AgentKey` (built with the MCP sign-in) | **built** |
-| 6b    | The `Block` hierarchy behind `DocCheck`: abstract `Block` (template methods `check` and `lint`), `DataBlock`/`TimeBlock`/`ControlBlock`, `QueryBlock`, `RowBlock`, the 14 types and `UnknownBlock`, `BlockRegistry`; builder ops check through `DocCheck` (`ApplyOpsContext.check`)                                                                                  | **built** |
-| 7a    | The legacy list deleted (`class-boundary.mjs`; the plan’s end check as a test), the test-only shims deleted, `QueryTarget`, `ItemPolicy` and `Topic` through `Dashboard` and `View`, `Dashboard#blocks()` and `pageBlock`, topics go with their workspace (the cascade, the purge, a migration), the phase 6b review’s hardening                                     | **built** |
-| 7b    | DATA.md, DECISIONS.md, REPORT.md and this page final                                                                                                                                                                                                                                                                                                                 | planned   |
+**History.** The redesign moved the old `services/*`, `sync/runSync.ts`, `gcal/plan.ts` and
+`gcal/commit.ts` behind classes, phase by phase: 0 base layer, policies and `AuditLog`; 1 to 2W
+`Integration`, `Credential`, auth strategies, the read-only gate, write-back; 3 `Workspace`; PC the
+primary calendar; 4 the `Item` hierarchy; 5 sync and the calendar push; 6 `Dashboard`, `View` and
+the `Block` classes, with `AgentKey` and the MCP sign-in built by another session in parallel; 7
+the legacy list deleted, the docs final. What is left outside `classes/` is thin by design:
+routes, controllers and MCP tool definitions (parse, call a class, `toView()`), the dispatcher and
+worker (`sync/dispatcher.ts`, `sync/worker.ts`, `jobs/purge.ts`, which only start jobs and call
+classes), pure helpers (zod schemas, the builder's compiler and ops, `gcal/diff.ts`, the HTTP
+client, crypto primitives) and migrations (frozen raw scripts, exempt from the boundary).
 
 **How the boundary is held.** `server/class-boundary.mjs` names:
 
@@ -248,7 +244,6 @@ classDiagram
   }
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
-  classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
   class Entity:::built
   class WorkspaceEntity:::built
   class WorkspaceScoped:::built
@@ -276,9 +271,14 @@ classDiagram
   class Media:::built
 ```
 
-The contracts are declared now and implemented by the entity classes of later phases (`Owned` by
-`Integration`, `View`, `AgentKey`; `Versioned` by `Dashboard`; `Expirable` by `Invite` and
-`AgentKey`; …).
+The contracts are implemented by the entity classes (`Owned` by `Integration`, `View` and
+`Dashboard`; `Versioned` by `Dashboard`; `Expirable` by `Invite`, `ConnectLink` and `AgentKey`;
+`Revocable` by `Invite`, `AgentKey` and the providers that can revoke a grant; …).
+
+Every audited request records its address and user agent: controllers pass `req.caller.actor`
+(or, before a workspace exists and on the OAuth callbacks, the request's origin) and MCP tools pass
+their caller's actor. Jobs and the sync write as the system, without an origin. `AuditLog.record` is
+the only writer of the audit log.
 
 ## 2. Errors
 
@@ -578,12 +578,12 @@ classDiagram
   AuthStrategy <|-- ServiceAccountAuth
   AuthStrategy <|-- UnofferedAuth
   Credential ..> OAuthAuth : refreshIfStale
-  class SyncAdapter~TConfig,TSecret~ {
-    <<strategy>>
+  class ProviderAdapter {
+    <<interface: the sync's read strategy>>
   }
   Integration *-- Credential
   Integration *-- AuthStrategy
-  Integration *-- SyncAdapter
+  Integration *-- ProviderAdapter : definition.adapter
   Integration *-- Mode
 
   class SupportsOAuth {
@@ -668,13 +668,6 @@ classDiagram
     <<interface>>
     +revoke(caller)
   }
-  class BoardProvider {
-    <<interface>>
-    +boards(caller)
-  }
-  class CourseProvider {
-    <<interface>>
-  }
 
   class TrackerIntegration~TConfig,TSecret~ {
     <<abstract>>
@@ -729,14 +722,12 @@ classDiagram
   Revocable <|.. LinearIntegration
   SupportsOAuth <|.. LinearIntegration
   SupportsApiKey <|.. LinearIntegration
-  BoardProvider <|.. GitHubIntegration
   SupportsOAuth <|.. GitHubIntegration
   SupportsApiKey <|.. GitHubIntegration
   CalendarProvider <|.. GoogleCalendarIntegration
   ResourcePicker <|.. GoogleCalendarIntegration
   Revocable <|.. GoogleCalendarIntegration
   SupportsOAuth <|.. GoogleCalendarIntegration
-  CourseProvider <|.. MoodleIntegration
   SupportsApiKey <|.. MoodleIntegration
 
   class IntegrationRegistry {
@@ -758,7 +749,6 @@ classDiagram
   OAuthFlow ..> Integration : connectOAuth
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
-  classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
   class WorkspaceEntity:::built
   class Owned:::built
   class Auditable:::built
@@ -768,20 +758,18 @@ classDiagram
   class Integration:::built
   class Mode:::built
   class Credential:::built
-  class KeyProvider:::planned
+  class KeyProvider:::built
   class AuthStrategy:::built
   class OAuthAuth:::built
   class ApiKeyAuth:::built
   class ServiceAccountAuth:::built
-  class SyncAdapter:::planned
+  class ProviderAdapter:::built
   class SupportsOAuth:::built
   class SupportsApiKey:::built
   class CreateFunnel:::built
   class TaskProvider:::built
   class CalendarProvider:::built
   class ResourcePicker:::built
-  class BoardProvider:::planned
-  class CourseProvider:::planned
   class TrackerIntegration:::built
   class JiraIntegration:::built
   class ClickUpIntegration:::built
@@ -801,7 +789,7 @@ classDiagram
   class WriteLedger:::built
   class EventEdit:::built
   class RecurrenceRule:::built
-  class ItemCopy:::planned
+  class ItemCopy:::built
 ```
 
 The write gate is the `protected` `withWriteSession`: only provider subclasses reach a writer
@@ -1205,9 +1193,6 @@ classDiagram
   Calendar *-- PushPlan
   Calendar ..> PushCommit : commit
   PushCommit ..> SyncRun : succeed
-  class AttributeValues {
-    <<value object>>
-  }
   class Overlay {
     <<value object>>
     +overrides: Overrides
@@ -1248,7 +1233,6 @@ classDiagram
   Item ..> ItemEditing : editing
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
-  classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
   class WorkspaceEntity:::built
   class Viewable:::built
   class Auditable:::built
@@ -1295,7 +1279,6 @@ classDiagram
   class PushPlan:::built
   class PushCommit:::built
   class SyncRun:::built
-  class AttributeValues:::planned
 ```
 
 - **`Item.from(data)`** is the polymorphic factory: a local to-do is a `Todo`; a mirrored item is a
@@ -1305,7 +1288,7 @@ classDiagram
 - **Effective values.** What an item reads as is `override ?? source` (`Overrides`): its getters,
   its views, MCP's summaries, every `ItemQuery` read (an `$addFields` right after the access
   filter's `$match`), the builder's compiled pipeline (the same stage, second, before the filters,
-  sorts and groups), the facets and the workspace calendar's push (`gcal/plan.ts` projects it before
+  sorts and groups), the facets and the workspace calendar's push (`PushPlan` projects it before
   its date window).
 - **One edit, split** (`Item#edit`, polymorphic): a `Todo` changes its own columns (ItemPolicy:
   editors who see it); a `MirroredItem` splits the edit (`ItemEdit#split`) against its provider's
@@ -1521,7 +1504,6 @@ classDiagram
   Invite ..> Member : assertRoomFor, add
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
-  classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
   class Entity:::built
   class WorkspaceEntity:::built
   class Auditable:::built
@@ -1806,7 +1788,6 @@ classDiagram
   View *-- Query
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
-  classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
   class WorkspaceEntity:::built
   class Versioned:::built
   class Auditable:::built
@@ -2122,29 +2103,6 @@ classDiagram
   SyncEngine *-- ContainerCache
   SyncEngine ..> SyncedRows : upserts, sweeps
   ContainerCache ..> SyncedRows
-  class AgentKey {
-    built with the MCP sign-in
-    +authenticate(raw)$ AgentKey
-    +scopes: ScopeSet
-  }
-  WorkspaceEntity <|-- AgentKey
-  class Expirable {
-    <<interface>>
-  }
-  class Revocable {
-    <<interface>>
-  }
-  class Auditable {
-    <<interface>>
-  }
-  Expirable <|.. AgentKey
-  Revocable <|.. AgentKey
-  Auditable <|.. AgentKey
-  class ScopeSet {
-    <<value object>>
-    scopes ∩ role
-  }
-  AgentKey *-- ScopeSet
   class ConnectLink {
     a ReplayNonce, once
     +TTL_MS$ = 10 min
@@ -2158,24 +2116,8 @@ classDiagram
   }
   Expirable <|.. ConnectLink
   Viewable <|.. ConnectLink
-  class KeyProvider {
-    <<interface>>
-  }
-  class Transport {
-    <<interface>>
-  }
-  class Mailer {
-    <<interface>>
-  }
-  class ObjectStore {
-    <<interface>>
-  }
-  class Clock {
-    <<interface>>
-  }
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
-  classDef planned fill:#f3f4f6,stroke:#9ca3af,stroke-dasharray:5 5,color:#4b5563
   class WorkspaceEntity:::built
   class Expirable:::built
   class Revocable:::built
@@ -2190,18 +2132,172 @@ classDiagram
   class ContainerCache:::built
   class SyncedRows:::built
   class Integration:::built
-  class AgentKey:::built
-  class ScopeSet:::planned
   class ConnectLink:::built
-  class KeyProvider:::planned
-  class Transport:::planned
-  class Mailer:::planned
-  class ObjectStore:::planned
-  class Clock:::planned
 ```
 
-The outside-world interfaces invert today's test seams (`set…ForTests`): production wires KMS,
-SES, S3 and the real clock; tests wire the fakes. Behaviour does not change.
+The outside-world seams are small interfaces the classes take, so tests wire fakes and production
+wires the real thing; behaviour does not change: `KeyProvider` (`services/crypto/envelope.ts`: KMS
+in production, the one a test installs; `Credential` and `JoinLink` take it, through `stageKeyProvider`), `Transport`
+and `Clock` (`sync/http.ts`: the HTTP seam of every provider client, the guarded transport the
+writers send through, and the clock the sync engine and the clients sleep on). The agent keys and
+the MCP sign-in are section 8.
+
+## 8. Agent keys and the MCP sign-in
+
+An MCP agent acts as its user. It holds either a **key** a member made in the app (`elk_…`) or a
+**sign-in grant** an OAuth client made with the member's consent (`elo_…` access token, `elr_…`
+refresh token). Both are one `AgentKey` row (`kind: 'key' | 'oauth'`), so `authenticate`,
+revoking, the audit trail and the per-user cap are the same for both. Three classes carry it; the
+HTTP side (`controllers/mcpOAuth.ts`, `routes/private/mcpOAuth.ts`, `mcp/oauth/*`) stays thin.
+
+```mermaid
+classDiagram
+  direction LR
+  class WorkspaceEntity~TData~ {
+    <<abstract>>
+  }
+  class Entity~TData~ {
+    <<abstract>>
+  }
+  class Auditable {
+    <<interface>>
+  }
+  class Expirable {
+    <<interface>>
+  }
+  class Revocable {
+    <<interface>>
+  }
+  class AgentKey {
+    -constructor()
+    +KEY_PREFIX$ = elk_
+    +userId, name, prefix, scopes, kind, clientName
+    +expiresAt, lastUsedAt, revokedAt
+    +isExpired(now) boolean
+    +isUsable(now) boolean
+    +auditTarget() AuditTarget
+    +viewWithUser() AgentKeyView
+    +revoke(caller) Promise
+    +list(caller)$ AgentKeyView[]
+    +create(caller, input)$ key and raw
+    +revoke(caller, id)$ void
+    +authenticate(raw, now, origin)$ AuthenticatedAgent
+    +issueGrant(input, actor, now)$ IssuedTokens
+    +refresh(rawRefresh, clientId, now)$ IssuedTokens
+    +revokeBySource(requestId)$ void
+    +revokeByToken(rawToken, clientId)$ void
+  }
+  WorkspaceEntity <|-- AgentKey
+  Auditable <|.. AgentKey
+  Expirable <|.. AgentKey
+  Revocable <|.. AgentKey
+  class McpClient {
+    -constructor()
+    +name, redirectUris
+    +allowsRedirect(uri) boolean
+    +register(metadata, origin)$ McpClient
+    +resolve(clientId)$ McpClient
+    +setMetadataFetchForTests(fetcher)$
+  }
+  Entity <|-- McpClient
+  class McpAuthorization {
+    <<namespace of the sign-in steps>>
+    +start(params)$ redirectTo
+    +describe(id, userId)$ ConsentView
+    +approve(id, actor, input)$ redirectTo
+    +deny(id, userId)$ redirectTo
+    +exchange(input, now, origin)$ IssuedTokens
+  }
+  McpAuthorization ..> McpClient : resolve
+  McpAuthorization ..> AgentKey : issueGrant, revokeBySource
+  McpAuthorization ..> Workspace : consent lists the member's workspaces
+  AgentKey ..> AuditLog : record
+  class Workspace
+  class AuditLog
+
+  classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
+  class WorkspaceEntity:::built
+  class Entity:::built
+  class Auditable:::built
+  class Expirable:::built
+  class Revocable:::built
+  class AgentKey:::built
+  class McpClient:::built
+  class McpAuthorization:::built
+  class Workspace:::built
+  class AuditLog:::built
+```
+
+**`AgentKey`** (`classes/AgentKey.ts`) `extends WorkspaceEntity<AgentKeyData> implements Auditable,
+Expirable, Revocable`: the only code that reads or writes the `AgentKeys` collection. Only the
+SHA-256 of a raw token is stored (`hashAgentKey`).
+
+- `create(caller, input)`: any member makes a key for themselves with scopes their role permits
+  (`ROLE_SCOPES`, else 400 `scope_not_allowed`), up to `LIMITS.agentKeysPerUser` live keys (409).
+  The raw `elk_` key is returned once. `list` and `revoke`: an owner sees and revokes everyone's,
+  anyone else their own (another's is a 404).
+- `authenticate(raw, now, origin)`: the bearer pattern, then the hash lookup, then "usable" (not
+  revoked, not expired, the access token not past its hour), then the principal (the user must
+  still be an active member; the agent's scopes are its grant's ∩ its current role). Returns the
+  `AuthenticatedAgent` or `null`, and notes `lastUsedAt` at most once a minute.
+- `issueGrant(input, actor)`: a sign-in grant (kind `oauth`) with an hour-long access token and a
+  refresh token (90 days from its last use), the grant capped at 365 days; audited
+  `agent_key.oauth_grant`. `refresh(rawRefresh, clientId)` rotates both tokens with one atomic
+  update (the previous refresh token still works for 30 seconds, for a lost response); a rotated
+  token shown later than that is a leak, so the grant is revoked (`agent_key.oauth_reuse`).
+- `revokeBySource(requestId)`: ends the grant an authorization request made (its code was used
+  twice; `agent_key.oauth_code_reuse`). `revokeByToken(rawToken, clientId)`: RFC 7009, an unknown
+  or another client's token is a silent no-op.
+
+**`McpClient`** (`classes/mcp/McpClient.ts`) `extends Entity<McpClientData>`: who is asking to
+sign a member in. Both kinds are public clients (PKCE, no secret).
+
+- **Dynamic (DCR, RFC 7591)**: `register(metadata)` validates and stores it; `resolve(clientId)`
+  finds it by id and notes its use at most once an hour, so an unused one expires after 30 days
+  (a TTL on `lastUsedAt`).
+- **Metadata document (CIMD)**: a client id that is an https URL with a path. `resolve` fetches the
+  document (public hosts only, through the SSRF-safe live transport, 5 s, 64 KiB), which must name
+  itself by that URL; nothing is stored, the answer is cached for 10 minutes (200 at most).
+- `allowsRedirect(uri)`: an https URI matches only exactly; a loopback URI (http on `localhost`,
+  `127.0.0.1` or `[::1]`) matches the registered one with any port (RFC 8252). It compares strings,
+  never a normalised URL.
+
+**`McpAuthorization`** (`classes/mcp/McpAuthorization.ts`), the member's side, in order:
+
+1. `start(params)`: validates the authorization request (the client, its redirect URI, PKCE
+   `S256`, the resource) and stores it as pending for 10 minutes. A bad client or redirect URI is
+   never redirected to (an `OAuthError`, shown as a 400 page); any other fault goes back to the
+   client as `error=` with `state` and `iss`. The answer is the consent page's URL.
+2. `describe(id, userId)` → `ConsentView` (the client's name, the redirect host, the requested
+   scopes, and per workspace the role, what it allows, what is preselected, whether the member is at
+   the agent cap); `approve(id, actor, {workspaceId, scopes, name})` picks one workspace and scopes the role permits (on the read-only
+   resource only read scopes) and issues a single-use `elc_` code, stored as its SHA-256 only;
+   `deny` answers `access_denied`. `providers:create` and `builder:publish` are never preselected.
+3. `exchange(input)`: the token endpoint's code grant. The code must be approved, unexpired, and
+   match the client, the redirect URI, the resource and the PKCE verifier; the member must still be
+   in the workspace with a role that allows the scopes, and under the cap. It is consumed by one
+   atomic update, so a code can never make two grants; shown again it revokes the grant it made
+   (`AgentKey.revokeBySource`). It ends in `AgentKey.issueGrant`.
+
+## 9. Gates that enforce the design
+
+The rules above are held by tests that read the import graph of `server/src` (through
+`testing/importGraph.ts`: a scanner aware of strings, templates, regexes, type-only imports and
+dynamic imports) or run the code end to end. A change that breaks one of these rules fails the
+build; it is not a style note.
+
+| Gate (test)                                                                                                           | What it holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `classes/classBoundary.test.ts` with `server/class-boundary.mjs` and ESLint                                           | Only classes (and the models, the connection, migrations and tests) load a database module or package, or name a `get…Repository` getter; production code never loads a test helper; only `AuditLog` names the audit log's repository. **The permanent end check** runs the plan's `git grep` on the raw text of `server/src`, `scripts/` and `infra/`, comments and strings included: no exceptions, no legacy list.                                                            |
+| `classes/integration/writePaths.test.ts`                                                                              | The one write choke point: a provider writer is made only in a provider's `createWriter`, which only `Integration#withWriteSession` calls (after it refused demo data and read-only integrations); each writer factory, `applyOps`, `applyUpdate` and the calendar delete have one pinned call site; no alias gets round it; MCP never switches the mode, picks the primary calendar or removes what TodoList added.                                                             |
+| `classes/integration/readOnly.calendar.test.ts`, `readOnly.trackers.test.ts`                                          | The read-only gate end to end against the mock providers: while an integration is read-only, no entry point (REST, MCP, the scheduled job) sends the provider anything but a read (zero non-GET requests); after its owner switches it to read and write, each of them writes; demo data never becomes writable.                                                                                                                                                                 |
+| `services/crypto/vaultImports.test.ts`                                                                                | The credential has one encrypt and one decrypt path (`Credential`, reached only through `Integration`'s sessions); `sync/secrets.ts` is imported only by the sync engine; nothing under `mcp/` names a credential; every dynamic import takes one string literal, so the graph sees every edge.                                                                                                                                                                                  |
+| `sync/providers/adapterSecrets.test.ts`                                                                               | The adapters never reach a provider secret: their context has no `secret`, their headers come from the auth strategy, and nothing under `sync/providers/` names `.secret` or loads the credential, the sync's secret door or the vault.                                                                                                                                                                                                                                          |
+| `classes/sync/syncInternals.test.ts`                                                                                  | Only `Integration` loads the sync engine; only the engine, `Integration` and the purge load `SyncedRows`; only `GoogleCalendarIntegration` and `PushCommit` load `EventClaim`; the global writes (`purgeDeletedBefore`, `reapStuck`) are named only where they belong; no barrel re-exports an internal module.                                                                                                                                                                  |
+| `classes/dashboard/dashboardInternals.test.ts`                                                                        | Only `Dashboard`, `NewDashboard` and `DashboardDryRun` load `History`; only `Workspace` loads the cascade; each dashboard collection is read and written by its class (Dashboards by `Dashboard` and `NewDashboard`, DashboardVersions by `History`, Views by `View`); the doors that skip a caller's checks (`listOutlines`, `pinAccount`, `removeAllIn`, `removeConnectorEverywhere`, `removeOrphans`, …) are named only by their owners; the document check has one composer. |
+| `models/__tests__/primaryReads.test.ts`                                                                               | Every read that decides "this workspace is gone" before a delete (the purge's sweep, the orphan migrations) goes to the primary, asks for ids only, and a failed read deletes nothing.                                                                                                                                                                                                                                                                                           |
+| Capability tests: `classes/integration/definitions/definitions.test.ts` and `classes/dashboard/blocks/blocks.test.ts` | The `implements` contracts and the data agree: each integration class answers the client with the capabilities its contracts and definition declare; each block class declares and implements the capability contracts (`data`, `time`, `control`) the catalog expects, and the registry has one class per catalog type.                                                                                                                                                         |
+| `classes/dashboard/docCheck.golden.test.ts` and `docCheck.golden.json`                                                | The golden `DocCheck` test: the issues, lint, write refusals, `validation` and `restorable` answers of the dashboard check over every template (both languages), every block type and a set of invalid documents, pinned byte for byte before the `Block` classes replaced the per-block checks, and unchanged by that swap. Regenerate only for a deliberate change (`UPDATE_DOCCHECK_GOLDEN=1`) and review the JSON diff.                                                      |
 
 ## What phase 7a built (the boundary without exceptions, the backlog)
 
@@ -2277,8 +2373,7 @@ Auditable, Viewable<SavedView>`, composing a **`Query`** value object (parsed an
   deletion and an account's end alike (the owner's ruling). The `2026-11-15-orphaned-dashboards`
   migration (sync-db) removes, once, those of workspaces that are gone or soft-deleted; it answers
   counts only.
-- **Legacy list: 6 → 0.** `LEGACY_DB_IMPORTERS` is an empty array (ESLint and the boundary test
-  still read it; phase 7 deletes it).
+- **Legacy list: 6 → 0.** `LEGACY_DB_IMPORTERS` became an empty array; phase 7a deleted it.
 
 ### Phase 6a, fix round 1
 
@@ -2314,22 +2409,6 @@ Auditable, Viewable<SavedView>`, composing a **`Query`** value object (parsed an
 - **Nits:** a read's refusal names a member (`Operation.member`, N2); `Layout` / `Query` compare
   canonically (N4); a raced connect link is used once (test, N3); the cascade loads the dashboard
   classes before its first destructive step (N5).
-
-## Where phase 6a left the old modules
-
-| Module                                                                                   | Now                                                                                                     |
-| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `services/dashboards.ts`                                                                 | **removed**: `Dashboard`, `History`, `HistoryTrail`, `DocCheck`, `DashboardConnectors`, `BlockPreviews` |
-| `services/views.ts`                                                                      | **removed**: `View`, `Query`                                                                            |
-| `services/personas.ts`                                                                   | **removed**: `Persona`                                                                                  |
-| `services/connectLinks.ts`                                                               | **removed**: `ConnectLink`                                                                              |
-| `mcp/tools/workspace/auditLogQuery.ts`                                                   | thin over `AuditLog.page`; off the legacy list                                                          |
-| `seed/seedWorkspace.ts`                                                                  | through classes only; off the legacy list                                                               |
-| controllers (dashboards, builder, views, connect links), MCP builder tools and resources | `Dashboard.load(caller, id, operation)` then the method; `View`, `Persona`, `ConnectLink`               |
-| `services/dashboardSchemas.ts`                                                           | `History.MAX_UNDO_STEPS`                                                                                |
-
-Tests that called the removed modules import the same call shapes from `src/testing/dashboardCalls.ts`
-(one line each over the classes); their assertions are unchanged.
 
 ## What phase 5 built (sync, the dispatchers and the calendar push)
 
@@ -2381,7 +2460,7 @@ Tests that called the removed modules import the same call shapes from `src/test
   frozen value object: `ops`,
   `calendarId`, `dailyCapReached`, `toDryRun`), `cursor` (`gcal:<id>`), `commit` → **`PushCommit`**
   (a method object; closes its `SyncRun` with `succeed`). `gcal/plan.ts` and `gcal/commit.ts` are
-  gone; `gcal/diff.ts` and `calendarApi.ts` stay pure. `GoogleCalendarIntegration` keeps `push`,
+  gone (they are `PushPlan` and `PushCommit`); `gcal/diff.ts` and `calendarApi.ts` stay pure. `GoogleCalendarIntegration` keeps `push`,
   `dryRun` and `insertEvent`.
 - **Carried fixes:** a clean-up racing another integration's push (fix rounds 1 and 2: every
   TodoList delete of a pushed event claims its own link first, `EventClaim`, so its tombstone exists
@@ -2455,7 +2534,7 @@ Tests that called the removed modules import the same call shapes from `src/test
 - **`Overrides.prefilter(filter, skip)`**: a wider filter on stored fields, run before the
   projection so the indexes narrow (the compiler, `ItemQuery#list`, the push plan); the exact
   filter still runs after it.
-- **`gcal/commit.ts`** builds its `PushItem` from the effective values, as the plan does.
+- **`PushCommit`** (once `gcal/commit.ts`) builds its `PushItem` from the effective values, as the plan does.
 - **A stale override** of a provider field clears when the provider's value is sent (no write).
 - **Text search** covers `overlay.overrides.title` (the items text index; sync-db swaps the old one).
 - **`Integration#needsCreateConsent`** (a create: the write scopes, or one of the definition's
@@ -2483,7 +2562,7 @@ Tests that called the removed modules import the same call shapes from `src/test
 - **`ItemDetail.sourceValues`** (additive, REST only): a mirrored item's values at its provider
   under its overrides (title redacted), so "Use <provider>'s value" can send the provider's own
   title or status (a date or the priority clears with null).
-- **The pull-back** in `gcal/commit.ts` redacts the title like the plan; MCP `create_todo` is
+- **The pull-back** in `PushCommit` redacts the title like the plan; MCP `create_todo` is
   `openWorldHint: true`.
 - **Client.** `features/items/editing/`: `editPlan.ts` (which fields show, provider or "Only in
   TodoList", the one `ProviderLock` reason, the draft and the one PATCH), `saveProblem.ts` (each
@@ -2524,18 +2603,6 @@ Tests that called the removed modules import the same call shapes from `src/test
   `GoogleCalendarIntegration#readEvent` asks for the owner.
 - **MCP `update_todo`** takes `null` to clear a title or status override, as REST does.
 
-## Where phase 4a left the old modules
-
-| Module                               | Now                                                                                                                                                  |
-| ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `services/items.ts`                  | **deleted**: `Item`, `Todo`, `ItemQuery`, `Container` (controllers and MCP tools call them)                                                          |
-| `services/providerCreate/mirror.ts`  | **deleted**: `MirroredItem.store`, `MirroredItem#markAsCopyOf`                                                                                       |
-| `services/providerCreate/service.ts` | no database: the chips and the funnel steps; `createCopy` is `Todo.findOwn` + `Todo#copyTo` (`TodoCopy`)                                             |
-| `services/providerFields.ts`         | moved to `builder/providerFields.ts` (pure discovery); the sample and its cache are `ProviderFields`                                                 |
-| `services/workspaceQuery.ts`         | no database: request parsing and the compile context; `QueryTarget` reads views and blocks, `ItemQuery#run` runs the query (the 503 on a time limit) |
-| `gcal/plan.ts`                       | still on the legacy list (phase 5); projects the effective values before its date window                                                             |
-| `testing/itemCalls.ts`               | tests only: the old call shapes, one line each over the classes                                                                                      |
-
 ## What the calendar phase (PC) built
 
 The rulings are in `.superpowers/sdd/2026-11-14-oop-redesign/progress.md` (the calendar phase).
@@ -2550,7 +2617,7 @@ The rulings are in `.superpowers/sdd/2026-11-14-oop-redesign/progress.md` (the c
   the integration as it is now; `viewFor(userId)` shows the ids to the integration's owner only.
   Routes: `GET/PUT/DELETE …/primary-calendar`; audited as `workspace.primary_calendar`
   (`{integrationId, created}` or `{cleared}`, never a calendar's id or name).
-- **The push** (`gcal/plan.ts`, `commit.ts`, `scheduledSync.ts`): only the integration the primary
+- **The push** (`PushPlan`, `PushCommit`, `gcal/scheduledSync.ts`): only the integration the primary
   calendar is on is planned (`CalendarNotPrimaryError`, 409 `calendar_not_primary`), into that
   calendar, with a fixed rule: every item with a planned, start or due date that the
   integration's owner may see (`ItemPolicy.for`), Google Calendar's own items and
@@ -2592,7 +2659,7 @@ The rulings are in `.superpowers/sdd/2026-11-14-oop-redesign/progress.md` (the c
 
 - **`CalendarLink`** (`classes/calendar/CalendarLink.ts`): the one rule every delete path shares
   (`isOwnLive`: live, `to_google`, the event id TodoList gives the item). The push's deletes and
-  moves (`gcal/plan.ts`), `deleteLinkedEvent`, the clean-ups and an item's delete all use it.
+  moves (`PushPlan`), `deleteLinkedEvent`, the clean-ups and an item's delete all use it.
 - **`CalendarLinks.in(workspaceId).onItemDeleted(itemId)`** (`classes/calendar/CalendarLinks.ts`):
   replaces `GoogleCalendarIntegration.deleteEventsOfDeletedItem`; it goes through each
   integration's public `deleteLinkedEvent` as its owner and never fails the delete.
@@ -2640,104 +2707,3 @@ The rulings are in `.superpowers/sdd/2026-11-14-oop-redesign/progress.md` (the c
 - **The disconnect answers its clean-up's counts** (200; 204 without one); Google's OAuth
   transport and `#contentsOf`'s paging fit the request's `TimeBudget`; `applyOps` always runs a
   first op.
-
-## Where the calendar phase left the old modules
-
-| Module                                        | State after PC                                                                                                                        |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `gcal/plan.ts`                                | no `targetCalendarId` / `pushFilter`: the primary calendar from the workspace, the fixed push rule, `ItemPolicy.for` as the owner     |
-| `gcal/commit.ts`                              | a create goes to the primary calendar (from the workspace), an update to its link's calendar                                          |
-| `gcal/diff.ts`                                | `PushItem.plannedAt`; a link on another calendar moves (delete + create); skip reason `not_moved`                                     |
-| `gcal/scheduledSync.ts`                       | eligible = stored rules + the workspace's active primary calendar is on the integration (`Workspace.primaryCalendarStatusOf`)         |
-| `services/items.ts`                           | `deleteItem` deletes the to-do's pushed events at once; facets' containers name their integration and external id; `plannedAt`        |
-| `services/workspaceQuery.ts`, `dashboards.ts` | a block's (or draft's) `connectorScopes` through `ItemPolicy#scopeOf`                                                                 |
-| `models/*/CalendarLink.ts`                    | `upsert` keyed on the item; `listLiveForItem`, `removeForIntegration`                                                                 |
-| `models/*/Workspace.ts`                       | `settings.primaryCalendar`; `setPrimaryCalendar` (never through `update`)                                                             |
-| `migrations/primaryCalendar.ts`               | a stored push target becomes the primary calendar when the owner rules allow it; every config loses `targetCalendarId` / `pushFilter` |
-
-## Where phase 3 left the old modules
-
-| Module                                                     | State after phase 3                                                                                                                                     |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `services/workspaces.ts`                                   | **removed**: `Workspace`, `Member`, `Invite`, `JoinLink` and the cascade (`workspace/cascade.ts`)                                                       |
-| `services/attributes.ts`                                   | **removed**: `Workspace#createAttribute` / `updateAttribute` / `deleteAttribute`, `AttributeDefinitions` (`attributesOf`, `prepare`)                    |
-| `services/topics.ts`, `services/topicRules.ts`             | **removed**: `Topic`, `TopicRules`                                                                                                                      |
-| `services/crypto/joinLinkVault.ts`                         | **removed**: `JoinLink` seals and opens the token (the same stage key and context)                                                                      |
-| `types/attributes.ts`                                      | `attributeValueError` is gone: each `AttributeDefinition` subclass holds its type's rule. The zod schemas, `numberRange`, `dayOf`, `noonOf` stay (pure) |
-| `services/inviteTokens.ts`                                 | stays pure (hashing and drawing a token; no database)                                                                                                   |
-| `services/inviteDelivery.ts`                               | stays: the invite email and the links; `Invite#deliver` sends it (it read the workspace and inviter, now in the class)                                  |
-| `services/workspaceSchemas.ts`, `services/topicSchemas.ts` | stay (pure zod); limits come from `TopicRules` and `workspace/workspaceRules.ts`                                                                        |
-| `classes/User.ts`                                          | `deleteAccount` calls `Workspace.deleteAccountCascade` (class to class, no service)                                                                     |
-| `classes/integration/Integration.ts`, `Credential.ts`      | `Integration.removeAllIn` / `ownersRemovedWith` and `Credential.destroyAllIn` serve the cascade                                                         |
-
-## Where phase 2W (write-back) left the old modules
-
-| Module                                                  | State after phase 2W                                                                                                                                                           |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `models/definitions/Item.ts`, `models/mongoose/Item.ts` | `updateMirrored(workspaceId, integrationId, id, patch, {resync})`: a write-back on a live mirrored item of that integration (never a local one); `resync` clears `source.hash` |
-| `sync/http.ts`                                          | `HttpRequest.method` names `PUT` and `PATCH` too: only the write client sends them, for its allow-listed updates; the read client still sends GET and POST only                |
-| `services/providerCreate/ids.ts`                        | patterns for a ClickUp task id, a GitHub issue number and a Google event id; a calendar id is never `.` or `..`                                                                |
-| `types/integrations.ts`                                 | `WRITABLE_FIELDS` / `WritableField`; `ProviderCapabilities.canUpdate`, `writableFields`, `writableKinds`, `reachableStatuses` (additive)                                       |
-| `types/errorCodes.ts`                                   | `status_not_available`, `scope_missing`, `field_not_writable`, `provider_partial_write`, `provider_item_missing`, `event_has_guests` (the client translates each)              |
-| `sync/providers/google_calendar.ts`                     | an event's item carries `props.guestsCount` (attendees beyond the calendar's owner)                                                                                            |
-
-## Where phase 2a left the old modules
-
-| Module                             | State after phase 2a                                                                                                                               |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `services/googleCalendarOAuth.ts`  | **removed**: `OAuthFlow` (start, callback) and `GoogleCalendarIntegration`'s definition; the picker route helper is in `services/oauth/service.ts` |
-| `services/googleOAuthClient.ts`    | **removed**: `GOOGLE_CALENDAR_OAUTH` (`OAuthAuth`: credentials, token client, per-call refresh, revoke)                                            |
-| `services/oauth/providers.ts`      | **removed**: each provider's `OAuthAuth` in its definition (`identify`, scopes, endpoints)                                                         |
-| `services/oauth/client.ts`         | **removed**: `OAuthAuth#credentials`, `#client`, `#refresh`                                                                                        |
-| `services/oauth/service.ts`        | the request bodies and the picker listings (over `ResourcePicker`); the flow is `OAuthFlow`                                                        |
-| `services/oauth/common.ts`         | pure (cookie, callback URL, redirects); the state's database work is `OAuthFlow`'s; off the legacy list                                            |
-| `services/oauth/transport.ts`      | the OAuth apps' transport seam only; the stand-in rewrite is `OAuthAuth#transport`                                                                 |
-| `services/integrationConfig.ts`    | the request bodies, and views of the definitions                                                                                                   |
-| `seed/fakeCredentials.ts`          | a view of the strategies' FAKE credentials (the pieces: `definitions/fake.ts`)                                                                     |
-| `sync/providers/oauthEndpoints.ts` | the test stand-in switch only; the endpoints are the definitions'                                                                                  |
-| `sync/providers/googleAuth.ts`     | moved to `classes/integration/auth/googleServiceAccount.ts`: `ServiceAccountAuth`'s signer, which reads the session's secret (adapters never do)   |
-
-## Where phase 1 left the old modules
-
-| Module                                                      | State after phase 1                                                                                                |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `services/integrations.ts`                                  | **removed**: `Integration` (connect within caps, update, disconnect template, providers by member)                 |
-| `services/integrationConnect.ts`                            | **removed**: `Integration.connectOAuth`                                                                            |
-| `services/integrationCredentials.ts`                        | **removed**: `Integration#saveCredential`                                                                          |
-| `services/integrationOwnership.ts`                          | **removed**: `Integration.findOwn`, `findOwnIncludingDeleted`, `listOwn`, `listVisible`                            |
-| `services/integrationTest.ts`                               | **removed**: `Integration#testConnection` (template over `probe`) and `classes/integration/connectionTest.ts`      |
-| `services/sharing.ts`                                       | **removed**: `Integration#stopSharing`, `Integration.sharedOwnIds`                                                 |
-| `services/crypto/credentialVault.ts`, `credentialWriter.ts` | **removed**: `Credential` (`open`, `seal`, `refreshIfStale`)                                                       |
-| `services/providerCreate/session.ts`                        | **removed**: the tracker read and write sessions (`TrackerIntegration`)                                            |
-| `services/providerCreate/writeClient.ts`                    | moved to `classes/integration/writers/trackerWriter.ts`                                                            |
-| `gcal/calendarApi.ts`                                       | moved to `classes/integration/writers/calendarApi.ts` (the push's ops: `writers/calendarOps.ts`)                   |
-| `gcal/oauthCalendar.ts`                                     | **removed**: `GoogleCalendarIntegration` (calendars, insert, push, pull, revoke)                                   |
-| `services/oauth/grants.ts`                                  | **removed**: Jira/ClickUp `grantResources`, `LinearIntegration#revoke`, `classes/integration/grantSelection.ts`    |
-| `services/gcalSync.ts`, `gcal/scheduledSync.ts`             | thin over `GoogleCalendarIntegration` (`dryRun`, `push`); off the legacy list                                      |
-| `services/providerCreate/service.ts`                        | the copy bookkeeping stays (items, quota: phase 4 `Todo.copyTo`); the writes go through `createTask`/`insertEvent` |
-| `services/syncRuns.ts`                                      | the run history stays (phase 5); "sync now" is `Integration#requestSync`                                           |
-
-## Where phase 0 left the old modules
-
-| Module                                    | State after phase 0                                                                                  |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `services/itemAccess.ts`                  | **removed**: its rules and share facts are `ItemPolicy`                                              |
-| `services/accessFilter.ts`                | thin delegation to `ItemPolicy` (the builder's compile test calls these names); re-exports the types |
-| `services/workspaceContext.ts`            | thin delegation to `Caller.enter` (tests resolve a context by this name)                             |
-| `services/integrationOwnership.ts`        | the loads stayed until phase 1 (`Integration.findOwn`); the rule is `IntegrationPolicy`              |
-| `services/sharing.ts`                     | stop sharing orchestrated there until phase 1 (`Integration#stopSharing`)                            |
-| `assertRole` (`services/integrations.ts`) | **removed**: `caller.require(minRole)`                                                               |
-| `assertOwner` (`services/workspaces.ts`)  | `caller.authorize(WorkspacePolicy.instance, 'manage', …)`                                            |
-| the 8 audit helpers and inline appends    | **removed**: `AuditLog.record` is the only writer                                                    |
-
-Every audited request records its address and user agent: controllers pass `req.caller.actor`
-(or, before a workspace exists and on the OAuth callbacks, the request's origin) and MCP tools pass
-their caller's actor. Jobs and the sync write as the system, without an origin.
-
-Rules that still live in a service until their phase moves them into a class:
-
-| Rule                                                        | Where                                                                    | Moves with              |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------ | ----------------------- |
-| A private saved view is its owner's alone                   | `View#isVisibleTo` (phase 6a); `QueryTarget` asks `View.load` (phase 7a) | done (phase 7a)         |
-| Only your own local to-do is copied to a provider           | `services/providerCreate/service.ts` (`loadTodo`)                        | `Todo.copyTo` (phase 4) |
-| Agent-key visibility and revoking (owner or the key's user) | `services/agentKeys.ts`, through `WorkspacePolicy`                       | `AgentKey` (phase 6)    |
