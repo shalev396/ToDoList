@@ -14,6 +14,7 @@ import { integrationOwners } from './integrationOwners.js';
 import { introduceTopics } from './introduceTopics.js';
 import { orphanedDashboards } from './orphanedDashboards.js';
 import { orphanedIntegrations } from './orphanedIntegrations.js';
+import { orphanedTopics } from './orphanedTopics.js';
 import { primaryCalendar } from './primaryCalendar.js';
 import { primaryCalendarRead } from './primaryCalendarRead.js';
 import { removeGoogleDrive } from './removeGoogleDrive.js';
@@ -36,6 +37,7 @@ export const MIGRATIONS: readonly Migration[] = [
   primaryCalendarRead,
   calendarLinkDeleteAnswered,
   orphanedDashboards,
+  orphanedTopics,
 ];
 
 interface MigrationRecord {

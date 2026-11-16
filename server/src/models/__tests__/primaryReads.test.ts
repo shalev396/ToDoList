@@ -193,3 +193,48 @@ describe('the orphan migration reads the primary, ids only', () => {
     );
   });
 });
+
+describe('the orphaned-topics migration reads the primary, ids only', () => {
+  it('its distinct and the Workspaces lookup name the primary; the lookup projects _id', async () => {
+    const { orphanedTopics } = await import('../../migrations/orphanedTopics.js');
+    const raw = mongoose.connection.db;
+    assert.ok(raw);
+    await raw.collection('Topics').insertOne({ _id: 'topic-m' as never, workspaceId: 'w-m' });
+    const calls: { collection: string; op: string; options: unknown }[] = [];
+    const watching = new Proxy(raw, {
+      get(target, property, receiver): unknown {
+        if (property !== 'collection') return Reflect.get(target, property, receiver) as unknown;
+        return (name: string): unknown => {
+          const collection = target.collection(name);
+          return new Proxy(collection, {
+            get(inner, method): unknown {
+              const value = Reflect.get(inner, method, inner) as unknown;
+              if (method !== 'distinct' && method !== 'find' && method !== 'deleteMany') {
+                return value;
+              }
+              return (...args: unknown[]): unknown => {
+                const options = method === 'distinct' ? args[2] : args[1];
+                calls.push({ collection: name, op: method, options });
+                return (value as (...a: unknown[]) => unknown).apply(inner, args);
+              };
+            },
+          });
+        };
+      },
+    });
+    await orphanedTopics.run(watching, new Date());
+    assert.deepEqual(
+      calls.map(({ collection, op, options }) => ({ collection, op, options })),
+      [
+        { collection: 'Topics', op: 'distinct', options: { readPreference: 'primary' } },
+        {
+          collection: 'Workspaces',
+          op: 'find',
+          options: { projection: { _id: 1 }, readPreference: 'primary' },
+        },
+        // Only after both reads: the delete.
+        { collection: 'Topics', op: 'deleteMany', options: undefined },
+      ],
+    );
+  });
+});
