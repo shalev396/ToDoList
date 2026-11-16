@@ -386,7 +386,7 @@ describe('the push goes to the primary calendar', () => {
 
   it('a delete Google gives no answer to: audited as unknown, as that member, and the to-do is still deleted', async () => {
     const made = await as(editor, 'POST', '/items', {
-      title: 'The editor’s to-do, delete unanswered',
+      title: 'The editorâ€™s to-do, delete unanswered',
       dueAt: new Date(Date.now() + 6 * 86_400_000).toISOString(),
     });
     assert.equal(made.status, 201, made.text);
