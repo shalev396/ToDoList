@@ -33,7 +33,8 @@ import {
  *
  * - `defaultRate`/`defaultBurst`: API Gateway stage default for every route.
  * - `auth*`, `mcp*`: tighter limits on the unauthenticated surfaces, per route key: the public
- *   auth routes and /api/mcp*. Each route key has its own bucket.
+ *   auth routes, and /api/mcp* with the root /.well-known discovery documents of MCP sign-in.
+ *   Each route key has its own bucket.
  * - `apiReservedConcurrency`: reserved concurrent executions of the function, the stack's only
  *   one, shared by HTTP requests and background sync jobs (5 of each stage's count are room for
  *   the jobs). Each warm execution environment holds a Mongo pool of at most MAX_POOL_SIZE

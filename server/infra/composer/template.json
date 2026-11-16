@@ -503,6 +503,10 @@
 					"ANY /api/mcp/{proxy+}": {
 						"ThrottlingRateLimit": 5,
 						"ThrottlingBurstLimit": 10
+					},
+					"GET /.well-known/{proxy+}": {
+						"ThrottlingRateLimit": 5,
+						"ThrottlingBurstLimit": 10
 					}
 				},
 				"StageName": "$default",

@@ -79,8 +79,8 @@ export class Api extends Construct {
     const mcp = this.httpApi.addRoutes({ path: '/api/mcp', methods, integration });
     const mcpProxy = this.httpApi.addRoutes({ path: '/api/mcp/{proxy+}', methods, integration });
     // Public OAuth discovery documents at the root (GET only, no authorizer), reached through the
-    // CloudFront /.well-known/oauth-* behavior.
-    this.httpApi.addRoutes({
+    // CloudFront /.well-known/oauth-* behavior. Part of MCP sign-in, so throttled like /api/mcp*.
+    const wellKnown = this.httpApi.addRoutes({
       path: '/.well-known/{proxy+}',
       methods: [apigwv2.HttpMethod.GET],
       integration,
@@ -96,10 +96,11 @@ export class Api extends Construct {
         'ANY /api/public/auth/{proxy+}': throttle(limits.authRate, limits.authBurst),
         'ANY /api/mcp': throttle(limits.mcpRate, limits.mcpBurst),
         'ANY /api/mcp/{proxy+}': throttle(limits.mcpRate, limits.mcpBurst),
+        'GET /.well-known/{proxy+}': throttle(limits.mcpRate, limits.mcpBurst),
       };
       // API Gateway refuses route settings for a route that does not exist yet, and nothing else
       // orders the auto-created $default stage after the routes ("Unable to find Route by key").
-      for (const route of [...auth, ...mcp, ...mcpProxy]) {
+      for (const route of [...auth, ...mcp, ...mcpProxy, ...wellKnown]) {
         const cfnRoute = route.node.defaultChild;
         if (cfnRoute instanceof apigwv2.CfnRoute) this.stage.node.addDependency(cfnRoute);
       }

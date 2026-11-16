@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { Template } from 'aws-cdk-lib/assertions';
+import { Match, Template } from 'aws-cdk-lib/assertions';
 import { buildApp } from '../lib/app.js';
 import { MAX_POOL_SIZE, STAGE_LIMITS, type StageLimits } from '../lib/config.js';
 import { STAGES, type Stage } from '../lib/constants.js';
@@ -58,13 +58,15 @@ for (const stage of STAGES) {
       });
     });
 
-    it('throttles the public auth routes and /api/mcp* tighter per route', () => {
+    it('throttles the public auth routes, /api/mcp* and the root /.well-known tighter per route', () => {
       template.hasResourceProperties('AWS::ApiGatewayV2::Stage', {
-        RouteSettings: {
+        RouteSettings: Match.exact({
           'ANY /api/public/auth/{proxy+}': rate(want.authRate, want.authBurst),
           'ANY /api/mcp': rate(want.mcpRate, want.mcpBurst),
           'ANY /api/mcp/{proxy+}': rate(want.mcpRate, want.mcpBurst),
-        },
+          // MCP sign-in's discovery documents at the root: public, so the MCP budget too.
+          'GET /.well-known/{proxy+}': rate(want.mcpRate, want.mcpBurst),
+        }),
       });
       const limits = STAGE_LIMITS[stage];
       for (const [r, b] of [
@@ -80,6 +82,7 @@ for (const stage of STAGES) {
         'ANY /api/public/auth/{proxy+}',
         'ANY /api/mcp',
         'ANY /api/mcp/{proxy+}',
+        'GET /.well-known/{proxy+}',
       ]) {
         template.hasResourceProperties('AWS::ApiGatewayV2::Route', { RouteKey: routeKey });
       }
