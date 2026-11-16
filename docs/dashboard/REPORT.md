@@ -32,7 +32,7 @@ After the first build the server was reshaped, phase by phase, into a set of cla
 | 4. Frontend | New design system (DESIGN.md). Landing, pricing and legal pages. Auth, onboarding and invites. App shell with org switcher and ⌘K. Org settings and members. Dashboard runtime (grid, page vars, autosave with conflict recovery, RTL). All 12 block types. Item sheet. Block editor with live preview. Integrations, templates and agent-keys pages. en and he throughout. |
 | 5. Google Calendar bridge | Signed envelope, public hooks, diff/commit with CalendarLinks, the Apps Script client (gated by `GCAL_BRIDGE_ENABLED`; locally only the mock on :3999), `gcal-sync` dry run, the mock, and `apps-script/Code.gs` with its README. |
 | 6. MCP | v2 SDK, stateless JSON on `/api/mcp` and `/api/mcp/readonly`, plus stdio. `elk_` agent keys, scopes ∩ role, limits, redaction, audit and confirm. 42 tools (read, items, sync, integrations, workspace, builder) with D12 preview-before-write. 9 `todolist://` resources and 5 prompts. |
-| 7. Infra and docs | CDK KMS per stage, SQS + DLQ + worker, schedules (08:00 and 18:00 Asia/Jerusalem, nightly purge), `/api/mcp` routes without the JWT authorizer, CI workflows (inert until pushed). DECISIONS, DEPLOY-PLAN and this report. |
+| 7. Infra and docs | CDK KMS per stage, SQS + DLQ + worker, no schedules (the sync, gcal and purge functions are invoked directly), `/api/mcp` routes without the JWT authorizer, CI workflows (inert until pushed). DECISIONS, DEPLOY-PLAN and this report. |
 
 ## Run it
 

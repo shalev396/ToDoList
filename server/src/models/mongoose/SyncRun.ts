@@ -110,7 +110,7 @@ export const SyncRunRepository: ISyncRunRepository = {
     return doc ? toSyncRunData(doc) : null;
   },
 
-  // Global on purpose: the nightly purge job ends stale runs in every workspace (jobs/purge.ts).
+  // Global on purpose: the purge job ends stale runs in every workspace (jobs/purge.ts).
   async listRunningStartedBefore(before, limit) {
     const docs = await SyncRunMongoModel.find({ status: 'running', startedAt: { $lt: before } })
       .sort({ startedAt: 1 })

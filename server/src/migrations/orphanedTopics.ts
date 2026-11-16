@@ -7,7 +7,7 @@
  * Counts only, never a value. Idempotent: what it removes is gone, and a live workspace's topics
  * are never touched (one stored without `deletedAt` is live too). "Gone or live" is read from the
  * primary, ids only, before anything is deleted, so a failed read deletes nothing. The purge runs
- * the same rule nightly (Topic.removeOrphans), for what a request in flight writes after its
+ * the same rule when invoked (Topic.removeOrphans; no schedule), for what a request in flight writes after its
  * workspace's cascade.
  */
 import { TOPIC_TABLE_NAME } from '../models/definitions/Topic.js';

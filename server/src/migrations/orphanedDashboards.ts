@@ -6,7 +6,7 @@
  * soft-deleted, is removed for good, deleted dashboards too.
  *
  * Counts only, never a value. Idempotent: what it removes is gone, and a live workspace's
- * documents are never touched. The purge runs the same rule nightly (Dashboard.removeOrphans), for
+ * documents are never touched. The purge runs the same rule when invoked (Dashboard.removeOrphans; no schedule), for
  * what a request in flight writes after its workspace's cascade.
  */
 import { DASHBOARD_TABLE_NAME } from '../models/definitions/Dashboard.js';

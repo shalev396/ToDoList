@@ -101,7 +101,7 @@ export interface IContainerRepository {
     deletedAt?: Date,
   ): Promise<number>;
   /**
-   * GLOBAL, every workspace: the nightly purge job (jobs/purge.ts) only. Hard-deletes containers
+   * GLOBAL, every workspace: the purge job (jobs/purge.ts) only. Hard-deletes containers
    * soft-deleted before `date`. Returns how many.
    */
   purgeDeletedBefore(date: Date): Promise<number>;

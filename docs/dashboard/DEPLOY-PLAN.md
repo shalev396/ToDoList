@@ -94,7 +94,7 @@ There is no queue, DLQ or alarm (C0-ARCH), so there is nothing to route to SNS. 
 
 1. Merge to `dev` triggers `push-dev.yml`: lint, build, the unit and infra tests, then deploy.
 2. Check the dashboard loads, onboarding creates a workspace with demo data, and the integrations page shows fixture syncs.
-3. There are no schedules yet: invoke `sync-dispatch`, `gcal-dispatch` or `purge` directly when they should run (the purge is meant to run nightly once a schedule exists).
+3. There are no schedules yet: invoke `sync-dispatch`, `gcal-dispatch` or `purge` directly when they should run (the purge runs only when invoked; no schedule exists).
 4. Note: invite links put a token in the URL (accepted risk). On AWS the invite goes through SES, which needs a verified sender (NEEDS SHALEV).
 
 ### Step 11. Load protection and email (config, no secrets)

@@ -1,5 +1,5 @@
 /**
- * The purge (DATA.md §4), meant to run nightly (no schedule invokes it for now):
+ * The purge (DATA.md §4), run only when invoked directly (no schedule invokes it):
  * - ends the sync runs still `running` more than 15 minutes after they started (a sync job's
  *   timeout is 5, the function's): `failed` with `timeout`. When such a run's integration was
  *   disconnected, the rows the dead run wrote or revived after the disconnect are deleted again;

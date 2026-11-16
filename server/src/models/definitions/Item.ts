@@ -391,7 +391,7 @@ export interface IItemRepository {
   /** Clears one attribute's value on every item of the workspace. Returns how many items held it. */
   clearAttribute(workspaceId: string, key: string): Promise<number>;
   /**
-   * GLOBAL, every workspace: the nightly purge job (jobs/purge.ts) only. Hard-deletes items
+   * GLOBAL, every workspace: the purge job (jobs/purge.ts) only. Hard-deletes items
    * soft-deleted before `date`. Returns how many.
    */
   purgeDeletedBefore(date: Date): Promise<number>;

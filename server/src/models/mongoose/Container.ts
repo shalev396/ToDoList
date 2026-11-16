@@ -188,7 +188,7 @@ export const ContainerRepository: IContainerRepository = {
     return result.modifiedCount;
   },
 
-  // Global on purpose: the nightly purge job runs over every workspace (jobs/purge.ts).
+  // Global on purpose: the purge job runs over every workspace (jobs/purge.ts).
   async purgeDeletedBefore(date) {
     const result = await ContainerMongoModel.deleteMany({ deletedAt: { $lt: date } });
     return result.deletedCount;

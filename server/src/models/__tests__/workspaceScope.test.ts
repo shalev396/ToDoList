@@ -34,7 +34,7 @@ const GLOBAL_METHODS = new Set([
   'AgentKeyRepository.rotateGrant',
   // The public OAuth callback knows the state only: its hash is the key (like an invite token).
   'OAuthStateRepository.findByStateHash',
-  // The nightly purge job (jobs/purge.ts) is maintenance over every workspace.
+  // The purge job (jobs/purge.ts) is maintenance over every workspace.
   'ItemRepository.purgeDeletedBefore',
   'ContainerRepository.purgeDeletedBefore',
   // The same job ends the runs still `running` long after they started.

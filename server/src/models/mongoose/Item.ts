@@ -720,7 +720,7 @@ export const ItemRepository: IItemRepository = {
     return result.modifiedCount;
   },
 
-  // Global on purpose: the nightly purge job runs over every workspace (jobs/purge.ts).
+  // Global on purpose: the purge job runs over every workspace (jobs/purge.ts).
   async purgeDeletedBefore(date) {
     const result = await ItemMongoModel.deleteMany({ deletedAt: { $lt: date } });
     return result.deletedCount;

@@ -61,7 +61,7 @@ export interface ISyncRunRepository {
     patch: SyncRunPatch,
   ): Promise<SyncRunData | null>;
   /**
-   * GLOBAL, every workspace: the nightly purge job (jobs/purge.ts) only. Runs still `running` that
+   * GLOBAL, every workspace: the purge job (jobs/purge.ts) only. Runs still `running` that
    * started before `before`, oldest first, at most `limit`.
    */
   listRunningStartedBefore(before: Date, limit: number): Promise<SyncRunData[]>;
