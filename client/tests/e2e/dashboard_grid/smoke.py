@@ -195,9 +195,10 @@ def test_block_menu_moves_with_the_keyboard_and_returns_focus(
     # Keyboard only: a mouse click on Move, then a pointer travelling to "Right", can leave the
     # submenu's grace area and close it (re-mounting its items) before the click lands.
     move_item = menu.get_by_role("menuitem", name="Move", exact=True)
-    # Radix focuses the menu once it has opened; only then do the arrow keys reach its items.
+    # Radix focuses the menu once it has opened, and sometimes its first item ("Move") as well, so
+    # an ArrowDown could land on Move or on the item after it. Home always lands on the first item.
     expect(menu).to_be_focused()
-    page.keyboard.press("ArrowDown")
+    page.keyboard.press("Home")
     expect(move_item).to_be_focused()
     page.keyboard.press("ArrowRight")
     move = page.get_by_role("menu", name="Move", exact=True)
