@@ -1,8 +1,9 @@
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import rateLimit, { type Options, type RateLimitRequestHandler } from 'express-rate-limit';
 import { environment } from '../config/environment.js';
 import { sha256Hex } from '../services/crypto/hashing.js';
 import { addressKey } from '../utils/clientAddress.js';
+import { verifiedCognitoSub } from './expressAuth.js';
 
 const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -54,8 +55,23 @@ export function limiter(max: number, keyGenerator: KeyGenerator = ipKey): RateLi
 /**
  * Authenticated user APIs (/api/private), per presented token: app.ts mounts it first, before the
  * token is verified, so an over-budget caller is refused without verification or a database read.
+ * It is not the per-user cap (a user can mint new tokens; privateUserLimiter is that), so its 300
+ * is above the user's 200: one token alone reaches the user limit first and a normal user never
+ * meets this one.
  */
-export const privateLimiter = limiter(200, tokenKey);
+export const privateLimiter = limiter(300, tokenKey);
+
+/** The verified Cognito user (verifyCognitoToken's `sub`); the address when none was verified. */
+export function userKey(req: Request, res: Response): string {
+  const sub = verifiedCognitoSub(res);
+  return sub === undefined ? ipKey(req) : `user:${sub}`;
+}
+
+/**
+ * /api/private per verified user, whatever tokens they hold: after privateLimiter and
+ * verifyCognitoToken, before the database read (app.ts), so an over-budget user costs no lookup.
+ */
+export const privateUserLimiter = limiter(200, userKey);
 
 /**
  * Auth endpoints (/api/public/auth: login, signup, forgot-password, …), per address: nobody is

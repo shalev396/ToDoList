@@ -4,8 +4,8 @@
  * app.ts mounts the per-token limit first, before verification, so an over-budget caller is
  * refused without a token check or a database read.
  *
- * Tokens are verified by a stand-in (setTokenVerifierForTests): the token text is its `sub`, and
- * "bad" fails verification. Every request comes from 127.0.0.1.
+ * Tokens are verified by a stand-in (setTokenVerifierForTests): the token text before any ":" is
+ * its `sub` (so "u:1" and "u:2" are two tokens of one user), and "bad" fails verification. Every request comes from 127.0.0.1.
  */
 import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -31,7 +31,7 @@ setTokenVerifierForTests((token) => {
   verifications += 1;
   return token === 'bad'
     ? Promise.reject(new Error('invalid token'))
-    : Promise.resolve({ sub: token });
+    : Promise.resolve({ sub: token.split(':')[0] });
 });
 
 const express = (await import('express')).default;
@@ -165,22 +165,57 @@ describe('MCP sign-in discovery in the app', () => {
 });
 
 describe('/api/private in the app', () => {
-  it('refuses an over-budget token before it is verified or the user looked up', async () => {
+  it('caps a user at 200, then refuses with no database read; other users are unaffected', async () => {
     const lookups = mock.method(User, 'findByCognitoSub', () => Promise.resolve(null));
-    const verifiedBefore = verifications;
     try {
-      // privateLimiter's budget is 200 per token per window; each request looks its user up.
+      // privateUserLimiter's budget is 200 per user per window; each request looks its user up.
       for (let i = 0; i < 200; i += 1) {
         assert.equal(await get('/api/private/me', 'busy-user'), 404, `request ${String(i)}`);
       }
       assert.equal(lookups.mock.callCount(), 200);
       assert.equal(await get('/api/private/me', 'busy-user'), 429);
       assert.equal(lookups.mock.callCount(), 200);
-      assert.equal(verifications - verifiedBefore, 200, 'the 429 was not verified');
       assert.equal(await get('/api/private/me', 'quiet-user'), 404);
       assert.equal(lookups.mock.callCount(), 201);
     } finally {
       lookups.mock.restore();
+    }
+  });
+
+  it('caps a user who rotates tokens at the per-user budget, with no database read past it', async () => {
+    const lookups = mock.method(User, 'findByCognitoSub', () => Promise.resolve(null));
+    try {
+      // "rotator:<n>" is a different token each time, for the same user (sub) "rotator".
+      for (let i = 0; i < 200; i += 1) {
+        assert.equal(
+          await get('/api/private/me', `rotator:${String(i)}`),
+          404,
+          `token ${String(i)}`,
+        );
+      }
+      assert.equal(await get('/api/private/me', 'rotator:fresh'), 429);
+      assert.equal(await get('/api/private/me', 'rotator:fresher'), 429);
+      assert.equal(lookups.mock.callCount(), 200);
+    } finally {
+      lookups.mock.restore();
+    }
+  });
+
+  it('refuses an over-budget token before it is verified or the user looked up', async () => {
+    const lookups = mock.method(User, 'findByCognitoSub', () => Promise.resolve(null));
+    const logged = mock.method(console, 'error', () => undefined);
+    const verifiedBefore = verifications;
+    try {
+      // privateLimiter's budget is 300 per token; a token that fails verification is counted too.
+      for (let i = 0; i < 300; i += 1) {
+        assert.equal(await get('/api/private/me', 'bad'), 401, `request ${String(i)}`);
+      }
+      assert.equal(await get('/api/private/me', 'bad'), 429);
+      assert.equal(verifications - verifiedBefore, 300, 'the 429 was not verified');
+      assert.equal(lookups.mock.callCount(), 0);
+    } finally {
+      lookups.mock.restore();
+      logged.mock.restore();
     }
   });
 });

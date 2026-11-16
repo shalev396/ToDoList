@@ -2,6 +2,7 @@ export { responseFormatter, errorHandler, notFound } from './responseFormatter.j
 export { verifyCognitoToken, loadCognitoUser, verifiedCognitoSub } from './expressAuth.js';
 export {
   privateLimiter,
+  privateUserLimiter,
   authLimiter,
   oauthLimiter,
   mcpOAuthLimiter,

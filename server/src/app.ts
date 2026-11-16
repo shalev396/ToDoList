@@ -5,6 +5,7 @@ import {
   notFound,
   verifyCognitoToken,
   privateLimiter,
+  privateUserLimiter,
   loadCognitoUser,
   requestMemo,
 } from './middlewares/index.js';
@@ -61,11 +62,13 @@ export function createApp(): Express {
   app.use(responseFormatter);
 
   app.use('/api/public', parseBody, publicRouter);
-  // The per-token limit → the token check → the user's row: an over-budget caller costs neither.
+  // The per-token limit → the token check → the per-user limit → the user's row: an over-budget
+  // caller costs no database read.
   app.use(
     '/api/private',
     privateLimiter,
     verifyCognitoToken,
+    privateUserLimiter,
     loadCognitoUser,
     parseBody,
     privateRouter,
