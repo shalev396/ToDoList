@@ -22,6 +22,7 @@ import {
   IntegrationRegistry,
   isCalendarProvider,
   isCreateFunnel,
+  isCourseProvider,
   isResourcePicker,
   isTaskProvider,
 } from '../index.js';
@@ -338,6 +339,9 @@ describe('capabilities (what GET …/oauth/providers tells the client)', () => {
       for (const field of definition.writableFields) {
         assert.ok((WRITABLE_FIELDS as readonly string[]).includes(field), `${cls.name}: ${field}`);
       }
+      // A CourseProvider (Moodle) refuses every course read while it is coming soon, so it is
+      // declared coming soon: the client shows it with that badge and offers no way to use it.
+      if (isCourseProvider(can)) assert.equal(definition.comingSoon, true, `${cls.name}: courses`);
     }
   });
 

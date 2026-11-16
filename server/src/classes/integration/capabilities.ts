@@ -18,6 +18,7 @@ import type { PlanNarrowing } from '../calendar/PushPlan.js';
 import type { ItemData } from '../../models/definitions/Item.js';
 import type { MappedItem } from '../../sync/types.js';
 import type { OAuthResource } from '../../types/integrations.js';
+import type { FacetContainer, ItemSummary } from '../../types/items.js';
 import type {
   CreateOptionsQuery,
   CreateOptionsResponseData,
@@ -261,6 +262,18 @@ export interface ResourcePicker<K extends PickerKind = PickerKind> {
   choose(caller: Caller, ids: readonly string[]): Promise<Integration>;
 }
 
+/**
+ * A learning platform (Moodle), read only: the courses the account is enrolled in, a course's
+ * assignments, and the deadlines across them (plan: "courses, assignments, deadlines"). Moodle is
+ * coming soon, so its methods refuse with 400 `provider_coming_soon` until it opens (its demo
+ * sample reads all three through the sync, as containers and items).
+ */
+export interface CourseProvider {
+  courses(caller: Caller): Promise<FacetContainer[]>;
+  assignments(caller: Caller, courseId: string): Promise<ItemSummary[]>;
+  deadlines(caller: Caller): Promise<ItemSummary[]>;
+}
+
 /** Connects through the provider's OAuth sign-in. */
 export interface SupportsOAuth<TSecret extends SecretJson = SecretJson> {
   readonly oauth: OAuthAuth<TSecret>;
@@ -323,6 +336,13 @@ export function picksFrom<K extends PickerKind>(
   kind: K,
 ): integration is Integration & ResourcePicker<K> {
   return isResourcePicker(integration) && integration.pickerKind === kind;
+}
+
+/** Reads a learning platform's courses, assignments and deadlines (CourseProvider). */
+export function isCourseProvider(
+  integration: Integration,
+): integration is Integration & CourseProvider {
+  return ['courses', 'assignments', 'deadlines'].every((name) => hasMethod(integration, name));
 }
 
 export function isRevocable(integration: Integration): integration is Integration & Revocable {

@@ -11,6 +11,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { NotFoundError } from '../../errors/NotFoundError.js';
+import { ProviderComingSoonError } from '../../errors/ProviderComingSoonError.js';
 import { ReadOnlyIntegrationError } from '../../errors/ReadOnlyIntegrationError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { WorkspaceSettings } from '../../models/definitions/Workspace.js';
@@ -26,6 +27,7 @@ import {
   Integration,
   IntegrationRegistry,
   isCalendarProvider,
+  isCourseProvider,
   isResourcePicker,
   isRevocable,
   isTaskProvider,
@@ -145,20 +147,34 @@ describe('capability contracts', () => {
       return [
         isTaskProvider(integration),
         isCalendarProvider(integration),
+        isCourseProvider(integration),
         isRevocable(integration),
         supportsOAuth(integration),
         supportsApiKey(integration),
       ];
     };
-    // [TaskProvider, CalendarProvider, Revocable, SupportsOAuth, SupportsApiKey]
-    assert.deepEqual(row('jira'), [true, false, false, true, true]);
-    assert.deepEqual(row('clickup'), [true, false, false, true, true]);
-    assert.deepEqual(row('linear'), [true, false, true, true, true]);
-    assert.deepEqual(row('github'), [true, false, false, true, true]);
-    assert.deepEqual(row('google_calendar'), [false, true, true, true, false]);
-    assert.deepEqual(row('moodle'), [false, false, false, false, true]);
-    assert.deepEqual(row('slack'), [false, false, false, false, false]);
+    // [TaskProvider, CalendarProvider, CourseProvider, Revocable, SupportsOAuth, SupportsApiKey]
+    assert.deepEqual(row('jira'), [true, false, false, false, true, true]);
+    assert.deepEqual(row('clickup'), [true, false, false, false, true, true]);
+    assert.deepEqual(row('linear'), [true, false, false, true, true, true]);
+    assert.deepEqual(row('github'), [true, false, false, false, true, true]);
+    assert.deepEqual(row('google_calendar'), [false, true, false, true, true, false]);
+    assert.deepEqual(row('moodle'), [false, false, true, false, false, true]);
+    assert.deepEqual(row('slack'), [false, false, false, false, false, false]);
     assert.equal(MoodleIntegration.definition.comingSoon, true);
+  });
+
+  it('Moodle is a CourseProvider that is coming soon: each course read refuses with provider_coming_soon', async () => {
+    const moodle = Integration.from(stored('moodle'));
+    assert.ok(isCourseProvider(moodle));
+    const refused = (error: unknown): boolean =>
+      error instanceof ProviderComingSoonError &&
+      error.statusCode === 400 &&
+      error.code === 'provider_coming_soon' &&
+      error.provider === 'moodle';
+    await assert.rejects(moodle.courses(caller()), refused);
+    await assert.rejects(moodle.assignments(caller(), 'course-1'), refused);
+    await assert.rejects(moodle.deadlines(caller()), refused);
   });
 
   it('each auth strategy shapes its own headers (OAuth bearer, API key as the provider wants it)', () => {

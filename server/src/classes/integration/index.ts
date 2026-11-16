@@ -40,6 +40,7 @@ export {
 export {
   isAddedContentRemover,
   isCalendarProvider,
+  isCourseProvider,
   isCreateFunnel,
   isResourcePicker,
   isRevocable,
@@ -56,6 +57,7 @@ export {
   type WriteResult,
   type CalendarProvider,
   type CalendarPushRequest,
+  type CourseProvider,
   type CreatedTask,
   type CreateFunnel,
   type CreateTaskRequest,
