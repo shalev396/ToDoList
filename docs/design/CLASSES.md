@@ -421,6 +421,15 @@ classDiagram
   AppError <|-- ProviderPartialWriteError
   AppError <|-- ProviderItemMissingError
   AppError <|-- EventHasGuestsError
+  AppError <|-- CalendarNotPrimaryError
+  AppError <|-- CleanupIncompleteError
+  AppError <|-- CreatedNotStoredError
+  AppError <|-- OAuthError
+  AppError <|-- PrimaryCalendarUnsetError
+  AppError <|-- ProviderNoAnswerError
+  AppError <|-- ProviderUnreachableError
+  AppError <|-- WrittenNotStoredError
+  ForbiddenError <|-- IntegrationNotOwnerError
 
   classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
   class AppError:::built
@@ -438,6 +447,15 @@ classDiagram
   class ProviderPartialWriteError:::built
   class ProviderItemMissingError:::built
   class EventHasGuestsError:::built
+  class CalendarNotPrimaryError:::built
+  class CleanupIncompleteError:::built
+  class CreatedNotStoredError:::built
+  class OAuthError:::built
+  class PrimaryCalendarUnsetError:::built
+  class ProviderNoAnswerError:::built
+  class ProviderUnreachableError:::built
+  class WrittenNotStoredError:::built
+  class IntegrationNotOwnerError:::built
   class SecretLeakError:::built
 ```
 
@@ -2498,6 +2516,11 @@ build; it is not a style note.
   `ItemPolicy` asks `Dashboard.connectorIdsIn` for the share facts and `Topic.delete` asks
   `Dashboard.softDeleteAllOn(topic)`. `dashboardInternals.test.ts` pins the three repositories to
   their classes.
+- **`Workspace.requireEnded(workspaceId)`**: the live-workspace guard before a bulk hard delete.
+  It throws a 500 `AppError` when the workspace is live (neither missing nor soft-deleted), reading
+  the primary, ids only, filtered on `deletedAt` (through `Workspace.liveAmong`). `Topic`,
+  `Dashboard` and `View` call it first in `removeAllIn`, so a live workspace's data is never swept,
+  whoever calls. `Integration.removeAllIn` does not (see Known limitations).
 - **`Dashboard#blocks(caller)`**: the blocks as their classes, the plan's composition (storage
   stays JSON). An editor gets the draft's blocks; a viewer gets the published copy's, and a 404
   before the first publish. It has no production caller yet (only tests use it).
