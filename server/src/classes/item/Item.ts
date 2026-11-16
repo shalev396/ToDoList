@@ -18,6 +18,7 @@ import type { Caller } from '../base/Caller.js';
 import type { Auditable, SoftDeletable, Viewable } from '../base/contracts.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { ItemPolicy, type ItemFacts } from '../policies/ItemPolicy.js';
+import { AttributeDefinitions } from '../workspace/AttributeDefinitions.js';
 import { Topic } from '../workspace/Topic.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import type { ItemData, ItemOverlayPatch } from '../../models/definitions/Item.js';
@@ -26,6 +27,7 @@ import { scrub } from '../../services/scrub.js';
 import { redactString } from '../../services/secretPatterns.js';
 import type { ItemKind, ItemStatus, Provider, Visibility } from '../../types/domain.js';
 import type { ItemDetail, ItemSummary } from '../../types/items.js';
+import { AttributeValues } from './AttributeValues.js';
 import { Copies, type LiveStatuses } from './Copies.js';
 import { DueDate } from './DueDate.js';
 import type { ItemEdit, ProviderHalf } from './ItemEdit.js';
@@ -225,6 +227,11 @@ export abstract class Item
     return Overlay.of(this.data.overlay);
   }
 
+  /** Its custom attribute values (kept in its overlay). */
+  get attributes(): AttributeValues {
+    return this.overlay.attributes;
+  }
+
   get copies(): Copies {
     return Copies.of(this.data.copies);
   }
@@ -348,6 +355,22 @@ export abstract class Item
       await Topic.assertOf(this.workspaceId, edit.topicOverride);
     }
     return this.storeOverlay(Overlay.patch(edit, caller.settings));
+  }
+
+  /**
+   * Custom attribute values on any item the caller sees (editors), each checked against the
+   * workspace's definitions (AttributeValues: 400 for an unknown key or a value that does not
+   * fit); null clears one. Never written to a provider. The item as now stored.
+   */
+  async setAttributes(
+    caller: Caller,
+    values: Readonly<Record<string, unknown>>,
+    now: Date = new Date(),
+  ): Promise<Item> {
+    this.assertIn(caller);
+    (await ItemPolicy.for(caller)).assertCanOverride(caller, this.facts);
+    const checked = AttributeValues.checked(values, AttributeDefinitions.of(caller.settings));
+    return this.storeOverlay({ attrs: checked.toStored(), editedAt: now });
   }
 
   /** Stores an overlay patch; the item as now stored (404 when it is gone). */

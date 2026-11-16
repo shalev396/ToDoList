@@ -3,10 +3,17 @@ import assert from 'node:assert/strict';
 
 import { hasStatus } from '../../testing/workspaceFixtures.js';
 import { BUILTIN_IMPORTANCE, type AttributeDef } from '../../types/attributes.js';
+import { AttributeValues } from '../item/AttributeValues.js';
 import { AttributeDefinition } from './AttributeDefinition.js';
 import { AttributeDefinitions } from './AttributeDefinitions.js';
 import { TopicRules } from './TopicRules.js';
 import { WorkspaceSettings } from './WorkspaceSettings.js';
+
+/** What the overlay stores of these values, checked against `defs` (AttributeValues). */
+const prepare = (
+  defs: AttributeDefinitions,
+  values: Record<string, unknown>,
+): Record<string, unknown> => AttributeValues.checked(values, defs).toStored();
 
 const def = (type: AttributeDef['type'], extra: Partial<AttributeDef> = {}): AttributeDef => ({
   key: 'field',
@@ -101,8 +108,8 @@ describe('AttributeDefinition: patches and unknown types', () => {
     assert.equal(unknown.check(null), null);
     const defs = AttributeDefinitions.of({ attributes: [unknown.toJSON()] });
     assert.equal(defs.toJSON().length, 2);
-    assert.deepEqual(defs.prepare({ importance: 2 }), { importance: 2 });
-    assert.throws(() => defs.prepare({ field: 'x' }), hasStatus(400));
+    assert.deepEqual(prepare(defs, { importance: 2 }), { importance: 2 });
+    assert.throws(() => prepare(defs, { field: 'x' }), hasStatus(400));
   });
 });
 
@@ -121,14 +128,14 @@ describe('AttributeDefinitions', () => {
     ]);
   });
 
-  it('prepares values: unknown keys and misfits are 400, dates are stored at noon', () => {
+  it('values are checked against them (AttributeValues): unknown keys and misfits are 400, dates are stored at noon', () => {
     const defs = AttributeDefinitions.of({ attributes: [def('date', { key: 'due' })] });
-    const prepared = defs.prepare({ importance: 4, due: '2026-12-01' });
+    const prepared = prepare(defs, { importance: 4, due: '2026-12-01' });
     assert.equal(prepared['importance'], 4);
     assert.ok(prepared['due'] instanceof Date);
-    assert.deepEqual(defs.prepare({ due: null }), { due: null });
-    assert.throws(() => defs.prepare({ nope: 1 }), hasStatus(400));
-    assert.throws(() => defs.prepare({ importance: 9 }), hasStatus(400));
+    assert.deepEqual(prepare(defs, { due: null }), { due: null });
+    assert.throws(() => prepare(defs, { nope: 1 }), hasStatus(400));
+    assert.throws(() => prepare(defs, { importance: 9 }), hasStatus(400));
   });
 
   it('finds a definition by key', () => {

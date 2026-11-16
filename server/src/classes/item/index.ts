@@ -25,6 +25,7 @@ export {
 } from './ItemEdit.js';
 export { ItemEditing, type EditingIntegration } from './ItemEditing.js';
 export { Overlay, type OverlayEdit } from './Overlay.js';
+export { AttributeValues } from './AttributeValues.js';
 export {
   OVERRIDABLE_FIELDS,
   Overrides,

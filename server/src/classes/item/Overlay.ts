@@ -6,13 +6,15 @@
  * flow sets.
  *
  * `patch()` turns an overlay edit into what is stored: the planned date parsed (PlannedAt), the
- * attribute values checked against the workspace's definitions, `editedAt` stamped. Pure.
+ * attribute values checked against the workspace's definitions (AttributeValues), `editedAt`
+ * stamped. Pure.
  */
 import type { ItemOverlay, ItemOverlayPatch } from '../../models/definitions/Item.js';
 import type { WorkspaceSettings } from '../../models/definitions/Workspace.js';
 import type { ItemOverlayView, UpdateOverlayRequestBody } from '../../types/items.js';
 import { redactString } from '../../services/secretPatterns.js';
 import { AttributeDefinitions } from '../workspace/AttributeDefinitions.js';
+import { AttributeValues } from './AttributeValues.js';
 import { Overrides } from './Overrides.js';
 import { PlannedAt } from './PlannedAt.js';
 
@@ -20,17 +22,6 @@ import { PlannedAt } from './PlannedAt.js';
 export type OverlayEdit = {
   [K in keyof UpdateOverlayRequestBody]?: UpdateOverlayRequestBody[K] | undefined;
 };
-
-/** Attribute values as the API shows them: dates as ISO strings, text redacted. */
-function attrValues(raw: Readonly<Record<string, unknown>>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (value === null || value === undefined) continue;
-    if (value instanceof Date) out[key] = value.toISOString();
-    else out[key] = typeof value === 'string' ? redactString(value) : value;
-  }
-  return out;
-}
 
 export class Overlay {
   readonly #overlay: Readonly<ItemOverlay>;
@@ -70,13 +61,23 @@ export class Overlay {
           }),
       ...(edit.attrs === undefined
         ? {}
-        : { attrs: AttributeDefinitions.of(settings).prepare(edit.attrs) }),
+        : {
+            attrs: AttributeValues.checked(
+              edit.attrs,
+              AttributeDefinitions.of(settings),
+            ).toStored(),
+          }),
       editedAt: now,
     };
   }
 
   get overrides(): Overrides {
     return this.#overrides;
+  }
+
+  /** Its custom attribute values. */
+  get attributes(): AttributeValues {
+    return AttributeValues.of(this.#overlay.attrs);
   }
 
   get pinned(): boolean | null {
@@ -115,7 +116,7 @@ export class Overlay {
       calendarSync: overlay.calendarSync,
       plannedAt: overlay.plannedAt,
       editedAt: overlay.editedAt,
-      attrs: attrValues(overlay.attrs),
+      attrs: this.attributes.toView(),
       overrides: this.#overrides.toView(),
     };
   }

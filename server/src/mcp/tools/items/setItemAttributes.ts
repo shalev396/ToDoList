@@ -26,9 +26,7 @@ export const setItemAttributes = defineTool({
   minRole: 'editor',
   async handler(ctx, input) {
     const caller = itemCaller(ctx);
-    const item = await (
-      await Item.find(caller, input.id)
-    ).setOverlay(caller, { attrs: input.attrs });
+    const item = await (await Item.find(caller, input.id)).setAttributes(caller, input.attrs);
     const view = await (await itemReads(ctx)).detail(item);
     return { output: { item: toItemDetailView(view) }, target: { type: 'item', id: view.id } };
   },
