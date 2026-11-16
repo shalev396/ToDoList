@@ -21,7 +21,7 @@ Object.assign(process.env, {
 const switches = await import('./testSwitches.js');
 const { setTokenVerifierForTests } = await import('../utils/cognitoUtil.js');
 const { setObjectStoreForTests } = await import('../utils/s3Util.js');
-const { setMailSenderForTests } = await import('../utils/sesUtil.js');
+const { setMailerForTests } = await import('../utils/sesUtil.js');
 const { setKeyProviderForTests } = await import('../services/crypto/keyProviders.js');
 const { setAppSecretsForTests, resetAppSecretsForTests } =
   await import('../services/appSecrets.js');
@@ -51,8 +51,8 @@ const SEAMS: Record<string, () => void> = {
   setObjectStoreForTests: () => {
     setObjectStoreForTests(null);
   },
-  setMailSenderForTests: () => {
-    setMailSenderForTests(() => Promise.resolve());
+  setMailerForTests: () => {
+    setMailerForTests({ send: () => Promise.resolve() });
   },
   setKeyProviderForTests: () => {
     setKeyProviderForTests(null);

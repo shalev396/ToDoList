@@ -18,6 +18,7 @@ import { setLoopbackAllowedForTests, setRateLimitsOffForTests } from '../config/
 import type { SyncJob } from '../services/syncJobs.js';
 import type { SendEmailParams } from '../utils/sesUtil.js';
 import { MemoryObjectStore } from './memoryObjectStore.js';
+import { RecordingMailer } from './recordingMailer.js';
 import { verifyTestToken } from './testAuth.js';
 import { testKeyProvider } from './testKeyProvider.js';
 
@@ -72,12 +73,9 @@ export async function installTestSeams(): Promise<TestSeams> {
   const { setObjectStoreForTests } = await import('../utils/s3Util.js');
   setObjectStoreForTests(objects);
 
-  const mail: SendEmailParams[] = [];
-  const { setMailSenderForTests } = await import('../utils/sesUtil.js');
-  setMailSenderForTests((params) => {
-    mail.push(params);
-    return Promise.resolve();
-  });
+  const mailer = new RecordingMailer();
+  const { setMailerForTests } = await import('../utils/sesUtil.js');
+  setMailerForTests(mailer);
 
   const { setJobRunnerForTests } = await import('../services/syncJobs.js');
   setJobRunnerForTests(runJobInProcess);
@@ -85,5 +83,5 @@ export async function installTestSeams(): Promise<TestSeams> {
   const { setAppSecretsForTests } = await import('../services/appSecrets.js');
   setAppSecretsForTests({});
 
-  return { mail, objects };
+  return { mail: mailer.sent, objects };
 }
