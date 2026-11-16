@@ -252,9 +252,15 @@ def test_messy_titles_never_overflow_a_phone(page: Page, base_url: str, api_base
     open_as(page, base_url, user, "/en/dashboard")
     expect(_block(page, LIST)).to_be_visible(timeout=NORMAL_TIMEOUT)
     expect(page.locator('article[aria-busy="true"]')).to_have_count(0, timeout=NORMAL_TIMEOUT)
-    expect(_block(page, LIST).get_by_text(re.compile("^שלום עולם")).first).to_be_visible(
-        timeout=NORMAL_TIMEOUT
-    )
+    # The list shows its first 7 rows and the rest sit behind "Show all" (a dialog), so where the
+    # messy row is depends on what the other tests left open. Look where it is, not where it was.
+    show_all = _block(page, LIST).get_by_role("button", name=re.compile("^Show all"))
+    rows = _block(page, LIST)
+    if show_all.count():
+        show_all.click()
+        rows = page.get_by_role("dialog", name="All items in My list")
+        expect(rows).to_be_visible(timeout=NORMAL_TIMEOUT)
+    expect(rows.get_by_text(re.compile("^שלום עולם")).first).to_be_visible(timeout=NORMAL_TIMEOUT)
     scroll_width = page.evaluate("() => document.documentElement.scrollWidth")
     assert scroll_width <= PHONE["width"], f"the page scrolls sideways ({scroll_width}px)"
     # The table scrolls inside its block, not the page.
