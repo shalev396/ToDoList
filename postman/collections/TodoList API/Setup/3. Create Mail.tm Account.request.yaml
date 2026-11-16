@@ -16,6 +16,14 @@ auth:
 scripts:
   - type: beforeRequest
     code: |-
+      // mail.tm rate-limit guard (same in every mail.tm request; see postman/README.md)
+      {
+          const mtLast = parseInt(pm.collectionVariables.get('mailtmLastCallAt') || '0', 10) || 0;
+          const mtWait = Math.min(1500, 1500 - (Date.now() - mtLast));
+          const mtStart = Date.now();
+          while (Date.now() - mtStart < mtWait) { /* block */ }
+          pm.collectionVariables.set('mailtmLastCallAt', String(Date.now()));
+      }
       const random1 = Math.random().toString(36).substring(2, 8);
       const random2 = Math.random().toString(36).substring(2, 6);
       const domain = pm.collectionVariables.get('mailTmDomain');
@@ -44,6 +52,29 @@ scripts:
     language: text/javascript
   - type: afterResponse
     code: |-
+      // mail.tm rate-limit guard (same in every mail.tm request; see postman/README.md)
+      {
+          const mtKey = 'mailtm429:' + pm.info.requestName;
+          const mtCount = parseInt(pm.collectionVariables.get(mtKey) || '0', 10) || 0;
+          let mtRetrying = false;
+          if (pm.response.code === 429 && mtCount < 5) {
+              const mtRetryAfter = String(pm.response.headers.get('Retry-After') || '').trim();
+              const mtWaitSec = /^\d+$/.test(mtRetryAfter) && parseInt(mtRetryAfter, 10) <= 60 ? parseInt(mtRetryAfter, 10) : [2, 4, 8, 16, 30][mtCount];
+              console.log('mail.tm 429 on "' + pm.info.requestName + '", retry ' + (mtCount + 1) + '/5 after ' + mtWaitSec + 's');
+              const mtStart = Date.now();
+              while (Date.now() - mtStart < mtWaitSec * 1000) { /* block */ }
+              pm.collectionVariables.set(mtKey, String(mtCount + 1));
+              if (typeof pm.execution !== 'undefined' && pm.execution.setNextRequest) {
+                  pm.execution.setNextRequest(pm.info.requestName);
+                  mtRetrying = true;
+              } else if (typeof postman !== 'undefined' && postman.setNextRequest) {
+                  postman.setNextRequest(pm.info.requestName);
+                  mtRetrying = true;
+              }
+          }
+          if (!mtRetrying) pm.collectionVariables.unset(mtKey);
+          pm.collectionVariables.set('mailtmRetrying', mtRetrying ? '1' : '0');
+      }
       if (pm.response.code !== 429 || pm.collectionVariables.get('mailtmRetrying') !== '1') {
           if (pm.response.code !== 201) {
               console.log('Mail.tm Error Response:', pm.response.text());
