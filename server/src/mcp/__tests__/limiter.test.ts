@@ -1,12 +1,12 @@
 /**
  * Rate limits (MCP.md §3): over the per-agent cap the answer is a JSON-RPC error (429), counted
  * once per request per presented key across /api/mcp and /api/mcp/readonly, before the key is
- * looked up, without touching other keys; failed
- * authentications are limited per address (an IPv6 address by its /56), and only failed ones are
- * counted, after the key is looked up: a key that authenticates never spends the budget and is
- * never held off by it, even from an address over it (hosted assistants share addresses). The
- * router runs at /api/mcp and /spare/api/mcp with tiny caps (each its own budgets), and at
- * /default/api/mcp with the real ones.
+ * looked up, without touching other keys; failed authentications are limited per address (an IPv6
+ * address by its /56), and only failed lookups of a well-formed key are counted: a key that
+ * authenticates never spends the budget and is never held off by it, even from an address over it
+ * (hosted assistants share addresses), and a request with no well-formed key gets the 401
+ * challenge without spending it. The router runs at /api/mcp and /spare/api/mcp with tiny caps
+ * (each its own budgets), and at /default/api/mcp with the real ones.
  */
 import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
@@ -83,6 +83,17 @@ async function key(): Promise<TestKey> {
 function post(path: string, raw: string): ReturnType<McpHarness['post']> {
   return h.post(path, INITIALIZE, { ...MCP_HEADERS, authorization: `Bearer ${raw}` });
 }
+
+/** A POST with this Authorization header, or none. */
+function postWith(path: string, authorization?: string): ReturnType<McpHarness['post']> {
+  return h.post(
+    path,
+    INITIALIZE,
+    authorization === undefined ? MCP_HEADERS : { ...MCP_HEADERS, authorization },
+  );
+}
+
+const CHALLENGE = /^Bearer realm="todolist-mcp", resource_metadata="[^"]+", scope="[^"]+"/;
 
 describe('the per-agent limit', () => {
   it('answers past the cap with a JSON-RPC error and a 429, counting each request once', async () => {
@@ -171,6 +182,27 @@ describe('the failed-authentication limit', () => {
     }
   });
 
+  it('without a well-formed key: the 401 challenge, no lookup and no spend', async () => {
+    const { AgentKey } = await import('../../classes/AgentKey.js');
+    const spends = mock.method(limiter.AuthFailureLimit.prototype, 'spend');
+    const lookups = mock.method(AgentKey, 'authenticate');
+    try {
+      for (const authorization of [undefined, 'Bearer nope', 'Basic test', 'elk_x']) {
+        for (let i = 0; i <= AUTH_FAILURE_CAP; i += 1) {
+          const response = await postWith('/spare/api/mcp/readonly', authorization);
+          assert.equal(response.status, 401, String(authorization));
+          assert.match(response.headers.get('www-authenticate') ?? '', CHALLENGE);
+          assert.equal(response.headers.get('ratelimit-limit'), null, 'no limiter counted it');
+        }
+      }
+      assert.equal(spends.mock.callCount(), 0);
+      assert.equal(lookups.mock.callCount(), 0);
+    } finally {
+      spends.mock.restore();
+      lookups.mock.restore();
+    }
+  });
+
   it('over the budget: a failed key gets 429, a valid key from the same address still gets in', async () => {
     for (let i = 0; i < AUTH_FAILURE_CAP; i += 1) {
       assert.equal((await post('/api/mcp', newRawKey())).status, 401);
@@ -178,6 +210,14 @@ describe('the failed-authentication limit', () => {
     const limited = await post('/api/mcp', newRawKey());
     assert.equal(limited.status, 429);
     assert.notEqual(limited.headers.get('retry-after'), null);
+    // Still the challenge, so a client whose token expired can refresh or sign in after waiting.
+    assert.match(limited.headers.get('www-authenticate') ?? '', CHALLENGE);
+    assert.match(limited.headers.get('www-authenticate') ?? '', /error="invalid_token"/);
+    // No well-formed key: the plain 401 challenge, never the 429.
+    const anonymous = await postWith('/api/mcp');
+    assert.equal(anonymous.status, 401);
+    assert.match(anonymous.headers.get('www-authenticate') ?? '', CHALLENGE);
+    assert.equal((await postWith('/api/mcp', 'Bearer not-a-key')).status, 401);
     assert.equal(
       (JSON.parse(limited.text) as { error: { message: string } }).error.message,
       'Too many failed authentications from this address. Try again later.',

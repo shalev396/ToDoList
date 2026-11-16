@@ -8,10 +8,12 @@
  *   its budget is refused without a database lookup. A request with no well-formed credential
  *   is not counted here: mcpAuth refuses it without a lookup.
  * - AuthFailureLimit: failed authentications per client address. mcpAuth spends it only when a
- *   key fails, after the lookup, so it counts nothing else and never holds off a key that
- *   authenticates: hosted assistants share egress addresses, and an expired grant counts as a
- *   failure, so a busy shared address must not lock out every member's valid key. Over the budget,
- *   a failed key gets 429 instead of 401; that keeps key guessing from turning into a query flood.
+ *   well-formed key was looked up and failed (an expired or revoked grant counts too), so it never
+ *   holds off a key that authenticates (hosted assistants share egress addresses). Over the
+ *   budget, a failed key gets 429 instead of 401, still with the `WWW-Authenticate` challenge, so
+ *   a client stuck on a bad key backs off (Retry-After) and can still start sign-in. It neither
+ *   saves the lookup nor refuses a right guess: guessing is bounded by the 256-bit keys and API
+ *   Gateway's MCP route throttle.
  *
  * Counters are in memory, per Lambda instance, like the other limiters (middlewares/rateLimit.ts),
  * and always on (only a test, config/testSwitches.ts, or the local server's `--no-rate-limits`,
@@ -82,7 +84,8 @@ export function agentLimiter(limit: Limit = AGENT_LIMIT): RateLimitRequestHandle
 export interface AuthFailureBudget {
   /**
    * Counts one failed authentication: true within the budget, false when it answered 429 itself.
-   * mcpAuth calls it only after a key failed, so a key that authenticates never spends it.
+   * mcpAuth calls it only after a well-formed key was looked up and failed, so a key that
+   * authenticates never spends it, and neither does a request with no well-formed key.
    */
   spend(req: Request, res: Response): Promise<boolean>;
 }

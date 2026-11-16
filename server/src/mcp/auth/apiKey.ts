@@ -48,22 +48,28 @@ export function authenticateAgentKey(
 const SUGGESTED_SCOPE = 'read items:write builder:write';
 
 /**
- * The one 401 every failed check gets. `resource` is the endpoint's (mcpResource): the challenge
- * points an OAuth client to that resource's metadata (RFC 9728), so it can sign in.
+ * The `WWW-Authenticate` challenge for this endpoint (`resource`, from mcpResource): it points an
+ * OAuth client to that resource's metadata (RFC 9728), so it can sign in. `presented` (credentials
+ * were sent) adds `error="invalid_token"`.
  */
+function challengeFor(presented: boolean, resource: string): string {
+  const metadata = `${mcpIssuer()}/resource-metadata${resource === mcpResource(true) ? '/readonly' : ''}`;
+  return (
+    `Bearer realm="${REALM}", resource_metadata="${metadata}", scope="${SUGGESTED_SCOPE}"` +
+    (presented ? ', error="invalid_token"' : '')
+  );
+}
+
+/** The one 401 every failed check gets, with the challenge. */
 export function sendUnauthorized(
   res: Response,
   presented: boolean,
   body: unknown,
   resource: string,
 ): void {
-  const metadata = `${mcpIssuer()}/resource-metadata${resource === mcpResource(true) ? '/readonly' : ''}`;
-  const challenge =
-    `Bearer realm="${REALM}", resource_metadata="${metadata}", scope="${SUGGESTED_SCOPE}"` +
-    (presented ? ', error="invalid_token"' : '');
   res
     .status(401)
-    .set('WWW-Authenticate', challenge)
+    .set('WWW-Authenticate', challengeFor(presented, resource))
     .json(
       jsonRpcError(
         requestIdOf(body),
@@ -75,9 +81,11 @@ export function sendUnauthorized(
 
 /**
  * Express middleware: authenticates the agent key or grant token for this endpoint (`resourceOf`),
- * or answers 401. `failures` (the per-address failed-authentication budget) is spent only after
- * the key is looked up and fails, so it counts failures alone and never stands in the way of a key
- * that authenticates, whatever its address's count; over its budget, it answers 429 itself.
+ * or answers 401. Without a well-formed key nothing is looked up and nothing is spent: the 401
+ * challenge is how a client finds sign-in. `failures` (the per-address failed-authentication
+ * budget) is spent only after a well-formed key is looked up and fails, so it never stands in the
+ * way of a key that authenticates, whatever its address's count; over its budget it answers 429
+ * itself, still with the challenge, so a client can refresh or sign in once it has waited.
  */
 export function createMcpAuth(
   failures: AuthFailureBudget,
@@ -86,16 +94,20 @@ export function createMcpAuth(
   return async (req, res, next): Promise<void> => {
     const { presented, key } = bearerKey(req.headers.authorization);
     const resource = resourceOf(req);
-    const agent =
-      key === null ? null : await authenticateAgentKey(key, new Date(), Actor.originOf(req));
+    if (key === null) {
+      sendUnauthorized(res, presented, req.body, resource);
+      return;
+    }
+    const agent = await authenticateAgentKey(key, new Date(), Actor.originOf(req));
     // A sign-in grant is for one endpoint (its token audience); a key (resource null) is for both.
     if (agent !== null && (agent.resource === null || agent.resource === resource)) {
       setRequestAgent(res, agent);
       next();
       return;
     }
+    res.set('WWW-Authenticate', challengeFor(true, resource));
     if (await failures.spend(req, res)) {
-      sendUnauthorized(res, presented, req.body, resource);
+      sendUnauthorized(res, true, req.body, resource);
     }
   };
 }

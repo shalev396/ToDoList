@@ -11,10 +11,10 @@
  *     `sessionIdGenerator: undefined` and JSON responses.
  *
  * The chain, per request: agentLimiter (per presented key, before any lookup) → mcpAuth (key →
- * principal; only a failed key counts against its address's failed-authentication limit, and a
- * valid key is never held off by it) → request checks → scope guard (refused calls are audited) →
- * MCP (only the tools the principal may call; per call: confirm → handler → secret guard → audit)
- * → the secret guard again, over the whole JSON-RPC response.
+ * principal; only a well-formed key that fails counts against its address's failed-authentication
+ * limit, and a valid key is never held off by it) → request checks → scope guard (refused calls
+ * are audited) → MCP (only the tools the principal may call; per call: confirm → handler → secret
+ * guard → audit) → the secret guard again, over the whole JSON-RPC response.
  */
 import {
   Router,
