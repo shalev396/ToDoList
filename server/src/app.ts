@@ -3,8 +3,9 @@ import {
   responseFormatter,
   errorHandler,
   notFound,
-  expressAuth,
+  verifyCognitoToken,
   privateLimiter,
+  loadCognitoUser,
   requestMemo,
 } from './middlewares/index.js';
 import { publicRouter, privateRouter } from './routes/index.js';
@@ -34,7 +35,8 @@ const parseBody: RequestHandler[] = [
  * local dev server (local.ts), which runs it against a deployed stage.
  *
  * - /api/public  → no auth (Cognito sign-up/login flows; rate-limited in routes/public/index.ts)
- * - /api/private → JWT verified in-app by expressAuth (API Gateway also runs a JWT authorizer)
+ * - /api/private → JWT verified in-app (middlewares/expressAuth.ts; API Gateway also runs a JWT
+ *   authorizer), then rate-limited per user, then the user is loaded
  *
  * Stage maintenance (schema sync, test reset) is not HTTP: it runs as a direct Lambda invoke, see
  * lambda.ts.
@@ -56,7 +58,15 @@ export function createApp(): Express {
   app.use(responseFormatter);
 
   app.use('/api/public', ...parseBody, publicRouter);
-  app.use('/api/private', privateLimiter, expressAuth, ...parseBody, privateRouter);
+  // Verified token → the per-user limit → the user's row: an over-budget user costs no DB read.
+  app.use(
+    '/api/private',
+    verifyCognitoToken,
+    privateLimiter,
+    loadCognitoUser,
+    ...parseBody,
+    privateRouter,
+  );
   // MCP sign-in: public OAuth endpoints and discovery. Before /api/mcp, which would swallow them.
   app.use('/.well-known', ...parseBody, wellKnownRouter);
   app.use('/api/mcp/oauth', ...parseBody, mcpOAuthRouter);
