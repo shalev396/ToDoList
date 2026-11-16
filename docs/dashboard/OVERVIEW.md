@@ -28,7 +28,7 @@ flowchart LR
     CF["CloudFront /api/*"] --> APIGW["API Gateway HTTP API"]
     APIGW --> API["ApiFn — Express 5 on Lambda<br/>/api/private/* (Cognito JWT)<br/>/api/mcp (agent keys)"]
     API --> LB["Logic Bridge<br/>server/src/builder/<br/>schema · compile · ops · lint"]
-    API --> VAULT["CredentialVault<br/>decryptForSync"]
+    API --> VAULT["Credential<br/>(Integration session)"]
     API -->|"async self-invoke (sync-run, gcal-run)"| W["Sync job in the same function<br/>(read-only provider clients)"]
     W --> VAULT
     API --> SES["SES (invite emails)"]
@@ -80,14 +80,14 @@ sequenceDiagram
   participant U as UI or MCP (POST /sync)
   participant A as ApiFn
   participant J as The same function (async invoke)
-  participant V as CredentialVault (KMS)
+  participant V as Credential (KMS)
   participant P as Provider API (Jira/ClickUp/Linear/Moodle)
   participant M as MongoDB
   U->>A: Sync now {integrationId}
   A->>M: create a queued SyncRun
   A-->>U: 202 {runId}
   A->>J: invoke itself, InvocationType Event {action: sync-run, integrationId, runId} (no secrets)
-  J->>V: decryptForSync(integrationId)
+  J->>V: open the credential (read session)
   V-->>J: plaintext in memory for this call only
   J->>P: GET (incremental: SyncStates cursor)
   P-->>J: changed records
@@ -115,7 +115,7 @@ sequenceDiagram
   B->>M: items + CalendarLinks
   A-->>U: preview: N create · N update · N delete
   U->>A: confirm {dryRun: false}
-  A->>A: decryptForSync(gcal integration) → OAuth refresh token (memory only)
+  A->>A: open the gcal integration's credential (write session) → OAuth refresh token (memory only)
   A->>G: create / update / delete events (deterministic ids)
   G-->>A: eventId, etag per op
   A->>M: CalendarLinks, SyncRuns counts, AuditLogs gcal.write

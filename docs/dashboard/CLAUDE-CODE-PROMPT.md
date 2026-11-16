@@ -78,7 +78,7 @@ server/src/
                                      AgentKey CalendarLink ReplayNonce
   routes/private/                    workspaces items dashboards views query integrations sync agentKeys
   builder/                           schema catalog compile ops templates lint (Logic Bridge)
-  services/crypto/credentialVault.ts decryptForSync only
+  classes/integration/Credential.ts  the only encrypt and decrypt path
   services/logger.ts                 redacting logger
   services/areaRules.ts
   sync/                              dispatcher worker (runs one job) http providers/{gcal,jira,clickup,linear,moodle,github}
@@ -124,7 +124,7 @@ server/infra/lib/constructs/         kms.ts (and the single function)
 - **Tokens encrypted at rest** (KMS envelope + AES-256-GCM, AAD-bound) in `Credentials` only.
 - **Tokens never returned** to the user, UI, logs, errors, exports or agents **in any form** — no masked hint, no last-4, no prefix. Integration status = `{id, provider, accountLabel, status: connected|expired|error, expiresAt, lastSyncAt}`.
 - Secret inputs are write-only (`PUT …/integrations/:iid/credential` → `204`), never stored in Redux/React Query/localStorage/URL.
-- Only `CredentialVault.decryptForSync` decrypts; a test fails if anything else (including `server/src/mcp/**`) imports the vault.
+- Only the `Credential` class decrypts, through an `Integration`'s sessions; a test fails if anything else (including `server/src/mcp/**`) imports it.
 - Redacting logger, response scrubber for token patterns (`pk_`, `lin_api_`, `ATATT`, `xox`, `ghp_`, `github_pat_`, `elk_`, JWTs), sanitized provider errors.
 - Agent keys (`elk_…`) are shown once and stored only as SHA-256 hashes (`AgentKeys`).
 - **One-way mirror** into the app; the **only** exception is the audit-logged two-way sync with Google Calendar through OAuth.
