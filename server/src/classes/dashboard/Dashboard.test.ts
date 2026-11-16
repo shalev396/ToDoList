@@ -463,7 +463,7 @@ describe('Dashboard#blocks and Dashboard#pageBlock', () => {
     const { id } = await pageWithDraftBlocks(t);
     const dashboard = await Dashboard.load(t.editor, id);
     const stored = (await dashboard.view(t.editor)).blocks;
-    const blocks = dashboard.blocks();
+    const blocks = dashboard.blocks(t.editor);
     assert.deepEqual(
       blocks.map((block) => [block.constructor.name, block.type]),
       stored.map((block) => [
@@ -476,7 +476,44 @@ describe('Dashboard#blocks and Dashboard#pageBlock', () => {
       stored,
     );
     assert.ok(Object.isFrozen(blocks) && blocks.every((block) => Object.isFrozen(block)));
-    assert.equal(dashboard.blocks(), blocks, 'made once');
+    assert.equal(dashboard.blocks(t.editor), blocks, 'made once');
+    assert.equal(dashboard.blocks(t.owner), blocks, 'the owner reads the draft too');
+    assert.deepEqual(
+      dashboard.blocks(t.viewer),
+      [],
+      'a viewer reads the published copy (no blocks)',
+    );
+  });
+
+  it('blocks(caller): a viewer gets the published blocks only, an editor or owner the draft', async () => {
+    const { Dashboard } = classes;
+    const t = await team('dash-blocks-caller');
+    const { id } = await pageWithDraftBlocks(t);
+    const loaded = async (caller: Caller): Promise<DashboardModule.Dashboard> =>
+      Dashboard.load(caller, id);
+    const draft = await (await loaded(t.editor)).view(t.editor);
+    const types = (blocks: readonly { type: string }[]): string[] => blocks.map((b) => b.type);
+    await (
+      await Dashboard.load(t.owner, id, Dashboard.Operation.publish)
+    ).publish(t.owner, { expectedVersion: draft.version });
+    // Edit the draft after publishing: the viewer must not see it.
+    const dashboard = await Dashboard.load(t.editor, id, Dashboard.Operation.edit);
+    await dashboard.applyOps(t.editor, {
+      expectedVersion: draft.version,
+      ops: [{ op: 'add_block', block: { type: 'note', title: 'Unpublished' } }],
+    });
+    const published = types((await loaded(t.viewer)).blocks(t.viewer));
+    assert.deepEqual(published, types(draft.blocks));
+    const latest = await loaded(t.editor);
+    assert.equal(latest.blocks(t.editor).length, draft.blocks.length + 1);
+    assert.equal(latest.blocks(t.owner).length, draft.blocks.length + 1);
+    assert.equal((await loaded(t.viewer)).blocks(t.viewer).length, draft.blocks.length);
+    // A viewer has no copy to see before the first publish.
+    const unpublished = await Dashboard.create(t.editor, { title: 'Draft only', language: 'en' });
+    await assert.rejects(
+      Dashboard.load(t.viewer, unpublished.id).then((page) => page.blocks(t.viewer)),
+      hasStatus(404),
+    );
   });
 
   it('pageBlock: editors read the draft, viewers the published copy; 404 for what they don’t see', async () => {

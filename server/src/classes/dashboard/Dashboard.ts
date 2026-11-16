@@ -25,7 +25,7 @@
  *   every block of every dashboard (removeConnectorEverywhere).
  * - The blocks are stored as plain JSON, and checked and linted in one place, DocCheck, which
  *   asks each block's own class (Block.from: one class per block type, classes/dashboard/blocks/).
- *   A dashboard hands its draft's blocks out as those classes (blocks()), and one block as a
+ *   A dashboard hands the caller's copy of its blocks out as those classes (blocks(caller)), and one block as a
  *   caller sees it for running its query (pageBlock).
  *
  * Errors: AppError (403, 404, 409), ConflictError (409 + currentVersion), OpValidationError (400
@@ -239,8 +239,9 @@ export class Dashboard
 
   readonly #history: History<DashboardDraft>;
   readonly #layout: Layout;
-  /** The draft's blocks as their classes, made on first use (blocks()). */
-  #blocks: readonly Block[] | null = null;
+  /** The draft's and the published copy's blocks as their classes, made on first use (blocks()). */
+  #draftBlocks: readonly Block[] | null = null;
+  #publishedBlocks: readonly Block[] | null = null;
 
   private constructor(data: DashboardData) {
     super(data);
@@ -285,14 +286,24 @@ export class Dashboard
   }
 
   /**
-   * The draft's blocks, each as its type's class (Block.from: an immutable value over its JSON),
-   * in block order: the plan's composition, a dashboard holds its Block[]. Storage stays JSON (the
-   * views and every write hand the JSON on). Made from the draft as parsed: a stored dashboard
-   * always passed validation when written (DocCheck, which checks each block through its class).
+   * The blocks the caller sees, each as its type's class (Block.from: an immutable value over its
+   * JSON), in block order: the plan's composition, a dashboard holds its Block[]. The same copy
+   * as view() and pageBlock: editors and owners get the draft (parsed, as a stored dashboard always
+   * passed validation when written), viewers the published copy as stored. 404 when a viewer has
+   * no copy to see (before the first publish). Made once per copy: the entity is immutable.
    */
-  blocks(): readonly Block[] {
-    this.#blocks ??= Object.freeze(this.#draft().blocks.map((json) => Block.from(json)));
-    return this.#blocks;
+  blocks(caller: Caller): readonly Block[] {
+    this.#allow(caller, Dashboard.Operation.read);
+    if (isEditor(caller)) {
+      this.#draftBlocks ??= Object.freeze(this.#draft().blocks.map((json) => Block.from(json)));
+      return this.#draftBlocks;
+    }
+    const published = this.data.published;
+    if (published === null) throw notFound();
+    this.#publishedBlocks ??= Object.freeze(
+      published.blocks.map((json) => Block.from(json as BlockJson)),
+    );
+    return this.#publishedBlocks;
   }
 
   /** The draft's page views (after the Summary), as stored. */
