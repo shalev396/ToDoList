@@ -34,6 +34,22 @@ describe('toSegments', () => {
     assert.equal(segmentsTotal(segments), 6);
   });
 
+  it('keeps the real key next to the label (number, boolean, null)', () => {
+    const segments = toSegments([
+      { key: { priority: 2 }, value: 3 },
+      { key: { allDay: true }, value: 2 },
+      { key: { dueAt: null }, value: 1 },
+    ]);
+    assert.deepEqual(
+      segments.map((segment): unknown[] => [segment.key, segment.raw]),
+      [
+        ['2', 2],
+        ['true', true],
+        ['', null],
+      ],
+    );
+  });
+
   it('is empty without groups', () => {
     assert.deepEqual(toSegments([]), []);
     assert.equal(segmentsTotal([]), 0);

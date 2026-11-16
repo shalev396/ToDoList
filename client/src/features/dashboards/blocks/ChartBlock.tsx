@@ -151,8 +151,8 @@ export default function ChartBlock({ dashboard, block }: BlockComponentProps) {
         setVar(emitName, segment.key);
       }
     }
-    if (!active && segment.key !== '' && block.query !== undefined) {
-      setDrill({ field: segment.field, key: segment.key, name });
+    if (!active && segment.key !== '' && segment.raw !== null && block.query !== undefined) {
+      setDrill({ field: segment.field, key: segment.key, value: segment.raw, name });
     }
   };
 

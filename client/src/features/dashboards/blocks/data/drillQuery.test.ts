@@ -35,5 +35,27 @@ describe('drillQuery', () => {
       combinator: 'and',
       rules: [{ field: 'status', operator: '=', value: 'done' }],
     });
+    assert.deepEqual(query.sort, [{ field: 'dueAt', dir: 'asc' }]);
+  });
+
+  it('carries a number as a number (priority)', () => {
+    const query = drillQuery({ source: 'items', groupBy: ['priority'] }, 'priority', 2);
+    assert.deepEqual(query.where, {
+      combinator: 'and',
+      rules: [{ field: 'priority', operator: '=', value: 2 }],
+    });
+  });
+
+  it('carries a boolean as a boolean (allDay)', () => {
+    const query = drillQuery({ source: 'items', groupBy: ['allDay'] }, 'allDay', false);
+    assert.deepEqual(query.where, {
+      combinator: 'and',
+      rules: [{ field: 'allDay', operator: '=', value: false }],
+    });
+  });
+
+  it('does not sort containers by dueAt, which they do not have', () => {
+    const query = drillQuery({ source: 'containers', groupBy: ['type'] }, 'type', 'project');
+    assert.deepEqual(query.sort, [{ field: 'name', dir: 'asc' }]);
   });
 });

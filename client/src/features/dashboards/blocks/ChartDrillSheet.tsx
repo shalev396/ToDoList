@@ -19,6 +19,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 export interface DrillTarget {
   field: string;
   key: string;
+  /** The group's real value (not its label), for the drill rule. */
+  value: string | number | boolean;
   name: string;
 }
 
@@ -66,7 +68,7 @@ export function ChartDrillSheet({
       const response = await runQuery(
         workspaceId,
         {
-          draft: drillQuery(query, target.field, target.key),
+          draft: drillQuery(query, target.field, target.value),
           blockType: 'chart',
           vars: selected,
           preview: true,

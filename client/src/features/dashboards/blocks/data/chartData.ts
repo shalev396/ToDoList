@@ -6,6 +6,8 @@ export interface Segment {
   field: string;
   /** The group's key value, as text (a provider, a status, an area ...). */
   key: string;
+  /** The group's key as the server returned it (a number, a boolean ...), for a drill rule. */
+  raw: string | number | boolean | null;
   value: number;
   /** Set when the group is a source, for its colour. */
   provider: Provider | undefined;
@@ -48,7 +50,10 @@ export function toSegments(groups: readonly GroupLike[]): Segment[] {
         : typeof raw === 'number' || typeof raw === 'boolean'
           ? String(raw)
           : '';
-    return [{ field, key, value, provider: isProvider(key) ? key : undefined }];
+    const typed = typeof raw === 'string' || typeof raw === 'number' || typeof raw === 'boolean';
+    return [
+      { field, key, raw: typed ? raw : null, value, provider: isProvider(key) ? key : undefined },
+    ];
   });
   if (segments.length > 0 && segments.every((segment) => segment.provider !== undefined)) {
     return segments.sort((a, b) => bySlot(a.provider ?? 'local', b.provider ?? 'local'));
