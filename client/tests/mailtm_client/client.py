@@ -20,6 +20,7 @@ quota counts, so the pause covers the whole API host: the simplest choice that n
 """
 from __future__ import annotations
 
+import logging
 import math
 import os
 import random
@@ -41,6 +42,8 @@ from .ratelimit import (
     SharedRateLimiter,
     Sleep,
 )
+
+_log = logging.getLogger(__name__)
 
 DEFAULT_BASE_URL = "https://api.mail.tm"
 # https://docs.mail.tm/: "The general quota limit is 8 queries per second (QPS) per IP address."
@@ -328,6 +331,9 @@ class MailTmClient:
                 wait = max(wait, spent or 0.0)
                 # Every process sharing the limiter waits this out, not just this one.
                 self.limiter.penalize(wait)
+                _log.warning(
+                    "mail.tm answered 429 to %s %s: every process pauses %.1f s", method, path, wait
+                )
                 if not retry_429 or last_try or not may_wait(wait):
                     return response
                 waited += wait  # the next acquire() sleeps through the pause

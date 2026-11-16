@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import http.server
 import json
+import logging
 import math
 import os
 import tempfile
@@ -175,6 +176,16 @@ def test_a_429_is_retried_after_a_jittered_backoff(mail):
     first, second = mail.session.gaps()
     assert 1.0 <= first <= 2.0
     assert 2.0 <= second <= 4.0
+
+
+def test_a_429_is_logged_with_the_pause(mail, caplog):
+    # A run that fails on a slow inbox shows whether mail.tm refused calls meanwhile.
+    mail.session.answers = [answer(429, retry_after=3), answer(200)]
+    with caplog.at_level(logging.WARNING):
+        mail.request("GET", "/messages")
+    assert [r.getMessage() for r in caplog.records] == [
+        "mail.tm answered 429 to GET /messages: every process pauses 3.0 s"
+    ]
 
 
 def test_retry_after_is_honoured_in_seconds(mail):
