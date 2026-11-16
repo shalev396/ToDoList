@@ -24,7 +24,7 @@ It is updated every phase.
 | 4b    | Client: the item sheet's editing and hints, the Repeat control, copy fixes; server: the primary calendar is always read, `ItemDetail.sourceValues`                                                                                                                                                                                                                   | **built** |
 | 5     | `SyncRun` state machine, `SyncCursor`/`SyncCursors`, `Integration.sync()` (template method) with `SyncEngine`, `Calendar` + `PushPlan` + `PushCommit`; the dispatcher, worker and purge on the classes                                                                                                                                                               | **built** |
 | 6a    | `Dashboard` + `NewDashboard` (`History<T>`, `HistoryTrail`, `Layout`, `DashboardOutline`, `DocCheck`, `DashboardConnectors`, `BlockPreviews`, `DashboardDryRun`), `View` + `Query`, `Persona`, `Operation`, `ConnectLink`, `AuditLog.page`; the seed through classes; the cascade and the purge remove dashboards and views; `AgentKey` (built with the MCP sign-in) | **built** |
-| 6b    | The `Block` hierarchy (14 types) behind `DocCheck`                                                                                                                                                                                                                                                                                                                   | planned   |
+| 6b    | The `Block` hierarchy behind `DocCheck`: abstract `Block` (template methods `check` and `lint`), `DataBlock`/`TimeBlock`/`ControlBlock`, `QueryBlock`, `RowBlock`, the 14 types and `UnknownBlock`, `BlockRegistry`; builder ops check through `DocCheck` (`ApplyOpsContext.check`)                                                                                  | **built** |
 | 7     | The legacy list emptied, dead services deleted                                                                                                                                                                                                                                                                                                                       | planned   |
 
 **How the boundary is held.** `server/legacy-db-importers.mjs` names:
@@ -1579,11 +1579,13 @@ How the pieces work, in short:
   be and how it is stored is polymorphic); `TopicRules` classifies a container's match key and
   validates a request's rules.
 
-## 6. Dashboards and views (phase 6a built; the Block classes are phase 6b)
+## 6. Dashboards and views (phases 6a and 6b, built)
 
-`classes/dashboard/`. A dashboard's blocks are still plain JSON: `DocCheck` is the one place they
-are checked (`checkDraft`) and linted (`lintDashboard`), and phase 6b replaces its two bodies with
-the `Block` hierarchy (`Block.from(json).check()`) without changing a caller.
+`classes/dashboard/`. A dashboard's blocks are stored as plain JSON. `DocCheck` is the one place a
+document is checked and linted: it runs the builder's document-level steps (`validate.ts`) and asks
+each block's own class (`Block.from(json).check()` and `.lint(scope)`, the Block hierarchy below)
+for the rest. Every write comes through it, builder ops included (`ApplyOpsContext.check`), except
+"Stop sharing", which only takes a connector off a stored draft.
 
 ```mermaid
 classDiagram
@@ -1707,7 +1709,7 @@ classDiagram
     +equals(other) boolean
   }
   class DocCheck {
-    the one document check (6b: per-block parts to Block.from)
+    the one document check: document steps, then Block.from per block
     +instance$
     +check(input) DraftCheck
     +lint(doc, mode, topicIds) LintIssue[]
@@ -1750,66 +1752,12 @@ classDiagram
 
   class Block {
     <<abstract>>
-    +type*
+    one class per block type: see the Block hierarchy
     +from(json)$ Block
-    +check() LintIssue[]
-    #lintSpecific()* LintIssue[]
+    +check() BlockIssue[]
+    +lint(scope) LintIssue[]
   }
-  class DataBlock {
-    <<interface>>
-    +query() Query
-  }
-  class TimeBlock {
-    <<interface>>
-    +range
-  }
-  class ControlBlock {
-    <<interface>>
-    +controls()
-  }
-  class ListBlock
-  class TableBlock
-  class KanbanBlock
-  class ChartBlock
-  class CounterBlock
-  class DeadlinesBlock
-  class TimelineBlock
-  class AgendaBlock
-  class WorkloadBlock
-  class CalendarBlock
-  class ClockBlock
-  class FilterBlock
-  class ActionBlock
-  class NoteBlock
-  DocCheck ..> Block : phase 6b
-  Block <|-- ListBlock
-  Block <|-- TableBlock
-  Block <|-- KanbanBlock
-  Block <|-- ChartBlock
-  Block <|-- CounterBlock
-  Block <|-- DeadlinesBlock
-  Block <|-- TimelineBlock
-  Block <|-- AgendaBlock
-  Block <|-- WorkloadBlock
-  Block <|-- CalendarBlock
-  Block <|-- ClockBlock
-  Block <|-- FilterBlock
-  Block <|-- ActionBlock
-  Block <|-- NoteBlock
-  DataBlock <|.. ListBlock
-  DataBlock <|.. TableBlock
-  DataBlock <|.. KanbanBlock
-  DataBlock <|.. ChartBlock
-  DataBlock <|.. CounterBlock
-  DataBlock <|.. DeadlinesBlock
-  DataBlock <|.. TimelineBlock
-  DataBlock <|.. AgendaBlock
-  DataBlock <|.. WorkloadBlock
-  DataBlock <|.. CalendarBlock
-  TimeBlock <|.. CalendarBlock
-  TimeBlock <|.. ClockBlock
-  ControlBlock <|.. FilterBlock
-  ControlBlock <|.. ActionBlock
+  DocCheck ..> Block : per block
 
   class View {
     +Audit$
@@ -1834,6 +1782,7 @@ classDiagram
     <<value object>>
     +parse(input)$ Query
     +from(stored)$ Query
+    +compileIssue(blockType) issue
     +toJSON() QueryJson
     +equals(other) boolean
   }
@@ -1862,25 +1811,182 @@ classDiagram
   class Persona:::built
   class View:::built
   class Query:::built
-  class Block:::planned
-  class DataBlock:::planned
-  class TimeBlock:::planned
-  class ControlBlock:::planned
-  class ListBlock:::planned
-  class TableBlock:::planned
-  class KanbanBlock:::planned
-  class ChartBlock:::planned
-  class CounterBlock:::planned
-  class DeadlinesBlock:::planned
-  class TimelineBlock:::planned
-  class AgendaBlock:::planned
-  class WorkloadBlock:::planned
-  class CalendarBlock:::planned
-  class ClockBlock:::planned
-  class FilterBlock:::planned
-  class ActionBlock:::planned
-  class NoteBlock:::planned
+  class Block:::built
 ```
+
+### The Block hierarchy (phase 6b)
+
+`classes/dashboard/blocks/`. One class per block type of the catalog (`BLOCK_TYPES`, 14), each an
+immutable value object over the block's JSON. DocCheck is its one caller; the dashboard barrel does
+not hand it on.
+
+```mermaid
+classDiagram
+  direction TB
+  class DocCheck {
+    +check(input) DraftCheck
+    +lint(doc, mode, topicIds) LintIssue[]
+  }
+  class Block {
+    <<abstract>>
+    +capabilities$ BlockCapability[]
+    +type* BlockType
+    +id
+    +title
+    +from(json)$ Block
+    +check() BlockIssue[]
+    +lint(scope) LintIssue[]
+    +toJSON() BlockJson
+    #catalogIssues() BlockIssue[]
+    #checkSpecific() BlockIssue[]
+    #queryIssues() BlockIssue[]
+    #lintSpecific() LintIssue[]
+  }
+  class BlockRegistry {
+    singleton: type to class
+    +instance$
+    +register(type, cls, factory)
+    +registerFallback(factory)
+    +types() BlockType[]
+    +classOf(type) BlockClass
+    +create(json) Block
+  }
+  class Query {
+    <<value object>>
+    +compileIssue(blockType) issue
+  }
+  class DataBlock {
+    <<interface>>
+    +query() Query
+    +savedViewId
+  }
+  class TimeBlock {
+    <<interface>>
+    +range
+  }
+  class ControlBlock {
+    <<interface>>
+    +controls() BlockControl
+  }
+  class QueryBlock {
+    <<abstract>>
+    capabilities: data
+  }
+  class RowBlock {
+    <<abstract>>
+    #lintSpecific() the source link
+  }
+  class ListBlock
+  class TableBlock
+  class KanbanBlock
+  class DeadlinesBlock
+  class TimelineBlock
+  class AgendaBlock
+  class CalendarBlock {
+    capabilities: data, time
+  }
+  class ChartBlock
+  class CounterBlock
+  class WorkloadBlock
+  class ClockBlock {
+    capabilities: data, time
+  }
+  class FilterBlock {
+    capabilities: control
+    #checkSpecific() sets a variable
+  }
+  class ActionBlock {
+    capabilities: control
+    #checkSpecific() names its action
+  }
+  class NoteBlock {
+    static
+  }
+  class UnknownBlock {
+    a type this code does not know
+    #catalogIssues() the schema's type issue
+  }
+  DocCheck ..> Block : from(json).check(), .lint(scope)
+  Block ..> BlockRegistry : from
+  Block *-- Query : embedded query
+  Block <|-- QueryBlock
+  DataBlock <|.. QueryBlock
+  QueryBlock <|-- RowBlock
+  RowBlock <|-- ListBlock
+  RowBlock <|-- TableBlock
+  RowBlock <|-- KanbanBlock
+  RowBlock <|-- DeadlinesBlock
+  RowBlock <|-- TimelineBlock
+  RowBlock <|-- AgendaBlock
+  RowBlock <|-- CalendarBlock
+  QueryBlock <|-- ChartBlock
+  QueryBlock <|-- CounterBlock
+  QueryBlock <|-- WorkloadBlock
+  QueryBlock <|-- ClockBlock
+  TimeBlock <|.. CalendarBlock
+  TimeBlock <|.. ClockBlock
+  Block <|-- FilterBlock
+  Block <|-- ActionBlock
+  ControlBlock <|.. FilterBlock
+  ControlBlock <|.. ActionBlock
+  Block <|-- NoteBlock
+  Block <|-- UnknownBlock
+
+  classDef built fill:#d1fae5,stroke:#047857,stroke-width:2px
+  class DocCheck:::built
+  class Block:::built
+  class BlockRegistry:::built
+  class Query:::built
+  class DataBlock:::built
+  class TimeBlock:::built
+  class ControlBlock:::built
+  class QueryBlock:::built
+  class RowBlock:::built
+  class ListBlock:::built
+  class TableBlock:::built
+  class KanbanBlock:::built
+  class DeadlinesBlock:::built
+  class TimelineBlock:::built
+  class AgendaBlock:::built
+  class CalendarBlock:::built
+  class ChartBlock:::built
+  class CounterBlock:::built
+  class WorkloadBlock:::built
+  class ClockBlock:::built
+  class FilterBlock:::built
+  class ActionBlock:::built
+  class NoteBlock:::built
+  class UnknownBlock:::built
+```
+
+- **Two template methods.** `check()` is the type's catalog entry (the viz fits its schema, then the
+  query rule: a data block has a query or a saved view, any other takes none), then
+  `checkSpecific()`, then the embedded query compiled against the whitelist (`Query#compileIssue`,
+  never run). `lint(scope)` is the field paths, then `lintSpecific()`, then the text. Pointers are
+  relative to the block; DocCheck puts them under `/blocks/<i>`. The document schema (each block's
+  shape included) runs before, in DocCheck, and stops the check, so a block reaches its class
+  well-formed.
+- **The rules stay pure.** The classes only choose and order them: `vizIssues`, `queryRuleIssues`,
+  `filterVariableIssues`, `actionNameIssues` (`builder/catalog.ts`), `lintFields`,
+  `lintSourceLink`, `lintText` (`builder/lint.ts`). The document-level steps (`refusedInput`,
+  `parseDraft`, `variableIssues`, `secretIssues`, `finalIssues`, `builder/validate.ts`) are
+  DocCheck's. `dashboardInternals.test.ts` holds that only DocCheck names the document steps and
+  only the class that applies a rule names it, so no write can assemble a check of its own.
+- **Polymorphism instead of switches.** The two type switches of the old code are classes now: the
+  source-link lint of the row-rendering types is `RowBlock`'s hook, and the filter and action rules
+  are `FilterBlock`'s and `ActionBlock`'s.
+- **Registry.** Each class registers itself (a factory: the constructors are not public) when its
+  module loads, and `blocks/index.ts` loads them all. `Block.from` freezes what it makes. A type
+  outside `BLOCK_TYPES` gets `UnknownBlock`, whose one issue is the schema's own for `/type` (as
+  `UnknownAttribute` does for attributes); a known type without a class is an error, never the
+  fallback.
+- **Contracts.** `DataBlock` (`query()`: the embedded query as a `Query`, or null when the block
+  reads a saved view; `savedViewId`), `TimeBlock` (`range`: its query's date range), `ControlBlock`
+  (`controls()`: `{sets}` for a filter, `{runs}` for an action). Each class declares them in
+  `static capabilities`; `blocks.test.ts` holds the classes, the guards (`isDataBlock`,
+  `isTimeBlock`, `isControlBlock`) and the catalog (`requiredQuery`) to one table.
+- **The clock is a data block.** The plan made it a `TimeBlock` only; its catalog entry requires a
+  query (today's events), so `ClockBlock extends QueryBlock implements TimeBlock`.
 
 ## 7. Sync, agent keys and the outside world (phases 5 and 6)
 
@@ -2085,7 +2191,7 @@ implements Versioned, Auditable, SoftDeletable, Owned`: the only code that reads
   `read` → **`HistoryTrail<TDoc>`** (an immutable read: `stateAt`, `undo`, `redo`, the old undo
   loop and redo check, verbatim). The pure `builder/history.ts` is unchanged.
 - **`Layout`** (value object: the stored grid, `bottom(breakpoint)`), **`DocCheck`** (the one
-  place a document's blocks are checked and linted; the phase 6b seam), **`DashboardConnectors`**
+  place a document is checked and linted, each block by its Block class), **`DashboardConnectors`**
   (the connector rules for one member, ruling 3, 16, 23d), **`BlockPreviews`** (a dry run's rows).
 - **`View`** (`classes/dashboard/View.ts`) `extends WorkspaceEntity<ViewData> implements Owned,
 Auditable, Viewable<SavedView>`, composing a **`Query`** value object (parsed and compiled against
