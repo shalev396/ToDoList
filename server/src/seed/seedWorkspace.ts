@@ -19,11 +19,11 @@
  *    counted as the run's failures and never stored, as in any sync.
  *
  * Steps that don't depend on each other run at once, since every query is a round trip to the
- * database (from a local API to a stage's, a long one): 1 (each provider's accounts in demo order,
- * the providers at once), 2 and 3 together; then 4 (each topic's pages in template order, the
- * topics at once) beside 5. A step that fails is waited out with the rest, so nothing is still
- * writing when the seed throws. What lists in creation order (one provider's connections, one
- * topic's pages) is still made in demo order.
+ * database (from a local API to a stage's, a long one): 1 (the integrations in demo order, the
+ * credentials at once), 2 (after 1) and 3 together; then 4 (the pages in demo order) beside 5.
+ * A step that fails is waited out with the rest, so nothing is still writing when the seed
+ * throws. What lists in creation order (the integrations, the pages, so the template blocks'
+ * connectors) is made in demo order, as before.
  *
  * Idempotent: what exists is found by its natural key (or its seed id) and left as it is, and the
  * syncs leave unchanged items untouched (same hash: no `updatedAt` bump). A to-do its owner
@@ -118,26 +118,6 @@ async function allOrFirstFailure<T>(tasks: readonly Promise<T>[]): Promise<T[]> 
   });
 }
 
-/**
- * `task` for every entry at once, except that entries with the same key run one after another, in
- * their order (one provider's connections, one topic's pages: they list in creation order).
- * Answers in the entries' order, as allOrFirstFailure does.
- */
-async function inOrderPerKey<T, R>(
-  entries: readonly T[],
-  keyOf: (entry: T) => string,
-  task: (entry: T) => Promise<R>,
-): Promise<R[]> {
-  const tails = new Map<string, Promise<unknown>>();
-  const runs = entries.map((entry) => {
-    const key = keyOf(entry);
-    const run = (tails.get(key) ?? Promise.resolve()).then(() => task(entry));
-    tails.set(key, run);
-    return run;
-  });
-  return allOrFirstFailure(runs);
-}
-
 function connectionOf(spec: DemoIntegration): ConnectionInput {
   return {
     provider: spec.provider,
@@ -185,18 +165,15 @@ async function ensureCredential(caller: Caller, { spec, integration }: Connected
 }
 
 /**
- * Every demo integration, in demoData.ts order, each with its credential. The providers connect at
- * once; one provider's accounts connect in demo order, as its cards list them by creation.
+ * Every demo integration, in demoData.ts order, each with its credential. They connect one after
+ * another, so they list by creation in demo order (the integration lists, the template blocks'
+ * connectors); the credentials are saved at once.
  */
 async function ensureIntegrations(caller: Caller): Promise<Connected[]> {
-  const connected = await inOrderPerKey(
-    DEMO_INTEGRATIONS,
-    (spec) => spec.provider,
-    async (spec): Promise<Connected> => ({
-      spec,
-      integration: await ensureIntegration(caller, spec),
-    }),
-  );
+  const connected: Connected[] = [];
+  for (const spec of DEMO_INTEGRATIONS) {
+    connected.push({ spec, integration: await ensureIntegration(caller, spec) });
+  }
   await allOrFirstFailure(connected.map((entry) => ensureCredential(caller, entry)));
   return connected;
 }
@@ -290,8 +267,8 @@ async function leaveMinimalShape(caller: Caller, language: TemplateLanguage): Pr
 }
 
 /**
- * The demo dashboards from their templates (published: the owner creates them). The topics' pages
- * are made at once; one topic's in demo order, as its pages list by creation.
+ * The demo dashboards from their templates (published: the owner creates them), one after another
+ * in demo order, as the pages list by creation.
  */
 async function ensureDashboards(
   caller: Caller,
@@ -300,27 +277,23 @@ async function ensureDashboards(
 ): Promise<number> {
   const existing = await Dashboard.listOutlines(caller);
   const templates = new Map(listTemplates().map((template) => [template.key, template]));
-  await inOrderPerKey(
-    DEMO_DASHBOARDS,
-    (demo) => demo.topic ?? 'main',
-    async (demo): Promise<void> => {
-      const template = templates.get(demo.templateKey);
-      if (template === undefined) throw new Error(`seedWorkspace: no template ${demo.templateKey}`);
-      const topicId = demo.topic === undefined ? null : topics[demo.topic];
-      const found = existing.some(
-        (dashboard) =>
-          dashboard.templateKey === template.key &&
-          dashboard.scope.topicId === topicId &&
-          dashboard.scope.page === template.scope.page,
-      );
-      if (found) return;
-      await Dashboard.instantiate(caller, {
-        templateKey: template.key,
-        language,
-        ...(topicId === null ? {} : { scope: { topicId } }),
-      });
-    },
-  );
+  for (const demo of DEMO_DASHBOARDS) {
+    const template = templates.get(demo.templateKey);
+    if (template === undefined) throw new Error(`seedWorkspace: no template ${demo.templateKey}`);
+    const topicId = demo.topic === undefined ? null : topics[demo.topic];
+    const found = existing.some(
+      (dashboard) =>
+        dashboard.templateKey === template.key &&
+        dashboard.scope.topicId === topicId &&
+        dashboard.scope.page === template.scope.page,
+    );
+    if (found) continue;
+    await Dashboard.instantiate(caller, {
+      templateKey: template.key,
+      language,
+      ...(topicId === null ? {} : { scope: { topicId } }),
+    });
+  }
   return DEMO_DASHBOARDS.length;
 }
 
@@ -490,9 +463,10 @@ export async function seedWorkspace(
   if (caller?.role.name !== 'owner') {
     throw new Error('seedWorkspace: the workspace has no owner');
   }
-  // Steps 1 to 3 need only the topics.
+  // The to-dos need only the topics. The rules wait for the integrations: connecting GitHub
+  // appends its own topic rule to the same list ensureTopicRules rewrites.
   const integrationsDone = ensureIntegrations(caller);
-  const rulesDone = ensureTopicRules(caller, topics);
+  const rulesDone = integrationsDone.then(() => ensureTopicRules(caller, topics));
   const todosDone = ensureTodos(caller, now, topics);
   await Promise.allSettled([integrationsDone, rulesDone, todosDone]);
   const connected = await integrationsDone;

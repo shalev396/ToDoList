@@ -342,6 +342,53 @@ describe('seedWorkspace', () => {
     }
   });
 
+  it('makes everything in demo order: the integrations, the pages, the blocks’ connectors', async () => {
+    const byCreation = (rows: Doc[]): Doc[] =>
+      [...rows].sort(
+        (a, b) => (a['createdAt'] as Date).getTime() - (b['createdAt'] as Date).getTime(),
+      );
+    const integrations = byCreation(await docs('Integrations', { workspaceId }));
+    const demoOrder = first.integrations.map((entry) => entry.integrationId);
+    assert.deepEqual(
+      integrations.map((row) => row._id),
+      demoOrder,
+    );
+
+    const dashboards = byCreation(await docs('Dashboards', { workspaceId, deletedAt: null }));
+    assert.deepEqual(
+      dashboards.map(
+        (row) => `${String(row['templateKey'])}:${String((row['scope'] as Doc)['topicId'])}`,
+      ),
+      demo.DEMO_DASHBOARDS.map(
+        (entry) =>
+          `${entry.templateKey}:${String(entry.topic === undefined ? null : ids[entry.topic])}`,
+      ),
+    );
+
+    // A template's block lists its connectors in the integrations' creation order (the demo's own
+    // connector blocks name theirs).
+    const named = demo.DEMO_CONNECTOR_BLOCKS.map((entry) =>
+      entry.connectors.map(
+        (key) => first.integrations.find((found) => found.key === key)?.integrationId,
+      ),
+    );
+    const rank = new Map(demoOrder.map((id, index) => [id, index]));
+    let bound = 0;
+    for (const dashboard of dashboards) {
+      for (const block of dashboard['blocks'] as { connectors?: unknown[] }[]) {
+        if (named.some((ids) => JSON.stringify(ids) === JSON.stringify(block.connectors))) continue;
+        // The connectors also name the local to-dos ("local"): only the integrations rank.
+        const ranks = (block.connectors ?? []).flatMap((id) => rank.get(String(id)) ?? []);
+        assert.deepEqual(
+          ranks,
+          [...ranks].sort((a, b) => a - b),
+        );
+        bound += ranks.length;
+      }
+    }
+    assert.ok(bound > 0, 'some block binds connectors');
+  });
+
   it('a second run changes nothing: the same summary, no updatedAt bumped, nothing added', async () => {
     const watched = ['Items', 'Containers', 'Dashboards', 'Credentials', 'Workspaces'] as const;
     const before = new Map<string, Record<string, string>>();
