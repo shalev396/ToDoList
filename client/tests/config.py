@@ -3,11 +3,14 @@ E2E test configuration - timeouts and shared constants.
 Import from tests.config in E2E test files.
 """
 
-# Playwright timeouts (milliseconds)
-DEFAULT_TIMEOUT = 5_000   # Playwright default for assertions
-SHORT_TIMEOUT = 10_000    # Form fills, quick clicks
-NORMAL_TIMEOUT = 15_000   # Page loads, visibility checks
-LONG_TIMEOUT = 20_000     # Redirects, async flows
+# Playwright timeouts (milliseconds). The suite runs the local API against a deployed stage, and in
+# CI that API reaches the stage's database across regions, so a page that loads in a second here can
+# take ten there. A wait ends as soon as its condition holds, so generous bounds cost a passing run
+# nothing; they only decide how long a real failure takes to report.
+DEFAULT_TIMEOUT = 10_000  # Assertions with no timeout of their own (set as Playwright's default in conftest)
+SHORT_TIMEOUT = 15_000    # Form fills, quick clicks
+NORMAL_TIMEOUT = 30_000   # Page loads, visibility checks
+LONG_TIMEOUT = 40_000     # Redirects, async flows
 EXPORT_TIMEOUT = 40_000   # Account export: server builds the ZIP from S3, then the browser downloads it
 FORGOT_PASSWORD_TIMEOUT = 50_000  # Cognito forgot-password API + redirect (can be slow in CI)
 # Creating a workspace with demo data in the app: a seed of a few hundred queries, each a round trip

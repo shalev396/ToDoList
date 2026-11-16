@@ -45,6 +45,13 @@ def pytest_configure(config):
             "Set BASE_URL (or --base-url) and API_BASE_URL. `npm run test` sets them for the "
             "default dev servers; a run against any other server must name its own ports."
         )
+    # An assertion with no timeout of its own waits DEFAULT_TIMEOUT, not Playwright's 5 s (see
+    # tests/config.py: the stage is remote, and in CI slow).
+    from playwright.sync_api import expect
+
+    from tests.config import DEFAULT_TIMEOUT
+
+    expect.set_options(timeout=DEFAULT_TIMEOUT)
 
 
 @pytest.hookimpl(tryfirst=True)
