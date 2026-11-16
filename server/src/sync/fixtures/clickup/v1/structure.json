@@ -1,0 +1,171 @@
+[
+  {
+    "request": {
+      "url": "https://api.clickup.com/api/v2/team/9001/space"
+    },
+    "response": {
+      "body": {
+        "spaces": [
+          {
+            "id": "90010",
+            "name": "Roonga",
+            "private": false,
+            "archived": false
+          },
+          {
+            "id": "90020",
+            "name": "Parkbooker",
+            "private": false,
+            "archived": false
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://api.clickup.com/api/v2/space/90010/folder"
+    },
+    "response": {
+      "body": {
+        "folders": [
+          {
+            "id": "70001",
+            "name": "Backend",
+            "hidden": false,
+            "space": {
+              "id": "90010",
+              "name": "Roonga"
+            },
+            "archived": false,
+            "lists": [
+              {
+                "id": "80001",
+                "name": "API",
+                "orderindex": 0,
+                "content": "",
+                "status": null,
+                "priority": null,
+                "assignee": null,
+                "task_count": null,
+                "due_date": null,
+                "start_date": null,
+                "archived": false
+              },
+              {
+                "id": "80002",
+                "name": "Infra",
+                "orderindex": 0,
+                "content": "",
+                "status": null,
+                "priority": null,
+                "assignee": null,
+                "task_count": null,
+                "due_date": null,
+                "start_date": null,
+                "archived": false
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://api.clickup.com/api/v2/space/90010/list"
+    },
+    "response": {
+      "body": {
+        "lists": [
+          {
+            "id": "80003",
+            "name": "Backlog",
+            "orderindex": 0,
+            "content": "",
+            "status": null,
+            "priority": null,
+            "assignee": null,
+            "task_count": null,
+            "due_date": null,
+            "start_date": null,
+            "archived": false
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://api.clickup.com/api/v2/space/90020/folder"
+    },
+    "response": {
+      "body": {
+        "folders": [
+          {
+            "id": "70002",
+            "name": "Web",
+            "hidden": false,
+            "space": {
+              "id": "90020",
+              "name": "Parkbooker"
+            },
+            "archived": false,
+            "lists": [
+              {
+                "id": "80012",
+                "name": "Checkout",
+                "orderindex": 0,
+                "content": "",
+                "status": null,
+                "priority": null,
+                "assignee": null,
+                "task_count": null,
+                "due_date": null,
+                "start_date": null,
+                "archived": false
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://api.clickup.com/api/v2/space/90020/list"
+    },
+    "response": {
+      "body": {
+        "lists": [
+          {
+            "id": "80010",
+            "name": "Mobile app",
+            "orderindex": 0,
+            "content": "",
+            "status": null,
+            "priority": null,
+            "assignee": null,
+            "task_count": null,
+            "due_date": null,
+            "start_date": null,
+            "archived": false
+          },
+          {
+            "id": "80011",
+            "name": "Launch",
+            "orderindex": 0,
+            "content": "",
+            "status": null,
+            "priority": null,
+            "assignee": null,
+            "task_count": null,
+            "due_date": null,
+            "start_date": null,
+            "archived": false
+          }
+        ]
+      }
+    }
+  }
+]

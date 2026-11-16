@@ -58,7 +58,6 @@ for (const stage of STAGES) {
         'Function',
         'FunctionRole',
         'FunctionRoleDefaultPolicy',
-        'ServiceRoleDefaultPolicy',
         'LogGroup',
         'UserPool',
         'UserPoolClient',
@@ -94,9 +93,19 @@ for (const stage of STAGES) {
       assert.deepEqual(Object.keys(groups), [...COMPOSER_GROUPS]);
       const members = Object.values(groups).flatMap((g) => g?.Members ?? []);
       assert.equal(new Set(members).size, members.length, 'a card is in two groups');
+      // Composer folds these into another card; one listed as a group member makes Composer
+      // reject the whole file ("Member 'WorkerQueueMapping' is not a valid resource or group").
+      const foldedTypes = [
+        'AWS::Lambda::EventSourceMapping',
+        'AWS::Lambda::Permission',
+        'AWS::IAM::Policy',
+        'AWS::S3::BucketPolicy',
+      ];
       for (const member of members) {
         assert.ok(member in drawing.Resources, `unknown group member ${member}`);
         assert.equal(cardRoot(drawing, member), member, `${member} is folded into another card`);
+        const type = drawing.Resources[member]?.Type ?? '';
+        assert.ok(!foldedTypes.includes(type), `${member} (${type}) cannot be a group member`);
       }
       for (const name of names) {
         assert.ok(members.includes(cardRoot(drawing, name)), `${name} is not in any group`);
@@ -112,6 +121,40 @@ for (const stage of STAGES) {
       ]) {
         assert.ok(edge.includes(name), `${name} not in Edge`);
       }
+      // One function (its card is keyed by its log group) with its two layers and one role.
+      assert.deepEqual(groups['Compute']?.Members, [
+        'DependenciesLayer',
+        'CodebaseLayer',
+        'LogGroup',
+        'FunctionRole',
+      ]);
+      assert.deepEqual(groups['Storage']?.Members, [
+        'ClientBucket',
+        'AssetsBucket',
+        'CredentialsKey',
+        'CredentialsKeyAlias',
+      ]);
+      assert.deepEqual(groups['Auth']?.Members, ['UserPool', 'UserPoolClient']);
+    });
+
+    it('draws no queue, worker, alarm, schedule or deploy-time helper', () => {
+      const types = new Set(Object.values(drawing.Resources).map((r) => r.Type));
+      for (const type of [
+        'AWS::SQS::Queue',
+        'AWS::Lambda::EventSourceMapping',
+        'AWS::CloudWatch::Alarm',
+        'AWS::Scheduler::Schedule',
+        'AWS::CloudFormation::WaitCondition',
+      ]) {
+        assert.ok(!types.has(type), `${type} in the drawing`);
+      }
+      assert.deepEqual(
+        Object.entries(drawing.Resources)
+          .filter(([, r]) => r.Type === 'AWS::Lambda::Function' || r.Type === 'AWS::IAM::Role')
+          .map(([name]) => name)
+          .sort(),
+        ['Function', 'FunctionRole'],
+      );
     });
 
     it('links the API, certificate and origin access control to the distribution', () => {

@@ -1,8 +1,8 @@
-# Elytra Frontend E2E Tests (Playwright + Python)
+# TodoList Frontend E2E Tests (Playwright + Python)
 
 [← Back to main README](../../README.md)
 
-Run these against a live backend or the local API (`cd server && npm run dev`) + Vite. For the full list of hardcoded URLs to change, see [Getting Started → Change Hardcoded URLs](../../README.md#2-change-hardcoded-urls-and-branding) in the main README.
+Run these against the local API (`cd server && npm run dev`, which runs against a deployed stage) + Vite, or against the deployed qa site. For the full list of hardcoded URLs to change, see [Getting Started → Change Hardcoded URLs](../../README.md#2-change-hardcoded-urls-and-branding) in the main README.
 
 > [!WARNING]
 > **Resetting a stage deletes everything in it.** The suite itself never resets anything. To start from an empty stage, run the reset first:
@@ -13,7 +13,7 @@ Run these against a live backend or the local API (`cd server && npm run dev`) +
 >
 > It deletes **the database, all S3 user uploads and every Cognito user** of that stage. It is a direct invoke of the stage's API function (`{"action":"reset-db"}`), not an HTTP route, so it needs AWS credentials for the account; nobody can trigger it through the API. CI runs it before each suite: `_test-local.yml` resets **qa** on every PR into qa, and `_test-qa.yml` resets **qa** before testing the deployed QA site.
 >
-> Don't reset when using a pre-existing account (`E2E_TEST_EMAIL`, see [Mail.tm](#mailtm-and-auth-dependent-tests)): it would delete that user.
+> There is no offline mode: every account is a real Cognito user. Don't reset when using a pre-existing account (`E2E_TEST_EMAIL`, see [Mail.tm](#mailtm-and-auth-dependent-tests)): it would delete that user.
 
 ---
 
@@ -29,7 +29,7 @@ This creates `.venv`, installs dependencies, and Playwright Chromium. Cross-plat
 
 **Before every test run**, in separate terminals:
 
-1. **Server** (from `server/`): `npm run dev`
+1. **Server** (from `server/`): `npm run start:local -- --stage dev --no-rate-limits` (the local API on :3000 against the `dev` stage; `--stage qa` for qa). It needs `server/.env.<stage>` with the stage's `DOMAIN_NAME` and `DATABASE_URL`, and AWS credentials; Cognito, S3 and KMS come from the stage's stack outputs. `--no-rate-limits` turns the in-app rate limits off in that process only: every test request comes from one address, and a full run goes far past them. CI starts it the same way. Without the flag (`npm run dev`) the limits stay on, as on a deployed stage.
 2. **Client** (from `client/`): `npm run dev`
 
 **Run tests** (from `client/`):
@@ -38,7 +38,28 @@ This creates `.venv`, installs dependencies, and Playwright Chromium. Cross-plat
 npm run test
 ```
 
-Runs pytest via `.venv` with `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://localhost:3000/api`. Translations are exported automatically before tests (conftest fixture). The local API turns off rate limiting, so a full run never hits a 429 from the app itself.
+Runs pytest via `.venv` with `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://127.0.0.1:3000/api`. Translations are exported automatically before tests (conftest fixture). Accounts are pooled (below) instead of one per test: each signup costs a Mail.tm inbox, an SES email and 15 to 25 seconds.
+
+### Accounts and data
+
+Every account is a real Cognito user, made the way Elytra makes them: a Mail.tm inbox, signup, the emailed code, login (about 15 to 25 seconds and one SES email each). So tests share accounts, and what a test owns is a **workspace**, the isolation boundary ([`tests/helpers/users.py`](helpers/users.py)):
+
+| Fixture / helper               | What it is                                                                                                                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shared_test_user`             | One account for the whole run (`authenticated_page`)                                                                                                                               |
+| `fresh_owner`                  | The worker's pooled `owner` account plus a **new workspace** (deleted after the test). Returns `(user, workspace)`                                                                 |
+| `second_user`                  | The worker's pooled `member` account, for two-user flows (invites, members). Pass `workspace_id=` to `open_as` / `sign_in` to open a given workspace, as it joins many             |
+| `new_workspace(user, name, …)` | Factory for more workspaces; they are deleted at teardown (a user may own only 5)                                                                                                  |
+| `fresh_user`                   | A brand-new account with no workspace (it lands on onboarding). One signup per test, so only the onboarding, invite and sharing tests use it                                       |
+| `pooled_user(api, "other")`    | Any further pooled role. Pools are per xdist worker, so two workers never share an account                                                                                         |
+| `new_mailbox()`                | A real empty Mail.tm address for an invite to someone who does not exist (no bounce)                                                                                               |
+| `loadDemoData`                 | `create_workspace(..., loadDemoData=True)` loads the demo data through the API (dev and qa; refused on prod). Suites that need it make one workspace per module (`demo_workspace`) |
+
+Invite links come from the API response (`create_invite`) or, for an invite sent through the UI, from the invitee's Mail.tm inbox (`wait_for_invite_path`). If signups ever become the bottleneck, an `AdminCreateUser` shortcut (the CI role) can replace the Mail.tm signup in `create_test_user`; Elytra uses Mail.tm only.
+
+### What the browser does not cover
+
+A stage talks to the real providers, so the suites that needed a provider stand-in are not browser tests: the OAuth handshakes (Google Calendar, Linear, ClickUp), creating a to-do in providers and a working "Test connection" or sync. Their logic is covered by the server tests with injected provider fakes (see the list in [`integrations/test_cards.py`](e2e/integrations/test_cards.py)). The browser keeps the provider-free checks: cards, forms, secret handling, sharing and read-only states.
 
 ### Parallel workers
 
@@ -69,15 +90,16 @@ Accessibility tests also call `wait_for_fade_in(page)` from `tests/helpers/anima
 | Script                 | What it does                                    |
 | ---------------------- | ----------------------------------------------- |
 | `npm run test:install` | Create .venv, install deps, playwright chromium |
-| `npm run test`         | Run all E2E tests (local)                       |
+| `npm run test`         | Run all E2E tests (Vite + local API on a stage) |
 | `npm run test:qa`      | Run tests against QA URLs                       |
 
 ### URLs and Environment Variables
 
 Tests use `BASE_URL` (frontend) and `API_BASE_URL` (backend). Defaults:
 
-- **Local** (`npm run test`): `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://localhost:3000/api`. No basic-auth password needed.
-- **QA** (`npm run test:qa`): loads the gitignored `server/.env.qa` without overriding variables already set (shell and CI win). `BASE_URL` and `API_BASE_URL` default to `https://<DOMAIN_NAME>` and `https://<DOMAIN_NAME>/api`. The template documents `https://qa.elytra.shalev396.com` in [`client/conftest.py`](../conftest.py) (comment only); replace with your QA domain.
+- **Local API on a stage** (`npm run test`): `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://127.0.0.1:3000/api`. No basic-auth password needed.
+- **Running pytest directly**: set both yourself. There are no fallbacks, so a run never lands on someone else's dev server by accident; `npm run test` honours them too.
+- **QA** (`npm run test:qa`): loads the gitignored `server/.env.qa` without overriding variables already set (shell and CI win). `BASE_URL` and `API_BASE_URL` default to `https://<DOMAIN_NAME>` and `https://<DOMAIN_NAME>/api`.
 
 QA also needs `BASIC_AUTH_PASSWORD`, the password of the WAF gate in front of the qa pages ([Staging access](../../docs/staging-access.md)); the run exits without it. The username is the host (`DOMAIN_NAME`), and `/api/` is not gated. Locally, put it in `server/.env.qa`; never commit it. In CI, the workflow sets `BASE_URL` and `API_BASE_URL` from `vars.DOMAIN_NAME` and `BASIC_AUTH_PASSWORD` from the `qa` environment secret. The deploy reads `WAF_WEB_ACL_ARN` (repository secret) to attach the gate.
 
@@ -87,22 +109,27 @@ Every browser context answers the gate's 401 challenge itself (`browser_context_
 
 ## Page × Test Category Matrix
 
-| Page            | Route                   | Smoke | Accessibility | Visual | Responsive | Security |
-| --------------- | ----------------------- | ----- | ------------- | ------ | ---------- | -------- |
-| Landing         | `/`                     | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Dashboard       | `/dashboard`            | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Pricing         | `/pricing`              | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Profile         | `/profile`              | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Profile Edit    | `/profile/edit`         | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Login           | `/auth/login`           | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Signup          | `/auth/signup`          | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Forgot Password | `/auth/forgot-password` | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Reset Password  | `/auth/reset-password`  | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Confirm Signup  | `/auth/confirm-signup`  | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Privacy         | `/legal/privacy`        | ✓     | ✓             | ✓      | ✓          | ✓        |
-| Terms           | `/legal/terms`          | ✓     | ✓             | ✓      | ✓          | ✓        |
-| 404             | invalid routes          | ✓     | ✓             | ✓      | ✓          | ✓        |
-| App             | —                       | ✓     | —             | —      | —          | —        |
+| Page            | Route                     | Smoke | Accessibility | Visual | Responsive   | Security |
+| --------------- | ------------------------- | ----- | ------------- | ------ | ------------ | -------- |
+| Landing         | `/`                       | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Dashboard       | `/dashboard`              | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Pricing         | `/pricing`                | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Profile         | `/profile`                | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Profile Edit    | `/profile/edit`           | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Login           | `/auth/login`             | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Signup          | `/auth/signup`            | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Forgot Password | `/auth/forgot-password`   | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Reset Password  | `/auth/reset-password`    | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Confirm Signup  | `/auth/confirm-signup`    | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Privacy         | `/legal/privacy`          | ✓     | ✓             | ✓      | ✓            | ✓        |
+| Terms           | `/legal/terms`            | ✓     | ✓             | ✓      | ✓            | ✓        |
+| 404             | invalid routes            | ✓     | ✓             | ✓      | ✓            | ✓        |
+| App             | —                         | ✓     | —             | —      | —            | —        |
+| App shell       | `/dashboard`, `/t/:topic` | ✓     | ✓             | —      | ✓            | —        |
+| Onboarding      | `/onboarding`             | ✓     | ✓             | —      | ✓            | —        |
+| Settings        | `/settings`               | ✓     | ✓             | —      | ✓            | —        |
+| Members         | `/settings/members`       | ✓     | ✓             | —      | ✓ (settings) | —        |
+| Invite accept   | `/invites/:token`         | ✓     | —             | —      | —            | —        |
 
 _(App: translations, translation_pages, and `smoke.py`: Home Screen meta tags, manifest and icons, the failing-logo request loop, `theme-color` following the theme.)_
 
@@ -147,6 +174,14 @@ _(App: translations, translation_pages, and `smoke.py`: Home Screen meta tags, m
 
 ---
 
+## Flows (sharing.py)
+
+`test_owner_shares_college_with_a_classmate`: a fresh owner creates a workspace on onboarding and
+invites a second real account as a viewer, on Members. The invite email reaches the classmate's
+Mail.tm inbox; the classmate logs in, opens the link and accepts: every topic in the sidebar,
+"Workspace (Viewer)" instead of Settings, read-only settings and members. In two workspaces, the
+classmate switches with the switcher, and each workspace's members and topics stay its own.
+
 ## Folder Structure
 
 Aligned with [routes.ts](../src/router/routes.ts). Each route/page has its own folder.
@@ -169,6 +204,8 @@ tests/
     page_404/           invalid routes
     flows/              critical.py (cross-page: signup, login, edit-profile, delete, etc.)
     app/                smoke.py, translations.py, translation_pages.py
+    mailtm/             test_helper.py (offline: helpers/mailtm.py's wiring)
+  mailtm_client/       portable Mail.tm client + shared rate limit, with its offline tests
   scripts/
   helpers/
   fixtures/
@@ -195,8 +232,12 @@ Tests that create users (sign up, login flow, profile flows) use [Mail.tm](https
 
 - Backend API running
 - Network access to api.mail.tm
-- Initial 12s wait for email delivery (first poll)
+- Initial 12s wait for email delivery (first poll), then a look every 8 s, for up to 150 s (in CI, with every worker signing up at once, a confirmation email has taken over a minute)
+
+Mail.tm is free and shared, and answers 429 when an address sends too much (GitHub runners share addresses). [`tests/helpers/mailtm.py`](helpers/mailtm.py) makes every Mail.tm call through [`tests/mailtm_client`](mailtm_client/README.md), a portable package: no project imports, so it can be copied into other projects as is. All the pytest workers on the machine share one rate limit there (a lock file and a state file in the temp dir): 6 calls a second at most, where Mail.tm allows 8 per IP address. A 429 pauses every worker, for its `Retry-After` or else an exponential backoff with jitter, then the call is retried (up to 7 calls and 2 minutes of waiting). The active domain is looked up once for all workers. Several machines behind one address need a lower `MAILTM_RATE` each (see the package README).
+
+The package's own tests are offline and run with the suite (`tests/mailtm_client`, about 10 seconds); `tests/e2e/mailtm/test_helper.py` checks the helper's wiring. To run just those: `BASE_URL=http://127.0.0.1:9 API_BASE_URL=http://127.0.0.1:9 .venv/bin/python -m pytest tests/mailtm_client tests/e2e/mailtm` (`conftest.py` insists on both URLs; nothing contacts them).
 
 Optionally set `E2E_TEST_EMAIL`, `E2E_TEST_PASSWORD`, `E2E_TEST_ID_TOKEN`, `E2E_TEST_REFRESH_TOKEN` to use an existing account and skip user creation. Don't run `npm run reset:db` in this mode (it would delete that account); the run uses whatever data the stage already has.
 
-Otherwise each run creates one fresh Mail.tm user for the whole run (all workers) and sends one SES confirmation email; `test_signup_flow` and `test_delete_account_flow` each create one more. If SES or Mail.tm rejects the request (quota, 429), `shared_test_user` **fails** the run instead of skipping: a skip would turn every auth-dependent test into a green skip and hide a broken login. The trade-off is that, together with the reset on every run, each run spends SES quota; on a tight quota, use the `E2E_TEST_*` variables.
+Otherwise each run creates one fresh Mail.tm user for the whole run (all workers) and sends one SES confirmation email; `test_signup_flow` and `test_delete_account_flow` each create one more, every pytest worker creates its pooled accounts on first use (`owner`, `member`, sometimes `demo` and `other`: see [Accounts and data](#accounts-and-data)), and each test that uses `fresh_user` creates one. If SES or Mail.tm rejects the request (quota, 429), `shared_test_user` **fails** the run instead of skipping: a skip would turn every auth-dependent test into a green skip and hide a broken login. The trade-off is that, together with the reset on every run, each run spends SES quota; on a tight quota, use the `E2E_TEST_*` variables.

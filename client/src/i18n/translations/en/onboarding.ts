@@ -1,0 +1,31 @@
+export const onboarding = {
+  title: 'Welcome to {{appName}}',
+  titleAnother: 'Create a workspace',
+  lead: 'A workspace holds your dashboards and connected sources. Create one, or join one you were invited to.',
+  leadAnother: 'Each workspace has its own dashboards, sources and members.',
+  back: 'Back to {{workspace}}',
+  signedInAs: 'Signed in as {{email}}',
+  signOut: 'Sign out',
+  form: {
+    title: 'Create your workspace',
+    name: 'Name',
+    slug: 'Link name',
+    slugHint: 'Lowercase letters, digits and hyphens. If it’s taken, a number is added.',
+    slugInvalid: 'Use 2 to 48 lowercase letters or digits, with single hyphens between them.',
+    slugTaken: 'That link name is taken. Try another one.',
+    timezone: 'Time zone',
+    timezoneHint: 'Your dashboards show “today” and dates in this time zone.',
+    demo: 'Load demo data',
+    demoHint:
+      'Sample classes, tasks and deadlines, so you can look around before you connect a source.',
+    submit: 'Create workspace',
+    submitting: 'Creating…',
+    failed: 'The workspace couldn’t be created. Try again.',
+  },
+  invites: {
+    title: 'Invites for {{email}}',
+    open: 'To join, open the link in the invite email.',
+    none: 'No invites yet. When someone invites you, open the link in their email.',
+    detail: '{{role}} access, valid until {{date}}',
+  },
+};

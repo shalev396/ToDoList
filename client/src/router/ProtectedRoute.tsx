@@ -1,4 +1,4 @@
-import { useParams, Navigate } from 'react-router-dom';
+import { Navigate, useLocation, useParams } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import {
   selectIsAuthenticated,
@@ -6,6 +6,7 @@ import {
   selectSignedOut,
 } from '@/store/userSlice';
 import { pathTo, ROUTES } from '@/router/routes';
+import { loginPathWithNext } from '@/router/next';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -15,6 +16,7 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
   const isAuthenticated = useSelector(selectIsAuthenticated);
   const isRestoring = useSelector(selectIsRestoringSession);
   const signedOut = useSelector(selectSignedOut);
+  const location = useLocation();
   const { lng } = useParams<{ lng: string }>();
   const language = lng ?? 'en';
 
@@ -25,8 +27,11 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   if (!isAuthenticated) {
     // A user who just logged out or deleted their account goes home, not to the login page.
-    const target = signedOut ? ROUTES.HOME : ROUTES.AUTH.LOGIN;
-    return <Navigate to={pathTo(target, language)} replace />;
+    // Anyone else logs in and comes back here (an invite link, an item link).
+    const target = signedOut
+      ? pathTo(ROUTES.HOME, language)
+      : loginPathWithNext(language, `${location.pathname}${location.search}`);
+    return <Navigate to={target} replace />;
   }
 
   return <>{children}</>;

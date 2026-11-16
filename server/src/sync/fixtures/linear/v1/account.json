@@ -1,0 +1,45 @@
+[
+  {
+    "request": {
+      "graphql": "Viewer"
+    },
+    "response": {
+      "body": {
+        "data": {
+          "viewer": {
+            "id": "b6a1c7d2-0000-4000-8000-000000000001",
+            "name": "Demo Dev",
+            "displayName": "demo",
+            "email": "demo.dev@example.invalid"
+          }
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "graphql": "Projects"
+    },
+    "response": {
+      "body": {
+        "data": {
+          "projects": {
+            "nodes": [
+              {
+                "id": "d0c0a000-0000-4000-8000-000000000020",
+                "name": "Portfolio site",
+                "url": "https://example.invalid/linear/portfolio/project/portfolio-site-1a2b3c",
+                "state": "started",
+                "slugId": "1a2b3c"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            }
+          }
+        }
+      }
+    }
+  }
+]

@@ -1,6 +1,8 @@
 import axios from 'axios';
 import type { AxiosInstance, InternalAxiosRequestConfig, AxiosError } from 'axios';
 import { toast } from 'sonner';
+import { errorMessage } from '@/api/errors';
+import i18n from '@/i18n';
 import { store } from '@/store';
 import { selectIdToken, selectRefreshToken, updateTokens, logout } from '@/store/userSlice';
 import type { ApiRequestConfig } from '@/types';
@@ -109,27 +111,8 @@ axiosInstance.interceptors.response.use(
     }
 
     if (!originalRequest?.suppressErrorToast) {
-      const data = axiosError.response?.data;
-      let message = 'An unexpected error occurred';
-      if (
-        data &&
-        typeof data === 'object' &&
-        'message' in data &&
-        typeof data.message === 'string'
-      ) {
-        message = data.message;
-      } else if (data instanceof Blob) {
-        try {
-          const text = await data.text();
-          const parsed = JSON.parse(text) as { message?: string };
-          if (typeof parsed.message === 'string') {
-            message = parsed.message;
-          }
-        } catch {
-          // Keep default message if blob parsing fails
-        }
-      }
-      toast.error(message);
+      // The server's text is English and for logs: the toast says it in the user's language.
+      toast.error(errorMessage(i18n.t.bind(i18n), error, 'errors.generic'));
     }
 
     return Promise.reject(error instanceof Error ? error : new Error(String(error)));

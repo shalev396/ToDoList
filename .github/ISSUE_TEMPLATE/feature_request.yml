@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        For open-ended ideas or proposals, consider using [Discussions > Ideas](https://github.com/shalev396/Elytra/discussions/categories/ideas) instead.
+        For open-ended ideas or proposals, consider using [Discussions > Ideas](https://github.com/shalev396/TodoList/discussions/categories/ideas) instead.
         Use this form for feature requests with clear scope that can be tracked as work items.
   - type: textarea
     id: problem

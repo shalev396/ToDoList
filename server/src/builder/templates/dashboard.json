@@ -1,0 +1,130 @@
+{
+  "key": "dashboard@1",
+  "version": 1,
+  "titles": { "en": "Dashboard", "he": "לוח בקרה" },
+  "scope": { "topicId": null, "containerId": null, "page": "topic", "groupVar": null },
+  "vars": { "range": "this_week", "topic": null, "provider": null },
+  "blocks": [
+    {
+      "id": "blk_clock",
+      "type": "clock",
+      "titles": { "en": "Today", "he": "היום" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [{ "field": "kind", "operator": "=", "value": "event" }]
+        },
+        "dateRange": "today",
+        "dateField": "startAt",
+        "sort": [{ "field": "startAt", "dir": "asc" }]
+      },
+      "viz": { "kind": "clock24", "needle": "now", "showNext": true }
+    },
+    {
+      "id": "blk_donut",
+      "type": "chart",
+      "titles": { "en": "Open", "he": "פתוחים" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            { "field": "status", "operator": "in", "value": ["open", "in_progress"] },
+            { "field": "topic", "operator": "=", "value": "$page.topic" }
+          ]
+        },
+        "groupBy": ["source.provider"],
+        "aggregate": { "op": "count" }
+      },
+      "viz": { "kind": "donut", "showTotal": true, "legend": "chips" },
+      "emits": { "onSegmentClick": "$page.provider" },
+      "listen": ["$page.topic"]
+    },
+    {
+      "id": "blk_topic",
+      "type": "filter",
+      "titles": { "en": "Topic", "he": "נושא" },
+      "viz": { "kind": "chips", "field": "topic" },
+      "sets": "$page.topic"
+    },
+    {
+      "id": "blk_calendar",
+      "type": "calendar",
+      "titles": { "en": "Calendar", "he": "יומן" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "combinator": "or",
+              "rules": [
+                { "field": "startAt", "operator": "notNull" },
+                { "field": "dueAt", "operator": "notNull" }
+              ]
+            },
+            { "field": "topic", "operator": "=", "value": "$page.topic" },
+            { "field": "source.provider", "operator": "=", "value": "$page.provider" }
+          ]
+        },
+        "dateRange": "$page.range",
+        "dateField": "any",
+        "sort": [{ "field": "startAt", "dir": "asc" }]
+      },
+      "viz": { "kind": "calendar", "view": "week", "allowMonth": true },
+      "listen": ["$page.range", "$page.topic", "$page.provider"]
+    },
+    {
+      "id": "blk_deadlines",
+      "type": "deadlines",
+      "titles": { "en": "Deadlines", "he": "תאריכי יעד" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            { "field": "dueAt", "operator": "notNull" },
+            { "field": "status", "operator": "in", "value": ["open", "in_progress"] },
+            { "field": "topic", "operator": "=", "value": "$page.topic" },
+            { "field": "source.provider", "operator": "=", "value": "$page.provider" }
+          ]
+        },
+        "dateRange": "upcoming_14d",
+        "dateField": "dueAt",
+        "sort": [{ "field": "dueAt", "dir": "asc" }]
+      },
+      "rules": [
+        {
+          "if": { "field": "dueAt", "operator": "<", "value": "@now" },
+          "then": { "tone": "destructive" }
+        }
+      ],
+      "viz": { "kind": "deadlines", "overdueOnTop": true },
+      "listen": ["$page.topic", "$page.provider"]
+    }
+  ],
+  "layouts": {
+    "lg": [
+      { "i": "blk_topic", "x": 0, "y": 0, "w": 12, "h": 2 },
+      { "i": "blk_clock", "x": 0, "y": 2, "w": 4, "h": 8 },
+      { "i": "blk_donut", "x": 4, "y": 2, "w": 4, "h": 8 },
+      { "i": "blk_deadlines", "x": 8, "y": 2, "w": 4, "h": 18 },
+      { "i": "blk_calendar", "x": 0, "y": 10, "w": 8, "h": 10 }
+    ],
+    "md": [
+      { "i": "blk_topic", "x": 0, "y": 0, "w": 8, "h": 2 },
+      { "i": "blk_clock", "x": 0, "y": 2, "w": 4, "h": 8 },
+      { "i": "blk_donut", "x": 4, "y": 2, "w": 4, "h": 8 },
+      { "i": "blk_calendar", "x": 0, "y": 10, "w": 8, "h": 10 },
+      { "i": "blk_deadlines", "x": 0, "y": 20, "w": 8, "h": 10 }
+    ],
+    "sm": [
+      { "i": "blk_topic", "x": 0, "y": 0, "w": 1, "h": 2 },
+      { "i": "blk_clock", "x": 0, "y": 2, "w": 1, "h": 8 },
+      { "i": "blk_donut", "x": 0, "y": 10, "w": 1, "h": 8 },
+      { "i": "blk_calendar", "x": 0, "y": 18, "w": 1, "h": 10 },
+      { "i": "blk_deadlines", "x": 0, "y": 28, "w": 1, "h": 10 }
+    ]
+  }
+}

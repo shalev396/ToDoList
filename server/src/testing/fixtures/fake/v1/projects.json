@@ -1,0 +1,16 @@
+{
+  "request": { "graphql": "FakeProjects" },
+  "response": {
+    "body": {
+      "data": {
+        "projects": [
+          {
+            "id": "p1",
+            "name": "shalev396/Elytra",
+            "url": "https://fake.example.invalid/projects/p1"
+          }
+        ]
+      }
+    }
+  }
+}

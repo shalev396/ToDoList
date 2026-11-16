@@ -41,7 +41,7 @@ const shim = readFileSync(join(FUNCTION_ASSET_DIR, 'index.mjs'), 'utf8');
 if (!shim.includes(`from '${SHIM_TARGET}'`))
   fail(`lambda/index.mjs must re-export from ${SHIM_TARGET}`);
 
-const root = mkdtempSync(join(tmpdir(), 'elytra-layers-'));
+const root = mkdtempSync(join(tmpdir(), 'todolist-layers-'));
 try {
   const opt = join(root, 'opt');
   cpSync(join(DEPS_LAYER_DIR, 'nodejs'), join(opt, 'nodejs'), { recursive: true });

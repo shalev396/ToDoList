@@ -1,0 +1,56 @@
+[
+  {
+    "request": { "graphql": "CreateTeams" },
+    "response": {
+      "body": {
+        "data": {
+          "teams": {
+            "nodes": [
+              { "id": "c0a80101-0000-4000-8000-000000000001", "key": "DEMO", "name": "Demo Team" }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "request": { "graphql": "CreateProjects" },
+    "response": {
+      "body": {
+        "data": {
+          "team": {
+            "projects": {
+              "nodes": [{ "id": "c0a80101-0000-4000-8000-000000000002", "name": "Demo Project" }]
+            }
+          }
+        }
+      }
+    }
+  },
+  {
+    "request": { "graphql": "CreateStates" },
+    "response": {
+      "body": {
+        "data": {
+          "team": {
+            "defaultIssueState": { "id": "c0a80101-0000-4000-8000-000000000003" },
+            "states": {
+              "nodes": [
+                {
+                  "id": "c0a80101-0000-4000-8000-000000000003",
+                  "name": "Todo",
+                  "type": "unstarted"
+                },
+                {
+                  "id": "c0a80101-0000-4000-8000-000000000004",
+                  "name": "In Progress",
+                  "type": "started"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+]

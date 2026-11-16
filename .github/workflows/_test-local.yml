@@ -4,6 +4,9 @@
 # AWS credentials plus the stage's DOMAIN_NAME and DATABASE_URL — nothing else.
 # Each job first empties the stage (DB, S3 user uploads, Cognito users) with `npm run reset:db`,
 # a direct Lambda invoke: there is no HTTP reset route.
+# The local API starts with --no-rate-limits: every request comes from 127.0.0.1, so the in-app
+# limits (per user or per address, 15-minute windows) would answer most of the suite with 429.
+# The flag exists on the local entry only (server/src/local.ts); the deployed Lambda keeps them.
 name: Test Local
 
 on:
@@ -48,7 +51,7 @@ jobs:
         working-directory: server
       - name: Start local API and run Postman
         run: |
-          npm run start:local -- --stage ${{ inputs.environment }} &
+          npm run start:local -- --stage ${{ inputs.environment }} --no-rate-limits &
           SERVER_PID=$!
           for i in $(seq 1 60); do
             if curl -s -o /dev/null --connect-timeout 2 http://localhost:3000/api; then
@@ -101,7 +104,7 @@ jobs:
         working-directory: server
       - name: Start local API and Vite, run Playwright
         run: |
-          (cd ../server && npm run start:local -- --stage ${{ inputs.environment }}) &
+          (cd ../server && npm run start:local -- --stage ${{ inputs.environment }} --no-rate-limits) &
           SERVER_PID=$!
           npm run dev &
           VITE_PID=$!

@@ -1,0 +1,15 @@
+[
+  {
+    "request": { "url": "https://api.github.com/user/repos" },
+    "response": {
+      "body": [
+        { "full_name": "demo-org/demo-repo", "archived": false, "has_issues": true },
+        { "full_name": "demo-org/old-repo", "archived": true, "has_issues": true }
+      ]
+    }
+  },
+  {
+    "request": { "url": "https://api.github.com/repos/demo-org/demo-repo/labels" },
+    "response": { "body": [{ "name": "bug" }, { "name": "chore" }] }
+  }
+]

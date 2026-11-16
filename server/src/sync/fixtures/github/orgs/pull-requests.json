@@ -1,0 +1,10 @@
+{
+  "request": { "graphql": "PullRequestDetails", "variables": { "ids": ["PR_FAKE_acme_42"] } },
+  "response": {
+    "body": {
+      "data": {
+        "nodes": [{ "isDraft": false, "merged": false, "reviewDecision": "REVIEW_REQUIRED" }]
+      }
+    }
+  }
+}

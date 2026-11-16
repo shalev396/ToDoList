@@ -1,0 +1,63 @@
+/** The ⌘K command palette. Keywords are extra search terms, in any language. */
+export const commandPalette = {
+  title: 'תפריט פקודות',
+  description: 'חיפוש עמודים, מרחבי עבודה ופעולות.',
+  placeholder: 'הקלידו פקודה או חפשו…',
+  empty: 'אין תוצאות.',
+  groups: {
+    actions: 'פעולות',
+    navigation: 'מעבר אל',
+    workspaces: 'מרחבי עבודה',
+    preferences: 'העדפות',
+    account: 'חשבון',
+  },
+  commands: {
+    newTodo: 'משימה חדשה',
+    switchWorkspace: 'מעבר אל {{workspace}}',
+    createWorkspace: 'יצירת מרחב עבודה',
+    joinWorkspace: 'הצטרפות עם קישור הזמנה',
+    themeLight: 'ערכת צבעים בהירה',
+    themeDark: 'ערכת צבעים כהה',
+    language: 'מעבר ל-\u2060{{language}}',
+    toggleSidebar: 'כיווץ או הרחבה של סרגל הצד',
+    members: 'חברים',
+    profile: 'פרופיל',
+    signOut: 'התנתקות',
+  },
+  keywords: {
+    newTodo: 'הוספה יצירה משימה מהירה jira clickup linear github',
+    dashboard: 'בית סקירה היום home dashboard',
+    topic: 'נושא עמוד topic',
+    addPage: 'הוספה עמוד חדש נושא add page',
+    integrations: 'חיבור מקורות סנכרון integrations connect',
+    templates: 'תבניות עמודים templates',
+    settings: 'מרחב עבודה אזור זמן נושאים settings',
+    members: 'אנשים הזמנה שיתוף צוות members invite',
+    profile: 'חשבון אני profile account',
+    workspace: 'מרחב עבודה צוות workspace',
+    theme: 'מראה מצב כהה בהיר theme dark light',
+    language: 'שפה עברית אנגלית language english hebrew',
+    sidebar: 'סרגל צד תפריט sidebar',
+    signOut: 'יציאה התנתקות log out logout',
+    shortcuts: 'מקלדת קיצורים מקשים shortcuts keyboard help',
+  },
+};
+
+/** The Keyboard shortcuts dialog (`?`). */
+export const shortcuts = {
+  title: 'קיצורי מקלדת',
+  description: 'לוחצים על מקש, או על שניים ברצף כשמצוין. הקיצורים פועלים בכל מקום מלבד בתוך שדה.',
+  groups: { general: 'כללי', navigation: 'מעבר אל' },
+  items: {
+    palette: 'פתיחת תפריט הפקודות',
+    sidebar: 'כיווץ או הרחבה של סרגל הצד',
+    help: 'הצגת הרשימה הזו',
+    dashboard: 'לוח בקרה',
+    work: 'עבודה',
+    college: 'לימודים',
+    personal: 'אישי',
+    integrations: 'חיבורים',
+    templates: 'תבניות',
+    settings: 'הגדרות',
+  },
+};

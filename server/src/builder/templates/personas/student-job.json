@@ -1,0 +1,27 @@
+{
+  "key": "student-job@1",
+  "version": 1,
+  "titles": { "en": "Student + job", "he": "סטודנט + עבודה" },
+  "descriptions": {
+    "en": "A Studies page and a Work page, with an agenda and a workload view to balance them.",
+    "he": "עמוד לימודים ועמוד עבודה, עם סדר יום ותצוגת עומס כדי לאזן ביניהם."
+  },
+  "topics": [
+    {
+      "slug": "college",
+      "names": { "en": "Studies", "he": "לימודים" },
+      "icon": "graduation-cap",
+      "colour": "blue",
+      "page": "college@1",
+      "views": ["deadlines-agenda@1", "this-week@1"]
+    },
+    {
+      "slug": "work",
+      "names": { "en": "Work", "he": "עבודה" },
+      "icon": "briefcase",
+      "colour": "teal",
+      "page": "work@1",
+      "views": ["my-open-work@1", "workload-this-week@1"]
+    }
+  ]
+}

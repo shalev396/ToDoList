@@ -1,0 +1,59 @@
+{
+  "key": "my-open-work@1",
+  "version": 1,
+  "titles": {
+    "en": "My open work",
+    "he": "העבודה הפתוחה שלי"
+  },
+  "type": "list",
+  "vars": {},
+  "blocks": [
+    {
+      "id": "blk_open",
+      "type": "list",
+      "titles": {
+        "en": "My open work",
+        "he": "העבודה הפתוחה שלי"
+      },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "field": "status",
+              "operator": "in",
+              "value": ["open", "in_progress"]
+            },
+            {
+              "field": "topic",
+              "operator": "=",
+              "value": "$page.topic"
+            }
+          ]
+        },
+        "sort": [
+          {
+            "field": "importance",
+            "dir": "desc"
+          },
+          {
+            "field": "dueAt",
+            "dir": "asc"
+          }
+        ],
+        "limit": 100
+      },
+      "viz": {
+        "kind": "list",
+        "visibleRows": 50
+      },
+      "listen": ["$page.topic"]
+    }
+  ],
+  "layouts": {
+    "lg": [],
+    "md": [],
+    "sm": []
+  }
+}

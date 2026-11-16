@@ -1,0 +1,61 @@
+{
+  "key": "workload-this-week@1",
+  "version": 1,
+  "titles": {
+    "en": "Workload this week",
+    "he": "עומס השבוע"
+  },
+  "type": "workload",
+  "vars": {},
+  "blocks": [
+    {
+      "id": "blk_load",
+      "type": "workload",
+      "titles": {
+        "en": "Workload this week",
+        "he": "עומס השבוע"
+      },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "combinator": "or",
+              "rules": [
+                {
+                  "field": "kind",
+                  "operator": "=",
+                  "value": "event"
+                },
+                {
+                  "field": "status",
+                  "operator": "in",
+                  "value": ["open", "in_progress"]
+                }
+              ]
+            },
+            {
+              "field": "topic",
+              "operator": "=",
+              "value": "$page.topic"
+            }
+          ]
+        },
+        "dateRange": "this_week",
+        "dateField": "any",
+        "limit": 200
+      },
+      "viz": {
+        "kind": "workload",
+        "capacityHours": 8
+      },
+      "listen": ["$page.topic"]
+    }
+  ],
+  "layouts": {
+    "lg": [],
+    "md": [],
+    "sm": []
+  }
+}

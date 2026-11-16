@@ -1,4 +1,5 @@
 import { type RequestHandler } from 'express';
+import { Actor } from '../classes/base/Actor.js';
 import { User, Media } from '../classes/index.js';
 import type { AuthenticatedRequest } from '../types/express.js';
 import type {
@@ -10,15 +11,15 @@ import type {
 } from '../routes/private/account.js';
 import { accountImageFolder } from '../constants/s3Folders.js';
 import { consumeStagedUpload, stagedUploadErrorStatus } from '../services/stagedUpload.js';
-import {
-  deleteAllEntityMedia,
-  deleteMediaById,
-  uploadAndCreateMedia,
-} from '../services/mediaManager.js';
 import { getPresignedDownloadUrl, uploadExportZip } from '../utils/s3Util.js';
 import { createUserExportZip } from '../utils/exportZipUtil.js';
 import { sendEmail, escapeHtml } from '../utils/sesUtil.js';
 import { environment } from '../config/environment.js';
+import { Workspace } from '../classes/workspace/index.js';
+import { findSecrets } from '../services/secretPatterns.js';
+
+/** What a 5xx answers with; the real error only goes to the (redacting) log. */
+const INTERNAL_ERROR_MESSAGE = 'Internal server error';
 
 async function resolvePhotoUrl(photoId: string | null): Promise<string | null> {
   if (photoId === null) return null;
@@ -41,20 +42,20 @@ const getMe: RequestHandler = async (req, res): Promise<void> => {
 
     const photoUrl = await resolvePhotoUrl(user.photoId);
 
-    const data: MeResponseData = toMeResponse(user, photoUrl);
+    const data: MeResponseData = await toMeResponse(user, photoUrl);
 
     res.success(data);
   } catch (error) {
     console.error('Error fetching user account:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to fetch account data';
-    res.error(errorMessage, 500);
+    res.error(INTERNAL_ERROR_MESSAGE, 500);
   }
 };
 
 /** Lifetime of the export download link. */
 const EXPORT_URL_TTL_SECONDS = 900;
 
-function toMeResponse(user: User, photoUrl: string | null): MeResponseData {
+async function toMeResponse(user: User, photoUrl: string | null): Promise<MeResponseData> {
+  const { hasWorkspaces, defaultWorkspaceId } = await Workspace.statusFor(user);
   return {
     id: user.id,
     cognitoSub: user.cognitoSub,
@@ -62,6 +63,8 @@ function toMeResponse(user: User, photoUrl: string | null): MeResponseData {
     name: user.name ?? '',
     photoUrl,
     lastLoginAt: user.lastLoginAt ?? null,
+    hasWorkspaces,
+    defaultWorkspaceId,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
   };
@@ -74,6 +77,10 @@ function parseUpdateMeBody(body: unknown): UpdateMeRequestBody | string {
   }
   const { name, removePhoto, photo } = body as Record<string, unknown>;
   if (name !== undefined && typeof name !== 'string') return 'name must be a string';
+  // A token-shaped name would be stored, then blocked by the response guard on every GET /me.
+  if (typeof name === 'string' && findSecrets(name).length > 0) {
+    return 'name must not look like a secret';
+  }
   if (removePhoto !== undefined && typeof removePhoto !== 'boolean') {
     return 'removePhoto must be a boolean';
   }
@@ -133,7 +140,7 @@ const updateMe: RequestHandler = async (req, res): Promise<void> => {
         fileName: body.photo.fileName,
         purpose: 'account-photo',
       });
-      newPhoto = await uploadAndCreateMedia({
+      newPhoto = await Media.upload({
         ...staged,
         folder: accountImageFolder(userId),
         uploadedBy: userId,
@@ -153,25 +160,25 @@ const updateMe: RequestHandler = async (req, res): Promise<void> => {
 
     const oldPhotoId = user.photoId;
     if (oldPhotoId !== null && 'photoId' in updateData && updateData.photoId !== oldPhotoId) {
-      await deleteMediaById(oldPhotoId).catch((error: unknown) => {
+      await Media.remove(oldPhotoId).catch((error: unknown) => {
         console.warn('Failed to delete replaced photo %s:', oldPhotoId, error);
       });
     }
 
     const photoUrl = await resolvePhotoUrl(updatedUser.photoId);
-    const data: UpdateMeResponseData = toMeResponse(updatedUser, photoUrl);
+    const data: UpdateMeResponseData = await toMeResponse(updatedUser, photoUrl);
     res.success(data);
   } catch (error) {
     if (newPhoto !== null) {
       const orphanId = newPhoto.id;
-      await deleteMediaById(orphanId).catch((cleanupError: unknown) => {
+      await Media.remove(orphanId).catch((cleanupError: unknown) => {
         console.warn('Failed to remove uncommitted photo %s:', orphanId, cleanupError);
       });
     }
     const status = stagedUploadErrorStatus(error, 500);
     if (status >= 500) console.error('Error updating user account:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to update account';
-    res.error(errorMessage, status);
+    const known = status < 500 && error instanceof Error;
+    res.error(known ? error.message : INTERNAL_ERROR_MESSAGE, status);
   }
 };
 
@@ -181,9 +188,10 @@ const deleteAccount: RequestHandler = async (req, res): Promise<void> => {
     const userId = authReq.user.id;
     const cognitoSub = authReq.user.cognitoSub;
 
-    await deleteAllEntityMedia(userId);
+    await Media.removeAllOf(userId);
 
-    await User.deleteAccount(userId, cognitoSub);
+    // Runs the workspace cascade (deleteAccountCascade) before Cognito and the user row go.
+    await User.deleteAccount(userId, cognitoSub, Actor.user(userId, Actor.originOf(req)));
 
     const data: DeleteUserResponseData = {
       message: 'All user data has been permanently deleted',
@@ -192,9 +200,11 @@ const deleteAccount: RequestHandler = async (req, res): Promise<void> => {
     res.success(data);
   } catch (error) {
     console.error('Error deleting user account:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to delete user account';
-    const statusCode = errorMessage === 'User not found' ? 404 : 500;
-    res.error(errorMessage, statusCode);
+    if (error instanceof Error && error.message === 'User not found') {
+      res.error('User not found', 404);
+      return;
+    }
+    res.error(INTERNAL_ERROR_MESSAGE, 500);
   }
 };
 
@@ -257,8 +267,7 @@ const sendTest: RequestHandler = async (req, res): Promise<void> => {
     res.success({ message: 'Test email sent successfully' });
   } catch (error) {
     console.error('Error sending test email:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to send test email';
-    res.error(errorMessage, 500);
+    res.error(INTERNAL_ERROR_MESSAGE, 500);
   }
 };
 
@@ -286,8 +295,7 @@ const exportMyData: RequestHandler = async (req, res): Promise<void> => {
     res.success(data);
   } catch (error) {
     console.error('Error exporting user data:', error);
-    const errorMessage = error instanceof Error ? error.message : 'Failed to export data';
-    res.error(errorMessage, 500);
+    res.error(INTERNAL_ERROR_MESSAGE, 500);
   }
 };
 

@@ -1,10 +1,10 @@
 openapi: 3.0.3
 
 info:
-  title: Elytra API
+  title: TodoList API
   version: 1.0.0
   description: |
-    REST API for the Elytra platform.
+    REST API for TodoList.
 
     - `/public/auth/*`: public authentication flows (sign-up, login, password reset, token refresh).
     - `/private/*`: requires `Authorization: Bearer <idToken>` from login or refresh.
@@ -26,7 +26,7 @@ servers:
     description: Deployed environment
     variables:
       domain:
-        default: elytra.shalev396.com
+        default: todolist.shalev396.com
 
 tags:
   - name: Auth
@@ -872,7 +872,7 @@ components:
             uploadUrl:
               type: string
               format: uri
-              example: https://elytra-dev-assets.s3.us-east-1.amazonaws.com/
+              example: https://todolist-dev-assets.s3.us-east-1.amazonaws.com/
             fields:
               type: object
               additionalProperties:

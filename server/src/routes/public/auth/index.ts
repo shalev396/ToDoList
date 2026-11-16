@@ -68,6 +68,10 @@ export interface LoginResponseData {
     refreshToken: string;
     expiresIn: number;
   };
+  /** False on a first sign-in: the client shows onboarding (create a workspace or accept an invite). */
+  hasWorkspaces: boolean;
+  /** The workspace to open: the one last used while the user still belongs to it, else their oldest; null without any. */
+  defaultWorkspaceId: string | null;
 }
 
 router.post('/login', AuthController.login);

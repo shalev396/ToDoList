@@ -1,199 +1,119 @@
-import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { PageMetadata } from '@/components/shared/PageMetadata';
-import { pageTitle } from '@/data/pageTitles';
 import { useTranslation } from 'react-i18next';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { GradientText } from '@/components/animations/text/GradientText';
-import { FadeContent } from '@/components/animations/FadeContent';
-import { ElectricBorder } from '@/components/animations/ElectricBorder';
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from '@/components/ui/accordion';
-import { Check, ArrowRight } from 'lucide-react';
-import { pathTo, ROUTES } from '@/router/routes';
+import { Check } from 'lucide-react';
+import { PageMetadata } from '@/components/shared/PageMetadata';
+import { Faq } from '@/components/shared/Faq';
+import { ctaVariants } from '@/components/shared/cta-variants';
+import { sourceNameKey } from '@/components/items/sources';
+import { app } from '@/data/app';
+import { joinList, planFeatures, supportedIntegrations } from '@/data/pricing';
+import { pageTitle } from '@/data/pageTitles';
 import { useLanguage } from '@/hooks/useLanguage';
+import { pathTo, ROUTES } from '@/router/routes';
 
-type BillingCycle = 'monthly' | 'yearly';
+const PRICING_FAQ = ['free', 'limits', 'openSource', 'leave', 'tokens', 'sharing'] as const;
 
+const container = 'mx-auto w-full max-w-[1200px] px-4 sm:px-6 lg:px-8';
+
+/**
+ * One plan, and it's free: what it includes (every number from the shared limits), a contact for
+ * teams and schools, and questions.
+ */
 export default function PricingPage() {
   const { t } = useTranslation();
   const { language } = useLanguage();
-  const [billing, setBilling] = useState<BillingCycle>('monthly');
-
-  const plans = ['free', 'pro', 'enterprise'] as const;
-
-  const faqItems = t('pricing.faq.items', { returnObjects: true }) as {
-    question: string;
-    answer: string;
-  }[];
+  const integrations = joinList(
+    supportedIntegrations.map((provider) => t(sourceNameKey(provider))),
+    t('pricing.plan.list.separator'),
+    t('pricing.plan.list.last'),
+  );
 
   return (
-    <div className="min-h-svh">
-      <PageMetadata title={pageTitle('Pricing')} />
-      <div className="container mx-auto px-4 py-24 sm:px-6 lg:px-8">
-        {/* Header */}
-        <FadeContent>
-          <div className="mb-10 text-center">
-            <h1 className="text-4xl font-bold tracking-tight sm:text-5xl md:text-6xl">
-              <GradientText>{t('pricing.title')}</GradientText> {t('pricing.titleHighlight')}
-            </h1>
-            <p className="text-muted-foreground mx-auto mt-6 max-w-2xl text-lg">
-              {t('pricing.subtitle')}
-            </p>
+    <>
+      <PageMetadata
+        title={pageTitle(t('pricing.meta.title'))}
+        description={t('pricing.meta.description')}
+      />
+      <section
+        aria-labelledby="pricing-title"
+        className={`${container} pt-16 pb-12 lg:pt-24 lg:pb-16`}
+      >
+        <h1
+          id="pricing-title"
+          className="max-w-[16ch] text-[2.75rem] leading-[1.05] font-semibold tracking-[-0.02em] text-balance lg:text-[4rem]"
+        >
+          {t('pricing.title')}
+        </h1>
+        <p className="mt-6 max-w-[52ch] text-lg leading-relaxed text-muted-foreground lg:text-[1.3125rem]">
+          {t('pricing.lead')}
+        </p>
+      </section>
+
+      <section
+        aria-labelledby="plan-title"
+        className={`${container} grid grid-cols-1 items-start gap-6 pb-[72px] lg:grid-cols-12 lg:pb-32`}
+      >
+        <div className="rounded-lg border bg-card lg:col-span-8">
+          <div className="flex flex-col gap-6 p-6 sm:flex-row sm:items-start sm:justify-between lg:p-8">
+            <div>
+              <h2 id="plan-title" className="text-[1.875rem] leading-tight font-semibold">
+                {t('pricing.plan.name')}
+              </h2>
+              <p className="mt-2 flex flex-wrap items-baseline gap-x-2.5">
+                <span className="text-[1.875rem] leading-none font-semibold tracking-[-0.02em]">
+                  {t('pricing.plan.price')}
+                </span>
+                <span className="text-muted-foreground">{t('pricing.plan.period')}</span>
+              </p>
+              <p className="mt-4 max-w-[44ch] text-muted-foreground">
+                {t('pricing.plan.description')}
+              </p>
+            </div>
+            <Link to={pathTo(ROUTES.AUTH.SIGNUP, language)} className={ctaVariants()}>
+              {t('pricing.plan.cta')}
+            </Link>
           </div>
-        </FadeContent>
-
-        {/* Billing toggle */}
-        <FadeContent delay={100}>
-          <div className="mb-14 flex items-center justify-center gap-3">
-            <button
-              onClick={() => {
-                setBilling('monthly');
-              }}
-              className={`rounded-full px-5 py-2 text-sm font-medium transition-colors ${
-                billing === 'monthly'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {t('pricing.monthly')}
-            </button>
-            <button
-              onClick={() => {
-                setBilling('yearly');
-              }}
-              className={`rounded-full px-5 py-2 text-sm font-medium transition-colors ${
-                billing === 'yearly'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {t('pricing.yearly')}
-            </button>
-            {billing === 'yearly' && (
-              <span className="rounded-full bg-success/10 px-3 py-1 text-xs font-medium text-success">
-                {t('pricing.yearlyDiscount')}
-              </span>
-            )}
+          <div className="border-t p-6 lg:p-8">
+            <h3 className="text-sm font-semibold tracking-normal">
+              {t('pricing.plan.includedTitle')}
+            </h3>
+            <ul className="mt-5 grid grid-cols-1 gap-x-8 gap-y-5 sm:grid-cols-2">
+              {planFeatures.map(({ id, title, detail }) => (
+                <li key={id} data-plan-feature={id} className="flex gap-3">
+                  <Check aria-hidden="true" className="mt-1 size-4 shrink-0" strokeWidth={2.25} />
+                  <div className="min-w-0">
+                    <p className="text-[15px] leading-snug font-medium">
+                      {t(title.key, { ...title.values, list: integrations })}
+                    </p>
+                    {detail ? (
+                      <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                        {t(detail.key, { ...detail.values, list: integrations })}
+                      </p>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
           </div>
-        </FadeContent>
-
-        {/* Pricing cards */}
-        <div className="mx-auto grid max-w-5xl items-stretch gap-8 lg:grid-cols-3">
-          {plans.map((planKey, index) => {
-            const isPro = planKey === 'pro';
-            const features = t(`pricing.${planKey}.features`, {
-              returnObjects: true,
-            }) as string[];
-            const badge = t(`pricing.${planKey}.badge`);
-            const price =
-              billing === 'yearly'
-                ? t(`pricing.${planKey}.priceYearly`)
-                : t(`pricing.${planKey}.price`);
-            const period =
-              billing === 'yearly'
-                ? t(`pricing.${planKey}.periodYearly`)
-                : t(`pricing.${planKey}.period`);
-
-            const inner = (
-              <div className="flex h-full flex-col">
-                <CardHeader className="text-center">
-                  <CardTitle className="text-2xl">{t(`pricing.${planKey}.name`)}</CardTitle>
-                  <div className="mt-4">
-                    <span className="whitespace-pre-line text-4xl font-bold">{price}</span>
-                    <span className="text-muted-foreground text-sm">/{period}</span>
-                  </div>
-                  <p className="text-muted-foreground mt-2 text-base">
-                    {t(`pricing.${planKey}.description`)}
-                  </p>
-                </CardHeader>
-                <CardContent className="flex flex-1 flex-col pt-2">
-                  <ul className="flex-1 space-y-3">
-                    {features.map((feature) => (
-                      <li key={feature} className="flex items-start gap-3">
-                        <Check className="mt-0.5 size-5 shrink-0 text-primary" />
-                        <span className="text-sm">{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  <Button className="mt-8 w-full" variant={isPro ? 'gradient' : 'outline'} asChild>
-                    <Link to={pathTo(ROUTES.AUTH.SIGNUP, language)}>
-                      {t(`pricing.${planKey}.cta`)}
-                    </Link>
-                  </Button>
-                </CardContent>
-              </div>
-            );
-
-            return (
-              <FadeContent key={planKey} delay={index * 100}>
-                {isPro ? (
-                  <div className="relative">
-                    {badge && (
-                      <div className="absolute -top-3 start-1/2 z-10 -translate-x-1/2 rtl:translate-x-1/2">
-                        <span className="bg-primary text-primary-foreground rounded-full px-4 py-1 text-sm font-medium shadow-lg">
-                          {badge}
-                        </span>
-                      </div>
-                    )}
-                    <ElectricBorder className="h-full">
-                      <Card className="h-full border-0 bg-transparent shadow-none">{inner}</Card>
-                    </ElectricBorder>
-                  </div>
-                ) : (
-                  <Card className="h-full">{inner}</Card>
-                )}
-              </FadeContent>
-            );
-          })}
         </div>
 
-        {/* FAQ */}
-        <FadeContent delay={400}>
-          <div className="mx-auto mt-24 max-w-3xl">
-            <h2 className="mb-8 text-center text-2xl font-bold tracking-tight sm:text-3xl">
-              {t('pricing.faq.title')}
+        <div className="flex flex-col items-start justify-start gap-4 rounded-lg border bg-card p-6 lg:col-span-4 lg:p-8">
+          <div>
+            <h2 className="text-base font-semibold tracking-normal">
+              {t('pricing.business.title')}
             </h2>
-            <Accordion type="single" collapsible className="w-full">
-              {faqItems.map((item, i) => (
-                <AccordionItem key={i} value={`item-${i}`}>
-                  <AccordionTrigger className="text-start text-base">
-                    {item.question}
-                  </AccordionTrigger>
-                  <AccordionContent className="text-muted-foreground">
-                    {item.answer}
-                  </AccordionContent>
-                </AccordionItem>
-              ))}
-            </Accordion>
+            <p className="mt-1 text-sm text-muted-foreground">{t('pricing.business.body')}</p>
           </div>
-        </FadeContent>
+          <a
+            href={`mailto:${app.contactEmail}`}
+            className={ctaVariants({ tone: 'secondary', className: 'shrink-0' })}
+          >
+            {t('pricing.business.cta')}
+          </a>
+        </div>
+      </section>
 
-        {/* Bottom CTA */}
-        <FadeContent delay={600}>
-          <div className="mt-24 text-center">
-            <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
-              {t('pricing.ctaSection.title')}
-            </h2>
-            <p className="text-muted-foreground mx-auto mt-3 max-w-lg text-base">
-              {t('pricing.ctaSection.description')}
-            </p>
-            <div className="mt-6">
-              <Button size="lg" variant="gradient" asChild>
-                <Link to={pathTo(ROUTES.AUTH.SIGNUP, language)}>
-                  {t('pricing.ctaSection.button')}
-                  <ArrowRight className="ms-2 size-4" />
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </FadeContent>
-      </div>
-    </div>
+      <Faq items={PRICING_FAQ} className="border-t" />
+    </>
   );
 }

@@ -2,3 +2,6 @@
 # List only committed files it must not reformat.
 *package-lock.json
 server/infra/composer
+
+# Design docs and plans are kept exactly as authored
+docs/dashboard

@@ -1,0 +1,525 @@
+[
+  {
+    "request": {
+      "url": "https://example.invalid/jira/rest/api/3/search/jql"
+    },
+    "response": {
+      "body": {
+        "names": {
+          "customfield_10016": "Story point estimate",
+          "customfield_10200": "Risk level",
+          "customfield_10201": "Team size",
+          "customfield_10202": "Components touched",
+          "customfield_10203": "Reviewer",
+          "customfield_10204": "Design notes",
+          "customfield_10205": "Target release date",
+          "customfield_10206": "API token note"
+        },
+        "issues": [
+          {
+            "id": "10101",
+            "key": "ADS-101",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10101",
+            "fields": {
+              "summary": "Fix CSV import timeout",
+              "status": {
+                "name": "In Progress",
+                "statusCategory": {
+                  "id": 4,
+                  "key": "indeterminate",
+                  "name": "In Progress"
+                }
+              },
+              "duedate": "{{date:-3d}}",
+              "issuetype": {
+                "id": "10004",
+                "name": "Bug"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev",
+                "emailAddress": "demo.dev@example.invalid",
+                "timeZone": "Asia/Jerusalem",
+                "active": true
+              },
+              "priority": {
+                "name": "High"
+              },
+              "labels": ["import", "backend"],
+              "updated": "{{datetime:-1d@10:00}}",
+              "statuscategorychangedate": "{{datetime:-9d@10:00}}",
+              "parent": {
+                "id": "10090",
+                "key": "ADS-90",
+                "fields": {
+                  "summary": "Supplier sync v2",
+                  "issuetype": {
+                    "id": "10000",
+                    "name": "Epic"
+                  }
+                }
+              },
+              "customfield_10020": [
+                {
+                  "id": 13,
+                  "name": "ADS Sprint 13",
+                  "state": "closed"
+                },
+                {
+                  "id": 14,
+                  "name": "ADS Sprint 14",
+                  "state": "active"
+                }
+              ],
+              "customfield_10016": 3,
+              "customfield_10014": null,
+              "customfield_10200": { "value": "High", "id": "10300" },
+              "customfield_10201": 8,
+              "customfield_10202": [{ "value": "backend" }, { "value": "api" }],
+              "customfield_10203": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev"
+              },
+              "customfield_10204": { "type": "doc", "version": 1, "content": [] },
+              "customfield_10205": "{{date:+14d}}",
+              "customfield_10206": "FAKE-not-a-real-secret"
+            }
+          },
+          {
+            "id": "10102",
+            "key": "ADS-102",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10102",
+            "fields": {
+              "summary": "Review supplier sync PR",
+              "status": {
+                "name": "To Do",
+                "statusCategory": {
+                  "id": 2,
+                  "key": "new",
+                  "name": "To Do"
+                }
+              },
+              "duedate": "{{date:-1d}}",
+              "issuetype": {
+                "id": "10002",
+                "name": "Task"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev",
+                "emailAddress": "demo.dev@example.invalid",
+                "timeZone": "Asia/Jerusalem",
+                "active": true
+              },
+              "priority": {
+                "name": "Medium"
+              },
+              "labels": [],
+              "updated": "{{datetime:-2d@09:30}}",
+              "statuscategorychangedate": "{{datetime:-9d@10:00}}",
+              "customfield_10020": null,
+              "customfield_10016": null,
+              "customfield_10014": null
+            }
+          },
+          {
+            "id": "10103",
+            "key": "ADS-103",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10103",
+            "fields": {
+              "summary": "Update pricing rules docs",
+              "status": {
+                "name": "To Do",
+                "statusCategory": {
+                  "id": 2,
+                  "key": "new",
+                  "name": "To Do"
+                }
+              },
+              "duedate": "{{date:+0d}}",
+              "issuetype": {
+                "id": "10002",
+                "name": "Task"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev",
+                "emailAddress": "demo.dev@example.invalid",
+                "timeZone": "Asia/Jerusalem",
+                "active": true
+              },
+              "priority": {
+                "name": "Low"
+              },
+              "labels": [],
+              "updated": "{{datetime:-3d@16:00}}",
+              "statuscategorychangedate": "{{datetime:-9d@10:00}}",
+              "customfield_10020": null,
+              "customfield_10016": null,
+              "customfield_10014": null
+            }
+          },
+          {
+            "id": "10104",
+            "key": "ADS-104",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10104",
+            "fields": {
+              "summary": "Dashboard export to XLSX",
+              "status": {
+                "name": "In Progress",
+                "statusCategory": {
+                  "id": 4,
+                  "key": "indeterminate",
+                  "name": "In Progress"
+                }
+              },
+              "duedate": "{{date:+1d}}",
+              "issuetype": {
+                "id": "10001",
+                "name": "Story"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev",
+                "emailAddress": "demo.dev@example.invalid",
+                "timeZone": "Asia/Jerusalem",
+                "active": true
+              },
+              "priority": {
+                "name": "High"
+              },
+              "labels": [],
+              "updated": "{{datetime:+0d@08:15}}",
+              "statuscategorychangedate": "{{datetime:-9d@10:00}}",
+              "parent": {
+                "id": "10090",
+                "key": "ADS-90",
+                "fields": {
+                  "summary": "Supplier sync v2",
+                  "issuetype": {
+                    "id": "10000",
+                    "name": "Epic"
+                  }
+                }
+              },
+              "customfield_10020": [
+                {
+                  "id": 13,
+                  "name": "ADS Sprint 13",
+                  "state": "closed"
+                },
+                {
+                  "id": 14,
+                  "name": "ADS Sprint 14",
+                  "state": "active"
+                }
+              ],
+              "customfield_10016": 5,
+              "customfield_10014": null
+            }
+          },
+          {
+            "id": "10105",
+            "key": "ADS-105",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10105",
+            "fields": {
+              "summary": "Rate limit webhook retries",
+              "status": {
+                "name": "To Do",
+                "statusCategory": {
+                  "id": 2,
+                  "key": "new",
+                  "name": "To Do"
+                }
+              },
+              "duedate": "{{date:+3d}}",
+              "issuetype": {
+                "id": "10001",
+                "name": "Story"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev",
+                "emailAddress": "demo.dev@example.invalid",
+                "timeZone": "Asia/Jerusalem",
+                "active": true
+              },
+              "priority": {
+                "name": "Medium"
+              },
+              "labels": [],
+              "updated": "{{datetime:-4d@11:00}}",
+              "statuscategorychangedate": "{{datetime:-9d@10:00}}",
+              "customfield_10020": [
+                {
+                  "id": 13,
+                  "name": "ADS Sprint 13",
+                  "state": "closed"
+                },
+                {
+                  "id": 14,
+                  "name": "ADS Sprint 14",
+                  "state": "active"
+                }
+              ],
+              "customfield_10016": 2,
+              "customfield_10014": null
+            }
+          }
+        ],
+        "nextPageToken": "FAKE-page-token-2",
+        "isLast": false
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/jira/rest/api/3/search/jql?nextPageToken=FAKE-page-token-2"
+    },
+    "response": {
+      "body": {
+        "issues": [
+          {
+            "id": "10106",
+            "key": "ADS-106",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10106",
+            "fields": {
+              "summary": "Onboarding checklist for new hires",
+              "status": {
+                "name": "To Do",
+                "statusCategory": {
+                  "id": 2,
+                  "key": "new",
+                  "name": "To Do"
+                }
+              },
+              "duedate": "{{date:+5d}}",
+              "issuetype": {
+                "id": "10002",
+                "name": "Task"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-002",
+                "displayName": "Dana Teammate"
+              },
+              "priority": {
+                "name": "Lowest"
+              },
+              "labels": [],
+              "updated": "{{datetime:-5d@13:00}}",
+              "statuscategorychangedate": "{{datetime:-9d@10:00}}",
+              "customfield_10020": null,
+              "customfield_10016": null,
+              "customfield_10014": null
+            }
+          },
+          {
+            "id": "10107",
+            "key": "ADS-107",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10107",
+            "fields": {
+              "summary": "Migrate cron jobs to scheduler",
+              "status": {
+                "name": "In Review",
+                "statusCategory": {
+                  "id": 4,
+                  "key": "indeterminate",
+                  "name": "In Progress"
+                }
+              },
+              "duedate": null,
+              "issuetype": {
+                "id": "10002",
+                "name": "Task"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev",
+                "emailAddress": "demo.dev@example.invalid",
+                "timeZone": "Asia/Jerusalem",
+                "active": true
+              },
+              "priority": {
+                "name": "Highest"
+              },
+              "labels": [],
+              "updated": "{{datetime:-1d@17:45}}",
+              "statuscategorychangedate": "{{datetime:-9d@10:00}}",
+              "customfield_10020": [
+                {
+                  "id": 13,
+                  "name": "ADS Sprint 13",
+                  "state": "closed"
+                },
+                {
+                  "id": 14,
+                  "name": "ADS Sprint 14",
+                  "state": "active"
+                }
+              ],
+              "customfield_10016": null,
+              "customfield_10014": null
+            }
+          },
+          {
+            "id": "10108",
+            "key": "ADS-108",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10108",
+            "fields": {
+              "summary": "Q4 planning notes",
+              "status": {
+                "name": "Done",
+                "statusCategory": {
+                  "id": 3,
+                  "key": "done",
+                  "name": "Done"
+                }
+              },
+              "duedate": "{{date:-2d}}",
+              "issuetype": {
+                "id": "10002",
+                "name": "Task"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev",
+                "emailAddress": "demo.dev@example.invalid",
+                "timeZone": "Asia/Jerusalem",
+                "active": true
+              },
+              "priority": null,
+              "labels": [],
+              "updated": "{{datetime:-2d@15:20}}",
+              "statuscategorychangedate": "{{datetime:-2d@15:20}}",
+              "customfield_10020": null,
+              "customfield_10016": null,
+              "customfield_10014": null
+            }
+          },
+          {
+            "id": "10109",
+            "key": "ADS-109",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10109",
+            "fields": {
+              "summary": "Remove legacy export endpoint",
+              "status": {
+                "name": "To Do",
+                "statusCategory": {
+                  "id": 2,
+                  "key": "new",
+                  "name": "To Do"
+                }
+              },
+              "duedate": "{{date:+6d}}",
+              "issuetype": {
+                "id": "10002",
+                "name": "Task"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev",
+                "emailAddress": "demo.dev@example.invalid",
+                "timeZone": "Asia/Jerusalem",
+                "active": true
+              },
+              "priority": {
+                "name": "Medium"
+              },
+              "labels": [],
+              "updated": "{{datetime:-6d@10:00}}",
+              "statuscategorychangedate": "{{datetime:-9d@10:00}}",
+              "customfield_10020": null,
+              "customfield_10016": null,
+              "customfield_10014": null
+            }
+          },
+          {
+            "id": "10110",
+            "self": "https://example.invalid/jira/rest/api/3/issue/10110",
+            "fields": {
+              "summary": "Orphaned imported issue",
+              "status": {
+                "name": "To Do",
+                "statusCategory": {
+                  "id": 2,
+                  "key": "new",
+                  "name": "To Do"
+                }
+              },
+              "duedate": null,
+              "issuetype": {
+                "id": "10002",
+                "name": "Task"
+              },
+              "project": {
+                "id": "10001",
+                "key": "ADS",
+                "name": "AutoDS"
+              },
+              "assignee": {
+                "accountId": "FAKE-jira-account-001",
+                "displayName": "Demo Dev",
+                "emailAddress": "demo.dev@example.invalid",
+                "timeZone": "Asia/Jerusalem",
+                "active": true
+              },
+              "priority": null,
+              "labels": [],
+              "updated": "{{datetime:-7d@10:00}}",
+              "statuscategorychangedate": "{{datetime:-9d@10:00}}",
+              "customfield_10020": null,
+              "customfield_10016": null,
+              "customfield_10014": null
+            }
+          }
+        ],
+        "isLast": true
+      }
+    }
+  }
+]

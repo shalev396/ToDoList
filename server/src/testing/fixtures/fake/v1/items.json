@@ -1,0 +1,77 @@
+[
+  {
+    "request": { "url": "https://fake.example.invalid/api/items?page=1" },
+    "response": {
+      "body": {
+        "items": [
+          {
+            "id": "A",
+            "key": "FAKE-1",
+            "title": "Alpha",
+            "status": "open",
+            "closedAt": null,
+            "projectId": "p1",
+            "dueAt": "2026-11-15T21:59:00Z",
+            "updatedAt": "2026-11-01T08:00:00Z",
+            "url": "https://fake.example.invalid/items/A"
+          },
+          {
+            "id": "B",
+            "key": "FAKE-2",
+            "title": "Bravo",
+            "status": "in_progress",
+            "closedAt": null,
+            "projectId": "p1",
+            "dueAt": null,
+            "updatedAt": "2026-11-02T08:00:00Z",
+            "url": "https://fake.example.invalid/items/B"
+          },
+          {
+            "id": "C",
+            "key": "FAKE-3",
+            "title": "Charlie",
+            "status": "open",
+            "closedAt": null,
+            "projectId": "p1",
+            "topicId": "college",
+            "dueAt": null,
+            "updatedAt": "2026-11-03T08:00:00Z",
+            "url": "https://fake.example.invalid/items/C"
+          }
+        ],
+        "next": 2
+      }
+    }
+  },
+  {
+    "request": { "url": "https://fake.example.invalid/api/items?page=2" },
+    "response": {
+      "body": {
+        "items": [
+          {
+            "id": "D",
+            "key": "FAKE-4",
+            "title": "Delta",
+            "status": "open",
+            "closedAt": null,
+            "projectId": null,
+            "dueAt": null,
+            "updatedAt": "2026-11-04T08:00:00Z",
+            "url": "https://fake.example.invalid/items/D"
+          },
+          {
+            "id": "E",
+            "key": "FAKE-5",
+            "title": "Echo (no link)",
+            "status": "open",
+            "closedAt": null,
+            "projectId": "p1",
+            "dueAt": null,
+            "updatedAt": "2026-11-05T08:00:00Z"
+          }
+        ],
+        "next": null
+      }
+    }
+  }
+]

@@ -1,20 +1,44 @@
 """
-Mail.tm helper for E2E tests - creates temp email, signup, confirms, and returns credentials.
-Reuses the Postman flow logic.
+Test users for the E2E suite (a Mail.tm inbox -> signup -> confirm -> login, real Cognito), and
+the inboxes tests read.
+
+Mail.tm itself is tests/mailtm_client, a portable package (no project imports): every call goes
+through one rate limit shared by all the pytest workers on this machine (6 a second; Mail.tm
+allows 8 per IP address), a 429 pauses every worker and is retried after its Retry-After or a
+backoff, and the active domain is looked up once for all workers. This module only holds the
+project's settings (MAILTM_RATE and MAILTM_STATE_DIR override the limiter's) and the TodoList
+API steps.
 """
 import os
 import re
-import time
+import secrets
 from typing import NamedTuple, Optional
 from urllib.parse import urlparse
 
 import requests
 
+from tests.mailtm_client import AddressTaken, MailTmClient, MailTmTimeout, message_text
 
 MAILTM_BASE = "https://api.mail.tm"
+# A confirmation email usually takes 5 to 15 seconds through SES, but in CI, with every worker
+# signing up at once, it has taken over a minute: look after 12 s, then every 8 s, for up to
+# 150 s in all (about 18 looks, far under Mail.tm's rate limit).
 POLL_INITIAL_DELAY = 12
-POLL_RETRY_DELAY = 5
-POLL_MAX_RETRIES = 6
+POLL_RETRY_DELAY = 8
+POLL_TIMEOUT = 150
+
+_CODE = re.compile(r"\b(\d{6})\b")
+_INVITE_PATH = re.compile(r"/(?:en|he)/invites/[A-Za-z0-9_%-]+")
+
+_client: Optional[MailTmClient] = None
+
+
+def get_mailtm_client() -> MailTmClient:
+    """This process's Mail.tm client (the rate limit itself is shared by all of them)."""
+    global _client
+    if _client is None:
+        _client = MailTmClient(MAILTM_BASE)
+    return _client
 
 
 class TestUser(NamedTuple):
@@ -22,60 +46,41 @@ class TestUser(NamedTuple):
     password: str
     id_token: str
     refresh_token: str
+    # Mail.tm password of the user's inbox, so a test can read mail sent to them ("" if unknown).
+    mailtm_password: str = ""
 
 
 def get_mailtm_domain() -> str:
-    r = requests.get(f"{MAILTM_BASE}/domains", timeout=10)
-    r.raise_for_status()
-    data = r.json()
-    domains = data.get("hydra:member", [])
-    active = next((d for d in domains if d.get("isActive")), domains[0] if domains else None)
-    if not active:
-        raise RuntimeError("No Mail.tm domain available")
-    return active["domain"]
+    """The active Mail.tm domain, looked up once for all workers (cached for ten minutes)."""
+    return get_mailtm_client().domain()
 
 
 def create_mailtm_account(domain: str) -> tuple[str, str, str]:
-    """Create Mail.tm account. Returns (email, mailtm_password, app_password)."""
-    import secrets
+    """Create Mail.tm account. Returns (email, mailtm_password, app_password).
 
-    r1 = secrets.token_hex(4)
-    r2 = secrets.token_hex(3)
-    email = f"qatest{r1}{r2}@{domain}"
-    mailtm_password = f"Password{r1}!"
-    app_password = f"Test@{r1}Aa1!"
-
-    for attempt in range(3):
-        r = requests.post(
-            f"{MAILTM_BASE}/accounts",
-            json={"address": email, "password": mailtm_password},
-            headers={"Content-Type": "application/json"},
-            timeout=10,
-        )
-        if r.status_code == 201:
-            return email, mailtm_password, app_password
-        if r.status_code == 429 and attempt < 2:
-            time.sleep(2 ** (attempt + 1))
+    If the random address turns out to be someone else's (AddressTaken), it tries once more with
+    a new one: that is Mail.tm's side, not the test's."""
+    for attempt in range(2):
+        r1 = secrets.token_hex(4)
+        r2 = secrets.token_hex(3)
+        email = f"qatest{r1}{r2}@{domain}"
+        mailtm_password = f"Password{r1}!"
+        app_password = f"Test@{r1}Aa1!"
+        try:
+            get_mailtm_client().create_account(email, mailtm_password)
+        except AddressTaken:
+            if attempt == 1:
+                raise
             continue
-        raise RuntimeError(f"Mail.tm account creation failed: {r.status_code} {r.text}")
+        return email, mailtm_password, app_password
+    raise AssertionError("unreachable")
 
 
 def get_mailtm_token(email: str, mailtm_password: str) -> str:
-    r = requests.post(
-        f"{MAILTM_BASE}/token",
-        json={"address": email, "password": mailtm_password},
-        headers={"Content-Type": "application/json"},
-        timeout=10,
-    )
-    r.raise_for_status()
-    data = r.json()
-    token = data.get("token")
-    if not token:
-        raise RuntimeError("No Mail.tm token in response")
-    return token
+    return get_mailtm_client().get_token(email, mailtm_password)
 
 
-def signup_elytra(api_base_url: str, email: str, password: str, name: str = "Test User") -> None:
+def signup_app(api_base_url: str, email: str, password: str, name: str = "Test User") -> None:
     r = requests.post(
         f"{api_base_url}/public/auth/signup",
         json={"email": email, "password": password, "name": name},
@@ -83,39 +88,25 @@ def signup_elytra(api_base_url: str, email: str, password: str, name: str = "Tes
         timeout=15,
     )
     if r.status_code != 200:
-        raise RuntimeError(f"Elytra signup failed: {r.status_code} {r.text}")
+        raise RuntimeError(f"TodoList signup failed: {r.status_code} {r.text}")
 
 
 def poll_inbox_and_get_code(mailtm_token: str) -> str:
-    time.sleep(POLL_INITIAL_DELAY)
-    for attempt in range(POLL_MAX_RETRIES):
-        r = requests.get(
-            f"{MAILTM_BASE}/messages",
-            headers={"Authorization": f"Bearer {mailtm_token}"},
-            timeout=10,
+    """The 6-digit code from the confirmation email."""
+    try:
+        message = get_mailtm_client().wait_for_message(
+            mailtm_token,
+            lambda message: _CODE.search(message_text(message)),
+            timeout=POLL_TIMEOUT,
+            poll_interval=POLL_RETRY_DELAY,
+            initial_delay=POLL_INITIAL_DELAY,
         )
-        r.raise_for_status()
-        data = r.json()
-        messages = data.get("hydra:member", [])
-        if messages:
-            msg_id = messages[0]["id"]
-            rr = requests.get(
-                f"{MAILTM_BASE}/messages/{msg_id}",
-                headers={"Authorization": f"Bearer {mailtm_token}"},
-                timeout=10,
-            )
-            rr.raise_for_status()
-            msg = rr.json()
-            text = msg.get("text", "") + " " + " ".join(msg.get("html", []))
-            match = re.search(r"\b(\d{6})\b", text)
-            if match:
-                return match.group(1)
-        if attempt < POLL_MAX_RETRIES - 1:
-            time.sleep(POLL_RETRY_DELAY)
-    raise RuntimeError(f"No confirmation code received after {POLL_MAX_RETRIES} retries")
+    except MailTmTimeout:
+        raise RuntimeError(f"No confirmation code received within {POLL_TIMEOUT}s") from None
+    return _CODE.search(message_text(message)).group(1)
 
 
-def confirm_signup_elytra(api_base_url: str, email: str, code: str) -> None:
+def confirm_signup_app(api_base_url: str, email: str, code: str) -> None:
     r = requests.post(
         f"{api_base_url}/public/auth/confirm",
         json={"email": email, "code": code},
@@ -123,10 +114,10 @@ def confirm_signup_elytra(api_base_url: str, email: str, code: str) -> None:
         timeout=15,
     )
     if r.status_code != 200:
-        raise RuntimeError(f"Elytra confirm failed: {r.status_code} {r.text}")
+        raise RuntimeError(f"TodoList confirm failed: {r.status_code} {r.text}")
 
 
-def login_elytra(api_base_url: str, email: str, password: str) -> tuple[str, str]:
+def login_app(api_base_url: str, email: str, password: str) -> tuple[str, str]:
     r = requests.post(
         f"{api_base_url}/public/auth/login",
         json={"email": email, "password": password},
@@ -134,7 +125,7 @@ def login_elytra(api_base_url: str, email: str, password: str) -> tuple[str, str
         timeout=15,
     )
     if r.status_code != 200:
-        raise RuntimeError(f"Elytra login failed: {r.status_code} {r.text}")
+        raise RuntimeError(f"TodoList login failed: {r.status_code} {r.text}")
     data = r.json()
     tokens = data["data"].get("tokens", {})
     id_token = tokens.get("idToken")
@@ -144,16 +135,45 @@ def login_elytra(api_base_url: str, email: str, password: str) -> tuple[str, str
     return id_token, refresh_token
 
 
-def create_test_user(api_base_url: str) -> TestUser:
-    """Create a full test user: Mail.tm -> signup -> confirm -> login."""
+def create_test_user(api_base_url: str, with_workspace: bool = True) -> TestUser:
+    """
+    Create a full test user: Mail.tm -> signup -> confirm -> login (real Cognito, one email).
+
+    With `with_workspace` (the default) the user also gets a workspace through the API:
+    the app sends a signed-in user without one to onboarding instead of the dashboard.
+    """
+    from tests.helpers.workspaces import ensure_workspace
+
     domain = get_mailtm_domain()
     email, mailtm_password, app_password = create_mailtm_account(domain)
     mailtm_token = get_mailtm_token(email, mailtm_password)
-    signup_elytra(api_base_url, email, app_password)
+    signup_app(api_base_url, email, app_password)
     code = poll_inbox_and_get_code(mailtm_token)
-    confirm_signup_elytra(api_base_url, email, code)
-    id_token, refresh_token = login_elytra(api_base_url, email, app_password)
-    return TestUser(email, app_password, id_token, refresh_token)
+    confirm_signup_app(api_base_url, email, code)
+    id_token, refresh_token = login_app(api_base_url, email, app_password)
+    user = TestUser(email, app_password, id_token, refresh_token, mailtm_password)
+    if with_workspace:
+        ensure_workspace(api_base_url, user)
+    return user
+
+
+def wait_for_invite_path(user: TestUser, timeout_s: int = 90) -> str:
+    """The app path ("/en/invites/<token>") from the invite email sent to this user's inbox.
+    The email goes out through the stage's queue and SES, so it takes a few seconds."""
+    if not user.mailtm_password:
+        raise RuntimeError("This user's Mail.tm password is unknown, so its inbox cannot be read")
+    token = get_mailtm_token(user.email, user.mailtm_password)
+    try:
+        # Messages without an invite link (the signup confirmation, say) are read only once.
+        message = get_mailtm_client().wait_for_message(
+            token,
+            lambda message: _INVITE_PATH.search(message_text(message)),
+            timeout=timeout_s,
+            poll_interval=POLL_RETRY_DELAY,
+        )
+    except MailTmTimeout:
+        raise RuntimeError(f"No invite email reached {user.email} within {timeout_s}s") from None
+    return _INVITE_PATH.search(message_text(message)).group(0)
 
 
 def get_test_user_from_env() -> Optional[TestUser]:
@@ -204,19 +224,18 @@ def login_page_with_user(page, app_url: str, user: TestUser) -> None:
 
 def navigate_to_profile_via_ui(page, app_url: str, timeout_ms: int = 15000) -> None:
     """
-    Navigate to profile by opening the user menu and clicking My account.
-    Use after login_page_with_user. Assumes page is on dashboard or another authenticated page.
+    Navigate to profile through the account menu at the foot of the app sidebar (desktop
+    widths). Use after login_page_with_user, on any page of the signed-in app.
     """
-    page.get_by_role("navigation").get_by_role("button").first.click(timeout=timeout_ms)
-    page.get_by_role("menuitem", name="My account").click(timeout=timeout_ms)
-    page.wait_for_load_state("networkidle")
-    page.get_by_role("heading", name="Profile").wait_for(state="visible", timeout=timeout_ms)
+    page.get_by_role("button", name=re.compile(r"^Account: ")).click(timeout=timeout_ms)
+    page.get_by_role("menuitem", name="Profile").click(timeout=timeout_ms)
+    page.get_by_role("heading", name="Profile", level=1).wait_for(state="visible", timeout=timeout_ms)
 
 
 def create_test_user_and_login(page, app_url: str, api_base_url: str) -> None:
     """
     Create test user and inject auth into the Playwright page.
-    Elytra stores idToken in sessionStorage, refreshToken in localStorage.
+    TodoList stores idToken in sessionStorage, refreshToken in localStorage.
     """
     user = create_test_user(api_base_url)
     login_page_with_user(page, app_url, user)

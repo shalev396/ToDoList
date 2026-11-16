@@ -6,8 +6,8 @@ import { ThemeProviderContext } from './theme-context';
 // Hex of --background in index.css. Browsers and the Home Screen web app tint system UI with it.
 // Keep in sync with the theme-color tags in index.html and public/manifest.webmanifest.
 const THEME_COLOR: Record<Theme, string> = {
-  light: '#fafcff',
-  dark: '#04050d',
+  light: '#f7f4ee',
+  dark: '#16130e',
 };
 
 interface ThemeProviderProps {
@@ -32,7 +32,7 @@ function getStoredOrSystemTheme(storageKey: string): Theme {
 
 export function ThemeProvider({
   children,
-  storageKey = 'elytra-ui-theme',
+  storageKey = 'todolist-ui-theme',
   ...props
 }: ThemeProviderProps) {
   const [theme, setThemeState] = useState<Theme>(() => getStoredOrSystemTheme(storageKey));
@@ -51,7 +51,7 @@ export function ThemeProvider({
     });
   }, [theme]);
 
-  // Sync favicon with theme (light vs dark) — same paths as LogoIcon (single source of truth)
+  // Sync the favicon with the theme (data/favicon.ts). The in-app logo swaps in CSS (Logo.tsx).
   useEffect(() => {
     const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
     if (link) {

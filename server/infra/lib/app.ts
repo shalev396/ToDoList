@@ -5,7 +5,7 @@ import { AwsSolutionsChecks } from 'cdk-nag';
 import { SERVER_ROOT } from '../../scripts/paths.js';
 import { loadConfig } from './config.js';
 import { stackName } from './constants.js';
-import { ElytraStack } from './elytra-stack.js';
+import { TodoListStack } from './app-stack.js';
 import { applyNagSuppressions } from './nag.js';
 import { tagApp } from './tags.js';
 
@@ -22,10 +22,10 @@ function cdkJsonContext(): Record<string, unknown> {
 }
 
 /** Builds the app exactly as the CLI does (bin/app.ts) so tests exercise the same wiring. */
-export function buildApp(props?: AppProps): { app: App; stack: ElytraStack } {
+export function buildApp(props?: AppProps): { app: App; stack: TodoListStack } {
   const app = new App({ ...props, context: { ...cdkJsonContext(), ...props?.context } });
   const config = loadConfig(app);
-  const stack = new ElytraStack(app, stackName(config.stage), { config });
+  const stack = new TodoListStack(app, stackName(config.stage), { config });
 
   tagApp(app, config.stage);
   applyNagSuppressions(stack, config);

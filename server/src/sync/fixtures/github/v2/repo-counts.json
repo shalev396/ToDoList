@@ -1,0 +1,16 @@
+{
+  "request": {
+    "graphql": "RepoCounts",
+    "variables": { "ids": ["R_FAKE_sandbox", "R_FAKE_elytra"] }
+  },
+  "response": {
+    "body": {
+      "data": {
+        "nodes": [
+          { "issues": { "totalCount": 6 }, "pullRequests": { "totalCount": 1 } },
+          { "issues": { "totalCount": 4 }, "pullRequests": { "totalCount": 1 } }
+        ]
+      }
+    }
+  }
+}

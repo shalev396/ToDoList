@@ -47,7 +47,7 @@ Hosting platforms ship this as a switch: Vercel **Deployment Protection**, Netli
 
 ### A. AWS WAF — Basic auth rule (recommended AWS-native)
 
-One WAF web ACL (CloudFront scope, `us-east-1`) associated with the dev **and** qa distributions. A rule blocks any request whose `authorization` header is not exactly `Basic base64(user:password)`, answering with a custom **401** and header `WWW-Authenticate: Basic realm="Elytra staging"` — which makes the browser show its native login prompt. Fully declarative (`wafv2.CfnWebACL` + `webAclId` on the distribution), no code.
+One WAF web ACL (CloudFront scope, `us-east-1`) associated with the dev **and** qa distributions. A rule blocks any request whose `authorization` header is not exactly `Basic base64(user:password)`, answering with a custom **401** and header `WWW-Authenticate: Basic realm="TodoList staging"` — which makes the browser show its native login prompt. Fully declarative (`wafv2.CfnWebACL` + `webAclId` on the distribution), no code.
 
 - **Cost:** about $5/month per web ACL + $1/rule + $0.60 per million requests; one ACL can serve both stages.
 - **The catch — header conflict:** after login the client sends `Authorization: Bearer <idToken>` on API calls ([`client/src/api/instance.ts`](../client/src/api/instance.ts)), and an explicit header replaces the browser's Basic credentials. The rule needs an exception, and neither choice is airtight:

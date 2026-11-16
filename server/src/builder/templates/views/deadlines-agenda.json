@@ -1,0 +1,60 @@
+{
+  "key": "deadlines-agenda@1",
+  "version": 1,
+  "titles": {
+    "en": "Deadlines agenda",
+    "he": "סדר יום של מועדים"
+  },
+  "type": "agenda",
+  "vars": {},
+  "blocks": [
+    {
+      "id": "blk_agenda",
+      "type": "agenda",
+      "titles": {
+        "en": "Deadlines agenda",
+        "he": "סדר יום של מועדים"
+      },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "field": "dueAt",
+              "operator": "notNull"
+            },
+            {
+              "field": "status",
+              "operator": "in",
+              "value": ["open", "in_progress"]
+            },
+            {
+              "field": "topic",
+              "operator": "=",
+              "value": "$page.topic"
+            }
+          ]
+        },
+        "dateRange": "upcoming_7d",
+        "dateField": "dueAt",
+        "sort": [
+          {
+            "field": "dueAt",
+            "dir": "asc"
+          }
+        ],
+        "limit": 200
+      },
+      "viz": {
+        "kind": "agenda"
+      },
+      "listen": ["$page.topic"]
+    }
+  ],
+  "layouts": {
+    "lg": [],
+    "md": [],
+    "sm": []
+  }
+}

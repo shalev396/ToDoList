@@ -1,0 +1,72 @@
+{
+  "request": { "url": "https://api.github.com/user/repos?affiliation=owner" },
+  "response": {
+    "headers": { "ETag": "W/\"FAKE-etag-user-repos-v1\"" },
+    "body": [
+      {
+        "id": 9100011,
+        "node_id": "R_FAKE_elytra",
+        "name": "Elytra",
+        "full_name": "shalev396/Elytra",
+        "owner": { "login": "shalev396", "type": "User" },
+        "private": false,
+        "html_url": "https://example.invalid/github/shalev396/Elytra",
+        "fork": false,
+        "archived": false,
+        "language": "TypeScript",
+        "default_branch": "main",
+        "open_issues_count": 5,
+        "pushed_at": "{{datetime:-1d@17:20}}",
+        "updated_at": "{{datetime:-1d@17:20}}"
+      },
+      {
+        "id": 9100012,
+        "node_id": "R_FAKE_sandbox",
+        "name": "dashboard-sandbox",
+        "full_name": "shalev396/dashboard-sandbox",
+        "owner": { "login": "shalev396", "type": "User" },
+        "private": true,
+        "html_url": "https://example.invalid/github/shalev396/dashboard-sandbox",
+        "fork": false,
+        "archived": false,
+        "language": "TypeScript",
+        "default_branch": "main",
+        "open_issues_count": 7,
+        "pushed_at": "{{datetime:-1d@21:05}}",
+        "updated_at": "{{datetime:-1d@21:05}}"
+      },
+      {
+        "id": 9100013,
+        "node_id": "R_FAKE_fork",
+        "name": "react-grid-fork",
+        "full_name": "shalev396/react-grid-fork",
+        "owner": { "login": "shalev396", "type": "User" },
+        "private": false,
+        "html_url": "https://example.invalid/github/shalev396/react-grid-fork",
+        "fork": true,
+        "archived": false,
+        "language": "JavaScript",
+        "default_branch": "master",
+        "open_issues_count": 0,
+        "pushed_at": "{{datetime:-40d@12:00}}",
+        "updated_at": "{{datetime:-40d@12:00}}"
+      },
+      {
+        "id": 9100014,
+        "node_id": "R_FAKE_old_notes",
+        "name": "old-notes",
+        "full_name": "shalev396/old-notes",
+        "owner": { "login": "shalev396", "type": "User" },
+        "private": true,
+        "html_url": "https://example.invalid/github/shalev396/old-notes",
+        "fork": false,
+        "archived": true,
+        "language": null,
+        "default_branch": "main",
+        "open_issues_count": 1,
+        "pushed_at": "{{datetime:-300d@09:00}}",
+        "updated_at": "{{datetime:-300d@09:00}}"
+      }
+    ]
+  }
+}

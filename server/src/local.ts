@@ -1,26 +1,42 @@
+import { installConsoleRedaction } from './services/logger.js';
+
+// First, before anything can log: every console.* call is redacted from here on.
+installConsoleRedaction();
+
 import { existsSync } from 'node:fs';
-import express, { type RequestHandler } from 'express';
-import { isStage, resolveRegion, STAGES } from '../infra/lib/constants.js';
+import express from 'express';
+import { resolveRegion } from '../infra/lib/constants.js';
 import { readStackOutputs } from '../infra/lib/stack-outputs.js';
+import { turnRateLimitsOffForLocalServer } from './config/localSwitches.js';
+import { parseLocalArgs, type LocalServerArgs } from './devtools/localArgs.js';
 
 /**
  * Local dev server — the same Express app the Lambda serves, on http://localhost:3000.
  *
- * Usage: tsx watch src/local.ts --stage dev
+ * Usage: tsx watch src/local.ts --stage dev [--no-rate-limits]
+ *
+ * `--no-rate-limits` turns the in-app rate limits off for this process (config/localSwitches.ts):
+ * CI's browser tests send everything from 127.0.0.1. A Lambda has no such switch.
  *
  * Inputs: DOMAIN_NAME and DATABASE_URL, from the shell or server/.env.<stage>.
- * Everything else (Cognito ids, assets bucket) is read from the deployed elytra-<stage> stack,
- * so AWS credentials for the account are required.
+ * Everything else (Cognito ids, assets bucket, KMS key) is read from the deployed todolist-<stage>
+ * stack, so AWS credentials for the account are required. Background syncs ("Sync now") run inline
+ * in this process (services/syncJobs.ts), and emails go to SES with those credentials.
  */
 
 const PORT = 3000;
-const CLIENT_ORIGIN = 'http://localhost:5173';
 
-const stageFlag = process.argv.indexOf('--stage');
-const stage = stageFlag === -1 ? 'dev' : process.argv[stageFlag + 1];
-if (!isStage(stage)) {
-  console.error(`Invalid --stage "${String(stage)}". Expected one of: ${STAGES.join(', ')}`);
+let args: LocalServerArgs;
+try {
+  args = parseLocalArgs(process.argv.slice(2));
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
+}
+const { stage } = args;
+if (!args.rateLimits) {
+  turnRateLimitsOffForLocalServer();
+  console.warn('[local] in-app rate limits are OFF for this process (--no-rate-limits)');
 }
 
 const envFile = `.env.${stage}`;
@@ -39,6 +55,7 @@ const outputs = await readStackOutputs(stage, [
   'userPoolId',
   'userPoolClientId',
   'assetsBucketName',
+  'kmsKeyId',
 ]);
 
 // Wired values always come from the stack, so stale copies in an old .env file can't win.
@@ -47,30 +64,14 @@ process.env.AWS_REGION = resolveRegion();
 process.env.COGNITO_USER_POOL_ID = outputs.userPoolId;
 process.env.COGNITO_CLIENT_ID = outputs.userPoolClientId;
 process.env.S3_ASSETS_BUCKET_NAME = outputs.assetsBucketName;
-// A local server sees every request from one IP, so per-IP limits would throttle a single test
-// run. Never set on Lambda.
-process.env.DISABLE_RATE_LIMIT = 'true';
+process.env.KMS_KEY_ID = outputs.kmsKeyId;
+// The stage's app secrets are read from Secrets Manager (services/appSecrets.ts, name derived from
+// ENV) with the developer's AWS credentials: GetSecretValue on todolist-<stage>-app-secrets.
 
 // Imported only after the environment is populated: config/environment.ts reads it at load time.
 const { createApp } = await import('./app.js');
 const { initDB } = await import('./config/database.js');
-
-/** CloudFront makes the deployed app same-origin; locally the Vite client runs on another port. */
-const localCors: RequestHandler = (req, res, next) => {
-  if (req.headers.origin === CLIENT_ORIGIN) {
-    res.setHeader('Access-Control-Allow-Origin', CLIENT_ORIGIN);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
-    res.setHeader('Access-Control-Max-Age', '86400');
-    res.setHeader('Vary', 'Origin');
-  }
-  if (req.method === 'OPTIONS') {
-    res.sendStatus(204);
-    return;
-  }
-  next();
-};
+const { localCors } = await import('./devtools/localCors.js');
 
 await initDB();
 
@@ -78,6 +79,6 @@ const app = express();
 app.use(localCors);
 app.use(createApp());
 
-app.listen(PORT, () => {
+app.listen(PORT, '127.0.0.1', () => {
   console.warn(`[local] ${stage} API listening on http://localhost:${String(PORT)}/api`);
 });

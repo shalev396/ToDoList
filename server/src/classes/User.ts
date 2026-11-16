@@ -4,74 +4,80 @@ import {
   AdminDeleteUserCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { environment } from '../config/environment.js';
+import type { Actor } from './base/Actor.js';
+import { Entity } from './base/Entity.js';
+import { Workspace } from './workspace/Workspace.js';
 
 const cognitoClient = new CognitoIdentityProviderClient({
   region: environment.awsRegion,
 });
 
-export class User {
-  private readonly _id: string;
-  private readonly _cognitoSub: string;
-  private readonly _name: string | null;
-  private readonly _email: string | null;
-  private readonly _photoId: string | null;
-  private readonly _lastLoginAt: Date | null;
-  private readonly _createdAt: Date;
-  private readonly _updatedAt: Date;
-
-  constructor(data: UserData) {
-    this._id = data.id;
-    this._cognitoSub = data.cognitoSub;
-    this._name = data.name;
-    this._email = data.email;
-    this._photoId = data.photoId;
-    this._lastLoginAt = data.lastLoginAt;
-    this._createdAt = data.createdAt;
-    this._updatedAt = data.updatedAt;
-  }
-
-  get id(): string {
-    return this._id;
+/**
+ * A signed-in person (Cognito's user, mirrored as a Users row): this class owns the person's own
+ * reads and writes (sign-in, profile, account deletion). It is not the only code that reaches the
+ * Users collection (`getUserRepository`); the workspace classes also do, for what a workspace
+ * needs of a person:
+ *
+ * - Invite reads a user by email (is the invitee already a member?) and by id (the inviter's name
+ *   for the email);
+ * - Member reads a user by id (a member's name and email for the list);
+ * - Workspace writes the user's default workspace (`setDefaultWorkspace`: on create, and when the
+ *   user picks one) and cascade.ts reads the emails of the integration owners it notifies.
+ *
+ * Those are the workspace's reads of people and one pointer it keeps for them, not account
+ * operations, so they stay with the workspace classes. A user lives outside any workspace (an
+ * Entity, not a WorkspaceEntity); `deleteAccount` runs the workspace cascade first
+ * (Workspace.deleteAccountCascade).
+ */
+export class User extends Entity<UserData> {
+  private constructor(data: UserData) {
+    super(data);
   }
 
   get cognitoSub(): string {
-    return this._cognitoSub;
+    return this.data.cognitoSub;
   }
 
   get name(): string | null {
-    return this._name;
+    return this.data.name;
   }
 
   get email(): string | null {
-    return this._email;
+    return this.data.email;
   }
 
   get photoId(): string | null {
-    return this._photoId;
+    return this.data.photoId;
   }
 
   get lastLoginAt(): Date | null {
-    return this._lastLoginAt;
+    return this.data.lastLoginAt;
+  }
+
+  get defaultWorkspaceId(): string | null {
+    return this.data.defaultWorkspaceId;
   }
 
   get createdAt(): Date {
-    return this._createdAt;
+    return this.data.createdAt;
   }
 
   get updatedAt(): Date {
-    return this._updatedAt;
+    return this.data.updatedAt;
   }
 
-  toJSON(): UserData {
+  /** The row's fields, exactly these. */
+  override toJSON(): UserData {
     return {
-      id: this._id,
-      cognitoSub: this._cognitoSub,
-      name: this._name,
-      email: this._email,
-      photoId: this._photoId,
-      lastLoginAt: this._lastLoginAt,
-      createdAt: this._createdAt,
-      updatedAt: this._updatedAt,
+      id: this.id,
+      cognitoSub: this.cognitoSub,
+      name: this.name,
+      email: this.email,
+      photoId: this.photoId,
+      lastLoginAt: this.lastLoginAt,
+      defaultWorkspaceId: this.defaultWorkspaceId,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
     };
   }
 
@@ -111,13 +117,19 @@ export class User {
     return new User(updated);
   }
 
-  static async deleteAccount(userId: string, cognitoSub: string): Promise<void> {
+  /** `actor`: the request's actor, whose address and user agent the cascade's audit entries get. */
+  static async deleteAccount(userId: string, cognitoSub: string, actor?: Actor): Promise<void> {
     const repo = await getUserRepository();
     const user = await repo.findByCognitoSub(cognitoSub);
 
     if (user === null) {
       throw new Error('User not found');
     }
+
+    // Workspaces first: the ones this user solely owns are deleted, every other membership
+    // and agent key is revoked. If this fails, the account (Cognito and the row) is still there
+    // and the request can be retried.
+    await Workspace.deleteAccountCascade(userId, actor);
 
     try {
       const userPoolId = environment.cognitoUserPoolId;

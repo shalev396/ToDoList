@@ -1,3 +1,11 @@
 export { responseFormatter, errorHandler, notFound } from './responseFormatter.js';
-export { expressAuth } from './expressAuth.js';
-export { privateLimiter, authLimiter } from './rateLimit.js';
+export { verifyCognitoToken, loadCognitoUser, verifiedCognitoSub } from './expressAuth.js';
+export {
+  privateLimiter,
+  privateUserLimiter,
+  authLimiter,
+  oauthLimiter,
+  mcpOAuthLimiter,
+  mcpTokenLimiter,
+} from './rateLimit.js';
+export { requestMemo } from './requestMemo.js';

@@ -1,4 +1,4 @@
-# E2E test dependencies for Elytra client
+# E2E test dependencies for TodoList client
 # Install: pip install -r requirements-test.txt
 # Then: playwright install --with-deps
 

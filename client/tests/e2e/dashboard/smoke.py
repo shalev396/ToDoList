@@ -3,6 +3,8 @@ Dashboard page (dashboard) smoke tests.
 """
 from playwright.sync_api import Page, expect
 
+from tests.config import NORMAL_TIMEOUT
+
 
 def test_dashboard_redirects_unauthenticated(page: Page, app_url: str):
     """Asserts unauthenticated users visiting /dashboard are redirected to /auth/login."""
@@ -12,18 +14,27 @@ def test_dashboard_redirects_unauthenticated(page: Page, app_url: str):
 
 
 def test_dashboard_loads_authenticated(page: Page, app_url: str, authenticated_page: Page):
-    """Asserts the dashboard loads with Dashboard heading and Welcome text when authenticated."""
-    page.goto(f"{app_url}/dashboard", wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle")
+    """Asserts the dashboard's h1 is exactly "Dashboard" and it is the only heading with that word
+    (the auth fixture waits for it by name)."""
+    page.goto(f"{app_url}/dashboard", wait_until="load")
     assert "/auth/login" not in page.url, "Authentication failed: redirected to login page"
-    expect(page.get_by_role("heading", name="Dashboard")).to_be_visible()
-    expect(page.get_by_text("Welcome")).to_be_visible()
+    # After a reload the workspace list, then the dashboard, come from an API that reads a
+    # deployed stage's database: more than the 5 s default on a slow link.
+    expect(page.get_by_role("heading", level=1)).to_have_accessible_name(
+        "Dashboard", timeout=NORMAL_TIMEOUT
+    )
+    expect(page.get_by_role("heading", name="Dashboard")).to_have_count(1)
 
 
-def test_dashboard_welcome_card(page: Page, app_url: str, authenticated_page: Page):
-    """Asserts the welcome card shows User ID and Message when authenticated."""
-    page.goto(f"{app_url}/dashboard", wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle")
+def test_dashboard_without_one_offers_the_template(
+    page: Page, app_url: str, authenticated_page: Page
+):
+    """Asserts an owner without a main dashboard gets today's ring and "Create from template"
+    (the shared user's workspace never gets a dashboard: tests that need one own theirs)."""
+    page.goto(f"{app_url}/dashboard", wait_until="load")
     assert "/auth/login" not in page.url, "Authentication failed: redirected to login page"
-    expect(page.get_by_text("User ID")).to_be_visible()
-    expect(page.get_by_text("Status")).to_be_visible()
+    expect(page.get_by_text("Start your dashboard from a template")).to_be_visible(
+        timeout=NORMAL_TIMEOUT
+    )
+    expect(page.get_by_role("img", name="Today on a 24-hour clock", exact=False)).to_be_visible()
+    expect(page.get_by_role("button", name="Create from template")).to_be_visible()

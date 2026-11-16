@@ -1,0 +1,123 @@
+[
+  {
+    "request": { "url": "https://api.github.com/repos/shalev396/Elytra/issues?state=all" },
+    "response": {
+      "headers": {
+        "Link": "<https://api.github.com/repositories/9100011/issues?state=all&per_page=100&page=2>; rel=\"next\", <https://api.github.com/repositories/9100011/issues?state=all&per_page=100&page=2>; rel=\"last\""
+      },
+      "body": [
+        {
+          "node_id": "I_FAKE_elytra_14",
+          "number": 14,
+          "title": "Port the area rules screen to the new design",
+          "body": "Use the new tokens; keep the rule order editable.",
+          "html_url": "https://example.invalid/github/shalev396/Elytra/issues/14",
+          "state": "open",
+          "state_reason": null,
+          "user": { "login": "shalev396" },
+          "assignees": [{ "login": "shalev396" }],
+          "labels": [{ "name": "design" }],
+          "milestone": null,
+          "closed_at": null,
+          "created_at": "{{datetime:-3d@10:00}}",
+          "updated_at": "{{datetime:-1d@11:45}}"
+        },
+        {
+          "node_id": "PR_FAKE_elytra_13",
+          "number": 13,
+          "title": "Theme tokens for the dashboard shell",
+          "body": "Light and dark tokens, AA contrast checked.",
+          "html_url": "https://example.invalid/github/shalev396/Elytra/pull/13",
+          "state": "open",
+          "state_reason": null,
+          "draft": false,
+          "user": { "login": "shalev396" },
+          "assignees": [{ "login": "shalev396" }],
+          "labels": [{ "name": "frontend" }, { "name": "design" }],
+          "milestone": null,
+          "closed_at": null,
+          "created_at": "{{datetime:-3d@09:00}}",
+          "updated_at": "{{datetime:-1d@10:20}}",
+          "pull_request": {
+            "html_url": "https://example.invalid/github/shalev396/Elytra/pull/13",
+            "merged_at": null
+          }
+        },
+        {
+          "node_id": "I_FAKE_elytra_12",
+          "number": 12,
+          "title": "Fix the RTL overflow on deadline chips (mobile)",
+          "body": "Chips overflow at 320 px in Hebrew.",
+          "html_url": "https://example.invalid/github/shalev396/Elytra/issues/12",
+          "state": "open",
+          "state_reason": null,
+          "user": { "login": "demo-teammate" },
+          "assignees": [{ "login": "shalev396" }, { "login": "demo-teammate" }],
+          "labels": [{ "name": "rtl" }, { "name": "bug" }, { "name": "mobile" }],
+          "milestone": { "title": "Nov polish", "due_on": "{{datetime:+2d@10:00}}" },
+          "closed_at": null,
+          "created_at": "{{datetime:-6d@14:00}}",
+          "updated_at": "{{datetime:-1d@09:50}}"
+        }
+      ]
+    }
+  },
+  {
+    "request": { "url": "https://api.github.com/repositories/9100011/issues?state=all&page=2" },
+    "response": {
+      "headers": {
+        "Link": "<https://api.github.com/repositories/9100011/issues?state=all&per_page=100&page=1>; rel=\"prev\", <https://api.github.com/repositories/9100011/issues?state=all&per_page=100&page=1>; rel=\"first\""
+      },
+      "body": [
+        {
+          "node_id": "I_FAKE_elytra_11",
+          "number": 11,
+          "title": "Support Hebrew month names in the week strip",
+          "body": "Intl already formats them; drop the custom table.",
+          "html_url": "https://example.invalid/github/shalev396/Elytra/issues/11",
+          "state": "closed",
+          "state_reason": "not_planned",
+          "user": { "login": "shalev396" },
+          "assignees": [{ "login": "shalev396" }],
+          "labels": [{ "name": "i18n" }],
+          "milestone": null,
+          "closed_at": "{{datetime:-3d@12:00}}",
+          "created_at": "{{datetime:-12d@10:00}}",
+          "updated_at": "{{datetime:-3d@12:00}}"
+        },
+        {
+          "node_id": "I_FAKE_elytra_10",
+          "number": 10,
+          "title": "Explore a widget gallery",
+          "body": null,
+          "html_url": "https://example.invalid/github/shalev396/Elytra/issues/10",
+          "state": "open",
+          "state_reason": null,
+          "user": { "login": "demo-teammate" },
+          "assignees": [],
+          "labels": [],
+          "milestone": null,
+          "closed_at": null,
+          "created_at": "{{datetime:-20d@11:00}}",
+          "updated_at": "{{datetime:-20d@11:00}}"
+        },
+        {
+          "node_id": "I_FAKE_elytra_9",
+          "number": 9,
+          "title": "Migrate the build to Vite 5",
+          "body": null,
+          "html_url": "https://example.invalid/github/shalev396/Elytra/issues/9",
+          "state": "closed",
+          "state_reason": "completed",
+          "user": { "login": "shalev396" },
+          "assignees": [{ "login": "shalev396" }],
+          "labels": [{ "name": "build" }],
+          "milestone": null,
+          "closed_at": "{{datetime:-60d@10:00}}",
+          "created_at": "{{datetime:-75d@10:00}}",
+          "updated_at": "{{datetime:-60d@10:00}}"
+        }
+      ]
+    }
+  }
+]

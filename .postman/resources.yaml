@@ -3,11 +3,11 @@
 # Run "postman workspace prepare" and "postman workspace push" from repo root.
 
 collections:
-  - postman/collections/Elytra API
+  - postman/collections/TodoList API
 
 environments:
-  - postman/environments/Elytra Local.environment.yaml
-  - postman/environments/Elytra QA.environment.yaml
+  - postman/environments/TodoList Local.environment.yaml
+  - postman/environments/TodoList QA.environment.yaml
 
 localResources:
   specs:

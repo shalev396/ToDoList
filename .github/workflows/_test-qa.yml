@@ -1,6 +1,6 @@
 # Reusable workflow: Run tests against live QA environment
 # Tests run SEQUENTIALLY: backend first, then frontend
-# Uses qa environment to get DOMAIN_NAME (qa.elytra.shalev396.com)
+# Uses the qa environment to get DOMAIN_NAME
 # The WAF gate asks for basic auth on every qa page but not on /api/: only the Playwright job gets
 # BASIC_AUTH_PASSWORD (qa environment secret; the username is DOMAIN_NAME). See docs/staging-access.md.
 # Each job first empties QA (DB, S3 user uploads, Cognito users) with `npm run reset:db -- qa`, a

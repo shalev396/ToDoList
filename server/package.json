@@ -1,7 +1,7 @@
 {
-  "name": "elytra-server",
+  "name": "todolist-server",
   "version": "1.0.0",
-  "description": "Elytra backend: Express API on one AWS Lambda, infrastructure in AWS CDK",
+  "description": "TodoList backend: Express API on one AWS Lambda, infrastructure in AWS CDK",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/local.ts --stage dev",
@@ -19,19 +19,25 @@
     "deploy:backend": "tsx scripts/deploy-backend.ts",
     "reset:db": "tsx scripts/reset-db.ts",
     "deploy:frontend": "tsx scripts/deploy-frontend.ts",
-    "test:local": "cd .. && postman collection run \"postman/collections/Elytra API\" --environment \"postman/environments/Elytra Local.environment.yaml\" --working-dir .",
-    "test:qa": "cd .. && postman collection run \"postman/collections/Elytra API\" --environment \"postman/environments/Elytra QA.environment.yaml\" --working-dir ."
+    "test:local": "cd .. && postman collection run \"postman/collections/TodoList API\" --environment \"postman/environments/TodoList Local.environment.yaml\" --working-dir .",
+    "test:qa": "cd .. && postman collection run \"postman/collections/TodoList API\" --environment \"postman/environments/TodoList QA.environment.yaml\" --working-dir .",
+    "mcp:smoke": "tsx scripts/mcp-smoke.ts"
   },
   "engines": {
     "node": ">=22.0.0"
   },
   "dependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.1135.0",
+    "@aws-sdk/client-kms": "^3.1167.0",
+    "@aws-sdk/client-lambda": "^3.1135.0",
     "@aws-sdk/client-s3": "^3.1135.0",
+    "@aws-sdk/client-secrets-manager": "^3.1168.0",
     "@aws-sdk/client-ses": "^3.1135.0",
     "@aws-sdk/credential-providers": "^3.1142.0",
     "@aws-sdk/s3-presigned-post": "^3.1135.0",
     "@aws-sdk/s3-request-presigner": "^3.1135.0",
+    "@modelcontextprotocol/node": "^2.1.2",
+    "@modelcontextprotocol/server": "^2.4.0",
     "aws4": "^1.13.2",
     "express": "^5.3.0",
     "express-rate-limit": "^7.4.1",
@@ -41,8 +47,11 @@
     "mongoose": "^8.24.7",
     "pg": "^8.16.2",
     "pg-hstore": "^2.3.4",
+    "rfc6902": "^5.3.0",
     "sequelize": "^6.37.8",
-    "serverless-http": "^4.0.0"
+    "serverless-http": "^4.0.0",
+    "undici": "^7.30.1",
+    "zod": "^4.6.7"
   },
   "overrides": {
     "jose": "^5.10.0",
@@ -62,14 +71,15 @@
     "@aws-sdk/client-cloudformation": "^3.1135.0",
     "@aws-sdk/client-cloudfront": "^3.1135.0",
     "@aws-sdk/client-cost-explorer": "^3.1135.0",
-    "@aws-sdk/client-lambda": "^3.1135.0",
     "@aws-sdk/client-route-53": "^3.1135.0",
     "@eslint/js": "^9.39.5",
+    "@modelcontextprotocol/client": "^2.4.0",
     "@types/aws-lambda": "^8.10.158",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "^24.0.3",
     "@types/pg": "^8.16.0",
+    "ajv": "^8.20.0",
     "aws-cdk": "^2.1142.0",
     "aws-cdk-lib": "^2.276.0",
     "cdk-nag": "^3.0.2",
@@ -77,6 +87,7 @@
     "esbuild": "^0.28.2",
     "eslint": "^9.39.5",
     "globals": "^16.3.0",
+    "mongodb-memory-server": "^11.3.0",
     "postman-cli": "^1.27.0",
     "tsx": "^4.23.13",
     "typescript": "^5.8.3",

@@ -12,7 +12,8 @@ export interface AuthProps {
   readonly config: StageConfig;
   /**
    * What the user pool must wait for: Cognito rejects an SES sender that is not verified yet, so
-   * the pool depends on Email's `domainVerified`, which completes once SES has verified the domain.
+   * the pool waits for the CloudFront distribution, which itself waits for the DKIM records
+   * (app-stack.ts). Creating the distribution takes long enough for SES to verify the domain.
    */
   readonly waitFor: IDependable[];
 }

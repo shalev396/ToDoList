@@ -29,11 +29,12 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "verbatimModuleSyntax": false,
+    "erasableSyntaxOnly": true,
     "isolatedModules": true,
     "allowJs": false,
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "scripts/mcp-smoke.ts"],
   "exclude": ["node_modules", "cdk.out", ".build", "infra"]
 }

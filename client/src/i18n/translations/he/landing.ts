@@ -1,153 +1,162 @@
 export const landing = {
-  hero: {
-    badge: 'תבנית קוד פתוח עם מחסנית מלאה',
-    title: 'בנה אפליקציות ללא שרת',
-    titleHighlight: 'במהירות הבזק',
+  meta: {
+    title: 'TodoList: שיעורים, עבודה והגשות על שעון אחד',
     description:
-      'תבנית מוכנה לייצור עם אימות, העלאת קבצים ורכיבי UI מודרניים. התחל לבנות את הפרויקט הבא שלך תוך דקות, לא שבועות.',
-    cta: 'נסה עכשיו',
-    viewGithub: 'צפה ב-GitHub',
-    exploreLabel: 'חקור',
+      'TodoList מרכז את Jira,\u200F ClickUp,\u200F Linear, יומן Google ו-\u2060GitHub בלוח אחד: מה קורה עכשיו, מה הבא וכל תאריך יעד השבוע. חינם למי שלומד וגם עובד.',
   },
-  nav: {
-    benefits: 'יתרונות',
-    features: 'תכונות',
-    tech: 'טכנולוגיות',
-    pricing: 'תמחור',
+  hero: {
+    title: 'שיעורים, עבודה והגשות על שעון אחד',
+    lead: 'TodoList מביא את Jira,\u200F ClickUp,\u200F Linear, יומן Google ו-\u2060GitHub ללוח אחד. רואים מה קורה עכשיו, מה הבא וכל מה שצריך להגיש השבוע, בלי לפתוח חמש לשוניות.',
+    cta: 'יצירת מרחב עבודה',
+    login: 'התחברות',
+    note: 'חינם לכולם, בלי כרטיס אשראי.',
   },
-  benefits: {
-    title: 'למה לבחור ב-{{appName}}',
-    instant: {
-      title: 'טעינה מיידית',
-      description: 'אופטימיזציה לביצועים עם זמני טעינה מתחת לשנייה',
+  demo: {
+    today: 'היום',
+    now: 'עכשיו',
+    next: 'הבא',
+    until: 'עד {{time}}',
+    tomorrowAt: 'מחר {{time}}',
+    nothingNext: 'אין עוד אירועים היום',
+    deadlines: 'תאריכי יעד',
+    nextSevenDays: 'בשבוע הקרוב',
+    legend: 'מקורות',
+    clockSummary: 'היום על שעון של 24 שעות, עם {{count}} אירועים. השעה עכשיו {{time}}. {{status}}',
+    statusNow: 'עכשיו: {{title}}, עד {{time}}.',
+    statusNext: 'הבא: {{title}} ב-\u2060{{time}}.',
+    statusTomorrow: 'הבא: {{title}}, מחר ב-\u2060{{time}}.',
+    statusNone: 'אין עוד אירועים היום.',
+    eventList: 'האירועים של היום',
+    event: '{{title}}, מ-\u2060{{start}} עד {{end}}, {{source}}',
+  },
+  sources: {
+    title: 'מתחבר לכלים שכבר יש לכם בלימודים ובעבודה',
+  },
+  live: {
+    idle: 'נתוני דוגמה שמתעדכנים בזמן אמת',
+    deadline: '{{source}}: נוסף {{title}}',
+    done: '{{source}}: {{title}} הושלם',
+    event: '{{source}}: {{title}} נוסף להיום',
+    moved: '{{source}}: {{title}} הוזז',
+  },
+  flow: {
+    title: 'מחברים, בונים, משתפים',
+    connect: {
+      title: 'מחברים את המקורות',
+      body: 'מדביקים טוקן או קישור. אפשר להסיר בכל רגע.',
     },
-    seo: {
-      title: 'ידידותי למנועי חיפוש',
-      description: 'שיטות עבודה מומלצות מובנות עבור נראות טובה יותר',
+    build: {
+      title: 'בונים את הדף',
+      body: 'מתחילים מתבנית, ואז מזיזים ומשנים גודל של בלוקים.',
     },
-    responsive: {
-      title: 'רספונסיבי לחלוטין',
-      description: 'עובד מצוין ממובייל 320px ועד צגי 4K',
+    share: {
+      title: 'משתפים עם חברים לכיתה',
+      body: 'בוחרים מי עורך ומי רק צופה.',
     },
-    darkMode: {
-      title: 'מצב כהה ובהיר',
-      description: 'לפי ערכת הנושא של המערכת או לפי בחירת המשתמש',
+  },
+  everyone: {
+    title: 'בנוי לכולם',
+    body: 'אותם בלוקים מתאימים לשבוע קל של שיעורים ולשבוע עמוס עם שתי עבודות, תואר ופרויקט צד.',
+    switch: 'בחירת שבוע',
+    light: {
+      label: 'שבוע קל של סטודנט',
+      who: 'שיעורים, אימון ובוחן.',
     },
-    accessible: {
-      title: 'נגיש',
-      description: 'כל עמוד נבדק בבדיקות נגישות אוטומטיות',
+    packed: {
+      label: 'שבוע עמוס',
+      who: 'שתי עבודות, לימודים ופרויקט צד.',
     },
-    typeSafe: {
-      title: 'בטיחות טיפוסים מקצה לקצה',
-      description: 'הלקוח בנוי על טיפוסי ה-TypeScript של ה-API עצמו',
+    summary: 'אירועים: {{events}}. מקורות: {{sources}}. שעות מתוזמנות: {{hours}}.',
+  },
+  logic: {
+    title: 'לוגיקה בכל פנייה',
+    body: 'לכל בלוק יש כללים שאפשר לערוך: מה מוצג, איך ממיינים ומה נחשב חשוב. משנים כלל והרשימה מתעדכנת.',
+    steps: 'עריכה, אחר כך לוגיקה, ואז בוחרים “רק חשוב”: הרשימה שומרת את מה שחשוב.',
+    play: 'הפעלת ההדגמה',
+    pause: 'עצירת ההדגמה',
+    description:
+      'הדגמה: בוחרים עריכה בבלוק, פותחים את הלשונית לוגיקה ובוחרים רק חשוב, והרשימה שומרת את המשימות החשובות, לפי מועד ההגשה.',
+    count: '{{shown}} מתוך {{total}}',
+    tabs: {
+      data: 'נתונים',
+      logic: 'לוגיקה',
     },
-    secure: {
-      title: 'מאובטח כברירת מחדל',
-      description: 'דליים פרטיים, הגבלת קצב וכותרות אבטחה מהקופסה',
-    },
-    payPerUse: {
-      title: 'תשלום לפי שימוש',
-      description: 'אין שרתים שעומדים ריקים: העלות עוקבת אחרי התנועה',
-    },
-    onePush: {
-      title: 'פריסה בדחיפה אחת',
-      description: 'דוחפים ענף והסביבה שלו מתעדכנת מעצמה',
-    },
-    yourData: {
-      title: 'ייצוא ומחיקת נתונים',
-      description: 'משתמשים יכולים להוריד את הנתונים שלהם או למחוק את החשבון',
-    },
-    documented: {
-      title: 'מתועד היטב',
-      description: 'מדריכים, מפרט OpenAPI ותרשים ארכיטקטורה',
-    },
-    openSource: {
-      title: 'קוד פתוח',
-      description: 'ברישיון MIT: עשו fork והפכו אותו לשלכם',
-    },
+    show: 'הצגה',
+    sources: 'מקורות',
+    all: 'הכול',
+    important: 'רק חשוב',
+  },
+  showcase: {
+    title: 'והשאר של השבוע שלכם, מסודר',
+    rail: 'עוד יכולות',
+  },
+  templates: {
+    college: 'לימודים',
+    work: 'עבודה',
+    personal: 'אישי',
+  },
+  roles: {
+    owner: 'בעלים',
+    editor: 'עריכה',
+    viewer: 'צפייה',
+  },
+  scopes: {
+    all: 'הכול',
+    college: 'רק לימודים',
   },
   features: {
-    title: 'כל מה שצריך לבנות',
-    titleHighlight: 'מהר',
-    subtitle: 'תכונות מוכנות לייצור מהקופסה',
-    auth: {
-      title: 'אימות מוכן',
-      description:
-        'הרשמה עם AWS Cognito כולל אימות אימייל, התחברות ואיפוס סיסמה. נתיבי API פרטיים מוגנים ב-JWT.',
+    time: {
+      title: 'היום כשעון, השבוע כיומן',
+      body: 'השעון מציג את היום על טבעת של 24 שעות, והמחוג מצביע על הרגע הזה. היומן נפתח על השבוע, וכל מקור מופיע בצבע משלו.',
     },
-    s3: {
-      title: 'העלאת קבצים',
-      description:
-        'תמונות פרופיל עולות דרך ה-API לדלי S3 פרטי ומוגשות מהדומיין שלכם דרך CloudFront.',
+    deadlines: {
+      title: 'תאריכי יעד מכל המקורות',
+      body: 'מטלות מ-\u2060Moodle, כרטיסים מ-\u2060Jira, סקירות קוד מ-\u2060GitHub ומשימות מ-\u2060Linear ברשימה אחת. הקרובים ביותר מופיעים ראשונים, ומה שבאיחור נמצא למעלה.',
     },
-    serverless: {
-      title: 'ארכיטקטורה ללא שרת',
-      description:
-        'בנוי על AWS Lambda עם API Gateway. שלם רק עבור מה שאתה משתמש עם סקאלינג אוטומטי.',
+    sharing: {
+      title: 'שיתוף עם חברים ללימודים',
+      body: 'יוצרים מרחב עבודה ומזמינים אנשים. מי שיש לו הרשאת עריכה יכול לשנות עמודים, מי שיש לו הרשאת צפייה רק מסתכל, ואפשר לשתף רק את הלימודים בזמן שהעבודה נשארת פרטית.',
     },
-    database: {
-      title: 'מסד הנתונים שלכם',
-      description:
-        'PostgreSQL דרך Sequelize, או MongoDB דרך Mongoose, נבחר אוטומטית לפי מחרוזת החיבור.',
+    agents: {
+      title: 'שאלו את סוכן ה-\u2060AI שלכם',
+      body: 'מחברים סוכן AI דרך MCP עם מפתח שאפשר לבטל בכל רגע. הוא קורא את תאריכי היעד והעמודים שלכם, ויכול לעשות רק מה שהמפתח מרשה.',
     },
-    infra: {
-      title: 'תשתית כקוד',
-      description:
-        'כל הסטאק כתוב ב-AWS CDK ב-TypeScript, נבדק ב-cdk-nag ומוצג כתרשים ב-Infrastructure Composer.',
-    },
-    cdn: {
-      title: 'דומיין משלכם ו-CDN',
-      description: 'CloudFront על הדומיין שלכם, עם תעודת HTTPS ורשומות DNS שנוצרות עבורכם.',
-    },
-    cicd: {
-      title: 'צינור CI/CD',
-      description:
-        'GitHub Actions פורסים את dev, qa ו-prod מהענפים שלהם, עם lint, build ובדיקות בכל pull request.',
-    },
-    testing: {
-      title: 'בדיקות אוטומטיות',
-      description:
-        'בדיקות קצה לקצה ב-Playwright, בדיקות API ב-Postman ובדיקות תשתית, מקומית וב-CI.',
-    },
-    state: {
-      title: 'ניהול מצב',
-      description: 'Redux Toolkit עם TypeScript. מקור אמת יחיד עם בוררים ו-middleware מיטביים.',
-    },
-    i18n: {
-      title: 'בינלאומיות',
-      description: 'תומך בשפות RTL ו-LTR. תמיכה מובנית באנגלית ועברית עם הרחבה קלה.',
-    },
-    email: {
-      title: 'שליחת אימייל',
-      description: 'AWS SES עם DKIM על הדומיין שלכם לקודי אימות ולאימיילים שהאפליקציה שולחת.',
-    },
-    monitoring: {
-      title: 'לוגים וטיפול בשגיאות',
-      description: 'כל בקשה נרשמת ב-CloudWatch עם שמירה ל-30 יום, והשגיאות חוזרות בפורמט אחיד.',
+    privacy: {
+      title: 'הטוקנים שלכם נשארים סודיים',
+      body: 'טוקנים מוצפנים ברגע שאתם שומרים אותם, ולא מוצגים שוב לאף אחד, גם לא לכם. כדי לשנות טוקן, מחליפים אותו בחדש.',
     },
   },
-  tech: {
-    title: 'נבנה עם',
-    titleHighlight: 'טכנולוגיות מודרניות',
-    subtitle: 'כלים ומסגרות תעשייתיות סטנדרטיות',
-    react: { name: 'React 19', description: 'React עם Hooks' },
-    typescript: { name: 'TypeScript', description: 'פיתוח מאובטח סוגים' },
-    vite: { name: 'Vite', description: 'בנייה מהירה' },
-    tailwind: { name: 'Tailwind CSS', description: 'עיצוב עם utility' },
-    shadcn: { name: 'shadcn/ui', description: 'רכיבי UI יפים' },
-    reactBits: { name: 'React Bits', description: 'רכיבי UI מונפשים' },
-    lambda: { name: 'AWS Lambda', description: 'חישוב ללא שרת' },
-    redux: { name: 'Redux Toolkit', description: 'ניהול מצב' },
-    query: { name: 'React Query', description: 'סנכרון מצב שרת' },
-    axios: { name: 'Axios', description: 'לקוח HTTP' },
-    cdk: { name: 'AWS CDK', description: 'תשתית כקוד' },
-    aws: { name: 'AWS', description: 'תשתית ענן' },
+  dashboard: {
+    edit: 'עריכה',
+    openTodos: 'משימות פתוחות',
   },
-  cta: {
-    title: 'מוכן להתחיל',
-    titleHighlight: 'לבנות?',
-    description: 'הצטרף למפתחים ששולחים מהר יותר עם {{appName}}. חינם, קוד פתוח, ומוכן לייצור.',
-    button: 'צור חשבון',
-    docs: 'קרא תיעוד',
+  week: {
+    title: 'השבוע',
+    eventList: 'האירועים של השבוע',
+    event: '{{title}}, {{day}}, {{hours}}, {{source}}',
+    hours: 'מ-\u2060{{start}} עד {{end}}',
+  },
+  sharing: {
+    members: 'חברי מרחב העבודה',
+    invite: 'הזמנה',
+    access: 'גישה',
+  },
+  agents: {
+    you: 'אני',
+    agent: 'סוכן ה-\u2060AI שלי',
+    via: 'נקרא דרך שרת ה-\u2060MCP של TodoList',
+  },
+  privacy: {
+    status: 'מחובר',
+    token: 'טוקן',
+    sealed: 'נשמר ומוצפן',
+    saved: 'אי אפשר להציג אותו שוב, גם לא לכם. כדי לשנות אותו, מחליפים אותו בחדש.',
+    synced: 'סונכרן {{when}}',
+  },
+  closing: {
+    title: 'השבוע שלכם על שעון אחד',
+    body: 'TodoList חינם לכולם: בלי תוכנית בתשלום, בלי תקופת ניסיון ובלי כרטיס אשראי. יוצרים מרחב עבודה, מחברים מקור ראשון, והלוח מוכן.',
+    cta: 'יצירת מרחב עבודה',
+    pricing: 'מה כלול',
   },
 };

@@ -1,0 +1,450 @@
+[
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=core_webservice_get_site_info"
+    },
+    "response": {
+      "body": {
+        "sitename": "Demo College Moodle",
+        "username": "demo.student",
+        "firstname": "Demo",
+        "lastname": "Student",
+        "fullname": "Demo Student",
+        "lang": "en",
+        "userid": 4242,
+        "siteurl": "https://example.invalid/moodle",
+        "release": "4.1.3 (Build: 20230814)",
+        "version": "2022112803"
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=core_enrol_get_users_courses&userid=4242"
+    },
+    "response": {
+      "body": [
+        {
+          "id": 101,
+          "shortname": "ALG101",
+          "fullname": "Algorithms",
+          "displayname": "Algorithms",
+          "startdate": "{{epoch:-20d@00:00}}",
+          "enddate": "{{epoch:+90d@00:00}}",
+          "visible": 1,
+          "format": "topics"
+        },
+        {
+          "id": 102,
+          "shortname": "DS102",
+          "fullname": "Data Structures",
+          "displayname": "Data Structures",
+          "startdate": "{{epoch:-20d@00:00}}",
+          "enddate": "{{epoch:+90d@00:00}}",
+          "visible": 1,
+          "format": "topics"
+        },
+        {
+          "id": 103,
+          "shortname": "PHY103",
+          "fullname": "Physics 1",
+          "displayname": "Physics 1",
+          "startdate": "{{epoch:-20d@00:00}}",
+          "enddate": "{{epoch:+90d@00:00}}",
+          "visible": 1,
+          "format": "topics"
+        }
+      ]
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=mod_assign_get_assignments"
+    },
+    "response": {
+      "body": {
+        "courses": [
+          {
+            "id": 101,
+            "fullname": "Algorithms",
+            "shortname": "ALG101",
+            "timemodified": "{{epoch:-5d@10:00}}",
+            "assignments": [
+              {
+                "id": 1,
+                "cmid": 2011,
+                "course": 101,
+                "name": "HW3: Graph traversal",
+                "nosubmissions": 0,
+                "duedate": "{{epoch:-3d@23:59}}",
+                "allowsubmissionsfromdate": "{{epoch:-14d@08:00}}",
+                "cutoffdate": "{{epoch:+4d@23:59}}",
+                "gradingduedate": "{{epoch:+14d@23:59}}",
+                "intro": "<p>See the course page.</p>",
+                "timemodified": "{{epoch:-5d@10:00}}"
+              },
+              {
+                "id": 2,
+                "cmid": 2012,
+                "course": 101,
+                "name": "HW4: Dynamic programming",
+                "nosubmissions": 0,
+                "duedate": "{{epoch:+0d@23:59}}",
+                "allowsubmissionsfromdate": "{{epoch:-14d@08:00}}",
+                "cutoffdate": "{{epoch:+7d@23:59}}",
+                "gradingduedate": "{{epoch:+14d@23:59}}",
+                "intro": "<p>See the course page.</p>",
+                "timemodified": "{{epoch:-5d@10:00}}"
+              }
+            ]
+          },
+          {
+            "id": 102,
+            "fullname": "Data Structures",
+            "shortname": "DS102",
+            "timemodified": "{{epoch:-5d@10:00}}",
+            "assignments": [
+              {
+                "id": 3,
+                "cmid": 2021,
+                "course": 102,
+                "name": "Lab 2: Hash tables (extended)",
+                "nosubmissions": 0,
+                "duedate": "{{epoch:+3d@18:00}}",
+                "allowsubmissionsfromdate": "{{epoch:-14d@08:00}}",
+                "cutoffdate": "{{epoch:+9d@18:00}}",
+                "gradingduedate": "{{epoch:+14d@23:59}}",
+                "intro": "<p>See the course page.</p>",
+                "timemodified": "{{epoch:-5d@10:00}}"
+              }
+            ]
+          },
+          {
+            "id": 103,
+            "fullname": "Physics 1",
+            "shortname": "PHY103",
+            "timemodified": "{{epoch:-5d@10:00}}",
+            "assignments": [
+              {
+                "id": 5,
+                "cmid": 2031,
+                "course": 103,
+                "name": "Problem Set 6",
+                "nosubmissions": 0,
+                "duedate": "{{epoch:-1d@23:59}}",
+                "allowsubmissionsfromdate": "{{epoch:-14d@08:00}}",
+                "cutoffdate": "{{epoch:+6d@23:59}}",
+                "gradingduedate": "{{epoch:+14d@23:59}}",
+                "intro": "<p>See the course page.</p>",
+                "timemodified": "{{epoch:-5d@10:00}}"
+              },
+              {
+                "id": 6,
+                "cmid": 2032,
+                "course": 103,
+                "name": "Lab Report 3",
+                "nosubmissions": 0,
+                "duedate": "{{epoch:+9d@23:59}}",
+                "allowsubmissionsfromdate": "{{epoch:-14d@08:00}}",
+                "cutoffdate": "{{epoch:+16d@23:59}}",
+                "gradingduedate": "{{epoch:+14d@23:59}}",
+                "intro": "<p>See the course page.</p>",
+                "timemodified": "{{epoch:-5d@10:00}}"
+              },
+              {
+                "id": 7,
+                "course": 103,
+                "name": "Extra reading summary",
+                "nosubmissions": 0,
+                "duedate": "{{epoch:+5d@23:59}}",
+                "allowsubmissionsfromdate": "{{epoch:-14d@08:00}}",
+                "cutoffdate": 0,
+                "gradingduedate": "{{epoch:+14d@23:59}}",
+                "intro": "<p>See the course page.</p>",
+                "timemodified": "{{epoch:-5d@10:00}}"
+              }
+            ]
+          }
+        ],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=mod_assign_get_submission_status&assignid=1"
+    },
+    "response": {
+      "body": {
+        "lastattempt": {
+          "submission": {
+            "id": 501,
+            "userid": 4242,
+            "status": "new",
+            "timemodified": "{{epoch:-1d@09:00}}"
+          },
+          "submissionsenabled": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=mod_assign_get_submission_status&assignid=2"
+    },
+    "response": {
+      "body": {
+        "lastattempt": {
+          "submission": {
+            "id": 502,
+            "userid": 4242,
+            "status": "draft",
+            "timemodified": "{{epoch:-1d@09:00}}"
+          },
+          "submissionsenabled": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=mod_assign_get_submission_status&assignid=3"
+    },
+    "response": {
+      "body": {
+        "lastattempt": {
+          "submission": {
+            "id": 503,
+            "userid": 4242,
+            "status": "new",
+            "timemodified": "{{epoch:-1d@09:00}}"
+          },
+          "submissionsenabled": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=mod_assign_get_submission_status&assignid=5"
+    },
+    "response": {
+      "body": {
+        "lastattempt": {
+          "submission": {
+            "id": 505,
+            "userid": 4242,
+            "status": "submitted",
+            "timemodified": "{{epoch:-1d@09:00}}"
+          },
+          "submissionsenabled": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=mod_assign_get_submission_status&assignid=6"
+    },
+    "response": {
+      "body": {
+        "lastattempt": {
+          "submission": {
+            "id": 506,
+            "userid": 4242,
+            "status": "new",
+            "timemodified": "{{epoch:-1d@09:00}}"
+          },
+          "submissionsenabled": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=mod_assign_get_submission_status&assignid=7"
+    },
+    "response": {
+      "body": {
+        "lastattempt": {
+          "submission": {
+            "id": 507,
+            "userid": 4242,
+            "status": "new",
+            "timemodified": "{{epoch:-1d@09:00}}"
+          },
+          "submissionsenabled": true
+        },
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=core_calendar_get_calendar_events"
+    },
+    "response": {
+      "body": {
+        "events": [
+          {
+            "id": 9001,
+            "name": "Algorithms Quiz 2 closes",
+            "eventtype": "close",
+            "modulename": "quiz",
+            "instance": 301,
+            "timestart": "{{epoch:+1d@12:00}}",
+            "timesort": "{{epoch:+1d@12:00}}",
+            "courseid": 101,
+            "url": "https://example.invalid/moodle/mod/quiz/view.php?id=3011",
+            "visible": 1,
+            "component": "mod_quiz"
+          },
+          {
+            "id": 9002,
+            "name": "Midterm Quiz closes",
+            "eventtype": "close",
+            "modulename": "quiz",
+            "instance": 302,
+            "timestart": "{{epoch:+0d@20:00}}",
+            "timesort": "{{epoch:+0d@20:00}}",
+            "courseid": 102,
+            "url": "https://example.invalid/moodle/mod/quiz/view.php?id=3021",
+            "visible": 1,
+            "component": "mod_quiz"
+          },
+          {
+            "id": 9003,
+            "name": "Physics Quiz 4 closes",
+            "eventtype": "close",
+            "modulename": "quiz",
+            "instance": 303,
+            "timestart": "{{epoch:-2d@22:00}}",
+            "timesort": "{{epoch:-2d@22:00}}",
+            "courseid": 103,
+            "url": "https://example.invalid/moodle/mod/quiz/view.php?id=3031",
+            "visible": 1,
+            "component": "mod_quiz"
+          },
+          {
+            "id": 9004,
+            "name": "Physics Quiz 5 closes",
+            "eventtype": "close",
+            "modulename": "quiz",
+            "instance": 304,
+            "timestart": "{{epoch:+8d@10:00}}",
+            "timesort": "{{epoch:+8d@10:00}}",
+            "courseid": 103,
+            "url": "https://example.invalid/moodle/mod/quiz/view.php?id=3041",
+            "visible": 1,
+            "component": "mod_quiz"
+          },
+          {
+            "id": 9005,
+            "name": "Data Structures Quiz 3 closes",
+            "eventtype": "close",
+            "modulename": "quiz",
+            "instance": 305,
+            "timestart": "{{epoch:+4d@09:00}}",
+            "timesort": "{{epoch:+4d@09:00}}",
+            "courseid": 102,
+            "url": "",
+            "visible": 1,
+            "component": "mod_quiz"
+          },
+          {
+            "id": 9007,
+            "name": "Algorithms Quiz 2 opens",
+            "eventtype": "open",
+            "modulename": "quiz",
+            "instance": 301,
+            "timestart": "{{epoch:-6d@08:00}}",
+            "timesort": "{{epoch:-6d@08:00}}",
+            "courseid": 101,
+            "url": "https://example.invalid/moodle/mod/quiz/view.php?id=3011",
+            "visible": 1,
+            "component": "mod_quiz"
+          },
+          {
+            "id": 9006,
+            "name": "HW4: Dynamic programming is due",
+            "eventtype": "due",
+            "modulename": "assign",
+            "instance": 2,
+            "timestart": "{{epoch:+0d@23:59}}",
+            "timesort": "{{epoch:+0d@23:59}}",
+            "courseid": 101,
+            "url": "https://example.invalid/moodle/mod/assign/view.php?id=2012",
+            "visible": 1,
+            "component": "mod_assign"
+          }
+        ],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=core_completion_get_activities_completion_status&courseid=101"
+    },
+    "response": {
+      "body": {
+        "statuses": [
+          {
+            "cmid": 1041,
+            "modname": "quiz",
+            "instance": 1,
+            "state": 0,
+            "timecompleted": 0,
+            "tracking": 1
+          }
+        ],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=core_completion_get_activities_completion_status&courseid=102"
+    },
+    "response": {
+      "body": {
+        "statuses": [
+          {
+            "cmid": 3021,
+            "modname": "quiz",
+            "instance": 302,
+            "state": 1,
+            "timecompleted": "{{epoch:-1h}}",
+            "tracking": 1
+          }
+        ],
+        "warnings": []
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/moodle/webservice/rest/server.php?wsfunction=core_completion_get_activities_completion_status&courseid=103"
+    },
+    "response": {
+      "body": {
+        "statuses": [
+          {
+            "cmid": 1061,
+            "modname": "quiz",
+            "instance": 1,
+            "state": 0,
+            "timecompleted": 0,
+            "tracking": 1
+          }
+        ],
+        "warnings": []
+      }
+    }
+  }
+]

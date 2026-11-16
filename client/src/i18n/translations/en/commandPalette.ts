@@ -1,0 +1,63 @@
+/** The ⌘K command palette. Keywords are extra search terms, in any language. */
+export const commandPalette = {
+  title: 'Command menu',
+  description: 'Search for pages, workspaces and actions.',
+  placeholder: 'Type a command or search…',
+  empty: 'No results.',
+  groups: {
+    actions: 'Actions',
+    navigation: 'Go to',
+    workspaces: 'Workspaces',
+    preferences: 'Preferences',
+    account: 'Account',
+  },
+  commands: {
+    newTodo: 'New to-do',
+    switchWorkspace: 'Switch to {{workspace}}',
+    createWorkspace: 'Create workspace',
+    joinWorkspace: 'Join with an invite link',
+    themeLight: 'Use the light theme',
+    themeDark: 'Use the dark theme',
+    language: 'Switch to {{language}}',
+    toggleSidebar: 'Collapse or expand the sidebar',
+    members: 'Members',
+    profile: 'Profile',
+    signOut: 'Sign out',
+  },
+  keywords: {
+    dashboard: 'home overview today',
+    topic: 'topic page',
+    addPage: 'add new page topic create',
+    newTodo: 'add create task todo quick jira clickup linear github',
+    integrations: 'connect sources sync',
+    templates: 'layouts pages',
+    settings: 'workspace time zone topics',
+    members: 'people invite share team',
+    profile: 'account me',
+    workspace: 'workspace workspace team',
+    theme: 'appearance mode dark light',
+    language: 'language english hebrew',
+    sidebar: 'sidebar menu navigation',
+    signOut: 'log out logout exit',
+    shortcuts: 'keyboard keys hotkeys help',
+  },
+};
+
+/** The Keyboard shortcuts dialog (`?`). */
+export const shortcuts = {
+  title: 'Keyboard shortcuts',
+  description: 'Press a key, or two in a row where shown. They work anywhere except in a field.',
+  groups: { general: 'General', navigation: 'Go to' },
+  items: {
+    palette: 'Open the command menu',
+    sidebar: 'Collapse or expand the sidebar',
+    help: 'Show this list',
+    dashboard: 'Dashboard',
+    work: 'Work',
+    college: 'College',
+    personal: 'Personal',
+    integrations: 'Integrations',
+    templates: 'Templates',
+    settings: 'Settings',
+  },
+};

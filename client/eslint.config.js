@@ -70,4 +70,16 @@ export default defineConfig([
     files: ['tests/scripts/**/*.ts', 'scripts/**/*.ts'],
     rules: { 'no-console': 'off' },
   },
+  {
+    // TanStack Table's useReactTable returns functions React Compiler cannot memoize; it skips
+    // that one component (and the table block's rows are small), which is the documented outcome.
+    files: ['src/features/dashboards/blocks/TableBlock.tsx'],
+    rules: { 'react-hooks/incompatible-library': 'off' },
+  },
+  {
+    // Unit tests (npm run test:unit): node:test describe/it return promises the runner tracks
+    // itself. Same exception as server/eslint.config.js.
+    files: ['src/**/*.test.ts'],
+    rules: { '@typescript-eslint/no-floating-promises': 'off' },
+  },
 ]);

@@ -8,4 +8,4 @@ def test_protected_edit_profile_redirects_unauthenticated(page: Page, app_url: s
     """Asserts unauthenticated users visiting /profile/edit are redirected to /auth/login."""
     page.goto(f"{app_url}/profile/edit", wait_until="domcontentloaded")
     page.wait_for_load_state("networkidle")
-    expect(page).to_have_url(f"{app_url}/auth/login")
+    expect(page).to_have_url(f"{app_url}/auth/login?next=%2Fen%2Fprofile%2Fedit")

@@ -1,0 +1,391 @@
+[
+  {
+    "request": {
+      "url": "https://www.googleapis.com/calendar/v3/calendars/personal%40example.invalid/events"
+    },
+    "response": {
+      "body": {
+        "kind": "calendar#events",
+        "etag": "\"FAKE-etag-events-personal-v2-p1\"",
+        "summary": "Shalev (demo)",
+        "description": "",
+        "updated": "{{datetime:-1d@20:00}}",
+        "timeZone": "Asia/Jerusalem",
+        "accessRole": "reader",
+        "defaultReminders": [
+          {
+            "method": "popup",
+            "minutes": 10
+          }
+        ],
+        "nextPageToken": "FAKE-page-personal-2",
+        "items": [
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000201\"",
+            "id": "standup001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-standup001",
+            "created": "{{datetime:-40d@09:00}}",
+            "updated": "{{datetime:-3d@09:00}}",
+            "summary": "Team standup",
+            "organizer": {
+              "email": "noa@example.invalid",
+              "displayName": "Noa (demo)"
+            },
+            "start": {
+              "dateTime": "{{datetime:+0d@10:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:+0d@11:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "hangoutLink": "https://example.invalid/meet/FAKE-abc-defg-hij",
+            "attendees": [
+              {
+                "email": "personal@example.invalid",
+                "self": true,
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "noa@example.invalid",
+                "organizer": true,
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "dana@example.invalid",
+                "responseStatus": "tentative"
+              },
+              {
+                "email": "omer@example.invalid",
+                "responseStatus": "needsAction"
+              }
+            ],
+            "iCalUID": "standup001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000202\"",
+            "id": "lunch001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-lunch001",
+            "created": "{{datetime:-4d@18:00}}",
+            "updated": "{{datetime:-4d@18:00}}",
+            "summary": "Lunch with Noa",
+            "location": "Campus cafeteria",
+            "transparency": "transparent",
+            "organizer": {
+              "email": "personal@example.invalid",
+              "displayName": "Shalev (demo)",
+              "self": true
+            },
+            "start": {
+              "dateTime": "{{datetime:+0d@12:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:+0d@13:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "iCalUID": "lunch001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000213\"",
+            "id": "planning001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-planning001",
+            "created": "{{datetime:-10d@10:00}}",
+            "updated": "{{datetime:-1d@20:00}}",
+            "summary": "Sprint planning",
+            "organizer": {
+              "email": "dana@example.invalid",
+              "displayName": "Dana (demo)"
+            },
+            "start": {
+              "dateTime": "{{datetime:+0d@17:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:+0d@18:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "conferenceData": {
+              "conferenceId": "FAKE-xyz-pqrs-tuv",
+              "conferenceSolution": {
+                "key": {
+                  "type": "hangoutsMeet"
+                },
+                "name": "Google Meet"
+              },
+              "entryPoints": [
+                {
+                  "entryPointType": "video",
+                  "uri": "https://example.invalid/meet/FAKE-xyz-pqrs-tuv",
+                  "label": "example.invalid/meet/FAKE-xyz-pqrs-tuv"
+                },
+                {
+                  "entryPointType": "phone",
+                  "uri": "tel:+1-555-0100",
+                  "label": "+1 555-0100"
+                }
+              ]
+            },
+            "attendees": [
+              {
+                "email": "personal@example.invalid",
+                "self": true,
+                "responseStatus": "declined"
+              },
+              {
+                "email": "dana@example.invalid",
+                "organizer": true,
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "noa@example.invalid",
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "omer@example.invalid",
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "yael@example.invalid",
+                "responseStatus": "needsAction"
+              },
+              {
+                "email": "room-orion@example.invalid",
+                "displayName": "Orion meeting room",
+                "resource": true,
+                "responseStatus": "accepted"
+              }
+            ],
+            "iCalUID": "planning001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://www.googleapis.com/calendar/v3/calendars/personal%40example.invalid/events?pageToken=FAKE-page-personal-2"
+    },
+    "response": {
+      "body": {
+        "kind": "calendar#events",
+        "etag": "\"FAKE-etag-events-personal-v2-p2\"",
+        "summary": "Shalev (demo)",
+        "description": "",
+        "updated": "{{datetime:-1d@20:00}}",
+        "timeZone": "Asia/Jerusalem",
+        "accessRole": "reader",
+        "defaultReminders": [
+          {
+            "method": "popup",
+            "minutes": 10
+          }
+        ],
+        "nextSyncToken": "FAKE-sync-personal-v2",
+        "items": [
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000204\"",
+            "id": "gym001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-gym001",
+            "created": "{{datetime:-6d@21:00}}",
+            "updated": "{{datetime:-6d@21:00}}",
+            "summary": "Gym",
+            "location": "City Gym",
+            "organizer": {
+              "email": "personal@example.invalid",
+              "displayName": "Shalev (demo)",
+              "self": true
+            },
+            "start": {
+              "dateTime": "{{datetime:+0d@19:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:+0d@21:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "iCalUID": "gym001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000206\"",
+            "id": "coffee001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-coffee001",
+            "created": "{{datetime:-2d@20:00}}",
+            "updated": "{{datetime:-2d@20:00}}",
+            "summary": "Coffee with Dana",
+            "organizer": {
+              "email": "personal@example.invalid",
+              "displayName": "Shalev (demo)",
+              "self": true
+            },
+            "start": {
+              "dateTime": "{{datetime:+3d@09:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:+3d@09:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "attendees": [
+              {
+                "email": "personal@example.invalid",
+                "self": true,
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "dana@example.invalid",
+                "responseStatus": "accepted"
+              }
+            ],
+            "iCalUID": "coffee001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://www.googleapis.com/calendar/v3/calendars/personal%40example.invalid/events?syncToken=FAKE-sync-personal-v1"
+    },
+    "response": {
+      "body": {
+        "kind": "calendar#events",
+        "etag": "\"FAKE-etag-events-personal-v2-delta\"",
+        "summary": "Shalev (demo)",
+        "description": "",
+        "updated": "{{datetime:-1d@20:00}}",
+        "timeZone": "Asia/Jerusalem",
+        "accessRole": "reader",
+        "defaultReminders": [
+          {
+            "method": "popup",
+            "minutes": 10
+          }
+        ],
+        "nextSyncToken": "FAKE-sync-personal-v2",
+        "items": [
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000213\"",
+            "id": "planning001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-planning001",
+            "created": "{{datetime:-10d@10:00}}",
+            "updated": "{{datetime:-1d@20:00}}",
+            "summary": "Sprint planning",
+            "organizer": {
+              "email": "dana@example.invalid",
+              "displayName": "Dana (demo)"
+            },
+            "start": {
+              "dateTime": "{{datetime:+0d@17:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:+0d@18:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "conferenceData": {
+              "conferenceId": "FAKE-xyz-pqrs-tuv",
+              "conferenceSolution": {
+                "key": {
+                  "type": "hangoutsMeet"
+                },
+                "name": "Google Meet"
+              },
+              "entryPoints": [
+                {
+                  "entryPointType": "video",
+                  "uri": "https://example.invalid/meet/FAKE-xyz-pqrs-tuv",
+                  "label": "example.invalid/meet/FAKE-xyz-pqrs-tuv"
+                },
+                {
+                  "entryPointType": "phone",
+                  "uri": "tel:+1-555-0100",
+                  "label": "+1 555-0100"
+                }
+              ]
+            },
+            "attendees": [
+              {
+                "email": "personal@example.invalid",
+                "self": true,
+                "responseStatus": "declined"
+              },
+              {
+                "email": "dana@example.invalid",
+                "organizer": true,
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "noa@example.invalid",
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "omer@example.invalid",
+                "responseStatus": "accepted"
+              },
+              {
+                "email": "yael@example.invalid",
+                "responseStatus": "needsAction"
+              },
+              {
+                "email": "room-orion@example.invalid",
+                "displayName": "Orion meeting room",
+                "resource": true,
+                "responseStatus": "accepted"
+              }
+            ],
+            "iCalUID": "planning001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000215\"",
+            "id": "dentist001",
+            "status": "cancelled"
+          }
+        ]
+      }
+    }
+  }
+]

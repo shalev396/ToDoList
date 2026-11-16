@@ -21,6 +21,12 @@ export function applyNagSuppressions(stack: Stack, config: StageConfig): void {
   const noAccessLogs =
     'Access logs are not collected: no consumer for them and they add a log bucket/group per stage. Revisit with a WAF or audit requirement.';
 
+  // Lambda runtime: Node.js 24 (LTS) on purpose. The layers, the local toolchain and CI all run
+  // Node 24, so the runtime moves only when they do, not whenever aws-cdk-lib learns a newer one.
+  const pinnedRuntime =
+    'Pinned to Node.js 24 LTS, the version the layers, local toolchain and CI use; upgraded deliberately, together with them.';
+  ack('Compute/Function', 'AwsSolutions-L1', pinnedRuntime);
+
   // Storage
   ack('Storage/ClientBucket', 'AwsSolutions-S1', noAccessLogs);
   ack('Storage/AssetsBucket', 'AwsSolutions-S1', noAccessLogs);
@@ -31,6 +37,23 @@ export function applyNagSuppressions(stack: Stack, config: StageConfig): void {
     'Api/HttpApi/ANY--api--public--{proxy+}',
     'AwsSolutions-APIG4',
     'Public auth endpoints (signup, login, password reset) are unauthenticated by design; rate limited in-app and throttled at the stage.',
+  );
+  ack(
+    'Api/HttpApi/ANY--api--public--auth--{proxy+}',
+    'AwsSolutions-APIG4',
+    'Same public auth endpoints as /api/public, split out only to carry a tighter per-route throttle.',
+  );
+  for (const route of ['Api/HttpApi/ANY--api--mcp', 'Api/HttpApi/ANY--api--mcp--{proxy+}']) {
+    ack(
+      route,
+      'AwsSolutions-APIG4',
+      'MCP clients are agents, not Cognito users: the app authenticates every call with a hashed per-user agent key (MCP.md section 3 and 11), rate limits it and scopes it to the key owner. A JWT authorizer would reject them.',
+    );
+  }
+  ack(
+    'Api/HttpApi/GET--.well-known--{proxy+}',
+    'AwsSolutions-APIG4',
+    'Public discovery documents (RFC 8414 / RFC 9728): GET only, no secrets, must be readable before any sign-in.',
   );
   if (
     stack.node
@@ -60,13 +83,6 @@ export function applyNagSuppressions(stack: Stack, config: StageConfig): void {
       'WAF_WEB_ACL_ARN not set for this stage; attach a global web ACL to enable WAF.',
     );
   }
-
-  // Email (deploy-time SES verification waiter)
-  ack(
-    'Email/VerificationFunction/ServiceRole',
-    'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]',
-    'AWSLambdaBasicExecutionRole only grants writing to the function log group.',
-  );
 
   // Auth
   ack(

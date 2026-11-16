@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/api/queries/keys';
 import { QUERY_STALE_TIME_PRIVATE_MS } from '@/api/queries/queryOptions';
 import {
-  getDashboard,
   getMe,
   updateMe,
   sendTestEmail,
@@ -57,17 +56,6 @@ export function useDeleteAccount() {
   return useMutation({
     mutationFn: async () => {
       const response = await deleteAccount();
-      return response.data;
-    },
-  });
-}
-
-export function useDashboard() {
-  return useQuery({
-    queryKey: queryKeys.dashboard,
-    staleTime: QUERY_STALE_TIME_PRIVATE_MS,
-    queryFn: async () => {
-      const response = await getDashboard();
       return response.data;
     },
   });
