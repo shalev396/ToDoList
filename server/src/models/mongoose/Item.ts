@@ -232,7 +232,6 @@ function toPreview(text: string | null | undefined): string | null {
   return text.slice(0, splitsPair ? BODY_PREVIEW_MAX - 1 : BODY_PREVIEW_MAX);
 }
 
-/** A patch or input with its `bodyPreview` (when present) cut by the one preview rule. */
 /** A new local item's document, with its id (a local item's external id is its own id). */
 function localItemDoc(
   workspaceId: string,
@@ -275,6 +274,7 @@ function localItemDoc(
   };
 }
 
+/** A patch or input with its `bodyPreview` (when present) cut by the one preview rule. */
 function withPreview<T extends { bodyPreview?: string | null }>(input: T): T {
   if (input.bodyPreview === undefined) return input;
   return { ...input, bodyPreview: toPreview(input.bodyPreview) };

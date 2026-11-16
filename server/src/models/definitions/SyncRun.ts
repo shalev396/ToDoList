@@ -54,7 +54,10 @@ export interface ISyncRunRepository {
   /** create() for each input, in one write, in order. */
   createMany(workspaceId: string, inputs: readonly CreateSyncRunInput[]): Promise<SyncRunData[]>;
   update(workspaceId: string, id: string, patch: SyncRunPatch): Promise<SyncRunData | null>;
-  /** update() for each run, in one write, in order. How many runs it found. */
+  /**
+   * update() for each run, in one write, in order. How many runs it found. A batch door (the demo
+   * seed's): nothing validates the patches, its callers do.
+   */
   updateMany(
     workspaceId: string,
     updates: readonly { id: string; patch: SyncRunPatch }[],
@@ -71,7 +74,8 @@ export interface ISyncRunRepository {
   ): Promise<SyncRunData | null>;
   /**
    * updateIfStatus() for each run, in one write (no run is answered): ends the runs of a batch that
-   * failed, leaving any that finished meanwhile as they are. How many it changed.
+   * failed, leaving any that finished meanwhile as they are. How many it changed. Nothing validates
+   * the patches, its callers do.
    */
   updateManyIfStatus(
     workspaceId: string,

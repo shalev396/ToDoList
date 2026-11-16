@@ -148,8 +148,9 @@ export const CredentialRepository: ICredentialRepository = {
     return toCredentialMeta(doc);
   },
 
-  // upsertSealed()'s writes without its `runValidators` (a bulk write has none): Credential seals
-  // what it writes.
+  // upsertSealed()'s writes without its `runValidators` (a bulk write runs no update validators);
+  // the collection's $jsonSchema validator (models/validators.ts) still checks the sealed parts.
+  // A batch door of the demo seed: Credential seals what it writes.
   async upsertSealedMany(workspaceId, entries) {
     if (entries.length === 0) return 0;
     const result = await CredentialMongoModel.bulkWrite(

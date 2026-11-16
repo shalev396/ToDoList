@@ -216,8 +216,9 @@ export const IntegrationRepository: IIntegrationRepository = {
     return doc ? toIntegrationData(doc) : null;
   },
 
-  // update()'s writes without its `runValidators` (a bulk write has none): the classes write
-  // statuses and ids they know.
+  // update()'s writes, but nothing validates it: a bulk write runs no update validators, and
+  // this collection has no $jsonSchema validator (models/validators.ts). A batch door of the demo
+  // seed: its callers write values they built and typed.
   async updateMany(workspaceId, updates) {
     if (updates.length === 0) return;
     await IntegrationMongoModel.bulkWrite(
@@ -291,8 +292,9 @@ export const IntegrationRepository: IIntegrationRepository = {
     return doc ? toIntegrationData(doc) : null;
   },
 
-  // recordSyncResult()'s writes, without its `runValidators` (a bulk write has none): the engine
-  // writes a status it knows and its own times.
+  // recordSyncResult()'s writes, but nothing validates it: a bulk write runs no update validators, and
+  // this collection has no $jsonSchema validator (models/validators.ts). A batch door of the demo
+  // seed: its callers write values they built and typed.
   async recordSyncResults(workspaceId, results) {
     if (results.length === 0) return;
     await IntegrationMongoModel.bulkWrite(

@@ -99,7 +99,9 @@ export const SyncStateRepository: ISyncStateRepository = {
     return docs.map(toSyncStateData);
   },
 
-  // upsert()'s writes without its `runValidators` (a bulk write has none); the engine writes them.
+  // upsert()'s writes, but nothing validates it: a bulk write runs no update validators, and
+  // this collection has no $jsonSchema validator (models/validators.ts). A batch door of the demo
+  // seed: its callers write values they built and typed.
   async upsertMany(workspaceId, entries) {
     if (entries.length === 0) return;
     await SyncStateMongoModel.bulkWrite(

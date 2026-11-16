@@ -52,7 +52,10 @@ export interface ISyncStateRepository {
     workspaceId: string,
     integrationIds: readonly string[],
   ): Promise<SyncStateData[]>;
-  /** upsert() for each entry, in one write, in order (no state is answered). Same caveat. */
+  /**
+   * upsert() for each entry, in one write, in order (no state is answered). Same caveat. A batch
+   * door (the demo seed's): nothing validates the patches, its callers do.
+   */
   upsertMany(workspaceId: string, entries: readonly SyncStateUpsert[]): Promise<void>;
   /**
    * Counts one failed run toward the failed runs in a row (`consecutiveErrors`), at most once per

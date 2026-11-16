@@ -141,7 +141,10 @@ export interface IDashboardRepository {
     version: number,
     snapshot: DashboardSnapshot,
   ): Promise<DashboardData | null>;
-  /** setPublished() for each entry, in one write, in order (no dashboard is answered). */
+  /**
+   * setPublished() for each entry, in one write, in order (no dashboard is answered). A batch door
+   * (the demo seed's): nothing validates the snapshots, its callers do.
+   */
   setPublishedMany(
     workspaceId: string,
     entries: readonly { id: string; version: number; snapshot: DashboardSnapshot }[],

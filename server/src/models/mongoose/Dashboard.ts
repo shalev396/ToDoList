@@ -237,8 +237,9 @@ export const DashboardRepository: IDashboardRepository = {
     return doc ? toDashboardData(doc) : null;
   },
 
-  // setPublished()'s writes without its `runValidators` (a bulk write has none): the snapshots
-  // are the drafts a create just checked.
+  // setPublished()'s writes, but nothing validates it: a bulk write runs no update validators, and
+  // this collection has no $jsonSchema validator (models/validators.ts). A batch door of the demo
+  // seed: its snapshots are the drafts a create just checked.
   async setPublishedMany(workspaceId, entries) {
     if (entries.length === 0) return;
     for (const { version } of entries) {

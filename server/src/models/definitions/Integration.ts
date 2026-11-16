@@ -132,7 +132,10 @@ export interface IIntegrationRepository {
     ids: readonly string[],
   ): Promise<IntegrationData[]>;
   update(workspaceId: string, id: string, patch: IntegrationPatch): Promise<IntegrationData | null>;
-  /** update() for each integration, in one write, in order (no integration is answered). */
+  /**
+   * update() for each integration, in one write, in order (no integration is answered). A batch
+   * door (the demo seed's): nothing validates the patches, its callers do.
+   */
   updateMany(
     workspaceId: string,
     updates: readonly { id: string; patch: IntegrationPatch }[],
@@ -166,7 +169,10 @@ export interface IIntegrationRepository {
     id: string,
     result: SyncResultPatch,
   ): Promise<IntegrationData | null>;
-  /** recordSyncResult() for each integration, in one write, in order (no integration is answered). */
+  /**
+   * recordSyncResult() for each integration, in one write, in order (no integration is answered). A
+   * batch door (the demo seed's): nothing validates the results, its callers do.
+   */
   recordSyncResults(
     workspaceId: string,
     results: readonly { id: string; result: SyncResultPatch }[],
