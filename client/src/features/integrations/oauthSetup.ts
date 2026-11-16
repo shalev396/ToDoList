@@ -29,13 +29,14 @@ export function isOAuthSignIn(provider: string): provider is OAuthSignInProvider
 /**
  * Whether a reconnect should ask for the write scope: a read & write connection whose provider's
  * grant needs one to write back (the server's `needsWriteScope`: Jira `write:jira-work`, Linear
- * `write`). GitHub and ClickUp grant what they grant; unknown capabilities ask for nothing.
+ * `write`). GitHub and ClickUp grant what they grant; unknown capabilities ask, since the server ignores the
+ * request where a provider has no write scope.
  */
 export function reconnectAsksWrite(
   caps: ProviderCapabilities | undefined,
   mode: 'read' | 'read_write',
 ): boolean {
-  return mode === 'read_write' && caps?.needsWriteScope === true;
+  return mode === 'read_write' && caps?.needsWriteScope !== false;
 }
 
 /** Every provider that signs in with OAuth: those four, and Google Calendar (its own routes). */

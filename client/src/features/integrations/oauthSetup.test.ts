@@ -149,15 +149,16 @@ describe('reconnectAsksWrite: only where the server says a write scope exists', 
     assert.equal(reconnectAsksWrite(caps('google_calendar'), 'read_write'), false);
   });
 
-  it('follows the capability, not the provider’s name; nothing before the answer has arrived', () => {
+  it('follows the capability, not the provider’s name; asks until the answer says no', () => {
     assert.equal(reconnectAsksWrite(cap('github', { needsWriteScope: true }), 'read_write'), true);
     assert.equal(reconnectAsksWrite(cap('jira', { needsWriteScope: false }), 'read_write'), false);
-    assert.equal(reconnectAsksWrite(undefined, 'read_write'), false);
+    assert.equal(reconnectAsksWrite(undefined, 'read_write'), true);
+    assert.equal(reconnectAsksWrite(undefined, 'read'), false);
   });
 });
 
 describe('capabilities from the providers answer', () => {
-  it('finds a provider, and nothing before the answer has arrived', () => {
+  it('finds a provider, and asks until the answer says no', () => {
     assert.equal(caps('jira')?.provider, 'jira');
     assert.equal(caps('nope'), undefined);
     assert.equal(capabilitiesOf(undefined, 'jira'), undefined);
