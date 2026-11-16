@@ -438,3 +438,76 @@ describe('Dashboard.removeAllIn and View.removeAllIn', () => {
     assert.equal((await View.list(keep.owner)).length, 1);
   });
 });
+
+describe('Dashboard#blocks and Dashboard#pageBlock', () => {
+  /** An owner's page (published at once, no blocks), then an editor's two blocks in the draft. */
+  async function pageWithDraftBlocks(t: Team): Promise<{ id: string; blockIds: string[] }> {
+    const { Dashboard } = classes;
+    const created = await Dashboard.create(t.owner, { title: 'Blocks', language: 'en' });
+    const dashboard = await Dashboard.load(t.editor, created.id, Dashboard.Operation.edit);
+    const result = await dashboard.applyOps(t.editor, {
+      expectedVersion: created.version,
+      ops: [
+        { op: 'add_block', block: { type: 'deadlines', title: 'Due' } },
+        { op: 'add_block', block: { type: 'note', title: 'Note' } },
+      ],
+    });
+    assert.ok('version' in result);
+    const draft = await (await Dashboard.load(t.editor, created.id)).view(t.editor);
+    return { id: created.id, blockIds: draft.blocks.slice(-2).map((block) => block.id) };
+  }
+
+  it('blocks(): each draft block as its type’s class, in order, its JSON exactly as stored', async () => {
+    const { Dashboard } = classes;
+    const t = await team('dash-blocks');
+    const { id } = await pageWithDraftBlocks(t);
+    const dashboard = await Dashboard.load(t.editor, id);
+    const stored = (await dashboard.view(t.editor)).blocks;
+    const blocks = dashboard.blocks();
+    assert.deepEqual(
+      blocks.map((block) => [block.constructor.name, block.type]),
+      stored.map((block) => [
+        `${block.type.charAt(0).toUpperCase()}${block.type.slice(1)}Block`,
+        block.type,
+      ]),
+    );
+    assert.deepEqual(
+      blocks.map((block) => block.toJSON()),
+      stored,
+    );
+    assert.ok(Object.isFrozen(blocks) && blocks.every((block) => Object.isFrozen(block)));
+    assert.equal(dashboard.blocks(), blocks, 'made once');
+  });
+
+  it('pageBlock: editors read the draft, viewers the published copy; 404 for what they don’t see', async () => {
+    const { Dashboard } = classes;
+    const t = await team('dash-page-block');
+    const { id, blockIds } = await pageWithDraftBlocks(t);
+    const [due = '', note = ''] = blockIds;
+    const seen = async (
+      caller: Caller,
+      dashboardId: string,
+      blockId: string,
+    ): Promise<ReturnType<DashboardModule.Dashboard['pageBlock']>> =>
+      (await Dashboard.load(caller, dashboardId)).pageBlock(caller, blockId);
+    const forEditor = await seen(t.editor, id, note);
+    assert.deepEqual([forEditor.block.type, forEditor.block.id], ['note', note]);
+    const draft = await (await Dashboard.load(t.editor, id)).view(t.editor);
+    assert.equal(
+      forEditor.index,
+      draft.blocks.findIndex((block) => block.id === note),
+    );
+    assert.deepEqual(forEditor.vars, draft.vars);
+    // Only the editor's draft holds them: the viewer reads the published copy.
+    await assert.rejects(seen(t.viewer, id, due), hasStatus(404));
+    await (
+      await Dashboard.load(t.owner, id, Dashboard.Operation.publish)
+    ).publish(t.owner, { expectedVersion: draft.version });
+    const forViewer = await seen(t.viewer, id, due);
+    assert.deepEqual([forViewer.block.type, forViewer.block.id], ['deadlines', due]);
+    await assert.rejects(seen(t.editor, id, 'no-such-block'), hasStatus(404));
+    // A viewer has no copy to see before the first publish.
+    const unpublished = await Dashboard.create(t.editor, { title: 'Draft only', language: 'en' });
+    await assert.rejects(seen(t.viewer, unpublished.id, 'any'), hasStatus(404));
+  });
+});

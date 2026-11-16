@@ -25,6 +25,8 @@
  *   every block of every dashboard (removeConnectorEverywhere).
  * - The blocks are stored as plain JSON, and checked and linted in one place, DocCheck, which
  *   asks each block's own class (Block.from: one class per block type, classes/dashboard/blocks/).
+ *   A dashboard hands its draft's blocks out as those classes (blocks()), and one block as a
+ *   caller sees it for running its query (pageBlock).
  *
  * Errors: AppError (403, 404, 409), ConflictError (409 + currentVersion), OpValidationError (400
  * with a JSON pointer).
@@ -58,7 +60,7 @@ import { getDashboardRepository } from '../../models/index.js';
 import type { ImportanceConfig } from '../../types/importance.js';
 import {
   DashboardDraftSchema,
-  type Block,
+  type Block as BlockJson,
   type DashboardDraft,
   type DashboardVars,
   type Layouts,
@@ -88,6 +90,7 @@ import { DashboardPolicy } from '../policies/DashboardPolicy.js';
 import { IntegrationPolicy } from '../policies/IntegrationPolicy.js';
 import { ItemPolicy } from '../policies/ItemPolicy.js';
 import { Topic } from '../workspace/Topic.js';
+import { Block } from './blocks/index.js';
 import { BlockPreviews } from './BlockPreviews.js';
 import { DashboardConnectors } from './DashboardConnectors.js';
 import { DocCheck } from './DocCheck.js';
@@ -170,6 +173,17 @@ export interface DashboardListFilter {
   page?: DashboardPage | undefined;
 }
 
+/** One block as a caller sees it, with what running its query takes (Dashboard#pageBlock). */
+export interface PageBlock {
+  /** Where it sits in its copy's blocks: error pointers name it (`/blocks/<index>/query`). */
+  readonly index: number;
+  readonly block: Block;
+  /** The copy's page variables: what its `$page` references default to. */
+  readonly vars: Readonly<Record<string, unknown>>;
+  /** The copy's importance preset, as stored (checked before use). */
+  readonly importance: unknown;
+}
+
 /** What a caller's `save` says of its write: only its summary. */
 export interface SaveChange {
   readonly summary: string;
@@ -193,6 +207,10 @@ interface Commit {
 
 function notFound(): AppError {
   return new AppError(404, 'Not found');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function isEditor(caller: Caller): boolean {
@@ -221,6 +239,8 @@ export class Dashboard
 
   readonly #history: History<DashboardDraft>;
   readonly #layout: Layout;
+  /** The draft's blocks as their classes, made on first use (blocks()). */
+  #blocks: readonly Block[] | null = null;
 
   private constructor(data: DashboardData) {
     super(data);
@@ -264,9 +284,15 @@ export class Dashboard
     return this.data.published !== null;
   }
 
-  /** The draft's blocks, as stored: plain JSON (DocCheck checks each through its Block class). */
-  get blocks(): readonly unknown[] {
-    return this.data.blocks;
+  /**
+   * The draft's blocks, each as its type's class (Block.from: an immutable value over its JSON),
+   * in block order: the plan's composition, a dashboard holds its Block[]. Storage stays JSON (the
+   * views and every write hand the JSON on). Made from the draft as parsed: a stored dashboard
+   * always passed validation when written (DocCheck, which checks each block through its class).
+   */
+  blocks(): readonly Block[] {
+    this.#blocks ??= Object.freeze(this.#draft().blocks.map((json) => Block.from(json)));
+    return this.#blocks;
   }
 
   /** The draft's page views (after the Summary), as stored. */
@@ -451,7 +477,7 @@ export class Dashboard
       visibility: dashboard.visibility,
       vars: content.vars as DashboardVars,
       layouts: content.layouts as Layouts,
-      blocks: content.blocks as Block[],
+      blocks: content.blocks as BlockJson[],
       importance: (content.importance ?? null) as ImportanceConfig | null,
       views: (content.views ?? []) as PageView[],
       version: dashboard.version,
@@ -498,6 +524,28 @@ export class Dashboard
     const as: DashboardCopy = isEditor(caller) ? (options.as ?? 'draft') : 'published';
     if (as === 'published' && !this.isPublished) throw notFound();
     return this.#viewAs(caller, as);
+  }
+
+  /**
+   * The block `blockId` as the caller sees it (DATA.md §3.11: editors and owners work on the draft,
+   * viewers see what was published), with its place in that copy and the copy's page variables
+   * and importance preset: what running its query takes (QueryTarget). 404 when the caller has no
+   * copy to see (a viewer before the first publish) or that copy holds no such block. The copy is
+   * read as stored, the way its blocks' queries always ran: only the block found is made a Block.
+   */
+  pageBlock(caller: Caller, blockId: string): PageBlock {
+    this.#allow(caller, Dashboard.Operation.read);
+    const content = isEditor(caller) ? this.data : this.data.published;
+    if (content === null) throw notFound();
+    const index = content.blocks.findIndex((json) => isRecord(json) && json['id'] === blockId);
+    const json = content.blocks[index];
+    if (!isRecord(json)) throw notFound();
+    return Object.freeze({
+      index,
+      block: Block.from(json as unknown as BlockJson),
+      vars: content.vars,
+      importance: content.importance,
+    });
   }
 
   /** The history, newest first: who changed what, and when. Editors and owners. */
@@ -1038,7 +1086,7 @@ export class Dashboard
     const { published } = this.toJSON();
     await this.#commit(
       caller,
-      { ...before, blocks: withoutConnector(before.blocks, integrationId) as Block[] },
+      { ...before, blocks: withoutConnector(before.blocks, integrationId) as BlockJson[] },
       this.version,
       {
         summary: 'stop_sharing',

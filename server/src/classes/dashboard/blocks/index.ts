@@ -1,8 +1,9 @@
 /**
  * The Block hierarchy (docs/design/CLASSES.md §6): the abstract Block, its contracts (DataBlock,
  * TimeBlock, ControlBlock), the registry, and one class per block type. Importing this module loads
- * every class, so each is registered before `Block.from` is asked; DocCheck, their one caller,
- * imports it. Not handed on by the dashboard barrel: blocks are checked through DocCheck.
+ * every class, so each is registered before `Block.from` is asked; DocCheck (which checks a
+ * document's blocks) and Dashboard (which hands its blocks out as these classes) import it. Not
+ * handed on by the dashboard barrel: blocks are checked through DocCheck.
  */
 export { Block, type BlockIssue } from './Block.js';
 export { BlockRegistry, type BlockClass, type BlockFactory } from './BlockRegistry.js';
