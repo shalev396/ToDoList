@@ -51,11 +51,6 @@ export async function cachedCreateOptions(
   return remember(key, await compute());
 }
 
-/** Tests only: forgets every kept answer. */
-export function clearFunnelCacheForTests(): void {
-  cache.clear();
-}
-
 const name = (value: unknown, fallback: string): string =>
   (asString(value) ?? fallback).slice(0, NAME_MAX);
 

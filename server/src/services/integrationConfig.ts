@@ -89,11 +89,6 @@ export const UpdateIntegrationBody = z
 
 // ─── Views of the provider definitions ──────────────────────────────────────
 
-/** A provider the API connects (integrations made otherwise, e.g. by a seed, may be others). */
-export function isConnectableProvider(provider: string): provider is ConnectableProvider {
-  return (CONNECTABLE_PROVIDERS as readonly string[]).includes(provider);
-}
-
 /** A provider that is listed but not open yet (Moodle): 400 `provider_coming_soon`. */
 export function assertProviderOpen(provider: ConnectableProvider): void {
   if (requireDefinition(provider).comingSoon) throw new ProviderComingSoonError(provider);
