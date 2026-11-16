@@ -86,6 +86,13 @@ describe('the rate-limit keys', () => {
     assert.equal(userKey(request('203.0.113.7'), response({ cognitoSub: '' })), 'ip:203.0.113.7');
     assert.equal(ipKey(request(undefined)), 'ip:unknown');
   });
+
+  it('an IPv6 address counts by its /56, like the MCP limiters', () => {
+    const key = ipKey(request('2001:db8:abcd:12ff:1:2:3:4'));
+    assert.equal(key, 'ip:2001:db8:abcd:1200::/56');
+    assert.equal(ipKey(request('2001:db8:abcd:1234::9')), key);
+    assert.equal(ipKey(request('::ffff:203.0.113.7')), 'ip:203.0.113.7');
+  });
 });
 
 describe('a per-user limit', () => {

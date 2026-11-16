@@ -1,15 +1,19 @@
 import type { Request, Response } from 'express';
 import rateLimit, { type Options, type RateLimitRequestHandler } from 'express-rate-limit';
 import { environment } from '../config/environment.js';
+import { addressKey } from '../utils/clientAddress.js';
 import { verifiedCognitoSub } from './expressAuth.js';
 
 const WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
 type KeyGenerator = NonNullable<Options['keyGenerator']>;
 
-/** The client's address: what an unauthenticated request is counted by. */
+/**
+ * The client's address: what an unauthenticated request is counted by. An IPv6 address counts by
+ * its /56 (utils/clientAddress.ts), so cycling through one's own prefix gets no fresh budget.
+ */
 export function ipKey(req: Request): string {
-  return `ip:${req.ip ?? 'unknown'}`;
+  return `ip:${addressKey(req.ip)}`;
 }
 
 /**

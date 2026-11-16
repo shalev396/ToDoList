@@ -11,6 +11,7 @@ import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Request, Response } from 'express';
 
+import { addressKey } from '../../utils/clientAddress.js';
 import type * as Principal from '../auth/principal.js';
 import type * as Limiter from '../middleware/limiter.js';
 import type { TestKey } from './helpers/agentKeys.js';
@@ -219,24 +220,24 @@ describe('the per-agent key', () => {
 
 describe('the address a failed authentication counts against', () => {
   it('is an IPv4 address as it is', () => {
-    assert.equal(limiter.addressKey('203.0.113.7'), '203.0.113.7');
+    assert.equal(addressKey('203.0.113.7'), '203.0.113.7');
   });
 
   it('is an IPv4-mapped IPv6 address as its IPv4 address', () => {
-    assert.equal(limiter.addressKey('::ffff:203.0.113.7'), '203.0.113.7');
+    assert.equal(addressKey('::ffff:203.0.113.7'), '203.0.113.7');
   });
 
   it('is an IPv6 address masked to its /56', () => {
-    const key = limiter.addressKey('2001:db8:abcd:12ff:1:2:3:4');
+    const key = addressKey('2001:db8:abcd:12ff:1:2:3:4');
     assert.equal(key, '2001:db8:abcd:1200::/56');
     for (const sibling of ['2001:db8:abcd:1234::1', '2001:0db8:abcd:12aa:ffff::9%eth0']) {
-      assert.equal(limiter.addressKey(sibling), key, sibling);
+      assert.equal(addressKey(sibling), key, sibling);
     }
-    assert.notEqual(limiter.addressKey('2001:db8:abcd:1300::1'), key);
-    assert.equal(limiter.addressKey('::1'), '0:0:0:0::/56');
+    assert.notEqual(addressKey('2001:db8:abcd:1300::1'), key);
+    assert.equal(addressKey('::1'), '0:0:0:0::/56');
   });
 
   it('is a fixed key when the address is unknown', () => {
-    assert.equal(limiter.addressKey(undefined), 'unknown');
+    assert.equal(addressKey(undefined), 'unknown');
   });
 });
