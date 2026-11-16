@@ -2,21 +2,23 @@
  * Rate limits for MCP (MCP.md §3: per-agent limits stand in for a WAF the HTTP API can't have).
  * Over a limit the answer is a JSON-RPC error, so an MCP client reads it like any other error.
  *
- * - agentLimiter: requests per agent key, across /api/mcp and /api/mcp/readonly. Keyed by the key
- *   id, so agents behind one egress address (a hosted assistant) don't share a budget.
- * - authFailureLimiter: failed authentications per client address. It is consulted only when a key
- *   fails (mcpAuth), so it counts nothing else and never holds off a key that authenticates; it
- *   keeps key guessing from turning into a query flood.
+ * - agentLimiter: requests per agent key (or sign-in grant), across /api/mcp and
+ *   /api/mcp/readonly. Keyed by the authenticated key's id, so agents behind one egress address
+ *   (a hosted assistant) don't share a budget; by the address only if no agent was authenticated.
+ * - AuthFailureLimit: failed authentications per client address. mcpAuth spends it only when a
+ *   key fails, and checks it before looking a key up: an address that has used its budget up gets
+ *   429 for every key, a good one too, until the window turns, without a database read. That is
+ *   what keeps key guessing from turning into a query flood.
  *
  * Counters are in memory, per Lambda instance, like the other limiters (middlewares/rateLimit.ts),
  * and always on (only a test turns them off, config/testSwitches.ts).
  */
 import { isIPv6 } from 'node:net';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import rateLimit, { type Options, type RateLimitRequestHandler } from 'express-rate-limit';
 
 import { environment } from '../../config/environment.js';
-import { requestAgent } from '../auth/principal.js';
+import { findRequestAgent } from '../auth/principal.js';
 import { jsonRpcError, JSON_RPC, requestIdOf } from '../jsonRpc.js';
 
 export interface Limit {
@@ -48,11 +50,17 @@ function limiter(
   });
 }
 
+/** The agent key (or grant) mcpAuth authenticated; the address when there is none. */
+export function agentKey(req: Request, res: Response): string {
+  const agent = findRequestAgent(res);
+  return agent === undefined ? `ip:${addressKey(req.ip)}` : `agent:${agent.principal.agentId}`;
+}
+
 export function agentLimiter(limit: Limit = AGENT_LIMIT): RateLimitRequestHandler {
   return limiter(
     limit,
     'Too many requests for this agent key. Wait a minute and try again.',
-    (_req, res) => requestAgent(res).principal.agentId,
+    agentKey,
   );
 }
 
@@ -90,10 +98,50 @@ export function addressKey(ip: string | undefined): string {
   return `${[a, b, c, d & 0xff00].map((group) => group.toString(16)).join(':')}::/56`;
 }
 
-export function authFailureLimiter(limit: Limit = AUTH_FAILURE_LIMIT): RateLimitRequestHandler {
-  return limiter(
-    limit,
-    'Too many failed authentications from this address. Try again later.',
-    (req) => addressKey(req.ip),
-  );
+/** What mcpAuth asks of a failed-authentication budget (AuthFailureLimit is the real one). */
+export interface AuthFailureBudget {
+  /**
+   * True when this request's address has no failures left: answer it (spend) before any lookup.
+   * Counts nothing, and is never true while the rate limits are off.
+   */
+  exhausted(req: Request): Promise<boolean>;
+  /** Counts one failed authentication: true within the budget, false when it answered 429 itself. */
+  spend(req: Request, res: Response): Promise<boolean>;
+}
+
+/** Failed authentications per client address (an IPv6 address by its /56). */
+export class AuthFailureLimit implements AuthFailureBudget {
+  readonly #max: number;
+  readonly #counter: RateLimitRequestHandler;
+
+  constructor(limit: Limit = AUTH_FAILURE_LIMIT) {
+    this.#max = limit.max;
+    this.#counter = limiter(
+      limit,
+      'Too many failed authentications from this address. Try again later.',
+      (req) => addressKey(req.ip),
+    );
+  }
+
+  async exhausted(req: Request): Promise<boolean> {
+    if (!environment.rateLimitEnabled) return false;
+    const used = await this.#counter.getKey(addressKey(req.ip));
+    if (used === undefined) return false;
+    const windowOpen = used.resetTime === undefined || used.resetTime.getTime() > Date.now();
+    return windowOpen && used.totalHits >= this.#max;
+  }
+
+  spend(req: Request, res: Response): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+      const done = this.#counter(req, res, (error?: unknown) => {
+        if (error === undefined) resolve(true);
+        else reject(error instanceof Error ? error : new Error('The failed-auth limiter failed'));
+      });
+      // The limiter's promise settles after it either passed the request on (resolved above)
+      // or answered 429 itself.
+      Promise.resolve(done).then(() => {
+        resolve(false);
+      }, reject);
+    });
+  }
 }

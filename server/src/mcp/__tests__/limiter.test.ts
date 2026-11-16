@@ -1,13 +1,18 @@
 /**
  * Rate limits (MCP.md §3): over the per-agent cap the answer is a JSON-RPC error (429), counted
  * per agent key across /api/mcp and /api/mcp/readonly, without touching other keys; failed
- * authentications are limited per address (an IPv6 address by its /56), and only failed ones:
- * a key that authenticates is never held off by that limit. The router runs at /api/mcp with tiny
- * caps, and at /default/api/mcp with the real ones.
+ * authentications are limited per address (an IPv6 address by its /56), and only failed ones are
+ * counted: keys that authenticate never use the budget up. An address that has used it up gets
+ * 429 for every key, a good one too, before any key is looked up. The router runs at /api/mcp
+ * and /spare/api/mcp with tiny caps (each its own budgets), and at /default/api/mcp with the real
+ * ones.
  */
-import { after, before, describe, it } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import type { Request, Response } from 'express';
 
+import type { AgentKey as AgentKeyClass } from '../../classes/AgentKey.js';
+import type * as Principal from '../auth/principal.js';
 import type * as Limiter from '../middleware/limiter.js';
 import type { TestKey } from './helpers/agentKeys.js';
 import { insertAgentKey, newRawKey } from './helpers/agentKeys.js';
@@ -17,6 +22,8 @@ import { newTeam, type Team } from './helpers/team.js';
 let h: McpHarness;
 let team: Team;
 let limiter: typeof Limiter;
+let principal: typeof Principal;
+let AgentKey: typeof AgentKeyClass;
 
 const AGENT_CAP = 4;
 const AUTH_FAILURE_CAP = 2;
@@ -47,12 +54,22 @@ before(async () => {
           authFailureLimit: { max: AUTH_FAILURE_CAP, windowMs: 60_000 },
         }),
       );
+      app.use(
+        '/spare/api/mcp',
+        express.json(),
+        createMcpRouter({
+          agentLimit: { max: AGENT_CAP, windowMs: 60_000 },
+          authFailureLimit: { max: AUTH_FAILURE_CAP, windowMs: 60_000 },
+        }),
+      );
       app.use('/default/api/mcp', express.json(), createMcpRouter());
       return app;
     },
   });
   team = await newTeam('limiter');
   limiter = await import('../middleware/limiter.js');
+  principal = await import('../auth/principal.js');
+  ({ AgentKey } = await import('../../classes/AgentKey.js'));
 });
 
 after(async () => {
@@ -121,21 +138,40 @@ describe('the per-agent limit', () => {
 });
 
 describe('the failed-authentication limit', () => {
-  it('holds off further bad keys from an address, never a key that authenticates', async () => {
+  it('counts failures only: keys that authenticate never use the budget up', async () => {
+    const agent = await key();
+    for (let i = 0; i < AUTH_FAILURE_CAP + 2; i += 1) {
+      assert.equal((await post('/spare/api/mcp', agent.raw)).status, 200, `good key ${String(i)}`);
+    }
+    for (let i = 0; i < AUTH_FAILURE_CAP; i += 1) {
+      assert.equal((await post('/spare/api/mcp', newRawKey())).status, 401, `bad key ${String(i)}`);
+    }
+    assert.equal((await post('/spare/api/mcp', newRawKey())).status, 429);
+  });
+
+  it('holds off every key from an address over its budget, without looking one up', async () => {
     for (let i = 0; i < AUTH_FAILURE_CAP; i += 1) {
       assert.equal((await post('/api/mcp', newRawKey())).status, 401);
     }
-    const limited = await post('/api/mcp', newRawKey());
-    assert.equal(limited.status, 429);
-    assert.equal(
-      (JSON.parse(limited.text) as { error: { message: string } }).error.message,
-      'Too many failed authentications from this address. Try again later.',
-    );
-    assert.equal((await post('/api/mcp', (await key()).raw)).status, 200);
-    assert.equal((await post('/api/mcp', newRawKey())).status, 429);
+    const good = await key();
+    const lookups = mock.method(AgentKey, 'authenticate');
+    try {
+      const limited = await post('/api/mcp', newRawKey());
+      assert.equal(limited.status, 429);
+      assert.notEqual(limited.headers.get('retry-after'), null);
+      assert.equal(
+        (JSON.parse(limited.text) as { error: { message: string } }).error.message,
+        'Too many failed authentications from this address. Try again later.',
+      );
+      assert.equal((await post('/api/mcp', good.raw)).status, 429);
+      assert.equal((await post('/api/mcp/readonly', good.raw)).status, 429);
+      assert.equal(lookups.mock.callCount(), 0);
+    } finally {
+      lookups.mock.restore();
+    }
   });
 
-  it('with the real cap: 50 bad keys, then a valid key from the same address still gets in', async () => {
+  it('with the real cap: 50 bad keys, then the address waits, even with a valid key', async () => {
     for (let i = 0; i < 50; i += 1) {
       assert.equal(
         (await post('/default/api/mcp', newRawKey())).status,
@@ -144,7 +180,24 @@ describe('the failed-authentication limit', () => {
       );
     }
     assert.equal((await post('/default/api/mcp', newRawKey())).status, 429);
-    assert.equal((await post('/default/api/mcp', (await key()).raw)).status, 200);
+    assert.equal((await post('/default/api/mcp', (await key()).raw)).status, 429);
+  });
+});
+
+describe('the per-agent key', () => {
+  const request = { ip: '203.0.113.7' } as Request;
+
+  it('is the authenticated agent key', () => {
+    const res = { locals: {} } as unknown as Response;
+    principal.setRequestAgent(res, {
+      principal: { agentId: 'key-1' },
+    } as Principal.AuthenticatedAgent);
+    assert.equal(limiter.agentKey(request, res), 'agent:key-1');
+  });
+
+  it('is the address when no agent was authenticated', () => {
+    const res = { locals: {} } as unknown as Response;
+    assert.equal(limiter.agentKey(request, res), 'ip:203.0.113.7');
   });
 });
 

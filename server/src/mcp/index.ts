@@ -10,8 +10,9 @@
  *   - 2025 (initialize handshake): a Streamable HTTP transport per request, with
  *     `sessionIdGenerator: undefined` and JSON responses.
  *
- * The chain, per request: mcpAuth (key → principal; only a failed key counts against its address's
- * failed-authentication limit) → agentLimiter (per agent) → request checks → scope guard (refused
+ * The chain, per request: mcpAuth (an address over its failed-authentication limit gets 429 before
+ * any lookup; key → principal; only a failed key counts against that limit) → agentLimiter (per
+ * agent) → request checks → scope guard (refused
  * calls are audited) → MCP (only the tools the principal may call; per call: confirm → handler →
  * secret guard → audit) → the secret guard again, over the whole JSON-RPC response.
  */
@@ -42,7 +43,7 @@ import { requestAgent, type AuthenticatedAgent } from './auth/principal.js';
 import { screenToolCall, toolCallOf } from './callGuard.js';
 import { jsonRpcError, JSON_RPC, methodOf, requestIdOf, type JsonRpcId } from './jsonRpc.js';
 import { recordToolCall } from './middleware/audit.js';
-import { agentLimiter, authFailureLimiter, type Limit } from './middleware/limiter.js';
+import { agentLimiter, AuthFailureLimit, type Limit } from './middleware/limiter.js';
 import { blockSecrets } from './middleware/redact.js';
 import { buildServer, findTool } from './registry.js';
 
@@ -316,7 +317,7 @@ export interface McpRouterOptions {
 /** `/` → /api/mcp, `/readonly` → /api/mcp/readonly, once mounted at /api/mcp behind parseBody. */
 export function createMcpRouter(options: McpRouterOptions = {}): Router {
   const router = Router();
-  const mcpAuth = createMcpAuth(authFailureLimiter(options.authFailureLimit), (req) =>
+  const mcpAuth = createMcpAuth(new AuthFailureLimit(options.authFailureLimit), (req) =>
     mcpResource(req.path.startsWith('/readonly')),
   );
   const perAgent = agentLimiter(options.agentLimit);

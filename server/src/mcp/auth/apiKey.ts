@@ -11,6 +11,7 @@ import type { Request, RequestHandler, Response } from 'express';
 import { AGENT_BEARER_PATTERN, AgentKey } from '../../classes/AgentKey.js';
 import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
 import { jsonRpcError, JSON_RPC, requestIdOf } from '../jsonRpc.js';
+import type { AuthFailureBudget } from '../middleware/limiter.js';
 import { mcpIssuer, mcpResource } from '../oauth/urls.js';
 import { setRequestAgent, type AuthenticatedAgent } from './principal.js';
 
@@ -73,36 +74,23 @@ export function sendUnauthorized(
 }
 
 /**
- * Counts one failed authentication: true when it is within the limit (the limiter passed it on),
- * false when the limiter answered 429 itself.
- */
-function withinFailureLimit(
-  failures: RequestHandler,
-  req: Request,
-  res: Response,
-): Promise<boolean> {
-  return new Promise((resolve, reject) => {
-    const done = failures(req, res, (error?: unknown) => {
-      if (error === undefined) resolve(true);
-      else reject(error instanceof Error ? error : new Error('The failed-auth limiter failed'));
-    });
-    Promise.resolve(done).then(() => {
-      resolve(false);
-    }, reject);
-  });
-}
-
-/**
  * Express middleware: authenticates the agent key or grant token for this endpoint (`resourceOf`),
- * or answers 401. `failures` (the per-address failed-authentication limiter) is consulted only
- * when the key fails, so it counts failures alone and never stands in the way of a key that
- * authenticates; over its limit, it answers 429 itself.
+ * or answers 401. `failures` is the per-address failed-authentication budget:
+ * - checked first, so an address that has used it up gets 429 without a key lookup (no database
+ *   read), whatever key it sends;
+ * - spent only when the key fails, so a key that authenticates never uses it up.
  */
 export function createMcpAuth(
-  failures: RequestHandler,
+  failures: AuthFailureBudget,
   resourceOf: (req: Request) => string,
 ): RequestHandler {
   return async (req, res, next): Promise<void> => {
+    // Spent already when the address was over its budget but the window turned meanwhile.
+    let spent = false;
+    if (await failures.exhausted(req)) {
+      if (!(await failures.spend(req, res))) return;
+      spent = true;
+    }
     const { presented, key } = bearerKey(req.headers.authorization);
     const resource = resourceOf(req);
     const agent =
@@ -113,7 +101,7 @@ export function createMcpAuth(
       next();
       return;
     }
-    if (await withinFailureLimit(failures, req, res)) {
+    if (spent || (await failures.spend(req, res))) {
       sendUnauthorized(res, presented, req.body, resource);
     }
   };

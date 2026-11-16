@@ -89,9 +89,14 @@ export function setRequestAgent(res: Response, agent: AuthenticatedAgent): void 
   res.locals[LOCALS_KEY] = agent;
 }
 
+/** The agent mcpAuth authenticated for this request, or undefined before (or without) it. */
+export function findRequestAgent(res: Response): AuthenticatedAgent | undefined {
+  return res.locals[LOCALS_KEY] as AuthenticatedAgent | undefined;
+}
+
 /** The agent mcpAuth authenticated for this request; throws if it did not run. */
 export function requestAgent(res: Response): AuthenticatedAgent {
-  const agent = res.locals[LOCALS_KEY] as AuthenticatedAgent | undefined;
+  const agent = findRequestAgent(res);
   if (agent === undefined) throw new Error('MCP request reached a handler without mcpAuth');
   return agent;
 }
