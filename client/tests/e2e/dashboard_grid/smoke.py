@@ -233,7 +233,15 @@ def test_remove_block_asks_first(page: Page, base_url: str, api_base_url: str, f
 
     page.get_by_role("button", name="Options for Deadlines").click()
     page.get_by_role("menuitem", name="Remove", exact=True).click()
-    page.get_by_role("alertdialog").get_by_role("button", name="Remove block", exact=True).click()
+    # The removal is not optimistic: the block leaves when the server's answer lands, so wait for
+    # that answer (a slow API under load took longer than an assertion's default 5s).
+    with page.expect_response(
+        lambda r: r.url.endswith("/ops") and r.request.method == "POST", timeout=LONG_TIMEOUT
+    ) as removed:
+        page.get_by_role("alertdialog").get_by_role(
+            "button", name="Remove block", exact=True
+        ).click()
+    assert removed.value.ok
     expect(page.get_by_role("article")).to_have_count(len(dashboard["blocks"]) - 1)
     expect(page.get_by_role("article", name="Deadlines")).to_have_count(0)
 
