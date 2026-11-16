@@ -200,8 +200,17 @@ describe('the dashboard internals', () => {
       ).some((edge) => edge.target === OPS && reachesApplyOps(edge)),
       'Dashboard imports applyOps',
     );
-    // And it hands applyOps the one document check.
-    assert.ok(names(DASHBOARD, /check: \(draft\) => DocCheck\.instance\.check\(draft\)/));
+    // And every call of it hands applyOps the one document check (not just one of them).
+    const calls = (files.get(DASHBOARD) ?? '').split(/(?<![.\w])(?<!async )applyOps\(/).slice(1);
+    assert.ok(calls.length >= 1, 'Dashboard calls applyOps');
+    for (const call of calls) {
+      assert.ok(
+        /^[^;]{0,200}?\{\s*(?:\/\/[^\n]*\s*)*check: \(draft\) => DocCheck\.instance\.check\(draft\)/.test(
+          call,
+        ),
+        `an applyOps call without DocCheck's check: ${call.slice(0, 80)}`,
+      );
+    }
   });
 
   it('only their legitimate callers load them, and the guarded names are named only there', () => {
