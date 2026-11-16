@@ -6185,5 +6185,195 @@
       "message": "/ops/1/block/query/limit: Too small: expected number to be >=1",
       "pointer": "/ops/1/block/query/limit"
     }
+  },
+  "opsWritten": {
+    "add a block the catalog allows": {
+      "next": {
+        "title": "Page",
+        "scope": {
+          "topicId": null,
+          "containerId": null,
+          "page": "topic",
+          "groupVar": null
+        },
+        "vars": {},
+        "layouts": {
+          "lg": [
+            {
+              "i": "blk_golden_1",
+              "x": 0,
+              "y": 0,
+              "w": 4,
+              "h": 10
+            }
+          ],
+          "md": [
+            {
+              "i": "blk_golden_1",
+              "x": 0,
+              "y": 0,
+              "w": 3,
+              "h": 10
+            }
+          ],
+          "sm": [
+            {
+              "i": "blk_golden_1",
+              "x": 0,
+              "y": 0,
+              "w": 1,
+              "h": 10
+            }
+          ]
+        },
+        "blocks": [
+          {
+            "id": "blk_note_1",
+            "type": "note",
+            "title": "Any title",
+            "viz": {
+              "kind": "note"
+            },
+            "note": ""
+          },
+          {
+            "id": "blk_filter_2",
+            "type": "filter",
+            "title": "Any title",
+            "viz": {
+              "kind": "chips",
+              "field": "topic"
+            },
+            "sets": "$page.topic"
+          },
+          {
+            "id": "blk_golden_1",
+            "type": "deadlines",
+            "title": "",
+            "query": {
+              "source": "items",
+              "where": {
+                "combinator": "and",
+                "rules": [
+                  {
+                    "field": "dueAt",
+                    "operator": "notNull"
+                  },
+                  {
+                    "field": "status",
+                    "operator": "in",
+                    "value": ["open", "in_progress"]
+                  }
+                ]
+              },
+              "dateRange": "upcoming_14d",
+              "dateField": "dueAt",
+              "sort": [
+                {
+                  "field": "dueAt",
+                  "dir": "asc"
+                }
+              ]
+            },
+            "viz": {
+              "kind": "deadlines",
+              "overdueOnTop": true
+            }
+          }
+        ]
+      },
+      "patch": [
+        {
+          "op": "add",
+          "path": "/layouts/lg/-",
+          "value": {
+            "i": "blk_golden_1",
+            "x": 0,
+            "y": 0,
+            "w": 4,
+            "h": 10
+          }
+        },
+        {
+          "op": "add",
+          "path": "/layouts/md/-",
+          "value": {
+            "i": "blk_golden_1",
+            "x": 0,
+            "y": 0,
+            "w": 3,
+            "h": 10
+          }
+        },
+        {
+          "op": "add",
+          "path": "/layouts/sm/-",
+          "value": {
+            "i": "blk_golden_1",
+            "x": 0,
+            "y": 0,
+            "w": 1,
+            "h": 10
+          }
+        },
+        {
+          "op": "add",
+          "path": "/blocks/-",
+          "value": {
+            "id": "blk_golden_1",
+            "type": "deadlines",
+            "title": "",
+            "query": {
+              "source": "items",
+              "where": {
+                "combinator": "and",
+                "rules": [
+                  {
+                    "field": "dueAt",
+                    "operator": "notNull"
+                  },
+                  {
+                    "field": "status",
+                    "operator": "in",
+                    "value": ["open", "in_progress"]
+                  }
+                ]
+              },
+              "dateRange": "upcoming_14d",
+              "dateField": "dueAt",
+              "sort": [
+                {
+                  "field": "dueAt",
+                  "dir": "asc"
+                }
+              ]
+            },
+            "viz": {
+              "kind": "deadlines",
+              "overdueOnTop": true
+            }
+          }
+        }
+      ],
+      "inverse": [
+        {
+          "op": "remove",
+          "path": "/layouts/lg/0"
+        },
+        {
+          "op": "remove",
+          "path": "/layouts/md/0"
+        },
+        {
+          "op": "remove",
+          "path": "/layouts/sm/0"
+        },
+        {
+          "op": "remove",
+          "path": "/blocks/2"
+        }
+      ],
+      "warnings": []
+    }
   }
 }

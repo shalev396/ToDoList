@@ -23,7 +23,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 
 import { OpValidationError } from '../../builder/errors.js';
 import { BLOCK_CATALOG } from '../../builder/catalog.js';
-import { applyOps, type ApplyOpsContext } from '../../builder/ops.js';
+import { applyOps, type ApplyOpsContext, type ApplyOpsResult } from '../../builder/ops.js';
 import { instantiateTemplate, listTemplates, TEMPLATE_LANGUAGES } from '../../builder/templates.js';
 import { AppError } from '../../errors/AppError.js';
 import {
@@ -335,14 +335,41 @@ function opsContext(): ApplyOpsContext {
   };
 }
 
-/** What the ops write path answers: the blocks it would write, or its refusal. */
-function opsOf(ops: unknown[]): { blocks: string[] } | Refusal {
+/** What the ops write path writes, in full, or its refusal. */
+function opsRun(ops: unknown[]): ApplyOpsResult | Refusal {
   try {
-    const result = applyOps(OPS_PAGE, ops as Parameters<typeof applyOps>[1], opsContext());
-    return { blocks: result.next.blocks.map((block) => `${block.id} ${block.type}`) };
+    return applyOps(OPS_PAGE, ops as Parameters<typeof applyOps>[1], opsContext());
   } catch (error) {
     return refusalOf(error);
   }
+}
+
+/** What the ops write path answers: the blocks it would write, or its refusal. */
+function opsOf(ops: unknown[]): { blocks: string[] } | Refusal {
+  const run = opsRun(ops);
+  return 'next' in run
+    ? { blocks: run.next.blocks.map((block) => `${block.id} ${block.type}`) }
+    : run;
+}
+
+/**
+ * The document the ops write path writes: the whole next draft, its patch and inverse and its
+ * warnings (a refused case writes nothing, and is pinned by `ops`).
+ */
+function opsWrittenOf(list: Readonly<Record<string, unknown[]>>): Record<string, ApplyOpsResult> {
+  const written: Record<string, ApplyOpsResult> = {};
+  for (const [name, ops] of Object.entries(list)) {
+    const run = opsRun(ops);
+    if ('next' in run) {
+      written[name] = {
+        next: run.next,
+        patch: run.patch,
+        inverse: run.inverse,
+        warnings: run.warnings,
+      };
+    }
+  }
+  return written;
 }
 
 interface Snapshot {
@@ -351,6 +378,8 @@ interface Snapshot {
   validations: Record<string, Record<string, DashboardValidation>>;
   restores: Record<string, Record<string, Refusal | null>>;
   ops: Record<string, { blocks: string[] } | Refusal>;
+  /** Added after the rest, which stays as phase 6b wrote it. */
+  opsWritten: Record<string, ApplyOpsResult>;
 }
 
 function snapshot(): Snapshot {
@@ -379,7 +408,7 @@ function snapshot(): Snapshot {
     validations[`lint: ${name}`] = validationOf(doc);
   }
   for (const [name, list] of Object.entries(OPS_CASES)) ops[name] = opsOf(list);
-  return { checks, lints, validations, restores, ops };
+  return { checks, lints, validations, restores, ops, opsWritten: opsWrittenOf(OPS_CASES) };
 }
 
 describe('DocCheck: the output phase 6b kept', () => {
