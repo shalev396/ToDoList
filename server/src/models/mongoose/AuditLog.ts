@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import {
   AUDIT_LOG_TABLE_NAME,
   type AuditLogData,
+  type AuditLogEntry,
   type IAuditLogRepository,
 } from '../definitions/AuditLog.js';
 import { setFields, uuidIdField } from './common.js';
@@ -66,24 +67,41 @@ function toAuditLogData(doc: AuditLogFields): AuditLogData {
   };
 }
 
+/** The stored document of one entry (the schema fills in what it leaves out). */
+function entryDoc(
+  workspaceId: string,
+  entry: AuditLogEntry,
+): Pick<AuditLogFields, 'workspaceId' | 'actorUserId' | 'action'> & Record<string, unknown> {
+  return {
+    workspaceId,
+    actorUserId: entry.actorUserId,
+    action: entry.action,
+    ...setFields(entry, [
+      'actorAgentId',
+      'targetType',
+      'targetId',
+      'ip',
+      'userAgent',
+      'meta',
+      'at',
+    ]),
+  };
+}
+
 /** Append-only: no update or delete method. Entries leave only through the 365-day TTL. */
 export const AuditLogRepository: IAuditLogRepository = {
   async append(workspaceId, entry) {
-    const doc = await AuditLogMongoModel.create({
-      workspaceId,
-      actorUserId: entry.actorUserId,
-      action: entry.action,
-      ...setFields(entry, [
-        'actorAgentId',
-        'targetType',
-        'targetId',
-        'ip',
-        'userAgent',
-        'meta',
-        'at',
-      ]),
-    });
+    const doc = await AuditLogMongoModel.create(entryDoc(workspaceId, entry));
     return toAuditLogData(doc);
+  },
+
+  async appendMany(workspaceId, entries) {
+    if (entries.length === 0) return [];
+    const docs = await AuditLogMongoModel.insertMany(
+      entries.map((entry) => new AuditLogMongoModel(entryDoc(workspaceId, entry))),
+      { ordered: true },
+    );
+    return docs.map((doc) => toAuditLogData(doc));
   },
 
   async list(workspaceId, filter, limit) {

@@ -701,6 +701,15 @@ export const ItemRepository: IItemRepository = {
     return result.modifiedCount;
   },
 
+  async existsForIntegrations(workspaceId, integrationIds) {
+    if (integrationIds.length === 0) return false;
+    const found = await ItemMongoModel.exists({
+      workspaceId,
+      integrationId: { $in: [...integrationIds] },
+    });
+    return found !== null;
+  },
+
   async softDeleteForIntegration(workspaceId, integrationId, deletedAt = new Date()) {
     const result = await ItemMongoModel.updateMany(
       { workspaceId, integrationId, deletedAt: null },

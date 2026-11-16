@@ -49,7 +49,14 @@ export interface SyncRunPatch {
 
 export interface ISyncRunRepository {
   create(workspaceId: string, input: CreateSyncRunInput): Promise<SyncRunData>;
+  /** create() for each input, in one write, in order. */
+  createMany(workspaceId: string, inputs: readonly CreateSyncRunInput[]): Promise<SyncRunData[]>;
   update(workspaceId: string, id: string, patch: SyncRunPatch): Promise<SyncRunData | null>;
+  /** update() for each run, in one write, in order. How many runs it found. */
+  updateMany(
+    workspaceId: string,
+    updates: readonly { id: string; patch: SyncRunPatch }[],
+  ): Promise<number>;
   /**
    * update(), only while the run's status is one of `statuses` (one conditional write): ends a run
    * nobody finished meanwhile. Null when it has another status, or is not found.

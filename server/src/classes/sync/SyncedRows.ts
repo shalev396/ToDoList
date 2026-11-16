@@ -49,6 +49,37 @@ export class SyncedRows {
     return { items, containers };
   }
 
+  /** Whether any item or container (deleted ones too) belongs to one of these integrations. */
+  static async anyOf(workspaceId: string, integrationIds: readonly string[]): Promise<boolean> {
+    const [items, containers] = await Promise.all([getItemRepository(), getContainerRepository()]);
+    const found = await Promise.all([
+      items.existsForIntegrations(workspaceId, integrationIds),
+      containers.existsForIntegrations(workspaceId, integrationIds),
+    ]);
+    return found.includes(true);
+  }
+
+  /**
+   * The rows of several integrations of a workspace (each resolved there by the caller), bulk-
+   * upserted on their natural keys: the containers and the items at once (an item names its
+   * container's id, which a new container takes from its record: SyncEngine.executeTogether).
+   */
+  static async upsertAll(
+    workspaceId: string,
+    containers: readonly ContainerUpsert[],
+    items: readonly ItemUpsert[],
+  ): Promise<{ containers: BulkUpsertResult; items: ItemBulkUpsertResult }> {
+    const [itemRepository, containerRepository] = await Promise.all([
+      getItemRepository(),
+      getContainerRepository(),
+    ]);
+    const [containersDone, itemsDone] = await Promise.all([
+      containerRepository.bulkUpsert(workspaceId, containers),
+      itemRepository.bulkUpsert(workspaceId, items),
+    ]);
+    return { containers: containersDone, items: itemsDone };
+  }
+
   /** Its live containers, all or only these external ids. */
   async containers(externalIds?: readonly string[]): Promise<ContainerData[]> {
     return (await getContainerRepository()).list(this.#workspaceId, {

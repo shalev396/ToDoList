@@ -92,6 +92,20 @@ export const SyncRunRepository: ISyncRunRepository = {
     return toSyncRunData(doc);
   },
 
+  async createMany(workspaceId, inputs) {
+    if (inputs.length === 0) return [];
+    const docs = await SyncRunMongoModel.insertMany(
+      inputs.map((input) => ({
+        workspaceId,
+        integrationId: input.integrationId,
+        trigger: input.trigger,
+        ...setFields(input, ['status', 'startedAt']),
+      })),
+      { ordered: true },
+    );
+    return docs.map((doc) => toSyncRunData(doc));
+  },
+
   async update(workspaceId, id, patch) {
     const doc = await SyncRunMongoModel.findOneAndUpdate(
       { _id: id, workspaceId },
@@ -99,6 +113,21 @@ export const SyncRunRepository: ISyncRunRepository = {
       { new: true, runValidators: true },
     ).lean<SyncRunFields>();
     return doc ? toSyncRunData(doc) : null;
+  },
+
+  // update()'s writes without its `runValidators` (a bulk write has none); the engine writes them.
+  async updateMany(workspaceId, updates) {
+    if (updates.length === 0) return 0;
+    const result = await SyncRunMongoModel.bulkWrite(
+      updates.map(({ id, patch }) => ({
+        updateOne: {
+          filter: { _id: id, workspaceId },
+          update: { $set: setFields(patch, PATCH_KEYS) },
+        },
+      })),
+      { ordered: true },
+    );
+    return result.matchedCount;
   },
 
   async updateIfStatus(workspaceId, id, statuses, patch) {

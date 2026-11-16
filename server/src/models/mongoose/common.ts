@@ -135,6 +135,8 @@ export function scopedPipeline(
  * resource it came from (stamped on every write).
  */
 export interface SourceRecord {
+  /** The id a new copy gets (default: a random one). */
+  id?: string;
   /** The integration whose copy this is: part of the natural key (ruling 8). */
   integrationId: string;
   source: SourceRef;
@@ -380,7 +382,7 @@ export async function upsertBySource<T extends SourceRecord, S extends StoredSou
           'source.externalId': record.source.externalId,
           integrationId: record.integrationId,
         },
-        update: { $set: toSet(record, seenAt), $setOnInsert: { _id: randomUUID() } },
+        update: { $set: toSet(record, seenAt), $setOnInsert: { _id: record.id ?? randomUUID() } },
         upsert: true,
       },
     })),

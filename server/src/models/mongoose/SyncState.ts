@@ -90,6 +90,30 @@ export const SyncStateRepository: ISyncStateRepository = {
     return toSyncStateData(doc);
   },
 
+  async listForIntegrations(workspaceId, integrationIds) {
+    if (integrationIds.length === 0) return [];
+    const docs = await SyncStateMongoModel.find({
+      workspaceId,
+      integrationId: { $in: [...integrationIds] },
+    }).lean<SyncStateFields[]>();
+    return docs.map(toSyncStateData);
+  },
+
+  // upsert()'s writes without its `runValidators` (a bulk write has none); the engine writes them.
+  async upsertMany(workspaceId, entries) {
+    if (entries.length === 0) return;
+    await SyncStateMongoModel.bulkWrite(
+      entries.map(({ integrationId, resource, patch }) => ({
+        updateOne: {
+          filter: { workspaceId, integrationId, resource },
+          update: { $set: setFields(patch, PATCH_KEYS), $setOnInsert: { _id: randomUUID() } },
+          upsert: true,
+        },
+      })),
+      { ordered: true },
+    );
+  },
+
   async countFailedRun(workspaceId, integrationId, resource, runId) {
     const scope = { workspaceId, integrationId, resource };
     // The state exists first, so the counting write below is a plain conditional update.

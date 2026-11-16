@@ -124,6 +124,12 @@ function sanitizedError(error: ErrorInfo): { code: string; message: string } {
   return { code: error.code, message };
 }
 
+/** How a run that succeeded ended: when, and whether records were skipped (`partial`). */
+export interface SyncRunSuccess {
+  finishedAt: Date;
+  partial: boolean;
+}
+
 /** What a finished run stores of its records: its counts, and the records it skipped. */
 export interface SyncRunResults {
   counts: Record<string, number>;
@@ -170,6 +176,32 @@ export class SyncRun
       startedAt,
     });
     return new SyncRun(created);
+  }
+
+  /**
+   * `begin` for each integration of one workspace, in one write, in order: a batch of syncs
+   * (Integration.syncTogether).
+   */
+  static async beginAll(
+    runs: readonly { owner: SyncRunOwner; trigger: SyncTrigger; startedAt: Date }[],
+  ): Promise<SyncRun[]> {
+    const workspaceId = runs[0]?.owner.workspaceId;
+    if (workspaceId === undefined) return [];
+    if (runs.some(({ owner }) => owner.workspaceId !== workspaceId)) {
+      throw new Error('SyncRun.beginAll: the runs of one workspace at a time');
+    }
+    const created = await (
+      await getSyncRunRepository()
+    ).createMany(
+      workspaceId,
+      runs.map(({ owner, trigger, startedAt }) => ({
+        integrationId: owner.id,
+        trigger,
+        status: 'running',
+        startedAt,
+      })),
+    );
+    return created.map((data) => new SyncRun(data));
   }
 
   /**
@@ -468,19 +500,53 @@ export class SyncRun
    * running → succeeded, or `partial` when some records were skipped or some steps failed: its
    * counts, and the records it skipped when it keeps them (the engine).
    */
-  async succeed(
-    results: SyncRunResults,
-    outcome: { finishedAt: Date; partial: boolean },
+  async succeed(results: SyncRunResults, outcome: SyncRunSuccess): Promise<void> {
+    const patch = this.#succeeded(results, outcome);
+    await this.#write(patch);
+    this.#status = patch.status;
+  }
+
+  /**
+   * `succeed` for each run of one workspace (each `running`), in one write: a batch of syncs. Each
+   * transition is checked before anything is written.
+   */
+  static async succeedAll(
+    entries: readonly { run: SyncRun; results: SyncRunResults; outcome: SyncRunSuccess }[],
   ): Promise<void> {
+    const workspaceId = entries[0]?.run.workspaceId;
+    if (workspaceId === undefined) return;
+    if (entries.some(({ run }) => run.workspaceId !== workspaceId)) {
+      throw new Error('SyncRun.succeedAll: the runs of one workspace at a time');
+    }
+    const patches = entries.map(({ run, results, outcome }) => ({
+      run,
+      patch: run.#succeeded(results, outcome),
+    }));
+    await (
+      await getSyncRunRepository()
+    ).updateMany(
+      workspaceId,
+      patches.map(({ run, patch }) => ({ id: run.id, patch })),
+    );
+    for (const { run, patch } of patches) {
+      run.#current = Object.freeze({ ...run.#current, ...patch });
+      run.#status = patch.status;
+    }
+  }
+
+  /** What `succeed` writes, its transition checked. */
+  #succeeded(
+    results: SyncRunResults,
+    outcome: SyncRunSuccess,
+  ): SyncRunPatch & { status: 'succeeded' | 'partial' } {
     const status = outcome.partial ? 'partial' : 'succeeded';
     this.#check('succeed', status);
-    await this.#write({
+    return {
       status,
       finishedAt: outcome.finishedAt,
       counts: results.counts,
       ...(results.failures === undefined ? {} : { error: null, failures: results.failures }),
-    });
-    this.#status = status;
+    };
   }
 
   /**

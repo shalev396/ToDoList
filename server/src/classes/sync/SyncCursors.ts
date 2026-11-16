@@ -6,7 +6,11 @@
  * The unique index (integrationId, resource) has no `workspaceId`: the integration is resolved in
  * its workspace before its cursors are opened (every caller holds the integration).
  */
-import type { SyncStatePatch } from '../../models/definitions/SyncState.js';
+import type {
+  SyncStateData,
+  SyncStatePatch,
+  SyncStateUpsert,
+} from '../../models/definitions/SyncState.js';
 import { getSyncStateRepository } from '../../models/index.js';
 import { SyncCursor } from './SyncCursor.js';
 
@@ -26,6 +30,30 @@ export class SyncCursors {
   /** The cursors of one integration of a workspace. */
   static of(integration: { readonly id: string; readonly workspaceId: string }): SyncCursors {
     return new SyncCursors(integration.workspaceId, integration.id);
+  }
+
+  /**
+   * Every stored state of these integrations of a workspace (each resolved there by the caller),
+   * by integration: what a batch of runs reads in one round trip (SyncEngine.executeTogether).
+   */
+  static async listOf(
+    workspaceId: string,
+    integrationIds: readonly string[],
+  ): Promise<Map<string, SyncStateData[]>> {
+    const states = await (
+      await getSyncStateRepository()
+    ).listForIntegrations(workspaceId, integrationIds);
+    const byIntegration = new Map<string, SyncStateData[]>(integrationIds.map((id) => [id, []]));
+    for (const state of states) byIntegration.get(state.integrationId)?.push(state);
+    return byIntegration;
+  }
+
+  /**
+   * `save` for each entry, in one write, in order: what a batch of runs stores at its end (each
+   * integration resolved in the workspace by the caller).
+   */
+  static async saveAll(workspaceId: string, saves: readonly SyncStateUpsert[]): Promise<void> {
+    await (await getSyncStateRepository()).upsertMany(workspaceId, saves);
   }
 
   /** Where `resource` stands (none when it was never synced). */

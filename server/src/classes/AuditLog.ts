@@ -24,6 +24,13 @@ export interface AuditScope {
   readonly actor: ActorRef;
 }
 
+/** One entry of a batch (AuditLog.recordAll): what was done, to what, and its meta. */
+export interface AuditEntry {
+  action: string;
+  target: Auditable | AuditTarget;
+  meta?: Record<string, unknown>;
+}
+
 /** One page of the log, newest first: the filters, where to start (a cursor), how many. */
 export interface AuditPageQuery {
   actorAgentId?: string | undefined;
@@ -118,6 +125,39 @@ export class AuditLog extends WorkspaceEntity<AuditLogData> {
       meta,
     });
     return new AuditLog(stored);
+  }
+
+  /**
+   * Appends entries of one scope in one write, in the order given: each is a millisecond after the
+   * one before it, so the log lists them in that order (newest first) however fast they were
+   * written. What a batch audits per row (SyncEngine.executeTogether, the demo seed's batches).
+   */
+  static async recordAll(
+    scope: AuditScope,
+    entries: readonly AuditEntry[],
+    at: Date = new Date(),
+  ): Promise<AuditLog[]> {
+    const actor = Actor.from(scope.actor);
+    const stored = await (
+      await getAuditLogRepository()
+    ).appendMany(
+      scope.workspaceId,
+      entries.map(({ action, target, meta = {} }, index) => {
+        const about = target instanceof AuditTarget ? target : target.auditTarget();
+        return {
+          actorUserId: actor.userId,
+          actorAgentId: actor.agentId,
+          action,
+          targetType: about.type,
+          targetId: about.id,
+          ip: actor.ip,
+          userAgent: actor.userAgent,
+          meta,
+          at: new Date(at.getTime() + index),
+        };
+      }),
+    );
+    return stored.map((data) => new AuditLog(data));
   }
 
   /** Newest first; entries at the same time by id, descending (a stable order to page by). */

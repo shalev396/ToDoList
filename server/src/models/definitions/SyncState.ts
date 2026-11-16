@@ -27,6 +27,13 @@ export interface SyncStatePatch {
   consecutiveErrors?: number;
 }
 
+/** One state's upsert: its integration, its resource, the fields that change. */
+export interface SyncStateUpsert {
+  integrationId: string;
+  resource: string;
+  patch: SyncStatePatch;
+}
+
 export interface ISyncStateRepository {
   get(workspaceId: string, integrationId: string, resource: string): Promise<SyncStateData | null>;
   /**
@@ -40,6 +47,13 @@ export interface ISyncStateRepository {
     resource: string,
     patch: SyncStatePatch,
   ): Promise<SyncStateData>;
+  /** Every state of these integrations (every resource, `__run__` included). Same caveat. */
+  listForIntegrations(
+    workspaceId: string,
+    integrationIds: readonly string[],
+  ): Promise<SyncStateData[]>;
+  /** upsert() for each entry, in one write, in order (no state is answered). Same caveat. */
+  upsertMany(workspaceId: string, entries: readonly SyncStateUpsert[]): Promise<void>;
   /**
    * Counts one failed run toward the failed runs in a row (`consecutiveErrors`), at most once per
    * run: the increment and the run id it counts are one atomic write, so a retry of the run's job

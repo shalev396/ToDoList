@@ -151,6 +151,11 @@ export interface IIntegrationRepository {
     id: string,
     result: SyncResultPatch,
   ): Promise<IntegrationData | null>;
+  /** recordSyncResult() for each integration, in one write, in order (no integration is answered). */
+  recordSyncResults(
+    workspaceId: string,
+    results: readonly { id: string; result: SyncResultPatch }[],
+  ): Promise<void>;
   /** Sets `deletedAt`. False when there was nothing to delete. */
   softDelete(workspaceId: string, id: string): Promise<boolean>;
   /** A topic was deleted: integrations defaulting to it, deleted ones too, default to none. */

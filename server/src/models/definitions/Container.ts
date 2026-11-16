@@ -41,6 +41,11 @@ export interface ContainerFilter {
 
 /** One provider record mapped by a sync. Fields left out are written as null / empty. */
 export interface ContainerUpsert {
+  /**
+   * The id a new copy gets (default: a random one); a stored copy keeps its own. A batch that
+   * names its items' container before writing it (a fixture replay) sets it.
+   */
+  id?: string;
   integrationId: string;
   topicId: string | null;
   type: ContainerType;
@@ -94,6 +99,8 @@ export interface IContainerRepository {
     resources: readonly string[],
     options?: SweepOptions,
   ): Promise<number>;
+  /** Whether any container (a deleted one too) belongs to one of these integrations. */
+  existsForIntegrations(workspaceId: string, integrationIds: readonly string[]): Promise<boolean>;
   /** Sets `deletedAt` (default now) on this integration's live containers. Returns how many. */
   softDeleteForIntegration(
     workspaceId: string,

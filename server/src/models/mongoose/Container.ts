@@ -182,6 +182,15 @@ export const ContainerRepository: IContainerRepository = {
     return result.modifiedCount;
   },
 
+  async existsForIntegrations(workspaceId, integrationIds) {
+    if (integrationIds.length === 0) return false;
+    const found = await ContainerMongoModel.exists({
+      workspaceId,
+      integrationId: { $in: [...integrationIds] },
+    });
+    return found !== null;
+  },
+
   async softDeleteForIntegration(workspaceId, integrationId, deletedAt = new Date()) {
     const result = await ContainerMongoModel.updateMany(
       { workspaceId, integrationId, deletedAt: null },

@@ -252,6 +252,36 @@ export const IntegrationRepository: IIntegrationRepository = {
     return doc ? toIntegrationData(doc) : null;
   },
 
+  // recordSyncResult()'s writes, without its `runValidators` (a bulk write has none): the engine
+  // writes a status it knows and its own times.
+  async recordSyncResults(workspaceId, results) {
+    if (results.length === 0) return;
+    await IntegrationMongoModel.bulkWrite(
+      results.flatMap(({ id, result }) => {
+        const live = { _id: id, workspaceId, deletedAt: null };
+        return [
+          ...(result.status === undefined
+            ? []
+            : [
+                {
+                  updateOne: {
+                    filter: { ...live, status: { $nin: [...HELD_INTEGRATION_STATUSES] } },
+                    update: { $set: { status: result.status } },
+                  },
+                },
+              ]),
+          {
+            updateOne: {
+              filter: live,
+              update: { $set: setFields(result, ['lastSyncAt', 'lastError']) },
+            },
+          },
+        ];
+      }),
+      { ordered: true },
+    );
+  },
+
   async softDelete(workspaceId, id) {
     const result = await IntegrationMongoModel.updateOne(
       { _id: id, workspaceId, deletedAt: null },

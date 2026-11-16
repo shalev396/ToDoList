@@ -52,6 +52,8 @@ export interface AuditLogRecentQuery {
 
 export interface IAuditLogRepository {
   append(workspaceId: string, entry: AuditLogEntry): Promise<AuditLogData>;
+  /** append() for each entry, in one write, in order. */
+  appendMany(workspaceId: string, entries: readonly AuditLogEntry[]): Promise<AuditLogData[]>;
   /** Newest first; entries at the same time by id, descending (a stable order to page by). */
   list(workspaceId: string, filter: AuditLogFilter, limit: number): Promise<AuditLogData[]>;
   /** The newest entry since `since` matching the action, agent and meta values; or null. */

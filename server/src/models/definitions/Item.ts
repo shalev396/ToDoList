@@ -205,6 +205,11 @@ export interface MirroredItemPatch {
  * owner and linked items belong to users and are never written.
  */
 export interface ItemUpsert {
+  /**
+   * The id a new copy gets (default: a random one); a stored copy keeps its own. A batch that
+   * names its items' container before writing it (a fixture replay) sets it.
+   */
+  id?: string;
   integrationId: string;
   containerId?: string | null;
   kind: ItemKind;
@@ -374,6 +379,8 @@ export interface IItemRepository {
     resources: readonly string[],
     options?: SweepOptions,
   ): Promise<number>;
+  /** Whether any item (a deleted one too) belongs to one of these integrations. */
+  existsForIntegrations(workspaceId: string, integrationIds: readonly string[]): Promise<boolean>;
   /**
    * Sets `deletedAt` (default now) on this integration's live items: a disconnect, or a sync run
    * that finds its integration disconnected. Returns how many.
