@@ -8,9 +8,8 @@ import {
   DB_CONNECTION,
   DB_MODULES,
   DB_PACKAGES,
-  LEGACY_DB_IMPORTERS,
   TEST_FILES,
-} from './legacy-db-importers.mjs';
+} from './class-boundary.mjs';
 
 const DB_MESSAGE =
   'Only classes reach the database (docs/design/CLASSES.md): use or add a method on a class in src/classes/.';
@@ -20,7 +19,7 @@ const TEST_HELPER_MESSAGE =
 const escapeRegex = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * A module of legacy-db-importers.mjs as a regex over the import specifiers that name it:
+ * A module of class-boundary.mjs as a regex over the import specifiers that name it:
  * `src/models/mongoose/**` matches `../models/mongoose/Item.js`; `src/models/index.ts` matches
  * `../../models/index.js`. ESLint sees specifiers as written; the boundary test resolves them.
  */
@@ -92,7 +91,7 @@ export default tseslint.config(
       'no-debugger': 'error',
     },
   },
-  // The class boundary (legacy-db-importers.mjs). src/classes/classBoundary.test.ts holds the same
+  // The class boundary (class-boundary.mjs). src/classes/classBoundary.test.ts holds the same
   // line, and also resolves paths, sees dynamic imports and getters named outside an import.
   // A later block's options replace an earlier one's for the files both match.
   {
@@ -104,9 +103,9 @@ export default tseslint.config(
     },
   },
   {
-    // Outside the allowed places (and the shrinking legacy list), nothing loads the database.
+    // Outside the allowed places, nothing loads the database.
     files: ['src/**/*.ts'],
-    ignores: [...DB_ALLOWED, ...LEGACY_DB_IMPORTERS],
+    ignores: DB_ALLOWED,
     rules: { '@typescript-eslint/no-restricted-imports': boundaryRule(DB_MODULES) },
   },
   {

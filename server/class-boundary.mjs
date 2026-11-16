@@ -5,7 +5,9 @@
  * never loads a TEST_HELPERS module.
  *
  * Read by eslint.config.js (no-restricted-imports) and src/classes/classBoundary.test.ts (which
- * also resolves paths, sees dynamic imports and names), so both hold the same line.
+ * also resolves paths, sees dynamic imports and names, and greps the raw text), so both hold the
+ * same line. There are no exceptions: every module that reached the database directly moved
+ * behind a class, phase by phase, and the list of those left (LEGACY_DB_IMPORTERS) is gone.
  *
  * Paths are relative to server/; `*` is one name, `**` any path.
  */
@@ -52,10 +54,3 @@ export const DB_ALLOWED = [
 
 /** Besides models/** and tests, the only module that names the audit log's repository. */
 export const AUDIT_LOG_WRITER = 'src/classes/AuditLog.ts';
-
-/**
- * Modules that still reach the database directly, until their phase moves them behind a class.
- * The list only shrinks: the boundary test fails on an entry that no longer needs to be here.
- * Empty since phase 6a: every module outside DB_ALLOWED goes through a class. Phase 7 deletes it.
- */
-export const LEGACY_DB_IMPORTERS = [];

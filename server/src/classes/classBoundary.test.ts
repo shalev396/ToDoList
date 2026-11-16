@@ -1,20 +1,24 @@
 /**
  * The class boundary (docs/design/CLASSES.md), as a test over the import graph of server/src,
- * with the lists of legacy-db-importers.mjs:
- * - outside DB_ALLOWED and the legacy list, no module loads a database module (the models, the
- *   connection and its providers) or a database package at run time, statically or dynamically
- *   (a type-only import is erased, so it is fine), and none names a get…Repository getter. The
- *   entry points and jobs (DB_BOOTSTRAP) may load the connection itself, nothing else;
+ * with the lists of class-boundary.mjs:
+ * - outside DB_ALLOWED, no module loads a database module (the models, the connection and its
+ *   providers) or a database package at run time, statically or dynamically (a type-only import
+ *   is erased, so it is fine), and none names a get…Repository getter. The entry points and jobs
+ *   (DB_BOOTSTRAP) may load the connection itself, nothing else;
  * - production code (anything outside TEST_FILES) never loads a test helper;
- * - only classes/AuditLog.ts (besides models/** and tests) names the audit log's repository.
+ * - only classes/AuditLog.ts (besides models/** and tests) names the audit log's repository;
+ * - the plan's end check (plan.md, "Verification"), as `git grep` runs it on the raw text,
+ *   comments and strings included: outside DB_ALLOWED, no file of server/src, scripts/ or infra/
+ *   names a get…Repository getter or imports a database package, not even for its types.
  * ESLint holds the same line for static imports (eslint.config.js); this test also resolves
- * paths, sees dynamic imports and names.
- *
- * The legacy list only shrinks: an entry that no longer reaches the database fails the test, so a
- * migrated module comes off it in the same change.
+ * paths, sees dynamic imports and names. There are no exceptions: the list of modules still
+ * reaching the database (LEGACY_DB_IMPORTERS) shrank to nothing and is gone.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   AUDIT_LOG_WRITER,
@@ -23,10 +27,9 @@ import {
   DB_CONNECTION,
   DB_MODULES,
   DB_PACKAGES,
-  LEGACY_DB_IMPORTERS,
   TEST_FILES,
   TEST_HELPERS,
-} from '../../legacy-db-importers.mjs';
+} from '../../class-boundary.mjs';
 import { edgesOf, importsIn, nameText, scan, sourceTree } from '../testing/importGraph.js';
 
 /** Files of the graph are relative to src/; the lists are relative to server/. */
@@ -119,26 +122,12 @@ export function reachers(files: ReadonlyMap<string, string>): Map<string, string
   return found;
 }
 
-/** Every broken rule, given the legacy list (paths relative to server/). */
-export function boundaryViolations(
-  files: ReadonlyMap<string, string>,
-  legacy: readonly string[],
-): string[] {
+/** Every broken rule (paths relative to server/). */
+export function boundaryViolations(files: ReadonlyMap<string, string>): string[] {
   const exists = (file: string): boolean => files.has(file);
-  const listed = new Set(legacy);
   const found: string[] = [];
-  const reaching = reachers(files);
-  for (const [file, why] of reaching) {
-    if (!listed.has(`${SRC_PREFIX}${file}`)) {
-      found.push(`${SRC_PREFIX}${file}: ${why.join('; ')} (only classes reach the database)`);
-    }
-  }
-  for (const entry of listed) {
-    const file = entry.startsWith(SRC_PREFIX) ? entry.slice(SRC_PREFIX.length) : entry;
-    if (!files.has(file)) found.push(`${entry}: listed as a legacy importer but does not exist`);
-    else if (!reaching.has(file)) {
-      found.push(`${entry}: no longer reaches the database, take it off the legacy list`);
-    }
+  for (const [file, why] of reachers(files)) {
+    found.push(`${SRC_PREFIX}${file}: ${why.join('; ')} (only classes reach the database)`);
   }
   for (const [file, source] of files) {
     const self = `${SRC_PREFIX}${file}`;
@@ -154,6 +143,57 @@ export function boundaryViolations(
   return [...new Set(found)].sort();
 }
 
+// ─── The end check, as git grep runs it ─────────────────────────────────────
+
+/** server/, with a trailing separator. */
+const SERVER = fileURLToPath(new URL('../../', import.meta.url));
+
+/** The trees the end check reads (relative to server/): the code, its scripts and its infra. */
+const RAW_ROOTS = ['src', 'scripts', 'infra/bin', 'infra/lib', 'infra/functions'];
+const RAW_SOURCE = /\.(?:[cm]?[jt]s)$/;
+
+/** A get…Repository getter, named anywhere: code, a comment or a string. */
+const RAW_REPOSITORY = /\bget[A-Z]\w*Repository\b/;
+/** An import of a database package (`from`, `import`, `import()` or `require()`), any kind. */
+const QUOTE = `['"\`]`;
+const RAW_DB_IMPORT = new RegExp(
+  `(?:\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\bimport\\s+|\\brequire\\s*\\(\\s*)${QUOTE}` +
+    `((?:${DB_PACKAGES.join('|')})(?:/[^'"\`]*)?)${QUOTE}`,
+);
+
+/** Every source file under RAW_ROOTS, keyed by its path relative to server/ (forward slashes). */
+function rawTree(): Map<string, string> {
+  const files = new Map<string, string>();
+  for (const root of RAW_ROOTS) {
+    for (const entry of readdirSync(path.join(SERVER, root), {
+      recursive: true,
+      encoding: 'utf8',
+    })) {
+      if (!RAW_SOURCE.test(entry)) continue;
+      const relative = `${root}/${entry.split(path.sep).join('/')}`;
+      files.set(relative, readFileSync(path.join(SERVER, root, entry), 'utf8'));
+    }
+  }
+  return files;
+}
+
+/**
+ * The plan's end check on the raw text, no scanner (what `git grep` would print): every file
+ * outside DB_ALLOWED that names a get…Repository getter or imports a database package, with why.
+ * Stricter than the import graph on purpose: a comment, a string or a type-only import counts.
+ */
+export function rawFindings(files: ReadonlyMap<string, string>): string[] {
+  const found: string[] = [];
+  for (const [serverPath, text] of files) {
+    if (isAllowed(serverPath)) continue;
+    const getter = RAW_REPOSITORY.exec(text);
+    if (getter !== null) found.push(`${serverPath}: names ${getter[0]}`);
+    const imported = RAW_DB_IMPORT.exec(text);
+    if (imported !== null) found.push(`${serverPath}: imports ${imported[1] ?? ''}`);
+  }
+  return found.sort();
+}
+
 const STUBS: Record<string, string> = {
   [MODELS_BARREL]: '',
   'models/mongoose/Item.ts': '',
@@ -167,11 +207,9 @@ const STUBS: Record<string, string> = {
   'mcp/__tests__/helpers/team.ts': '',
 };
 
-function flagged(files: Record<string, string>, legacy: readonly string[] = []): string[] {
+function flagged(files: Record<string, string>): string[] {
   const tree = new Map(Object.entries({ ...STUBS, ...files }));
-  return [
-    ...new Set(boundaryViolations(tree, legacy).map((found) => found.slice(0, found.indexOf(':')))),
-  ];
+  return [...new Set(boundaryViolations(tree).map((found) => found.slice(0, found.indexOf(':'))))];
 }
 
 describe('the class boundary, on synthetic trees', () => {
@@ -233,33 +271,27 @@ describe('the class boundary, on synthetic trees', () => {
 
   it('production code never loads a test helper, even where it may reach the database', () => {
     assert.deepEqual(
-      flagged(
-        {
-          'services/a.ts': `import { contextFor } from '../testing/workspaceFixtures.js';`,
-          'classes/Thing.ts': `const kit = await import('../testing/workspaceFixtures.js');`,
-          'services/old.ts': `import { getItemRepository } from '../models/index.js';\nimport { team } from '../mcp/__tests__/helpers/team.js';`,
-          'services/types.ts': `import type { TestDatabase } from '../testing/testDatabase.js';`,
-          'services/a.test.ts': `import { contextFor } from '../testing/workspaceFixtures.js';`,
-          'testing/more.ts': `import { contextFor } from './workspaceFixtures.js';`,
-          'mcp/__tests__/helpers/kit.ts': `import { contextFor } from '../../../testing/workspaceFixtures.js';`,
-        },
-        ['src/services/old.ts'],
-      ),
-      ['src/classes/Thing.ts', 'src/services/a.ts', 'src/services/old.ts'],
+      flagged({
+        'services/a.ts': `import { contextFor } from '../testing/workspaceFixtures.js';`,
+        'classes/Thing.ts': `const kit = await import('../testing/workspaceFixtures.js');`,
+        'classes/Old.ts': `import { getItemRepository } from '../models/index.js';\nimport { team } from '../mcp/__tests__/helpers/team.js';`,
+        'services/types.ts': `import type { TestDatabase } from '../testing/testDatabase.js';`,
+        'services/a.test.ts': `import { contextFor } from '../testing/workspaceFixtures.js';`,
+        'testing/more.ts': `import { contextFor } from './workspaceFixtures.js';`,
+        'mcp/__tests__/helpers/kit.ts': `import { contextFor } from '../../../testing/workspaceFixtures.js';`,
+      }),
+      ['src/classes/Old.ts', 'src/classes/Thing.ts', 'src/services/a.ts'],
     );
   });
 
   it('AuditLog is the only audit writer: nothing else names its repository', () => {
     assert.deepEqual(
-      flagged(
-        {
-          'classes/AuditLog.ts': `import { getAuditLogRepository } from '../models/index.js';`,
-          'classes/Other.ts': `import { getAuditLogRepository } from '../models/index.js';`,
-          'services/old.ts': `import { getAuditLogRepository } from '../models/index.js';`,
-          'services/x.test.ts': `import { getAuditLogRepository } from '../models/index.js';`,
-        },
-        ['src/services/old.ts'],
-      ),
+      flagged({
+        'classes/AuditLog.ts': `import { getAuditLogRepository } from '../models/index.js';`,
+        'classes/Other.ts': `import { getAuditLogRepository } from '../models/index.js';`,
+        'services/old.ts': `import { getAuditLogRepository } from '../models/index.js';`,
+        'services/x.test.ts': `import { getAuditLogRepository } from '../models/index.js';`,
+      }),
       ['src/classes/Other.ts', 'src/services/old.ts'],
     );
   });
@@ -276,24 +308,20 @@ describe('the class boundary, on synthetic trees', () => {
     );
   });
 
-  it('allows type-only imports, the allowed places and the legacy list', () => {
+  it('allows type-only imports and the allowed places', () => {
     assert.deepEqual(
-      flagged(
-        {
-          'services/types.ts': `import type { ItemData } from '../models/index.js';\nimport type mongoose from 'mongoose';\nexport type { ItemData } from '../models/index.js';`,
-          'services/inline.ts': `import {\n  type ItemData,\n  type IItemRepository,\n} from '../models/index.js';`,
-          'classes/Thing.ts': `import { getItemRepository } from '../models/index.js';`,
-          'models/mongoose/Other.ts': `import mongoose from 'mongoose';`,
-          'config/database.ts': `import mongoose from 'mongoose';`,
-          'config/providers/mongoose.ts': `import mongoose from 'mongoose';`,
-          'migrations/old.ts': `import mongoose from 'mongoose';`,
-          'services/x.test.ts': `import { getItemRepository } from '../models/index.js';`,
-          'mcp/__tests__/helpers/team.ts': `import { getItemRepository } from '../../../models/index.js';`,
-          'testing/fixtures.ts': `const { getItemRepository } = await import('../models/index.js');`,
-          'services/old.ts': `import { getItemRepository } from '../models/index.js';`,
-        },
-        ['src/services/old.ts'],
-      ),
+      flagged({
+        'services/types.ts': `import type { ItemData } from '../models/index.js';\nimport type mongoose from 'mongoose';\nexport type { ItemData } from '../models/index.js';`,
+        'services/inline.ts': `import {\n  type ItemData,\n  type IItemRepository,\n} from '../models/index.js';`,
+        'classes/Thing.ts': `import { getItemRepository } from '../models/index.js';`,
+        'models/mongoose/Other.ts': `import mongoose from 'mongoose';`,
+        'config/database.ts': `import mongoose from 'mongoose';`,
+        'config/providers/mongoose.ts': `import mongoose from 'mongoose';`,
+        'migrations/old.ts': `import mongoose from 'mongoose';`,
+        'services/x.test.ts': `import { getItemRepository } from '../models/index.js';`,
+        'mcp/__tests__/helpers/team.ts': `import { getItemRepository } from '../../../models/index.js';`,
+        'testing/fixtures.ts': `const { getItemRepository } = await import('../models/index.js');`,
+      }),
       [],
     );
   });
@@ -304,16 +332,6 @@ describe('the class boundary, on synthetic trees', () => {
         'services/mixed.ts': `import { type ItemData, NotSupportedError } from '../models/index.js';`,
       }),
       ['src/services/mixed.ts'],
-    );
-  });
-
-  it('the legacy list only shrinks: a stale or missing entry fails', () => {
-    assert.deepEqual(
-      flagged({ 'services/clean.ts': `export const x = 1;` }, [
-        'src/services/clean.ts',
-        'src/services/gone.ts',
-      ]),
-      ['src/services/clean.ts', 'src/services/gone.ts'],
     );
   });
 
@@ -352,6 +370,62 @@ describe('the class boundary, on synthetic trees', () => {
   });
 });
 
+describe('the end check, as git grep runs it', () => {
+  it('counts a comment, a string and a type-only import outside the allowed places', () => {
+    assert.deepEqual(
+      rawFindings(
+        new Map([
+          ['src/services/a.ts', `// getItemRepository, only in a comment`],
+          ['src/jobs/b.ts', `export const name = 'getSyncRunRepository';`],
+          ['src/services/c.ts', `import type mongoose from 'mongoose';`],
+          ['src/services/d.ts', `const m = await import("mongoose/lib/index.js");`],
+          ['src/services/e.ts', `const { Pool } = require('pg');`],
+          ['src/services/f.ts', `import 'sequelize';`],
+          ['scripts/g.ts', `import { MongoClient } from 'mongodb';`],
+          ['infra/lib/h.ts', `export * from 'mongoose';`],
+        ]),
+      ),
+      [
+        'infra/lib/h.ts: imports mongoose',
+        'scripts/g.ts: imports mongodb',
+        'src/jobs/b.ts: names getSyncRunRepository',
+        'src/services/a.ts: names getItemRepository',
+        'src/services/c.ts: imports mongoose',
+        'src/services/d.ts: imports mongoose/lib/index.js',
+        'src/services/e.ts: imports pg',
+        'src/services/f.ts: imports sequelize',
+      ],
+    );
+  });
+
+  it('allows the allowed places, and a package name that is not an import', () => {
+    assert.deepEqual(
+      rawFindings(
+        new Map([
+          ['src/classes/Thing.ts', `import { getItemRepository } from '../models/index.js';`],
+          ['src/models/mongoose/Item.ts', `import mongoose from 'mongoose';`],
+          ['src/config/database.ts', `import mongoose from 'mongoose';`],
+          ['src/config/providers/mongoose.ts', `import mongoose from 'mongoose';`],
+          ['src/migrations/old.ts', `import type mongoose from 'mongoose';`],
+          ['src/services/x.test.ts', `import { getItemRepository } from '../models/index.js';`],
+          ['src/testing/fixtures.ts', `import mongoose from 'mongoose';`],
+          ['src/mcp/__tests__/helpers/team.ts', `import mongoose from 'mongoose';`],
+          ['src/config/environment.ts', `if (isMongo) return 'mongoose';`],
+          ['src/types/env.d.ts', `export type DatabaseProvider = 'sequelize' | 'mongoose';`],
+        ]),
+      ),
+      [],
+    );
+  });
+
+  it('server/src, scripts/ and infra/: nothing outside the allowed places (the plan’s end check)', () => {
+    const files = rawTree();
+    assert.ok(files.has('src/classes/AuditLog.ts') && files.has('scripts/reset-db.ts'));
+    assert.ok(files.has('infra/lib/app-stack.ts'));
+    assert.deepEqual(rawFindings(files), []);
+  });
+});
+
 describe('the class boundary of server/src', () => {
   const files = sourceTree();
 
@@ -367,11 +441,7 @@ describe('the class boundary of server/src', () => {
     );
   });
 
-  it('the legacy list is sorted and has no duplicates', () => {
-    assert.deepEqual([...LEGACY_DB_IMPORTERS], [...new Set(LEGACY_DB_IMPORTERS)].sort());
-  });
-
-  it('only classes (and the allowed places, and the legacy list) reach the database', () => {
-    assert.deepEqual(boundaryViolations(files, LEGACY_DB_IMPORTERS), []);
+  it('only classes (and the allowed places) reach the database', () => {
+    assert.deepEqual(boundaryViolations(files), []);
   });
 });
