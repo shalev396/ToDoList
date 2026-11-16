@@ -15,10 +15,19 @@ import { User } from './User.js';
 const MEDIA = 'classes/Media.ts';
 const ACCOUNT = 'controllers/account.ts';
 
-const FILE_DOORS = /\bMedia\.(?:remove|removeAllOf|upload)\b/;
+/**
+ * The class is named only by the modules below, whatever the spelling: `Media.remove(id)`,
+ * `Media['remove']`, `const { removeAllOf } = Media` and `import { Media as M }` all name it. The
+ * one distinctive door is pinned by its own name as well, for a reference that arrives some other
+ * way.
+ */
+// Not a module path: `models/definitions/Media.js` is the row type's file, not the class.
+const MEDIA_CLASS = /(?<!\/)\bMedia\b(?!\.js)/;
+const FILE_DOORS = /\bremoveAllOf\b/;
 const MEDIA_ROWS = /\bgetMediaRepository\b/;
 
 const DOORS: readonly { pattern: RegExp; allowed: ReadonlySet<string> }[] = [
+  { pattern: MEDIA_CLASS, allowed: new Set([MEDIA, ACCOUNT, 'classes/index.ts']) },
   { pattern: FILE_DOORS, allowed: new Set([MEDIA, ACCOUNT]) },
   // Nothing reaches the rows apart from their objects (models/** is exempt).
   { pattern: MEDIA_ROWS, allowed: new Set([MEDIA]) },
@@ -51,17 +60,39 @@ describe('Media and User on the base layer', () => {
 
   it('the file doors are named only by the account controller', () => {
     const files = sourceTree();
-    assert.ok(FILE_DOORS.test(nameText(scan(files.get(ACCOUNT) ?? ''))), 'account uses them');
+    assert.ok(MEDIA_CLASS.test(nameText(scan(files.get(ACCOUNT) ?? ''))), 'account uses them');
+    assert.ok(FILE_DOORS.test(nameText(scan(files.get(ACCOUNT) ?? ''))), 'account sweeps files');
     assert.deepEqual(strays(files), []);
   });
 
   it('catches a stray caller', () => {
     const tree = new Map(sourceTree());
     tree.set('services/sweep.ts', `export const go = (id: string) => Media.remove(id);`);
+    tree.set(
+      'services/destructured.ts',
+      `const { removeAllOf } = Media;
+await removeAllOf(userId);`,
+    );
+    tree.set('services/bracket.ts', `await Media['remove'](id);`);
+    tree.set(
+      'services/aliased.ts',
+      `import { Media as M } from '../classes/index.js';
+await M.upload(params);`,
+    );
+    tree.set(
+      'services/viaName.ts',
+      `const door = 'removeAll' + 'Of';
+fn(x.removeAllOf);`,
+    );
     tree.set('services/peek.ts', `import { getMediaRepository } from '../models/index.js';`);
     assert.deepEqual(strays(tree), [
+      `services/aliased.ts: ${MEDIA_CLASS.source}`,
+      `services/bracket.ts: ${MEDIA_CLASS.source}`,
+      `services/destructured.ts: ${MEDIA_CLASS.source}`,
+      `services/destructured.ts: ${FILE_DOORS.source}`,
       `services/peek.ts: ${MEDIA_ROWS.source}`,
-      `services/sweep.ts: ${FILE_DOORS.source}`,
+      `services/sweep.ts: ${MEDIA_CLASS.source}`,
+      `services/viaName.ts: ${FILE_DOORS.source}`,
     ]);
   });
 });
