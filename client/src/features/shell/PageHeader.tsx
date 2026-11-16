@@ -26,8 +26,11 @@ export function PageHeader({ title, description, actions, children, className }:
             <p className="max-w-[72ch] text-sm text-muted-foreground">{description}</p>
           )}
         </div>
+        {/* Never wider than the row: on a phone, actions that don't fit wrap (the dashboard's
+            save status, which keeps its room, goes under its buttons) instead of the page
+            scrolling sideways. */}
         {actions === undefined ? null : (
-          <div className="flex shrink-0 items-center gap-2">{actions}</div>
+          <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div>
         )}
       </div>
       {children}
