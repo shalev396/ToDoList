@@ -29,7 +29,7 @@ This creates `.venv`, installs dependencies, and Playwright Chromium. Cross-plat
 
 **Before every test run**, in separate terminals:
 
-1. **Server** (from `server/`): `npm run dev` (the local API on :3000 against the `dev` stage; `npm run start:local -- --stage qa` for qa). It needs `server/.env.<stage>` with the stage's `DOMAIN_NAME` and `DATABASE_URL`, and AWS credentials; Cognito, S3 and KMS come from the stage's stack outputs.
+1. **Server** (from `server/`): `npm run start:local -- --stage dev --no-rate-limits` (the local API on :3000 against the `dev` stage; `--stage qa` for qa). It needs `server/.env.<stage>` with the stage's `DOMAIN_NAME` and `DATABASE_URL`, and AWS credentials; Cognito, S3 and KMS come from the stage's stack outputs. `--no-rate-limits` turns the in-app rate limits off in that process only: every test request comes from one address, and a full run goes far past them. CI starts it the same way. Without the flag (`npm run dev`) the limits stay on, as on a deployed stage.
 2. **Client** (from `client/`): `npm run dev`
 
 **Run tests** (from `client/`):
@@ -38,7 +38,7 @@ This creates `.venv`, installs dependencies, and Playwright Chromium. Cross-plat
 npm run test
 ```
 
-Runs pytest via `.venv` with `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://localhost:3000/api`. Translations are exported automatically before tests (conftest fixture). The stage's rate limits stay on, which is why accounts are pooled (below) instead of one per test.
+Runs pytest via `.venv` with `BASE_URL=http://localhost:5173`, `API_BASE_URL=http://localhost:3000/api`. Translations are exported automatically before tests (conftest fixture). Accounts are pooled (below) instead of one per test: each signup costs a Mail.tm inbox, an SES email and 15 to 25 seconds.
 
 ### Accounts and data
 
@@ -230,7 +230,9 @@ Tests that create users (sign up, login flow, profile flows) use [Mail.tm](https
 
 - Backend API running
 - Network access to api.mail.tm
-- Initial 12s wait for email delivery (first poll)
+- Initial 12s wait for email delivery (first poll), then a look every 8 s, for up to a minute
+
+Mail.tm is free and shared, and answers 429 when an address sends too much (GitHub runners share addresses). Every call goes through `mailtm_request` ([`tests/helpers/mailtm.py`](helpers/mailtm.py)): at most one call per worker every half second (four workers stay under Mail.tm's 8 a second), a 429 retried after its `Retry-After` or an exponential backoff with jitter (up to 7 calls and 2 minutes of waiting), and the active domain looked up once per worker. `tests/e2e/mailtm/test_retry.py` checks that logic offline.
 
 Optionally set `E2E_TEST_EMAIL`, `E2E_TEST_PASSWORD`, `E2E_TEST_ID_TOKEN`, `E2E_TEST_REFRESH_TOKEN` to use an existing account and skip user creation. Don't run `npm run reset:db` in this mode (it would delete that account); the run uses whatever data the stage already has.
 
