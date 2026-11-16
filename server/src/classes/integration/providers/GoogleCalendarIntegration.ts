@@ -31,13 +31,7 @@ import { NotFoundError } from '../../../errors/NotFoundError.js';
 import { ScopeMissingError } from '../../../errors/ScopeMissingError.js';
 import { WrittenNotStoredError } from '../../../errors/WrittenNotStoredError.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
-import {
-  eventIdFor,
-  ORIGIN,
-  PAST_WINDOW_DAYS,
-  parseOpId,
-  type WireOp,
-} from '../../../gcal/diff.js';
+import { eventIdFor, ORIGIN, PAST_WINDOW_DAYS } from '../../../gcal/diff.js';
 import type { CalendarLinkData } from '../../../models/definitions/CalendarLink.js';
 import type { IntegrationData } from '../../../models/definitions/Integration.js';
 import type { ItemData } from '../../../models/definitions/Item.js';
@@ -90,6 +84,7 @@ import { Calendar } from '../../calendar/Calendar.js';
 import { CalendarLink } from '../../calendar/CalendarLink.js';
 import {
   EventClaim,
+  PushClaims,
   LIST_SWEEP_LIMIT,
   STUCK_CLAIM_MS,
   SWEEP_LIMIT,
@@ -552,10 +547,10 @@ export class GoogleCalendarIntegration
     const run = await SyncRun.begin(this, 'calendar_push', now);
     // Claim before delete: each delete (or move) op's own link is tombstoned before its DELETE is
     // sent; one that is no longer this integration's (adopted, moved) is not sent at all.
-    const claims = new Map<string, EventClaim>();
+    const claims = new PushClaims(this);
     let sent: { results: OpResult[]; readings: Map<string, DeleteReading> } | null = null;
     try {
-      await this.#claimDeletes(ops, claims);
+      await claims.claimDeletes(ops);
       const toSend = ops.filter((op) => op.type !== 'delete' || claims.has(op.opId));
       try {
         sent = await this.withWriteSession(caller, async ({ writer }) => {
@@ -566,7 +561,10 @@ export class GoogleCalendarIntegration
             Date.now,
             STEP_CEILING_MS,
           );
-          return { results, readings: await this.#readLost(writer, results, claims, budget) };
+          const readings = await claims.readLost(results, budget, (claim) =>
+            readingOf(() => writer.get(claim.calendarId, claim.googleEventId)),
+          );
+          return { results, readings };
         });
       } catch (error) {
         const authFailed = error instanceof ProviderHttpError && error.code === 'auth_failed';
@@ -596,11 +594,9 @@ export class GoogleCalendarIntegration
     } finally {
       // Nothing was sent (a throw before the ops ran): every claim goes back. Once the ops ran,
       // every claim has a result and is settled, kept or released below, never released blind.
-      if (sent === null) {
-        for (const claim of claims.values()) await this.#releaseQuietly(claim);
-      }
+      if (sent === null) await claims.releaseAll();
     }
-    const opResults = await this.#settleDeletes(sent.results, claims, sent.readings);
+    const opResults = await claims.settleDeletes(sent.results, sent.readings);
     // The pull that follows the writes (their etags are the links' by then, so our echoes are
     // skipped): Google-side edits and deletes of what we pushed. A failed pull never fails the
     // push; the token is kept and the next run lists again.
@@ -747,86 +743,6 @@ export class GoogleCalendarIntegration
   }
 
   /**
-   * The push's delete ops (a delete, or a move's first half), each claimed on its own live link
-   * (EventClaim) before anything is sent: by op id. An op whose link is no longer this
-   * integration's own and live on that calendar and event is left out.
-   */
-  async #claimDeletes(ops: readonly WireOp[], claims: Map<string, EventClaim>): Promise<void> {
-    const links = await getCalendarLinkRepository();
-    for (const op of ops) {
-      const parsed = op.type === 'delete' ? parseOpId(op.opId) : null;
-      if (parsed === null) continue;
-      const link = await links.findByItem(this.workspaceId, this.id, parsed.itemId);
-      if (
-        link === null ||
-        !CalendarLink.isOwnLive(link) ||
-        link.calendarId !== op.calendarId ||
-        link.googleEventId !== op.eventId
-      ) {
-        continue;
-      }
-      const claim = await EventClaim.take(link);
-      if (claim !== null) claims.set(op.opId, claim);
-    }
-  }
-
-  /**
-   * Inside the write session, right after the ops: each claimed delete Google gave no answer to
-   * (`no_answer`) is read once with the session's own token, while a call still fits the budget
-   * (no time: unknown). By op id.
-   */
-  async #readLost(
-    writer: CalendarWriter,
-    results: readonly OpResult[],
-    claims: ReadonlyMap<string, EventClaim>,
-    budget: TimeBudget,
-  ): Promise<Map<string, DeleteReading>> {
-    const readings = new Map<string, DeleteReading>();
-    for (const result of results) {
-      const claim = claims.get(result.opId);
-      if (claim === undefined || result.code !== 'no_answer') continue;
-      readings.set(
-        result.opId,
-        budget.canStart()
-          ? await readingOf(() => writer.get(claim.calendarId, claim.googleEventId))
-          : 'unknown',
-      );
-    }
-    return readings;
-  }
-
-  /**
-   * The push's claimed deletes, after the ops: a DELETE Google answered settles its claim; one
-   * that got no answer is settled when its read showed it made (and its op then counts as done),
-   * and kept otherwise (a live reading may come before a slow DELETE lands: the sweep releases it
-   * once STUCK_CLAIM_MS old); any other (deferred, refused, a conflict) takes its claim back.
-   */
-  async #settleDeletes(
-    results: readonly OpResult[],
-    claims: ReadonlyMap<string, EventClaim>,
-    readings: ReadonlyMap<string, DeleteReading>,
-  ): Promise<OpResult[]> {
-    const settled: OpResult[] = [];
-    for (const result of results) {
-      const claim = claims.get(result.opId);
-      if (claim === undefined) {
-        settled.push(result);
-      } else if (result.ok) {
-        await claim.settle();
-        settled.push(result);
-      } else if (result.code === 'no_answer') {
-        const reading = readings.get(result.opId) ?? 'unknown';
-        const outcome = await claim.resolve(() => Promise.resolve(reading));
-        settled.push(outcome === 'settled' ? { opId: result.opId, ok: true } : result);
-      } else {
-        await this.#releaseQuietly(claim);
-        settled.push(result);
-      }
-    }
-    return settled;
-  }
-
-  /**
    * This integration's claims left unanswered for STUCK_CLAIM_MS (a process that died between the
    * claim and the answer, a lost answer), the oldest first: each read once in one read session
    * (one grant exchange), while a call still fits `budget`; gone settles, live releases (its call
@@ -878,14 +794,7 @@ export class GoogleCalendarIntegration
 
   /** A claim taken back; a failure there is logged, never thrown over the call's own outcome. */
   async #releaseQuietly(claim: EventClaim | undefined): Promise<void> {
-    try {
-      await claim?.release();
-    } catch (error) {
-      logger.warn('A calendar claim could not be taken back', {
-        integrationId: this.id,
-        errorName: error instanceof Error ? error.name : typeof error,
-      });
-    }
+    await claim?.releaseQuietly(this.id);
   }
 
   /**
