@@ -22,59 +22,6 @@ variables:
   stagingKey: ''
   uploadUrl: ''
   uploadFields: '{}'
-scripts:
-  - type: beforeRequest
-    code: |-
-      if (String(pm.request.url.getHost()).toLowerCase() === 'api.mail.tm') {
-          // mail.tm allows 8 req/s per IP and shared CI egress IPs eat into that, so keep calls at least 1.5s apart.
-          const minGapMs = 1500;
-          const last = parseInt(pm.collectionVariables.get('mailtmLastCallAt') || '0', 10) || 0;
-          const waitMs = Math.min(minGapMs, minGapMs - (Date.now() - last));
-          if (waitMs > 0) {
-              const start = Date.now();
-              while (Date.now() - start < waitMs) { /* block */ }
-          }
-          pm.collectionVariables.set('mailtmLastCallAt', String(Date.now()));
-      }
-    language: text/javascript
-  - type: afterResponse
-    code: |-
-      if (String(pm.request.url.getHost()).toLowerCase() === 'api.mail.tm') {
-          // Runs before the request's own afterResponse: a 429 we are retrying sets mailtmRetrying so that script skips its assertions.
-          const key = 'mailtm429:' + pm.info.requestName;
-          const maxRetries = 5;
-          const count = parseInt(pm.collectionVariables.get(key) || '0', 10) || 0;
-          const canRetry = (typeof pm.execution !== 'undefined' && pm.execution.setNextRequest) || (typeof postman !== 'undefined' && postman.setNextRequest);
-          let retrying = false;
-
-          if (pm.response.code === 429) {
-              if (count < maxRetries && canRetry) {
-                  const backoffSec = [2, 4, 8, 16, 30];
-                  const header = String(pm.response.headers.get('Retry-After') || '').trim();
-                  const headerSec = /^\d+$/.test(header) ? parseInt(header, 10) : -1;
-                  const waitSec = headerSec >= 0 && headerSec <= 60 ? headerSec : backoffSec[count];
-                  console.log('mail.tm 429 on "' + pm.info.requestName + '", retry ' + (count + 1) + '/' + maxRetries + ' after ' + waitSec + 's');
-                  const start = Date.now();
-                  while (Date.now() - start < waitSec * 1000) { /* block */ }
-                  pm.collectionVariables.set(key, String(count + 1));
-                  if (typeof pm.execution !== 'undefined' && pm.execution.setNextRequest) {
-                      pm.execution.setNextRequest(pm.info.requestName);
-                  } else {
-                      postman.setNextRequest(pm.info.requestName);
-                  }
-                  retrying = true;
-              } else {
-                  console.log('mail.tm 429 on "' + pm.info.requestName + '", giving up after ' + count + ' retries');
-                  pm.collectionVariables.unset(key);
-              }
-          } else {
-              pm.collectionVariables.unset(key);
-          }
-
-          pm.collectionVariables.set('mailtmRetrying', retrying ? '1' : '0');
-          pm.collectionVariables.set('mailtmLastCallAt', String(Date.now()));
-      }
-    language: text/javascript
 auth:
   - id: c77fdf1d-2d72-4d5b-8112-f48266aefdfc
     type: bearer
