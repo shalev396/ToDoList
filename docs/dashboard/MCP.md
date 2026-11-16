@@ -488,7 +488,7 @@ Agent: → builder_undo({dashboardId:"d-1", steps:1})    ⇐ v4
 
 1. **Reuse services.** MCP handlers call the BACKEND.md services/repositories (workspace-scoped per DATA.md §5), with no duplicated logic.
 2. **Registry.** Each tool exports `{name, title, description, inputSchema, outputSchema, annotations, scopes, minRole, toolset, handler}`. One registry builds `/api/mcp`, `/api/mcp/readonly` and stdio.
-3. **Middleware chain:** `agentLimiter` (per presented key, before any lookup) → `mcpAuth` (key → user + membership; a failed lookup of a well-formed key spends the address's failed-auth budget) → `scopeGuard` (scopes ∩ role) → handler → response guard/`redact` → `audit`.
+3. **Middleware chain:** `agentLimiter` (per presented key, before any lookup) → `mcpAuth` (key → user + membership; only a well-formed but unknown key spends the address's failed-auth budget; an expired or revoked key gets 401 with the challenge and spends nothing, and so does a missing or malformed one; over budget the answer is 429 with the challenge. A sign-in grant's per-key budget restarts on each refresh because `rotateGrant` replaces the key hash; API Gateway's MCP route throttle bounds it) → `scopeGuard` (scopes ∩ role) → handler → response guard/`redact` → `audit`.
 4. **Builder core:** the shared block and query schema (`@api-types`), Ajv 2020-12, JSON Patch, `DashboardVersions`, and a preview runner with a row cap.
 5. **Data:** `AgentKeys`, `Dashboards`, `DashboardVersions`, `Views` and `AuditLogs.actorAgentId` are now defined in DATA.md (§3.10–3.14, indexes §6).
 6. **Phase 2 OAuth:** PRM at `/.well-known/oauth-protected-resource/api/mcp`, Cognito as the authorization server.

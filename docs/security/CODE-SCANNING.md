@@ -19,3 +19,15 @@ On GitHub, these alerts are dismissed with a short comment that points here. The
 - **When this stops being true:** if anything user-chosen or low-entropy (a password, a PIN, a short code) is ever hashed with `sha256Hex` for storage. Use a password hash for that.
 - **Format first:** the OAuth code and revoke paths now test a token's exact format before hashing it, like the other token paths; a malformed one is refused or ignored with no hash and no lookup.
 - **GitHub alert:** CodeQL #4: Dismissed as false positive on 2026-11-16; since 9de4ac55 the paths also validate format first (CodeQL may now report it fixed).
+
+### MCP 401s show whether a token was ever issued (known versus unknown token)
+
+- **Where:** `server/src/mcp/auth/apiKey.ts` (`createMcpAuth`) and `server/src/mcp/middleware/limiter.ts` (`AuthFailureLimit`).
+- **What a tool would see:** an MCP 401 reveals whether a presented token was ever issued.
+  - An unknown token gets `RateLimit-Policy: 50;w=900` and, once the address is over its failure budget, a 429.
+  - A known but expired or revoked token gets `RateLimit-Policy: 120;w=60` and a 401.
+  - Status and body are the same within the budget.
+- **Why it's safe:** exploiting it needs the exact 256-bit token string, so it can't discover tokens. It only tells the holder of a string that it was "real but dead", and a dead token grants nothing.
+- **Why it's like this:** members on shared vendor addresses (hosted assistants share egress addresses) whose token expired must always be able to refresh without being locked out. Spending the failure budget on known tokens would undo that.
+- **When this stops being true:** if tokens ever become guessable or short.
+- **Found by:** code review. There is no GitHub alert.
