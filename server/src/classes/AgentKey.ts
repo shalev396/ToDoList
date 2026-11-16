@@ -9,7 +9,7 @@
  * days (`expiresAt`), and a refresh token 90 days from its last use.
  *
  * Any member creates keys for themselves, limited to the scopes their role permits
- * (ROLE_SCOPES) and to LIMITS.agentKeysPerUser live keys (409). An owner lists and revokes
+ * (ScopeSet.forRole: ROLE_SCOPES) and to LIMITS.agentKeysPerUser live keys (409). An owner lists and revokes
  * everyone's keys; anyone else sees and revokes their own (another's is a 404).
  */
 import { randomBytes } from 'node:crypto';
@@ -19,7 +19,6 @@ import { AppError } from '../errors/AppError.js';
 import { NotFoundError } from '../errors/NotFoundError.js';
 import { OAuthError } from '../errors/OAuthError.js';
 import { resolvePrincipal, type AuthenticatedAgent } from '../mcp/auth/principal.js';
-import { ROLE_SCOPES } from '../mcp/auth/scopes.js';
 import type { AgentKeyData } from '../models/definitions/AgentKey.js';
 import { getAgentKeyRepository } from '../models/index.js';
 import type { AgentKeyView } from '../routes/private/agentKeys.js';
@@ -29,6 +28,7 @@ import { Actor, type ActorOrigin } from './base/Actor.js';
 import { AuditTarget } from './base/AuditTarget.js';
 import type { Caller } from './base/Caller.js';
 import type { Auditable, Expirable, Revocable } from './base/contracts.js';
+import { ScopeSet } from './base/ScopeSet.js';
 import { WorkspaceEntity } from './base/WorkspaceEntity.js';
 import { WorkspacePolicy } from './policies/WorkspacePolicy.js';
 import { AuditLog } from './AuditLog.js';
@@ -189,8 +189,7 @@ export class AgentKey
     caller: Caller,
     input: CreateAgentKeyInput,
   ): Promise<{ key: AgentKey; raw: string }> {
-    const permitted = ROLE_SCOPES[caller.role.name];
-    if (input.scopes.some((scope) => !permitted.includes(scope))) {
+    if (!ScopeSet.forRole(caller.role).hasAll(input.scopes)) {
       throw new AppError(400, 'This role cannot grant some of these scopes', {
         code: 'scope_not_allowed',
       });

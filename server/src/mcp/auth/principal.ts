@@ -8,10 +8,10 @@ import type { Response } from 'express';
 
 import { Actor, type ActorOrigin } from '../../classes/base/Actor.js';
 import { Caller, type WorkspaceContext } from '../../classes/base/Caller.js';
+import { ScopeSet } from '../../classes/base/ScopeSet.js';
 import type { AgentKeyData } from '../../models/definitions/AgentKey.js';
 import type { AgentScope, Role } from '../../types/domain.js';
 import type { ToolContext } from '../tool.js';
-import { effectiveScopes } from './scopes.js';
 
 export interface AgentPrincipal {
   userId: string;
@@ -50,7 +50,7 @@ export async function resolvePrincipal(
       workspaceId: key.workspaceId,
       agentId: key.id,
       role: workspace.role,
-      scopes: effectiveScopes(key.scopes, workspace.role),
+      scopes: ScopeSet.effective(key.scopes, workspace.role).toArray(),
     },
     workspace,
     caller,

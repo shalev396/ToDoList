@@ -4,21 +4,14 @@
  * ignored as well.
  */
 import { Role as MemberRole } from '../../classes/base/Role.js';
-import {
-  AGENT_SCOPES,
-  READ_ONLY_SCOPES,
-  ROLE_SCOPES,
-  type AgentScope,
-  type Role,
-} from '../../types/domain.js';
+import { ScopeSet } from '../../classes/base/ScopeSet.js';
+import { READ_ONLY_SCOPES, ROLE_SCOPES, type AgentScope, type Role } from '../../types/domain.js';
 
 export { ROLE_SCOPES, READ_ONLY_SCOPES };
 
-/** The key's scopes that the role permits, in catalog order, without repeats. */
+/** The key's scopes that the role permits, in catalog order, without repeats (ScopeSet). */
 export function effectiveScopes(keyScopes: readonly AgentScope[], role: Role): AgentScope[] {
-  const granted = new Set(keyScopes);
-  const permitted = new Set(ROLE_SCOPES[role]);
-  return AGENT_SCOPES.filter((scope) => granted.has(scope) && permitted.has(scope));
+  return ScopeSet.effective(keyScopes, role).toArray();
 }
 
 /** The effective scopes an endpoint honours: all of them, or only the read scopes on /readonly. */
@@ -26,9 +19,7 @@ export function endpointScopes(
   scopes: readonly AgentScope[],
   options: { readonly: boolean },
 ): AgentScope[] {
-  return AGENT_SCOPES.filter(
-    (scope) => scopes.includes(scope) && (!options.readonly || READ_ONLY_SCOPES.includes(scope)),
-  );
+  return ScopeSet.of(scopes).onEndpoint(options).toArray();
 }
 
 /** What a tool needs: every one of its scopes, at least its role, and read-only on /readonly. */
@@ -47,6 +38,5 @@ export function canCall(
   const readonly = options.readonly === true;
   if (readonly && !tool.readOnly) return false;
   if (!MemberRole.of(principal.role).atLeast(tool.minRole)) return false;
-  const usable = endpointScopes(principal.scopes, { readonly });
-  return tool.scopes.every((scope) => usable.includes(scope));
+  return ScopeSet.of(principal.scopes).onEndpoint({ readonly }).hasAll(tool.scopes);
 }

@@ -17,14 +17,14 @@ import { AppError } from '../../errors/AppError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { OAuthError, type OAuthErrorCode } from '../../errors/OAuthError.js';
 import { consentPageUrl, mcpIssuer, mcpResource } from '../../mcp/oauth/urls.js';
-import { READ_ONLY_SCOPES, ROLE_SCOPES } from '../../mcp/auth/scopes.js';
 import type { McpAuthRequestData } from '../../models/definitions/McpAuthRequest.js';
 import { getAgentKeyRepository, getMcpAuthRequestRepository } from '../../models/index.js';
 import { pkceChallenge, sha256Hex } from '../../services/crypto/hashing.js';
-import { AGENT_SCOPES, type AgentScope, type Role } from '../../types/domain.js';
+import type { AgentScope, Role } from '../../types/domain.js';
 import { AgentKey, type IssuedTokens } from '../AgentKey.js';
 import { Actor, type ActorOrigin, type ActorRef } from '../base/Actor.js';
 import { Caller } from '../base/Caller.js';
+import { ScopeSet } from '../base/ScopeSet.js';
 import { Workspace } from '../workspace/Workspace.js';
 import { McpClient } from './McpClient.js';
 
@@ -83,19 +83,14 @@ function isReadonly(resource: string): boolean {
   return resource === mcpResource(true);
 }
 
-/** The scopes a role may give on a resource. */
-function allowedScopes(role: Role, resource: string): AgentScope[] {
-  const permitted = ROLE_SCOPES[role];
-  return AGENT_SCOPES.filter(
-    (scope) =>
-      permitted.includes(scope) && (!isReadonly(resource) || READ_ONLY_SCOPES.includes(scope)),
-  );
+/** The scopes a role may give on a resource (on the read-only one, only the read scopes). */
+function allowedScopes(role: Role, resource: string): ScopeSet {
+  return ScopeSet.forRole(role).onEndpoint({ readonly: isReadonly(resource) });
 }
 
 function parseScopes(scope: string | undefined): AgentScope[] {
-  const named = new Set((scope ?? '').split(/\s+/));
-  const known = AGENT_SCOPES.filter((candidate) => named.has(candidate));
-  return known.length > 0 ? known : [...DEFAULT_SCOPES];
+  const known = ScopeSet.of((scope ?? '').split(/\s+/));
+  return known.size > 0 ? known.toArray() : [...DEFAULT_SCOPES];
 }
 
 /** `redirectUri` with the answer's parameters added to its query (an existing query is kept). */
@@ -175,9 +170,9 @@ export class McpAuthorization {
           id: workspace.id,
           name: workspace.name,
           role,
-          allowed,
+          allowed: allowed.toArray(),
           preselected: request.requestedScopes.filter(
-            (scope) => allowed.includes(scope) && !NEVER_PRESELECTED.includes(scope),
+            (scope) => allowed.has(scope) && !NEVER_PRESELECTED.includes(scope),
           ),
           atCap: (await keys.countForUser(workspace.id, userId)) >= LIMITS.agentKeysPerUser,
         };
@@ -209,10 +204,10 @@ export class McpAuthorization {
     const caller = await Caller.enter(input.workspaceId, actor);
     if (caller === null) throw new NotFoundError();
 
-    const scopes = AGENT_SCOPES.filter((scope) => input.scopes.includes(scope));
+    const scopes = ScopeSet.of(input.scopes).toArray();
     if (scopes.length === 0) throw new AppError(400, 'Choose at least one permission');
     const allowed = allowedScopes(caller.role.name, request.resource);
-    if (input.scopes.some((scope) => !allowed.includes(scope))) {
+    if (!allowed.hasAll(input.scopes)) {
       throw new AppError(400, 'This role cannot grant some of these scopes', {
         code: 'scope_not_allowed',
       });
@@ -293,7 +288,7 @@ export class McpAuthorization {
     if (caller === null) throw invalidGrant();
     // The role may have dropped since the member approved.
     const allowed = allowedScopes(caller.role.name, request.resource);
-    if (request.scopes.some((scope) => !allowed.includes(scope))) throw invalidGrant();
+    if (!allowed.hasAll(request.scopes)) throw invalidGrant();
     // The cap holds at sign-in, not only at consent (codes approved earlier count only now).
     const keys = await getAgentKeyRepository();
     if ((await keys.countForUser(request.workspaceId, request.userId)) >= LIMITS.agentKeysPerUser) {
