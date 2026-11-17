@@ -32,11 +32,10 @@ On the clock, Shalev wants to see at a glance which part of his life each block 
 
    Deadline markers use the Work shade.
 
-   **What decides the role** (my call, pending one answer below):
-   - **Scheduled:** an event that comes from a provider's calendar (`kind = event`, not a local item).
-   - **Work:** everything else, including TodoList's own to-dos that have a start and end (his study blocks).
-   - **Travel:** `kind = travel`.
-   - **Per-calendar override** (small, first version): "Treat this calendar as: Scheduled / Work". It covers the case where his own study time lives in a separate Google calendar.
+   **What decides the role** (by class, see the time-blocks design):
+   - **Scheduled:** a `CalendarEvent` from a provider (lectures, meetings).
+   - **Work:** a `TimeBlock` (his own study time, which lives in TodoList, repeating or not) or a markable `Todo`.
+   - **Travel:** a `TravelLeg`.
    - Charts and other topic-level totals use the Scheduled (base) shade.
 
 3. **Same everywhere.**
@@ -100,11 +99,9 @@ Build order (my call):
 - Colour by provider as an option.
 - More than three roles in the first version.
 
-## Open for Shalev
+## Answered by Shalev
 
-1. **Where does your own study time live?**
-   - **TodoList time blocks:** they come out as Work, a different shade from lectures, with no setup.
-   - **Events in Google Calendar:** on the same calendar as the lectures, they would share the lecture shade. On a separate calendar, the per-calendar "treat as Work" fixes it.
+- His own study time lives in **TodoList time blocks** (repeating or not), not in Google Calendar. They take the Work shade, distinct from lectures, with no setup. No per-calendar role override is needed in the first version.
 
 ## Calls I made (for Shalev to check)
 
