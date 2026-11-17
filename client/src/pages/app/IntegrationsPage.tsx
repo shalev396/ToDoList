@@ -24,18 +24,16 @@ import { ConnectDialog } from '@/features/integrations/ConnectDialog';
 import { GcalCalendarPicker } from '@/features/integrations/GcalCalendarPicker';
 import { GcalSyncButton } from '@/features/integrations/GcalSyncButton';
 import { PrimaryCalendarSection } from '@/features/integrations/PrimaryCalendarSection';
-import { IntegrationCard } from '@/features/integrations/IntegrationCard';
+import { ProviderCard } from '@/features/integrations/ProviderCard';
 import {
   OAUTH_RETURN_PARAMS,
   oauthFailure,
   oauthReturnOf,
 } from '@/features/integrations/oauthReturn';
-import { TokenFallback } from '@/features/integrations/TokenFallback';
 import { OAuthResourcePicker } from '@/features/integrations/OAuthResourcePicker';
 import {
   hasOAuthSignIn,
   capabilitiesOf,
-  comingSoonOf,
   hasTokenFallback,
   isOAuthSignIn,
   reconnectAsksWrite,
@@ -43,7 +41,6 @@ import {
   oauthMode,
 } from '@/features/integrations/oauthSetup';
 import { PROVIDER_ORDER } from '@/features/integrations/providers';
-import { latestRun } from '@/features/integrations/status';
 import { EmptyIcon, EmptyState } from '@/features/shell/EmptyState';
 import { PageContainer, PageHeader } from '@/features/shell/PageHeader';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
@@ -57,13 +54,6 @@ type Dialog =
   | { kind: 'connect'; provider: ConnectableProvider; existingId?: string }
   | { kind: 'calendars'; integration: IntegrationStatusView }
   | { kind: 'resources'; integration: IntegrationStatusView };
-
-interface CardEntry {
-  provider: ConnectableProvider;
-  integration: IntegrationStatusView | undefined;
-  /** The "connect another account" tile after a provider's connected accounts. */
-  another?: true;
-}
 
 function isConnectable(value: string | null): value is ConnectableProvider {
   return value !== null && (CONNECTABLE_PROVIDERS as readonly string[]).includes(value);
@@ -187,7 +177,7 @@ function useOAuthReturn(onConnected: () => void): void {
 }
 
 /**
- * PERMISSIONS-V2: every card is the member's own connection (other members' never reach this
+ * PERMISSIONS-V2: every connection is the member's own (other members' never reach this
  * page; they show as provider icons on Members). Editors and owners connect; viewers manage what
  * they already have.
  */
@@ -283,16 +273,6 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
 
   const byProvider = (provider: ConnectableProvider) =>
     integrations.data.filter((entry) => entry.provider === provider);
-  const cards = PROVIDER_ORDER.flatMap<CardEntry>((provider) => {
-    // Coming soon (Moodle): one card with a badge, whatever a demo workspace holds.
-    const connected = comingSoonOf(capsOf(provider), provider) ? [] : byProvider(provider);
-    if (connected.length === 0) {
-      return [{ provider, integration: undefined }];
-    }
-    const entries: CardEntry[] = connected.map((integration) => ({ provider, integration }));
-    // Many-to-one: every connection is its own integration, so each provider offers another.
-    return canConnect ? [...entries, { provider, integration: undefined, another: true }] : entries;
-  });
   const google = (provider: ConnectableProvider): boolean => provider === 'google_calendar';
   /** What "connect" does: sign in with the provider (OAuth is always the first way). */
   const connect = (provider: ConnectableProvider) => {
@@ -300,10 +280,6 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
       void startOAuth(provider);
     }
   };
-  const anotherTitle = (provider: ConnectableProvider): string =>
-    google(provider)
-      ? t('connect.oauth.anotherTitle')
-      : t('connect.another.title', { name: t(`sources.${provider}`) });
   const replace = (integration: IntegrationStatusView) => {
     setDialog({
       kind: 'connect',
@@ -334,87 +310,43 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
         </p>
       )}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {cards.map(({ provider, integration, another }) =>
-          another === true ? (
-            <article
-              key={`${provider}-another`}
-              data-connect-another={provider}
-              aria-label={anotherTitle(provider)}
-              className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 self-start rounded-lg border border-dashed px-4 py-3"
-            >
-              <div className="flex min-w-0 flex-1 basis-48 flex-col">
-                <h2 className="text-sm leading-snug font-semibold">{anotherTitle(provider)}</h2>
-                <p className="text-[13px] text-muted-foreground">
-                  {google(provider) ? t('connect.oauth.anotherBody') : t('connect.another.body')}
-                </p>
-              </div>
-              <footer>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="max-md:h-11"
-                  disabled={starting || modeOf(provider) !== 'connect'}
-                  onClick={() => {
-                    connect(provider);
-                  }}
-                >
-                  {t(google(provider) ? 'connect.oauth.another' : 'connect.another.button')}
-                </Button>
-                {hasTokenFallback(provider) ? (
-                  <TokenFallback
-                    provider={provider}
-                    name={t(`sources.${provider}`)}
-                    onOpen={() => {
-                      setDialog({ kind: 'connect', provider });
-                    }}
-                  />
-                ) : null}
-              </footer>
-            </article>
-          ) : (
-            <IntegrationCard
-              key={integration?.id ?? provider}
-              workspaceId={workspace.id}
-              provider={provider}
-              capabilities={capsOf(provider)}
-              integration={integration}
-              shared={integration !== undefined && sharing.data?.has(integration.id) === true}
-              run={integration === undefined ? undefined : latestRun(runs.data, integration.id)}
-              canConnect={canConnect}
-              timeZone={workspace.settings.timezone}
-              now={now}
-              onConnect={() => {
-                connect(provider);
-              }}
-              onTokenConnect={() => {
-                setDialog({ kind: 'connect', provider });
-              }}
-              signIn={{
-                mode: modeOf(provider),
-                onResources: (entry) => {
-                  setDialog({ kind: 'resources', integration: entry });
-                },
-                installUrl: infoOf(provider)?.installUrl ?? null,
-              }}
-              onReplace={replace}
-              onCalendars={
-                google(provider)
-                  ? (entry) => {
-                      setDialog({ kind: 'calendars', integration: entry });
-                    }
-                  : undefined
-              }
-              onReconnect={(entry) =>
-                void startOAuth(
-                  provider,
-                  entry.id,
-                  reconnectAsksWrite(capsOf(provider), entry.mode),
-                )
-              }
-            />
-          ),
-        )}
+        {PROVIDER_ORDER.map((provider) => (
+          <ProviderCard
+            key={provider}
+            workspaceId={workspace.id}
+            provider={provider}
+            capabilities={capsOf(provider)}
+            integrations={byProvider(provider)}
+            shared={sharing.data}
+            runs={runs.data}
+            canConnect={canConnect}
+            timeZone={workspace.settings.timezone}
+            now={now}
+            signInMode={modeOf(provider)}
+            starting={starting}
+            onConnect={() => {
+              connect(provider);
+            }}
+            onTokenConnect={() => {
+              setDialog({ kind: 'connect', provider });
+            }}
+            onResources={(entry) => {
+              setDialog({ kind: 'resources', integration: entry });
+            }}
+            installUrl={infoOf(provider)?.installUrl ?? null}
+            onReplace={replace}
+            onCalendars={
+              google(provider)
+                ? (entry) => {
+                    setDialog({ kind: 'calendars', integration: entry });
+                  }
+                : undefined
+            }
+            onReconnect={(entry) =>
+              void startOAuth(provider, entry.id, reconnectAsksWrite(capsOf(provider), entry.mode))
+            }
+          />
+        ))}
       </div>
       {dialog?.kind === 'calendars' ? (
         <GcalCalendarPicker
@@ -453,8 +385,8 @@ function Cards({ workspace, canConnect }: { workspace: WorkspaceView; canConnect
 }
 
 /**
- * Connections (FRONTEND.md §8, PERMISSIONS-V2): a card per source with the member's own
- * connections, each with exactly the status shape and whether it is shared. Editors and owners
+ * Connections (FRONTEND.md §8, PERMISSIONS-V2): a card per source; its Manage panel lists the
+ * member's own connections, each with exactly the status shape and whether it is shared. Editors and owners
  * connect; each member tests, syncs, replaces credentials, stops sharing and disconnects their
  * own. The server refuses the rest anyway.
  */

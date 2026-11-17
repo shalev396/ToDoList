@@ -42,6 +42,7 @@ const STATUS_KEYS = [
   'id',
   'lastSyncAt',
   'mode',
+  'needsReconnect',
   'provider',
   'status',
 ];

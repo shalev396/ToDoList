@@ -226,7 +226,16 @@ export const PENDING_ACCOUNT_PREFIX = 'pending:';
  * owner's switch). MCP shows the same minus `authMethod` and `mode`
  * (mcp/tools/integrations/views.ts). Whether it is shared is its own call (GET …/sharing).
  */
-export interface IntegrationStatusView {
+export interface IntegrationStatusView extends IntegrationStatusBase {
+  /**
+   * It is read & write over an OAuth grant that lacks the provider's write scope (Jira, Linear):
+   * writing starts only after its owner reconnects (Integration#needsReconnect).
+   */
+  needsReconnect: boolean;
+}
+
+/** The view's fields that need no read of the credential's scopes (Integration#toView). */
+export interface IntegrationStatusBase {
   id: string;
   provider: Provider;
   authMethod: AuthMethod;
@@ -258,7 +267,7 @@ const PUBLIC_STATUS: Readonly<Record<IntegrationStatus, PublicIntegrationStatus>
  */
 export function toIntegrationStatus(
   data: IntegrationData,
-): Omit<IntegrationStatusView, 'canSwitchMode'> {
+): Omit<IntegrationStatusBase, 'canSwitchMode'> {
   return {
     id: data.id,
     provider: data.provider,
