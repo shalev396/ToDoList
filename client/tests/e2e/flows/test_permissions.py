@@ -41,7 +41,10 @@ def _headers(user) -> dict:
 
 
 def _jira_card(page: Page):
-    return page.locator("[data-integration-card=jira]").filter(has_text=SITE)
+    """The connection's own card: it lives in the provider's Manage panel, opened here."""
+    page.locator("[data-integration-manage=jira]").click()
+    expect(page.locator("[data-integration-panel=jira]")).to_be_visible(timeout=NORMAL_TIMEOUT)
+    return page.locator("[data-integration-account=jira]").filter(has_text=SITE)
 
 
 def _connect_jira(page: Page) -> None:
@@ -55,6 +58,10 @@ def _connect_jira(page: Page) -> None:
     dialog.get_by_role("button", name="Save and connect").click()
     dialog.get_by_role("button", name="Done").click()
     expect(dialog).to_have_count(0)
+    # One card per provider now: it says which account, and offers Manage.
+    expect(page.locator("[data-integration-card=jira] [data-provider-summary]")).to_contain_text(
+        SITE, timeout=NORMAL_TIMEOUT
+    )
 
 
 def test_share_on_attach_between_two_members(

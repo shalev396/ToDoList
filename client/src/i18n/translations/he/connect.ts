@@ -169,10 +169,29 @@ export const connect = {
     otherWorkspace: 'הקישור שייך למרחב עבודה אחר. עברו אליו קודם ואז פתחו את הקישור שוב.',
     failed: 'לא הצלחנו להשתמש בקישור החיבור. בקשו מהעוזר קישור חדש.',
   },
-  another: {
-    title: 'חיבור {{name}} נוסף',
-    body: 'כל חיבור מסתנכרן בנפרד.',
-    button: 'חבר עוד אחד',
+  provider: {
+    accounts_one: 'חשבון אחד',
+    accounts_two: 'שני חשבונות',
+    accounts_other: '{{count}} חשבונות',
+    health: {
+      ok: 'מחובר',
+      syncing: 'מסתנכרן',
+      needs_reconnect: 'צריך להתחבר מחדש',
+      error: 'דורש תשומת לב',
+    },
+    manage: 'ניהול',
+    panelTitle: 'חשבונות {{name}}',
+    close: 'סגירת החשבונות',
+    another: 'חיבור חשבון נוסף',
+    anotherBody: 'כל חשבון שמחברים מסתנכרן בנפרד.',
+    anotherButton: 'חיבור נוסף',
+  },
+  reconnect: {
+    title: 'להתחבר מחדש ל-{{name}} עכשיו?',
+    body: 'הכתיבה ל-{{name}} תתחיל אחרי שתאשרו אותה שם. תחזרו ישר לכאן.',
+    now: 'התחברות מחדש עכשיו',
+    later: 'אחר כך',
+    notice: 'צריך להתחבר מחדש כדי לסיים. הכתיבה ל-{{name}} תתחיל אחרי שתאשרו אותה שם.',
   },
   signin: {
     connect: 'חיבור עם {{name}}',
@@ -299,9 +318,6 @@ export const connect = {
     help: 'דף העזרה של Google על שיתוף יומן',
   },
   oauth: {
-    another: 'חיבור חשבון נוסף',
-    anotherTitle: 'חשבון Google נוסף',
-    anotherBody: 'כל חשבון Google שמחברים מסתנכרן בנפרד.',
     reconnect: 'חיבור מחדש',
     connected: 'יומן Google חובר.',
     startFailed: 'לא הצלחנו לחבר את יומן Google. נסו שוב.',
