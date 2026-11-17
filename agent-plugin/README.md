@@ -2,13 +2,7 @@
 
 Connects an AI agent to TodoList over MCP, teaches it how to use the product (skills), and holds it to the task methodology (hooks). Works in Claude Code (full plugin), Cursor (MCP config plus a rule) and any MCP client.
 
-## 1. Get an agent key and the address
-
-In TodoList open **Settings -> Agent keys**, create a key and pick its scopes (`read` is enough to look around; add `items:write` to create to-dos, `builder:write` to edit dashboards). Copy the `elk_...` key once: it is shown only at creation. Never commit it.
-
-The same page shows **Connect an agent**: the MCP address of the site you are on (`https://<site>/api/mcp`, and `/api/mcp/readonly` for read-only tools). Each stage (dev, QA, prod) shows its own address, and a key works only on the stage that made it.
-
-## 2. Claude Code
+## 1. Claude Code
 
 Install it from this repository, which is also its marketplace (`.claude-plugin/marketplace.json` at the root lists this folder). In Claude Code:
 
@@ -17,9 +11,11 @@ Install it from this repository, which is also its marketplace (`.claude-plugin/
 /plugin install todolist@todolist
 ```
 
+Installing asks for nothing: the `todolist` MCP server, four skills (`todolist-daily`, `todolist-tasks`, `todolist-builder`, `todolist-sync`) and the hooks load together. The server starts out **needing authentication**: run `/mcp`, pick `todolist` and choose **Authenticate**. A browser opens on TodoList; sign in if asked, pick the workspace and what the agent may do (add **publish dashboards** if it should publish), and approve. You come back to Claude Code connected. The sign-in appears in **Settings -> Agent keys** with the client's name, and you can revoke it there at any time.
+
 Or from a terminal: `claude plugin marketplace add shalev396/TodoList --sparse .claude-plugin agent-plugin` (the sparse checkout skips the app's code), then `claude plugin install todolist@todolist`. Claude Code reads the marketplace from the repository's default branch (`main`); `/plugin marketplace update todolist` picks up a newer version later. From a checkout of another branch, add the marketplace by its path instead: `/plugin marketplace add <path to the checkout>`.
 
-To try it from a checkout without installing:
+The plugin connects to the production site, `https://todolist.shalev396.com/api/mcp`. To try it from a checkout without installing:
 
 ```sh
 claude --plugin-dir ./agent-plugin          # this session only
@@ -27,30 +23,23 @@ claude plugin validate ./agent-plugin       # optional: check the manifest
 claude plugin validate .                    # optional: check the marketplace
 ```
 
-When the plugin is enabled, Claude Code asks for two values (the plugin's `userConfig`):
+Hook state and the audit log live in the plugin data directory.
 
-- **TodoList MCP address**: paste it from **Connect an agent**. It defaults to the production site, `https://todolist.shalev396.com/api/mcp`.
-- **Agent key**: the `elk_...` key. Claude Code keeps it in the system's secure credential store, not in `settings.json`.
+### Another stage, or a key instead of signing in
 
-Change either later in `/config` (the key: disable and re-enable the plugin). The `todolist` MCP server, four skills (`todolist-daily`, `todolist-tasks`, `todolist-builder`, `todolist-sync`) and the hooks load together. Hook state and the audit log live in the plugin data directory.
-
-### Sign in instead of using a key
-
-Claude Code can also sign in, with no key. Add the server without a header:
+For dev or QA, or where no browser can open (CI, a server), add the server yourself with an agent key. In TodoList open **Settings -> Agent keys**, create a key and pick its scopes (`read` is enough to look around; add `items:write` to create to-dos, `builder:write` to edit dashboards). Copy the `elk_...` key once: it is shown only at creation. Never commit it. The same page shows **Connect an agent**: the MCP address of the site you are on (`https://<site>/api/mcp`, and `/api/mcp/readonly` for read-only tools). A key works only on the stage that made it.
 
 ```sh
-claude mcp add --transport http todolist <address>
+claude mcp add --transport http todolist <address> --header "Authorization: Bearer <key>"
 ```
 
-Then run `/mcp` in Claude Code and choose to sign in. A browser opens on TodoList, where you pick the scopes and approve. The sign-in appears in **Settings -> Agent keys** with the client's name, and you can revoke it there at any time.
-
-## 3. Cursor
+## 2. Cursor
 
 1. Copy `cursor/mcp.json` to `.cursor/mcp.json` in your project (or merge it into `~/.cursor/mcp.json`). It reads `${env:TODOLIST_MCP_URL}` (the address from **Connect an agent**) and `${env:TODOLIST_AGENT_KEY}`, so start Cursor from a shell that has them.
 2. Copy `cursor/rules/todolist.mdc` to `.cursor/rules/todolist.mdc`.
 3. Cursor has no hooks for this: the rule carries the methodology and the server still enforces the builder preview rule (D12).
 
-## 4. Any other MCP client
+## 3. Any other MCP client
 
 Streamable HTTP, the address from **Connect an agent**, header `Authorization: Bearer <key>`. In Claude (web, desktop): Connectors -> Add custom connector, paste the address, and add the header under Request headers. To sign in instead of using a key: Connectors -> Add custom connector, paste the address, leave the headers empty, and choose Connect. For Cursor and VS Code, add the server URL without the header and the client offers sign-in. To poke at it with the MCP Inspector:
 
