@@ -447,6 +447,7 @@ describe('credential route', () => {
         'id',
         'lastSyncAt',
         'mode',
+        'needsReconnect',
         'provider',
         // A Google Calendar's live pushed events (a count), and only there.
         ...(status['provider'] === 'google_calendar' ? ['pushedEvents'] : []),
