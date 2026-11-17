@@ -48,10 +48,11 @@ interface ProviderCardProps {
   starting: boolean;
 }
 
+// Red only for what is broken; amber for what wants a look or a reconnect.
 const HEALTH_DOT: Record<ProviderHealth, string> = {
   error: 'bg-destructive',
-  attention: 'bg-destructive',
-  needs_reconnect: 'bg-destructive',
+  attention: 'bg-status-warning',
+  needs_reconnect: 'bg-status-warning',
   syncing: 'bg-muted-foreground',
   ok: 'bg-success',
 };
