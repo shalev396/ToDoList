@@ -49,13 +49,21 @@ export function useUpdateMember(workspaceId: string) {
   });
 }
 
-export function useRemoveMember(workspaceId: string) {
+/**
+ * Removes a member. `onRemoved` runs before the members list is refetched: the refetch takes the
+ * member's row away, and with it the component that called `mutate`, whose own `onSuccess` then
+ * never runs (TanStack Query skips the callbacks of an unmounted caller), so its toast came or
+ * not depending on which finished first. useDeleteTopic does the same.
+ */
+export function useRemoveMember(workspaceId: string, onRemoved?: (userId: string) => void) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (userId: string) => {
       await removeMember(workspaceId, userId, { suppressErrorToast: true });
+      return userId;
     },
-    onSuccess: async () => {
+    onSuccess: async (userId) => {
+      onRemoved?.(userId);
       await queryClient.invalidateQueries({ queryKey: queryKeys.members(workspaceId) });
     },
   });
