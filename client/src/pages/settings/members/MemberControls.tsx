@@ -28,8 +28,12 @@ export function RemoveMember({
   name: string;
 }) {
   const { t } = useTranslation();
-  const removeMember = useRemoveMember(workspace.id);
   const [open, setOpen] = useState(false);
+  // Before the refetch takes this row (and this dialog) away: close, then say so.
+  const removeMember = useRemoveMember(workspace.id, () => {
+    setOpen(false);
+    toast.success(t('members.list.removed', { name }));
+  });
   return (
     <AlertDialog open={open} onOpenChange={setOpen}>
       <AlertDialogTrigger asChild>
@@ -58,10 +62,6 @@ export function RemoveMember({
             disabled={removeMember.isPending}
             onClick={() => {
               removeMember.mutate(member.userId, {
-                onSuccess: () => {
-                  setOpen(false);
-                  toast.success(t('members.list.removed', { name }));
-                },
                 onError: (err) => {
                   toast.error(errorMessage(t, err, 'members.list.removeFailed'));
                 },
