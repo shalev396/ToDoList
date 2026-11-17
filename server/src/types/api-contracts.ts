@@ -199,6 +199,8 @@ export type {
   SyncRunView,
 } from './integrations.js';
 
+export type { FileUnderResult, RefileCounts, RuleShape } from './topicRules.js';
+
 export type {
   ListIntegrationsResponseData,
   CreateIntegrationRequestBody,
@@ -207,6 +209,8 @@ export type {
   TestIntegrationResponseData,
   UpdateIntegrationRequestBody,
   UpdateIntegrationResponseData,
+  FileUnderRequestBody,
+  FileUnderResponseData,
   StopSharingResponseData,
   IntegrationSharingResponseData,
   RemovePushedResponseData,

@@ -244,6 +244,8 @@ export interface IntegrationStatusBase {
   mode: IntegrationMode;
   /** Whether its owner may switch it to read & write (never demo data: Integration#checkMode). */
   canSwitchMode: boolean;
+  /** The topic its records file under when no rule or override applies; null = Unsorted. */
+  topicId: string | null;
   expiresAt: Date | null;
   lastSyncAt: Date | null;
   /**
@@ -275,6 +277,7 @@ export function toIntegrationStatus(
     accountLabel: data.label,
     status: PUBLIC_STATUS[data.status],
     mode: data.mode,
+    topicId: data.topicId,
     expiresAt: data.expiresAt,
     lastSyncAt: data.lastSyncAt,
   };

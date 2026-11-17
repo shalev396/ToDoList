@@ -1212,9 +1212,14 @@ classDiagram
     +listVisible(caller, policy, ids)$
     +findByExternalId(...)$
     +unsetTopicIn(workspaceId, topicId)$
+    +matchKey
     +toView() FacetContainer
   }
   WorkspaceEntity <|-- Container
+  class Refiling {
+    +integration(integration)$
+    +workspace(workspaceId)$
+  }
   class ItemQuery {
     +for(caller)$ ItemQuery
     +effectiveStage()$
@@ -1550,6 +1555,8 @@ classDiagram
     +normalize(rules)$
     +matches(pattern, key)$
     +classify(input)
+    +withRule(match, topicId)
+    +ruleFor(match)
   }
   class AttributeDefinitions {
     <<value object>>
@@ -1730,7 +1737,9 @@ How the pieces work, in short:
   of the old `joinLinkVault`, unchanged); only its hash is searchable.
 - **Attributes and topic rules.** `AttributeDefinition` is one subclass per type (what a value may
   be and how it is stored is polymorphic); `TopicRules` classifies a container's match key and
-  validates a request's rules.
+  validates a request's rules. `Refiling` re-files stored containers and items after a File under
+  change (a connection's topic, a container's name rule, the workspace's rules), in place and with
+  no provider call: the same rule the sync applies.
 
 ## 6. Dashboards and views (phases 6a and 6b, built)
 

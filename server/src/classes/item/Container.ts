@@ -138,6 +138,13 @@ export class Container
     return (await getContainerRepository()).countLiveByIntegration(workspaceId, integrationIds);
   }
 
+  /** The integration's live containers (hidden ones too), by name. */
+  static async listOf(workspaceId: string, integrationId: string): Promise<Container[]> {
+    return (await (await getContainerRepository()).list(workspaceId, { integrationId })).map(
+      (data) => new Container(data),
+    );
+  }
+
   /** A topic was deleted: its containers become Unsorted (Topic.delete). Returns how many. */
   static async unsetTopicIn(workspaceId: string, topicId: string): Promise<number> {
     return (await getContainerRepository()).unsetTopic(workspaceId, topicId);
@@ -145,6 +152,15 @@ export class Container
 
   get integrationId(): string {
     return this.data.integrationId;
+  }
+
+  /**
+   * What the workspace's topic rules match: a GitHub repo's `owner/repo` or board's
+   * `owner/projects/<n>` (the provider key, which is also its match key), else the name.
+   */
+  get matchKey(): string {
+    const { data } = this;
+    return data.source.provider === 'github' ? (data.source.key ?? data.name) : data.name;
   }
 
   get topicId(): string | null {
@@ -169,6 +185,7 @@ export class Container
     return {
       id: this.id,
       name: redactString(data.name),
+      matchKey: redactString(this.matchKey),
       type: data.type,
       topicId: data.topicId,
       provider: data.source.provider,

@@ -13,6 +13,7 @@ const facets: FacetsResponseData = {
     {
       id: 'c1',
       name: 'Algorithms',
+      matchKey: 'Algorithms',
       type: 'course',
       topicId: 't-college',
       provider: 'moodle',
@@ -22,6 +23,7 @@ const facets: FacetsResponseData = {
     {
       id: 'c2',
       name: 'Atlas',
+      matchKey: 'Atlas',
       type: 'project',
       topicId: 't-work',
       provider: 'jira',

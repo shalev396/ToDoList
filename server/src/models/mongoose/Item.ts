@@ -743,6 +743,25 @@ export const ItemRepository: IItemRepository = {
     return result.modifiedCount;
   },
 
+  async refileByContainer(workspaceId, integrationId, assignments) {
+    if (assignments.length === 0) return 0;
+    const result = await ItemMongoModel.bulkWrite(
+      assignments.map(({ containerId, topicId }) => ({
+        updateMany: {
+          filter: {
+            workspaceId,
+            integrationId,
+            containerId,
+            deletedAt: null,
+            topicId: { $ne: topicId },
+          },
+          update: { $set: { topicId } },
+        },
+      })),
+    );
+    return result.modifiedCount;
+  },
+
   async unsetTopic(workspaceId, topicId) {
     const result = await ItemMongoModel.updateMany(
       { workspaceId, topicId },

@@ -249,6 +249,11 @@ export type GetItemResponseData = ItemDetail;
 export interface FacetContainer {
   id: string;
   name: string;
+  /**
+   * What topic rules match: a GitHub repo's `owner/repo` or board's `owner/projects/<n>`, else the
+   * name. A container's own rule (File under) has this as its `match`.
+   */
+  matchKey: string;
   type: ContainerType;
   /** Its topic's id; null = Unsorted. */
   topicId: string | null;

@@ -2232,3 +2232,36 @@ describe('github adapter: bad records fail alone', () => {
     assert.deepEqual(requestsOf(transport), [`GET ${API}/user`]);
   });
 });
+
+describe('match keys', () => {
+  it('gives repos and boards a match key equal to source.key', () => {
+    const board = mappedContainer(
+      mapBoard(M, 'shalev396', {
+        id: 'PVT_FAKE_k',
+        number: 3,
+        title: 'Roadmap',
+        url: 'https://example.invalid/github/users/shalev396/projects/3',
+        closed: false,
+        updatedAt: '2026-11-11T09:00:00Z',
+        statusOptions: [],
+        dueField: null,
+      }),
+    );
+    assert.equal(board.matchKey, board.source.key);
+    assert.equal(board.matchKey, 'shalev396/projects/3');
+    const repo = mappedContainer(
+      mapRepo(
+        M,
+        {
+          node_id: 'R_FAKE_k',
+          full_name: 'shalev396/Elytra',
+          html_url: 'https://example.invalid/github/shalev396/Elytra',
+          updated_at: '2026-11-10T09:05:00Z',
+        },
+        null,
+      ),
+    );
+    assert.equal(repo.matchKey, repo.source.key);
+    assert.equal(repo.matchKey, 'shalev396/Elytra');
+  });
+});

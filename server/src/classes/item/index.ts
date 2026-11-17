@@ -11,6 +11,7 @@ export { CalendarEvent, type NewRecurringTodo } from './CalendarEvent.js';
 export { Todo, type NewTodo } from './Todo.js';
 export { TodoCopy, failureFor, isCreatableProvider } from './TodoCopy.js';
 export { Container, FACET_CONTAINER_CAP } from './Container.js';
+export { Refiling, type RefileCounts } from './Refiling.js';
 export { ItemQuery, DEFAULT_PAGE_SIZE, type ItemListQuery } from './ItemQuery.js';
 export { QueryTarget, type QueryTargetData } from './QueryTarget.js';
 export { ProviderFields } from './ProviderFields.js';

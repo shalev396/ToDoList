@@ -33,6 +33,7 @@ import {
   type NewAttribute,
 } from '../../types/attributes.js';
 import type { Role as RoleName } from '../../types/domain.js';
+import type { FileUnderResult, RefileCounts } from '../../types/topicRules.js';
 import type { Env } from '../../types/env.d.ts';
 import { PLAN_LIMITS } from '../../types/limits.js';
 import type {
@@ -46,6 +47,7 @@ import type { Auditable, SoftDeletable } from '../base/contracts.js';
 import { Entity } from '../base/Entity.js';
 import { AuditLog } from '../AuditLog.js';
 import { Integration, isCalendarProvider } from '../integration/index.js';
+import { Refiling } from '../item/Refiling.js';
 import { WorkspacePolicy } from '../policies/WorkspacePolicy.js';
 import { AccountClosingDeletion, OwnerDeletion } from './cascade.js';
 import { assertInvitableRole } from './Invite.js';
@@ -469,10 +471,41 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
       ...Object.keys(patch.settings ?? {}).map((key) => `settings.${key}`),
     ];
     if (changed.length === 0) throw new AppError(400, 'No changes provided');
+    const updated = await this.#save(caller, patch, changed);
+    // Rules decide the topic of every stored container and item: they follow at once.
+    if (patch.settings?.topicRules !== undefined) await this.#refile();
+    return updated;
+  }
+
+  /**
+   * Owner only (File under): `match`'s own name rule becomes `topicId`, or goes when null, and the
+   * workspace's stored records follow. The rule is an ordinary name rule (TopicRules#withRule):
+   * validated, saved and audited as `update` does.
+   */
+  async setNameRule(
+    caller: Caller,
+    match: string,
+    topicId: string | null,
+  ): Promise<FileUnderResult> {
+    assertOwner(caller);
+    this.#assertCaller(caller);
+    const rules = TopicRules.normalize(this.settings.topicRules.withRule(match, topicId).toJSON());
+    await this.#assertRuleTopics(rules);
+    const topicRules = rules.toJSON();
+    const updated = await this.#save(caller, { settings: { topicRules } }, ['settings.topicRules']);
+    return { rule: updated.settings.topicRules.ruleFor(match), refiled: await this.#refile() };
+  }
+
+  /** The one write of a settings or name change: stored, then audited (`changed`: the field names). */
+  async #save(caller: Caller, patch: WorkspacePatch, changed: string[]): Promise<Workspace> {
     const updated = await (await getWorkspaceRepository()).update(this.id, patch);
     if (updated === null) throw new AppError(404, 'Workspace not found');
     await AuditLog.record(caller, 'workspace.update', this.auditTarget(), { changed });
     return new Workspace(updated);
+  }
+
+  #refile(): Promise<RefileCounts> {
+    return Refiling.workspace(this.id);
   }
 
   /** 400 unless every rule files into a topic of the workspace. */

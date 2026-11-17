@@ -500,6 +500,14 @@ export const MANIFEST: readonly Entry[] = [
     expect: [2],
     noBadInput: true,
   },
+  // File under: a container that is not there is 404, and nothing is written.
+  {
+    method: 'PUT',
+    path: `${W}/integrations/:iid/containers/:cid/file-under`,
+    params: (c) => ({ iid: c.integrations.jira, cid: 'no-such-container' }),
+    body: () => ({ topicId: null }),
+    expect: [4],
+  },
   // Only a Google Calendar pushes events: 400 for the Jira one (and nothing is removed).
   {
     method: 'POST',

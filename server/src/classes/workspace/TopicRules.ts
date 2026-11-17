@@ -14,6 +14,7 @@
 import { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { TopicRule } from '../../models/definitions/Workspace.js';
+import { exactRuleFor, sameRuleMatch } from '../../types/topicRules.js';
 
 export interface TopicInput {
   /** What the rules are matched against, e.g. "shalev396/Elytra". */
@@ -96,6 +97,23 @@ export class TopicRules {
       if (TopicRules.matches(rule.match, input.matchKey)) return rule.topicId;
     }
     return input.defaultTopicId;
+  }
+
+  /**
+   * The rules with `match`'s own rule (File under) replaced: any rule with the same match, ignoring
+   * case, goes, and a topic puts the new rule first, so it beats a broader glob; null only removes.
+   * `match` is stored as a glob like any other rule: a `*` in a calendar or project name stays a
+   * wildcard (an ordinary name rule), and the rule then also files names the glob matches.
+   */
+  withRule(match: string, topicId: string | null): TopicRules {
+    const kept = this.#rules.filter((rule) => !sameRuleMatch(rule.match, match));
+    return new TopicRules(topicId === null ? kept : [{ match: match.trim(), topicId }, ...kept]);
+  }
+
+  /** The rule whose match is exactly `match`, ignoring case (never a glob match); null when none. */
+  ruleFor(match: string): TopicRule | null {
+    const found = exactRuleFor(this.#rules, match);
+    return found === null ? null : { match: found.match, topicId: found.topicId };
   }
 
   equals(other: TopicRules): boolean {

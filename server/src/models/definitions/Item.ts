@@ -409,6 +409,16 @@ export interface IItemRepository {
    * overlays filing an item under it are cleared. Nothing else changes. Returns how many items.
    */
   unsetTopic(workspaceId: string, topicId: string): Promise<number>;
+  /**
+   * Files an integration's live items under topics (File under), one write: each assignment moves
+   * the items of that container (`null`: the ones with no container) to `topicId`. Only `topicId`
+   * is written, never an overlay; items that already have it are not counted. Returns how many.
+   */
+  refileByContainer(
+    workspaceId: string,
+    integrationId: string,
+    assignments: readonly { containerId: string | null; topicId: string | null }[],
+  ): Promise<number>;
   /** Clears one attribute's value on every item of the workspace. Returns how many items held it. */
   clearAttribute(workspaceId: string, key: string): Promise<number>;
   /**
