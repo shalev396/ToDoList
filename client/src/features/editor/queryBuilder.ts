@@ -3,7 +3,12 @@
  * catalog (`FIELD_WHITELIST` / `OPERATORS`), and the two-way conversion between its group format
  * and the query's strict `RuleGroup` (no ids, no extra keys).
  */
-import type { Field, RuleGroupType, RuleType } from 'react-querybuilder';
+import {
+  prepareRuleGroup,
+  type Field,
+  type RuleGroupType,
+  type RuleType,
+} from 'react-querybuilder';
 import type {
   CatalogDescription,
   CatalogField,
@@ -147,6 +152,25 @@ export function fromQueryBuilder(group: RuleGroupType, types: FieldTypes): RuleG
 /** The query's `where` as a querybuilder group (it accepts our shape; lists stay arrays). */
 export function toQueryBuilder(group: RuleGroup | undefined): RuleGroupType {
   return (group ?? { combinator: 'and', rules: [] }) as RuleGroupType;
+}
+
+/** The group the rule tree last handed us, and the `where` we built from it. */
+export interface BuilderCopy {
+  readonly where: RuleGroup | undefined;
+  readonly group: RuleGroupType;
+}
+
+/**
+ * The group to give the rule tree for `where`. react-querybuilder keys its rows by rule `id` and
+ * gives an id-less group new ids each time it renders it; a `where` keeps only the schema's keys,
+ * so handing it over as it is re-keyed, and so remounted, every row whenever the editor re-rendered
+ * (a preview answering): an open select closed, a click on one was lost, and focus dropped. The
+ * `where` built from the tree's own change gets the tree's group back, ids and all; any other
+ * (undo, the sentence editor, a block opened) gets ids once, here. Callers keep the result for as
+ * long as `where` is the same object.
+ */
+export function builderGroup(where: RuleGroup | undefined, own: BuilderCopy | null): RuleGroupType {
+  return own !== null && own.where === where ? own.group : prepareRuleGroup(toQueryBuilder(where));
 }
 
 /** Field name → catalog type, for converting typed values. */
