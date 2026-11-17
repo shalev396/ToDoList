@@ -447,6 +447,19 @@ def test_domains_are_shared_with_other_processes_through_the_state_dir(make):
     assert second.session.calls == []
 
 
+def test_forgotten_domains_are_looked_up_again_here_and_in_other_processes(make):
+    first = make()
+    renamed = {"hydra:member": [{"domain": "new.test", "isActive": True}]}
+    first.session.answers = [answer(200, DOMAINS)]
+    first.domains()
+    first.forget_domains()
+    second = make()
+    second.session.answers = [answer(200, renamed)]
+    assert second.domain() == "new.test"  # the shared cache went too: it asked mail.tm
+    assert first.domain() == "new.test"  # and the first reads the second's fresh list
+    assert len(first.session.calls) == 1
+
+
 def test_the_domain_cache_expires(make, clock):
     first = make(domain_ttl=600)
     renamed = {"hydra:member": [{"domain": "new.test", "isActive": True}]}

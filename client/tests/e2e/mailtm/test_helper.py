@@ -77,17 +77,34 @@ def test_a_new_inbox_is_made_on_the_active_domain(mail):
 
 
 def test_an_address_someone_else_has_is_replaced_once(mail):
-    """Mail.tm says the random address is used, and the password doesn't open it: a new address."""
+    """Mail.tm says the random address is used, and the password doesn't open it: a new address,
+    on a domain looked up again."""
     taken = [_answer(422, {"detail": "address: used"}), _answer(401, {"message": "bad"})]
-    mail.answers = [*taken, _answer(201, {"id": "a2"})]
+    listed = _answer(200, {"hydra:member": [{"domain": "mail.test", "isActive": True}]})
+    mail.answers = [*taken, listed, _answer(201, {"id": "a2"})]
     first = mailtm.create_mailtm_account("mail.test")[0]
-    assert mail.paths == ["POST /accounts", "POST /token", "POST /accounts"]
+    assert mail.paths == ["POST /accounts", "POST /token", "GET /domains", "POST /accounts"]
     mail.paths.clear()
-    mail.answers = [*taken, *taken]
+    mail.answers = [*taken, listed, *taken]
     with pytest.raises(mailtm.AddressTaken):
         mailtm.create_mailtm_account("mail.test")
     assert mail.paths.count("POST /accounts") == 2  # one retry, no more
     assert first.endswith("@mail.test")
+
+
+def test_a_retired_domain_is_replaced_on_the_retry(mail):
+    """Mail.tm retires domains: an address at one it no longer serves is refused (422), and the
+    retry takes a domain from a fresh list, not the cached one (CI, 2026-11-17: "fldubai.com")."""
+    retired = _answer(422, {"violations": [{"propertyPath": "address", "message": "The domain is not valid"}]})
+    mail.answers = [
+        retired,
+        _answer(401, {"message": "bad"}),
+        _answer(200, {"hydra:member": [{"domain": "new.test", "isActive": True}]}),
+        _answer(201, {"id": "a3"}),
+    ]
+    email = mailtm.create_mailtm_account("old.test")[0]
+    assert email.endswith("@new.test")
+    assert mail.paths == ["POST /accounts", "POST /token", "GET /domains", "POST /accounts"]
 
 
 def test_the_confirmation_code_comes_from_the_inbox(mail):
