@@ -1,0 +1,51 @@
+[
+  {
+    "request": { "url": "https://example.invalid/jira/rest/api/3/project/search?action=create" },
+    "response": {
+      "body": {
+        "isLast": true,
+        "values": [
+          { "id": "10001", "key": "DEMO", "name": "Demo Project" },
+          { "id": "10002", "key": "OPS", "name": "Operations" }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/jira/rest/api/3/issue/createmeta/10001/issuetypes"
+    },
+    "response": {
+      "body": {
+        "issueTypes": [
+          { "id": "10010", "name": "Task" },
+          { "id": "10011", "name": "Bug" },
+          { "id": "10012", "name": "Sub-task", "subtask": true }
+        ]
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://example.invalid/jira/rest/api/3/issue/createmeta/10001/issuetypes/10010"
+    },
+    "response": {
+      "body": {
+        "values": [
+          { "fieldId": "summary", "name": "Summary" },
+          {
+            "fieldId": "customfield_10100",
+            "name": "Team",
+            "schema": {
+              "custom": "com.atlassian.jira.plugin.system.customfieldtypes:atlassian-team"
+            },
+            "allowedValues": [
+              { "id": "FAKE-team-backend", "name": "Backend" },
+              { "id": "FAKE-team-web", "name": "Web" }
+            ]
+          }
+        ]
+      }
+    }
+  }
+]

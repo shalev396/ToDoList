@@ -1,0 +1,95 @@
+{
+  "key": "project@1",
+  "version": 1,
+  "titles": { "en": "Project", "he": "פרויקט" },
+  "scope": { "topicId": null, "containerId": null, "page": "group", "groupVar": "project" },
+  "vars": { "range": "this_week", "project": null },
+  "blocks": [
+    {
+      "id": "blk_deadlines",
+      "type": "deadlines",
+      "titles": { "en": "Deadlines", "he": "תאריכי יעד" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            { "field": "dueAt", "operator": "notNull" },
+            { "field": "status", "operator": "in", "value": ["open", "in_progress"] },
+            { "field": "containerId", "operator": "=", "value": "$page.project" }
+          ]
+        },
+        "dateRange": "upcoming_14d",
+        "dateField": "dueAt",
+        "sort": [{ "field": "dueAt", "dir": "asc" }]
+      },
+      "rules": [
+        {
+          "if": { "field": "dueAt", "operator": "<", "value": "@now" },
+          "then": { "tone": "destructive" }
+        }
+      ],
+      "viz": { "kind": "deadlines", "overdueOnTop": true },
+      "listen": ["$page.project"]
+    },
+    {
+      "id": "blk_board",
+      "type": "kanban",
+      "titles": { "en": "Board", "he": "לוח" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [{ "field": "containerId", "operator": "=", "value": "$page.project" }]
+        },
+        "groupBy": ["status"],
+        "limit": 50
+      },
+      "viz": { "kind": "kanban" },
+      "listen": ["$page.project"]
+    },
+    {
+      "id": "blk_calendar",
+      "type": "calendar",
+      "titles": { "en": "Calendar", "he": "יומן" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "combinator": "or",
+              "rules": [
+                { "field": "startAt", "operator": "notNull" },
+                { "field": "dueAt", "operator": "notNull" }
+              ]
+            },
+            { "field": "containerId", "operator": "=", "value": "$page.project" }
+          ]
+        },
+        "dateRange": "$page.range",
+        "dateField": "any",
+        "sort": [{ "field": "startAt", "dir": "asc" }]
+      },
+      "viz": { "kind": "calendar", "view": "week", "allowMonth": true },
+      "listen": ["$page.range", "$page.project"]
+    }
+  ],
+  "layouts": {
+    "lg": [
+      { "i": "blk_deadlines", "x": 0, "y": 0, "w": 4, "h": 10 },
+      { "i": "blk_calendar", "x": 4, "y": 0, "w": 8, "h": 10 },
+      { "i": "blk_board", "x": 0, "y": 10, "w": 12, "h": 10 }
+    ],
+    "md": [
+      { "i": "blk_deadlines", "x": 0, "y": 0, "w": 3, "h": 10 },
+      { "i": "blk_calendar", "x": 3, "y": 0, "w": 5, "h": 10 },
+      { "i": "blk_board", "x": 0, "y": 10, "w": 8, "h": 10 }
+    ],
+    "sm": [
+      { "i": "blk_deadlines", "x": 0, "y": 0, "w": 1, "h": 10 },
+      { "i": "blk_calendar", "x": 0, "y": 10, "w": 1, "h": 10 },
+      { "i": "blk_board", "x": 0, "y": 20, "w": 1, "h": 10 }
+    ]
+  }
+}

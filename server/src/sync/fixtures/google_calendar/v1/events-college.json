@@ -1,0 +1,217 @@
+[
+  {
+    "request": {
+      "url": "https://www.googleapis.com/calendar/v3/calendars/college%40example.invalid/events"
+    },
+    "response": {
+      "body": {
+        "kind": "calendar#events",
+        "etag": "\"FAKE-etag-events-college-v1\"",
+        "summary": "Braude Classes",
+        "description": "",
+        "updated": "{{datetime:-1d@18:00}}",
+        "timeZone": "Asia/Jerusalem",
+        "accessRole": "reader",
+        "defaultReminders": [],
+        "nextSyncToken": "FAKE-sync-college-v1",
+        "items": [
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000101\"",
+            "id": "algtoday001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-algtoday001",
+            "created": "{{datetime:-20d@09:00}}",
+            "updated": "{{datetime:-2d@09:00}}",
+            "summary": "Algorithms lecture",
+            "location": "Building M, Room 201",
+            "organizer": {
+              "email": "college@example.invalid",
+              "displayName": "Braude Classes",
+              "self": true
+            },
+            "start": {
+              "dateTime": "{{datetime:+0d@08:30}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:+0d@10:20}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "iCalUID": "algtoday001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000102\"",
+            "id": "physlab001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-physlab001",
+            "created": "{{datetime:-20d@09:05}}",
+            "updated": "{{datetime:-2d@09:05}}",
+            "summary": "Physics 1 lab",
+            "location": "Physics Lab 3",
+            "organizer": {
+              "email": "college@example.invalid",
+              "displayName": "Braude Classes",
+              "self": true
+            },
+            "start": {
+              "dateTime": "{{datetime:+0d@14:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:+0d@17:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "iCalUID": "physlab001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000103\"",
+            "id": "dsweekly001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-dsweekly001",
+            "created": "{{datetime:-21d@09:00}}",
+            "updated": "{{datetime:-14d@09:00}}",
+            "summary": "Data Structures lecture",
+            "location": "Building L, Room 105",
+            "organizer": {
+              "email": "college@example.invalid",
+              "displayName": "Braude Classes",
+              "self": true
+            },
+            "start": {
+              "dateTime": "{{datetime:-13d@10:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:-13d@12:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "recurrence": ["RRULE:FREQ=WEEKLY;COUNT=12"],
+            "iCalUID": "dsweekly001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000104\"",
+            "id": "dsweekly001_r1",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-dsweekly001_r1",
+            "created": "{{datetime:-21d@09:00}}",
+            "updated": "{{datetime:-8d@16:00}}",
+            "summary": "Data Structures lecture",
+            "location": "Building L, Room 210",
+            "organizer": {
+              "email": "college@example.invalid",
+              "displayName": "Braude Classes",
+              "self": true
+            },
+            "start": {
+              "dateTime": "{{datetime:-6d@13:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:-6d@15:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "recurringEventId": "dsweekly001",
+            "originalStartTime": {
+              "dateTime": "{{datetime:-6d@10:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "iCalUID": "dsweekly001@example.invalid",
+            "sequence": 1,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000107\"",
+            "id": "dsweekly001_r2",
+            "status": "cancelled",
+            "recurringEventId": "dsweekly001",
+            "originalStartTime": {
+              "dateTime": "{{datetime:+8d@10:00}}",
+              "timeZone": "Asia/Jerusalem"
+            }
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000105\"",
+            "id": "midterm001",
+            "status": "confirmed",
+            "htmlLink": "https://example.invalid/calendar/event?eid=FAKE-midterm001",
+            "created": "{{datetime:-30d@12:00}}",
+            "updated": "{{datetime:-30d@12:00}}",
+            "summary": "Algorithms midterm",
+            "transparency": "transparent",
+            "organizer": {
+              "email": "college@example.invalid",
+              "displayName": "Braude Classes",
+              "self": true
+            },
+            "start": {
+              "date": "{{date:+4d}}"
+            },
+            "end": {
+              "date": "{{date:+5d}}"
+            },
+            "iCalUID": "midterm001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": false
+            },
+            "eventType": "default"
+          },
+          {
+            "kind": "calendar#event",
+            "etag": "\"3420000000000106\"",
+            "id": "officehours001",
+            "status": "confirmed",
+            "htmlLink": "",
+            "created": "{{datetime:-5d@11:00}}",
+            "updated": "{{datetime:-5d@11:00}}",
+            "summary": "Algorithms office hours",
+            "location": "Building M, Room 118",
+            "organizer": {
+              "email": "college@example.invalid",
+              "displayName": "Braude Classes",
+              "self": true
+            },
+            "start": {
+              "dateTime": "{{datetime:+1d@16:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "end": {
+              "dateTime": "{{datetime:+1d@17:00}}",
+              "timeZone": "Asia/Jerusalem"
+            },
+            "iCalUID": "officehours001@example.invalid",
+            "sequence": 0,
+            "reminders": {
+              "useDefault": true
+            },
+            "eventType": "default"
+          }
+        ]
+      }
+    }
+  }
+]

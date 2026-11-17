@@ -43,139 +43,173 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
-  --color-gradient-from: var(--gradient-from);
-  --color-gradient-to: var(--gradient-to);
-  --color-gradient-via: var(--gradient-via);
-  --color-gradient-deep: var(--gradient-deep);
-  --color-gradient-from-hover: var(--gradient-from-hover);
-  --color-gradient-to-hover: var(--gradient-to-hover);
   --color-success: var(--success);
   --color-overlay: var(--overlay);
-  --color-on-gradient: var(--on-gradient);
-  --color-on-gradient-muted: var(--on-gradient-muted);
+  --color-sunken: var(--sunken);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-source-jira: var(--chart-1);
+  --color-source-moodle: var(--chart-2);
+  --color-source-google-calendar: var(--chart-3);
+  --color-source-clickup: var(--chart-5);
+  --color-source-github: var(--chart-6);
+  --color-source-linear: var(--chart-7);
+  --color-source-local: var(--muted-foreground);
+  --color-status-good: var(--status-good);
+  --color-status-warning: var(--status-warning);
+  --color-status-serious: var(--status-serious);
+  --color-status-critical: var(--status-critical);
+  --font-sans:
+    'IBM Plex Sans Variable', 'IBM Plex Sans Hebrew', ui-sans-serif, system-ui, sans-serif;
 }
 
+/*
+ * TodoList theme: Saffron & Sand (docs/design/DESIGN.md, PALETTE-OPTIONS.md option 1). Warm paper
+ * neutrals; the brand hue (ochre, saffron) only on primary actions, the accent wash and the focus
+ * ring. Every other colour is data: sources and status.
+ */
 :root {
   --radius: 0.625rem;
 
-  /* Beautiful purple-blue gradient palette */
-  --background: oklch(0.99 0.005 270);
-  --foreground: oklch(0.15 0.02 270);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.15 0.02 270);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.15 0.02 270);
+  --background: #f7f4ee;
+  --foreground: #1f1a12;
+  --card: #fffdf9;
+  --card-foreground: #1f1a12;
+  --popover: #fffdf9;
+  --popover-foreground: #1f1a12;
+  --sunken: #efeae0;
 
-  /* Primary: vibrant purple (--primary-rgb for rgba() in components) */
-  --primary: oklch(0.55 0.22 285);
-  --primary-rgb: 139, 92, 246;
-  --primary-foreground: oklch(0.99 0.01 285);
+  /* Primary actions in deep ochre (7.0:1 under its text). */
+  --primary: #7a4f00;
+  --primary-rgb: 122, 79, 0;
+  --primary-foreground: #fffdf9;
+  --secondary: #efeae0;
+  --secondary-foreground: #1f1a12;
+  --muted: #efeae0;
+  --muted-foreground: #675f50;
+  /* Saffron, the selected / just-changed wash, like a highlighter on paper. Ink text only on the
+     full wash; muted text needs it at 45% or less over a card (DESIGN.md). */
+  --accent: #f2c14e;
+  --accent-foreground: #1f1a12;
 
-  /* Secondary: soft purple */
-  --secondary: oklch(0.92 0.04 285);
-  --secondary-foreground: oklch(0.25 0.02 285);
+  /* Deeper than status critical (#d03b3b) so red text keeps AA (4.5:1) on every plane. */
+  --destructive: #b42a2a;
+  --destructive-foreground: #ffffff;
 
-  /* Muted: light purple tint */
-  --muted: oklch(0.96 0.01 285);
-  --muted-foreground: oklch(0.5 0.02 285);
+  /* Hairlines: the ink at low alpha, as strong as the palette's solid border (#ddd5c4). */
+  --border: rgba(31, 26, 18, 0.14);
+  --input: rgba(31, 26, 18, 0.2);
+  --ring: #9a5b00;
 
-  /* Accent: electric blue */
-  --accent: oklch(0.6 0.2 240);
-  --accent-foreground: oklch(0.99 0.01 240);
+  /* Source colours in fixed slot order (validated, see DESIGN.md). */
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+  --chart-6: #008300;
+  --chart-7: #6250d6;
 
-  --destructive: oklch(0.577 0.245 27.325);
-  --destructive-foreground: oklch(0.99 0.01 0);
+  /* Status: reserved, always with an icon and a label. */
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-serious: #ec835a;
+  --status-critical: #d03b3b;
 
-  --border: oklch(0.92 0.01 285);
-  --input: oklch(0.92 0.01 285);
-  --ring: oklch(0.55 0.22 285);
+  --sidebar: #f7f4ee;
+  --sidebar-foreground: #1f1a12;
+  --sidebar-primary: #7a4f00;
+  --sidebar-primary-foreground: #fffdf9;
+  --sidebar-accent: #ebe5da;
+  --sidebar-accent-foreground: #1f1a12;
+  --sidebar-border: rgba(31, 26, 18, 0.12);
+  --sidebar-ring: #9a5b00;
 
-  /* Chart colors: purple-blue gradient */
-  --chart-1: oklch(0.6 0.22 285);
-  --chart-2: oklch(0.65 0.2 250);
-  --chart-3: oklch(0.55 0.18 270);
-  --chart-4: oklch(0.7 0.19 240);
-  --chart-5: oklch(0.58 0.2 260);
+  --success: #0ca30c;
+  --overlay: #16130e;
 
-  --sidebar: oklch(0.98 0.01 285);
-  --sidebar-foreground: oklch(0.15 0.02 285);
-  --sidebar-primary: oklch(0.55 0.22 285);
-  --sidebar-primary-foreground: oklch(0.99 0.01 285);
-  --sidebar-accent: oklch(0.92 0.04 285);
-  --sidebar-accent-foreground: oklch(0.25 0.02 285);
-  --sidebar-border: oklch(0.92 0.01 285);
-  --sidebar-ring: oklch(0.55 0.22 285);
-
-  /* Brand gradient: blue-to-purple */
-  --gradient-from: oklch(0.55 0.24 262);
-  --gradient-to: oklch(0.5 0.26 293);
-  --gradient-via: oklch(0.5 0.26 293);
-  --gradient-deep: oklch(0.42 0.2 265);
-  --gradient-from-hover: oklch(0.49 0.24 264);
-  --gradient-to-hover: oklch(0.44 0.22 303);
-
-  /* Success: green indicator */
-  --success: oklch(0.59 0.18 149);
-
-  /* Overlay: base color for modal/dialog overlays */
-  --overlay: oklch(0 0 0);
-
-  /* Content on gradient backgrounds */
-  --on-gradient: oklch(1 0 0);
-  --on-gradient-muted: oklch(0.93 0.03 254);
+  --shadow-overlay: 0 12px 32px rgba(31, 26, 18, 0.14);
 }
 
 .dark {
-  /* Dark mode: deep purple-blue */
-  --background: oklch(0.12 0.02 270);
-  --foreground: oklch(0.95 0.01 270);
-  --card: oklch(0.18 0.03 275);
-  --card-foreground: oklch(0.95 0.01 275);
-  --popover: oklch(0.18 0.03 275);
-  --popover-foreground: oklch(0.95 0.01 275);
+  --background: #16130e;
+  --foreground: #f3ede0;
+  --card: #1e1a14;
+  --card-foreground: #f3ede0;
+  --popover: #1e1a14;
+  --popover-foreground: #f3ede0;
+  --sunken: #27221a;
 
-  /* Primary: brighter purple in dark mode */
-  --primary: oklch(0.65 0.22 285);
-  --primary-rgb: 167, 139, 250;
-  --primary-foreground: oklch(0.12 0.02 285);
+  --primary: #f0b53c;
+  --primary-rgb: 240, 181, 60;
+  --primary-foreground: #1b1405;
+  --secondary: #27221a;
+  --secondary-foreground: #f3ede0;
+  --muted: #27221a;
+  --muted-foreground: #b0a691;
+  --accent: #5a4513;
+  --accent-foreground: #f3ede0;
 
-  /* Secondary: medium purple */
-  --secondary: oklch(0.25 0.04 285);
-  --secondary-foreground: oklch(0.95 0.01 285);
+  --destructive: #ef7070;
+  --destructive-foreground: #14161a;
 
-  /* Muted: dark purple tint */
-  --muted: oklch(0.22 0.02 285);
-  --muted-foreground: oklch(0.65 0.02 285);
+  --border: rgba(243, 237, 224, 0.14);
+  --input: rgba(243, 237, 224, 0.2);
+  --ring: #f0b53c;
 
-  /* Accent: bright blue */
-  --accent: oklch(0.65 0.2 240);
-  --accent-foreground: oklch(0.12 0.02 240);
+  --chart-1: #3987e5;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+  --chart-5: #d55181;
+  --chart-6: #008300;
+  --chart-7: #9085e9;
 
-  --destructive: oklch(0.65 0.22 25);
-  --destructive-foreground: oklch(0.95 0.01 0);
+  --sidebar: #16130e;
+  --sidebar-foreground: #f3ede0;
+  --sidebar-primary: #f0b53c;
+  --sidebar-primary-foreground: #1b1405;
+  --sidebar-accent: #27221a;
+  --sidebar-accent-foreground: #f3ede0;
+  --sidebar-border: rgba(243, 237, 224, 0.12);
+  --sidebar-ring: #f0b53c;
 
-  --border: oklch(0.3 0.03 285);
-  --input: oklch(0.3 0.03 285);
-  --ring: oklch(0.65 0.22 285);
+  --success: #0ca30c;
 
-  /* Chart colors: brighter in dark mode */
-  --chart-1: oklch(0.65 0.22 285);
-  --chart-2: oklch(0.7 0.2 250);
-  --chart-3: oklch(0.6 0.18 270);
-  --chart-4: oklch(0.75 0.19 240);
-  --chart-5: oklch(0.63 0.2 260);
+  --shadow-overlay: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
 
-  --sidebar: oklch(0.18 0.03 275);
-  --sidebar-foreground: oklch(0.95 0.01 275);
-  --sidebar-primary: oklch(0.65 0.22 285);
-  --sidebar-primary-foreground: oklch(0.12 0.02 285);
-  --sidebar-accent: oklch(0.25 0.04 285);
-  --sidebar-accent-foreground: oklch(0.95 0.01 285);
-  --sidebar-border: oklch(0.3 0.03 285);
-  --sidebar-ring: oklch(0.65 0.22 285);
+/*
+ * Toasts (sonner, richColors). The toaster follows the app's theme (DirectionalToaster), and
+ * sonner's dark palette keeps AA. Its light one doesn't at the toast's 13px (error 4.35:1, success
+ * 4.26:1, info 4.35:1, warning 3.08:1), so the text is deepened on the same washes: error in the
+ * theme's red text colour, the others in sonner's hues. Unlayered and more specific than sonner's
+ * own `[data-sonner-toaster][data-sonner-theme]` rule, which it injects at run time.
+ * Checked by components/shared/toastPalette.test.ts.
+ */
+:root [data-sonner-toaster][data-sonner-theme='light'] {
+  --success-text: #007a29;
+  --info-text: #0869c9;
+  --warning-text: #a65907;
+  --error-text: var(--destructive);
+}
 
-  /* Success: brighter green in dark mode */
-  --success: oklch(0.72 0.17 150);
+/*
+ * A toast's close button is sonner's 20px circle on the toast's corner. On a touch screen its
+ * target is 44px (DESIGN.md "44px touch targets"): an invisible square centred on the circle, part
+ * of the button, so a tap on it closes the toast while the circle looks the same. On a phone it
+ * stays on screen because DirectionalToaster keeps toasts 20px from the sides.
+ */
+@media (pointer: coarse) {
+  [data-sonner-toast] [data-close-button]::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 44px;
+    height: 44px;
+    transform: translate(-50%, -50%);
+  }
 }
 
 @layer base {
@@ -190,56 +224,393 @@
     padding-right: env(safe-area-inset-right);
   }
 
-  /* Fluid typography */
   html {
-    font-size: clamp(14px, 1.5vw, 16px);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
   }
 }
 
-@keyframes shine {
+/*
+ * ClockRing draw-in: the one orchestrated moment on the landing page (docs/design/DESIGN.md).
+ * A mask sweeps the ring in clockwise from midnight while the needle swings round to now. Only
+ * rings rendered with animateIn get it, and never with reduced motion. Both animations fill
+ * backwards only, so once they end the ring is plain again (no dash seam at midnight).
+ */
+@keyframes clock-ring-sweep {
+  from {
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 1;
+  }
   to {
-    background-position: 200% center;
+    stroke-dasharray: 1 1;
+    stroke-dashoffset: 0;
   }
 }
 
-@keyframes shimmer {
+@keyframes clock-needle-in {
+  from {
+    transform: rotate(0deg);
+  }
+}
+
+/*
+ * The landing hero's live sample: an arc or a row that just changed fades in with a halo that
+ * settles, and a status dot breathes. Never with reduced motion.
+ */
+@keyframes landing-fresh {
+  from {
+    opacity: 0;
+  }
   to {
-    background-position: 200% center;
+    opacity: 1;
   }
 }
 
-@keyframes blob {
+@keyframes landing-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+    background-color: color-mix(in oklab, var(--primary) 18%, transparent);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    background-color: transparent;
+  }
+}
+
+@keyframes landing-snap {
   0% {
-    transform: translate(0px, 0px) scale(1);
+    opacity: 0;
+    transform: var(--from, none);
   }
-  33% {
-    transform: translate(30px, -50px) scale(1.1);
-  }
-  66% {
-    transform: translate(-20px, 20px) scale(0.9);
+  12%,
+  84% {
+    opacity: 1;
+    transform: none;
   }
   100% {
-    transform: translate(0px, 0px) scale(1);
+    opacity: 0;
+    transform: var(--from, none);
   }
 }
 
-.animate-blob {
-  animation: blob 7s infinite;
+@keyframes landing-progress {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
 }
 
-.animation-delay-2000 {
-  animation-delay: 2s;
+@keyframes landing-pulse {
+  50% {
+    opacity: 0.35;
+  }
 }
 
-.animation-delay-4000 {
-  animation-delay: 4s;
-}
-
-/* Decorative infinite animations stop when the user asks for reduced motion. */
+/*
+ * Overlays (dialogs, sheets, menus, popovers, tooltips) open and close through tw-animate-css
+ * classes behind data-state variants, which outrank a motion-reduce: utility. With reduced
+ * motion they appear and disappear at once (Radix unmounts as soon as no animation runs).
+ */
 @media (prefers-reduced-motion: reduce) {
-  .animate-blob,
-  [class*='animate-[shine'],
-  [class*='animate-[shimmer'] {
-    animation: none;
+  [data-state][class*='animate-in'],
+  [data-state][class*='animate-out'] {
+    animation: none !important;
   }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .clock-arc-fresh {
+    animation: landing-fresh 900ms ease-out backwards;
+  }
+
+  .landing-fade {
+    animation: landing-fresh 500ms ease-out backwards;
+  }
+
+  /* The flow scenes: each part moves in on its own delay, rests, and goes out for the next loop. */
+  .landing-snap {
+    animation: landing-snap 9s cubic-bezier(0.2, 0.7, 0.2, 1) calc(var(--i, 0) * 450ms) infinite
+      backwards;
+  }
+
+  .landing-progress {
+    transform-origin: top;
+    animation: landing-progress 8s linear forwards;
+  }
+
+  .group\/showcase:hover .landing-progress,
+  .group\/showcase:focus-within .landing-progress {
+    animation-play-state: paused;
+  }
+
+  .landing-row-fresh {
+    animation: landing-row-in 1100ms ease-out backwards;
+  }
+
+  .landing-live-dot {
+    animation: landing-pulse 2s ease-in-out infinite;
+  }
+
+  .clock-ring-animate .clock-ring-sweep {
+    animation: clock-ring-sweep 1400ms cubic-bezier(0.45, 0, 0.2, 1) backwards;
+  }
+  .clock-ring-animate .clock-ring-needle {
+    animation: clock-needle-in 1400ms cubic-bezier(0.45, 0, 0.2, 1) backwards;
+  }
+}
+
+/*
+ * The dashboard grid (react-grid-layout), drawn with the theme's tokens: its own stylesheet is not
+ * loaded (FRONTEND.md §10). Blocks answer a move in 160ms; reduced motion turns that off.
+ */
+:root {
+  /* Edit mode's column guides: a quiet wash of the sunken surface, quieter still in the dark. */
+  --grid-guide: color-mix(in oklab, var(--sunken) 80%, transparent);
+}
+
+.dark {
+  --grid-guide: color-mix(in oklab, var(--sunken) 45%, transparent);
+}
+
+@layer components {
+  .react-grid-layout {
+    position: relative;
+    transition: height 160ms ease-out;
+  }
+
+  .react-grid-item {
+    /* Physical on purpose: react-grid-layout places items with a translate from the left edge,
+       in right-to-left pages too; the grid mirrors x itself (features/dashboards/grid/rtl.ts). */
+    top: 0;
+    left: 0;
+    transition-property: transform, width, height;
+    transition-duration: 160ms;
+    transition-timing-function: ease-out;
+  }
+
+  .react-grid-item.resizing,
+  .react-grid-item.react-draggable-dragging {
+    transition: none;
+    z-index: 3;
+  }
+
+  /* A block being dragged is lifted above the page, as an overlay is (DESIGN.md "Depth"). */
+  .react-grid-item.react-draggable-dragging article {
+    box-shadow: var(--shadow-overlay);
+  }
+
+  /* Where the block will land: a sunken well with a dashed hairline. */
+  .react-grid-item.react-grid-placeholder {
+    z-index: 2;
+    border: 1px dashed var(--input);
+    border-radius: var(--radius);
+    background: var(--sunken);
+    transition-duration: 100ms;
+    user-select: none;
+  }
+
+  .react-grid-item > .react-resizable-handle {
+    position: absolute;
+    bottom: 0;
+    z-index: 1;
+    width: 24px;
+    height: 24px;
+    touch-action: none;
+  }
+
+  .react-grid-item > .react-resizable-handle-se {
+    right: 0;
+    cursor: se-resize;
+  }
+
+  .react-grid-item > .react-resizable-handle-sw {
+    left: 0;
+    cursor: sw-resize;
+  }
+
+  /* A small corner mark on the end-bottom corner (bottom-left in RTL), in the secondary text
+     colour: at least 3:1 against the block in both themes (WCAG 1.4.11), darker on hover. */
+  .react-grid-item > .react-resizable-handle::after {
+    content: '';
+    position: absolute;
+    bottom: 6px;
+    width: 8px;
+    height: 8px;
+    border-bottom: 2px solid var(--muted-foreground);
+  }
+
+  .react-grid-item > .react-resizable-handle-se::after {
+    right: 6px;
+    border-right: 2px solid var(--muted-foreground);
+    border-bottom-right-radius: 2px;
+  }
+
+  .react-grid-item > .react-resizable-handle-sw::after {
+    left: 6px;
+    border-left: 2px solid var(--muted-foreground);
+    border-bottom-left-radius: 2px;
+  }
+
+  .react-grid-item:hover > .react-resizable-handle::after,
+  .react-grid-item:focus-visible > .react-resizable-handle::after {
+    border-color: var(--foreground);
+  }
+
+  .react-resizable-hide > .react-resizable-handle {
+    display: none;
+  }
+
+  /* Phones (one column), not editing: the blocks stack at their content's height (no clipping,
+     no inner scrolling of a list). react-grid-layout sets positions and sizes inline, so these
+     win with !important; edit mode keeps its grid for dragging. The order comes from each
+     item's inline `order`. */
+  .dashboard-grid--stacked .react-grid-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    height: auto !important;
+    transition: none;
+  }
+
+  .dashboard-grid--stacked .react-grid-item {
+    position: relative !important;
+    width: auto !important;
+    height: auto !important;
+    transform: none !important;
+    transition: none;
+  }
+
+  /* Edit mode shows the grid's columns behind the blocks: where a block can land. */
+  .dashboard-grid--editing {
+    border-radius: var(--radius);
+    background-image: linear-gradient(
+      to right,
+      var(--grid-guide) 0 calc(100% - 16px),
+      transparent 0
+    );
+    background-size: calc((100% + 16px) / var(--grid-cols)) 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-grid-layout,
+  .react-grid-item,
+  .react-grid-item.react-grid-placeholder {
+    transition: none !important;
+  }
+}
+
+/*
+ * The calendar block (FullCalendar), restyled with the theme's tokens: a hairline grid on the card,
+ * the sunken wash for today, an ink now-line, and events tinted by their source colour (a wash and
+ * a solid edge on the leading side, as the public calendar does). Colour only encodes the source.
+ */
+.todolist-calendar .fc {
+  --fc-border-color: var(--border);
+  --fc-page-bg-color: var(--card);
+  --fc-neutral-bg-color: var(--sunken);
+  --fc-today-bg-color: var(--sunken);
+  --fc-now-indicator-color: var(--foreground);
+  --fc-list-event-hover-bg-color: var(--sunken);
+  --fc-event-text-color: var(--foreground);
+  --fc-small-font-size: 0.75rem;
+  font-size: 0.8125rem;
+  color: var(--foreground);
+}
+.todolist-calendar .fc .fc-scrollgrid,
+.todolist-calendar .fc .fc-scrollgrid td,
+.todolist-calendar .fc .fc-scrollgrid th {
+  border-color: var(--border);
+}
+.todolist-calendar .fc .fc-col-header-cell-cushion,
+.todolist-calendar .fc .fc-daygrid-day-number,
+.todolist-calendar .fc .fc-list-day-text,
+.todolist-calendar .fc .fc-list-day-side-text {
+  color: var(--foreground);
+  font-weight: 500;
+  text-decoration: none;
+}
+.todolist-calendar .fc .fc-timegrid-slot-label,
+.todolist-calendar .fc .fc-timegrid-axis-cushion,
+.todolist-calendar .fc .fc-list-event-time {
+  color: var(--muted-foreground);
+}
+.todolist-calendar .fc .fc-day-other .fc-daygrid-day-number {
+  color: var(--muted-foreground);
+}
+.todolist-calendar .fc .fc-list-day-cushion {
+  background: var(--sunken);
+}
+.todolist-calendar .fc .fc-list-event td {
+  border-color: var(--border);
+}
+.todolist-calendar .fc .fc-event {
+  --src: var(--color-source-local);
+  border: 0;
+  border-inline-start: 3px solid var(--src);
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--src) 16%, var(--card));
+  color: var(--foreground);
+  cursor: pointer;
+}
+.todolist-calendar .fc .fc-event:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 1px;
+}
+.todolist-calendar .fc .fc-event.fc-due {
+  border-inline-start-style: dashed;
+}
+.todolist-calendar .fc .fc-list-event-dot {
+  border-color: var(--src);
+}
+.todolist-calendar .fc .fc-src-jira {
+  --src: var(--color-source-jira);
+}
+.todolist-calendar .fc .fc-src-moodle {
+  --src: var(--color-source-moodle);
+}
+.todolist-calendar .fc .fc-src-google_calendar {
+  --src: var(--color-source-google-calendar);
+}
+.todolist-calendar .fc .fc-src-clickup {
+  --src: var(--color-source-clickup);
+}
+.todolist-calendar .fc .fc-src-github {
+  --src: var(--color-source-github);
+}
+.todolist-calendar .fc .fc-src-linear {
+  --src: var(--color-source-linear);
+}
+.todolist-calendar .fc .fc-src-local {
+  --src: var(--color-source-local);
+}
+.todolist-calendar .fc .fc-daygrid-more-link {
+  color: var(--muted-foreground);
+  font-weight: 500;
+}
+.todolist-calendar .fc .fc-timegrid-now-indicator-line {
+  border-width: 1px 0 0;
+}
+.todolist-calendar .fc .fc-list-event-title {
+  /* width 100% + max-width 0: the title takes what the time and dot leave, and truncates. */
+  width: 100%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.todolist-calendar .fc .fc-list-event-time {
+  width: 4.5rem;
+  white-space: nowrap;
 }

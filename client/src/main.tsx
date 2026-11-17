@@ -1,4 +1,9 @@
-/** Elytra client entry point. */
+/** TodoList client entry point. */
+import '@fontsource-variable/ibm-plex-sans';
+import '@fontsource/ibm-plex-sans-hebrew/400.css';
+import '@fontsource/ibm-plex-sans-hebrew/500.css';
+import '@fontsource/ibm-plex-sans-hebrew/600.css';
+import '@fontsource/ibm-plex-sans-hebrew/700.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Provider } from 'react-redux';

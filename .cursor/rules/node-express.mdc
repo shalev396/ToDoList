@@ -70,7 +70,6 @@ globs: **/*.js, **/*.ts, src/**/*.ts
 - Use proper test coverage
 
 ## Deployment
-- Use proper Docker setup
 - Implement proper CI/CD
 - Use proper environment variables
 - Configure proper logging

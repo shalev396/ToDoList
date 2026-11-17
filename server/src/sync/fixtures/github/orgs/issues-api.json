@@ -1,0 +1,44 @@
+{
+  "request": { "url": "https://api.github.com/repos/acme-labs/api/issues?state=all" },
+  "response": {
+    "body": [
+      {
+        "node_id": "PR_FAKE_acme_42",
+        "number": 42,
+        "title": "Rate-limit the export endpoint",
+        "body": "Token bucket per workspace; 429 with Retry-After.",
+        "html_url": "https://example.invalid/github/acme-labs/api/pull/42",
+        "state": "open",
+        "state_reason": null,
+        "draft": false,
+        "user": { "login": "demo-teammate" },
+        "assignees": [{ "login": "shalev396" }],
+        "labels": [{ "name": "performance" }, { "name": "backend" }],
+        "milestone": { "title": "Sprint 46", "due_on": "{{datetime:+3d@10:00}}" },
+        "closed_at": null,
+        "created_at": "{{datetime:-2d@10:30}}",
+        "updated_at": "{{datetime:-1d@17:05}}",
+        "pull_request": {
+          "html_url": "https://example.invalid/github/acme-labs/api/pull/42",
+          "merged_at": null
+        }
+      },
+      {
+        "node_id": "I_FAKE_acme_41",
+        "number": 41,
+        "title": "Flaky upload test on CI",
+        "body": null,
+        "html_url": "https://example.invalid/github/acme-labs/api/issues/41",
+        "state": "open",
+        "state_reason": null,
+        "user": { "login": "demo-teammate" },
+        "assignees": [],
+        "labels": [{ "name": "ci" }],
+        "milestone": null,
+        "closed_at": null,
+        "created_at": "{{datetime:-3d@09:00}}",
+        "updated_at": "{{datetime:-3d@09:00}}"
+      }
+    ]
+  }
+}

@@ -1,4 +1,5 @@
 import { type Request } from 'express';
+import type { Caller, WorkspaceContext } from '../classes/base/Caller.js';
 /// <reference path="./express-extensions.d.ts" />
 
 export interface CognitoJwtPayload {
@@ -23,6 +24,14 @@ export interface AuthenticatedRequest extends Request {
     id: string;
     cognitoSub: string;
   };
+}
+
+/** A request that passed requireWorkspace(minRole). */
+export interface WorkspaceRequest extends AuthenticatedRequest {
+  /** The caller: the user, from this request's address and user agent, in the workspace. */
+  caller: Caller;
+  /** `caller.context`: the standing as the services that take a WorkspaceContext read it. */
+  workspace: WorkspaceContext;
 }
 
 export type { ApiSuccessResponse, ApiErrorResponse, ApiResponse } from './response.js';

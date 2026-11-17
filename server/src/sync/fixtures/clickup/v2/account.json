@@ -1,0 +1,52 @@
+[
+  {
+    "request": {
+      "url": "https://api.clickup.com/api/v2/user"
+    },
+    "response": {
+      "body": {
+        "user": {
+          "id": 183,
+          "username": "Demo Dev",
+          "email": "demo.dev@example.invalid",
+          "color": "#7b68ee",
+          "profilePicture": null
+        }
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://api.clickup.com/api/v2/team"
+    },
+    "response": {
+      "body": {
+        "teams": [
+          {
+            "id": "9001",
+            "name": "Demo Workspace",
+            "color": "#536cfe",
+            "members": [
+              {
+                "user": {
+                  "id": 183,
+                  "username": "Demo Dev",
+                  "email": "demo.dev@example.invalid",
+                  "color": "#7b68ee",
+                  "profilePicture": null
+                }
+              },
+              {
+                "user": {
+                  "id": 184,
+                  "username": "Noa Teammate",
+                  "email": "noa@example.invalid"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+]

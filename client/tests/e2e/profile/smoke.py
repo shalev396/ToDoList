@@ -11,7 +11,7 @@ def test_profile_redirects_unauthenticated(page: Page, app_url: str):
     """Asserts unauthenticated users visiting /profile are redirected to /auth/login."""
     page.goto(f"{app_url}/profile", wait_until="domcontentloaded")
     page.wait_for_load_state("networkidle")
-    expect(page).to_have_url(f"{app_url}/auth/login")
+    expect(page).to_have_url(f"{app_url}/auth/login?next=%2Fen%2Fprofile")
 
 
 def test_profile_elements_authenticated(page: Page, app_url: str, authenticated_page: Page):

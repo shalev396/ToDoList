@@ -1,0 +1,22 @@
+[
+  {
+    "request": { "url": "https://api.clickup.com/api/v2/team" },
+    "response": { "body": { "teams": [{ "id": "9001", "name": "Demo Workspace" }] } }
+  },
+  {
+    "request": { "url": "https://api.clickup.com/api/v2/team/9001/space" },
+    "response": { "body": { "spaces": [{ "id": "90010", "name": "Demo Space" }] } }
+  },
+  {
+    "request": { "url": "https://api.clickup.com/api/v2/space/90010/folder" },
+    "response": { "body": { "folders": [{ "id": "90100", "name": "Demo Folder" }] } }
+  },
+  {
+    "request": { "url": "https://api.clickup.com/api/v2/folder/90100/list" },
+    "response": { "body": { "lists": [{ "id": "90200", "name": "Demo List" }] } }
+  },
+  {
+    "request": { "url": "https://api.clickup.com/api/v2/space/90010/list" },
+    "response": { "body": { "lists": [{ "id": "90201", "name": "Loose List" }] } }
+  }
+]

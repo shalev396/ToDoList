@@ -1,26 +1,54 @@
+import { installConsoleRedaction } from './services/logger.js';
+
+// First, before anything can log: every console.* call is redacted from here on.
+installConsoleRedaction();
+
 import serverlessHttp from 'serverless-http';
 import type { Context } from 'aws-lambda';
 import { createApp } from './app.js';
 import { initDB } from './config/database.js';
+import { AppError } from './errors/AppError.js';
+import { purgeDeleted } from './jobs/purge.js';
+import { seedStage } from './jobs/seed.js';
+import { logger } from './services/logger.js';
 import { resetStage, syncSchema } from './services/stageMaintenance.js';
+import { parseSyncJob } from './services/syncJobs.js';
+import { dispatchAllSyncs } from './sync/dispatcher.js';
+import { dispatchGcalSyncs } from './sync/gcalDispatcher.js';
+import { runSyncJob } from './sync/worker.js';
 import {
   API_ACTIONS,
+  GCAL_DISPATCH_ACTION,
+  GCAL_RUN_ACTION,
+  PURGE_ACTION,
   RESET_DB_ACTION,
+  SEED_ACTION,
   SYNC_DB_ACTION,
+  SYNC_DISPATCH_ACTION,
+  SYNC_RUN_ACTION,
   type ApiAction,
 } from '../infra/lib/constants.js';
 
 /**
- * Lambda entry for the entire API. Bundled into the codebase layer at /opt/nodejs/app/index.mjs
- * and re-exported by the function's shim (server/lambda/index.mjs).
+ * Lambda entry for the entire backend, the stack's only function. Bundled into the codebase layer
+ * at /opt/nodejs/app/index.mjs and re-exported as `handler` by server/lambda/index.mjs.
  *
- * Two event shapes reach it:
+ * Three event shapes reach it:
  * - API Gateway HTTP API events → the Express app
- * - A direct invoke `{ "action": … }` → stage maintenance:
- *   - `sync-db`  from `npm run deploy:backend` (every stage)
- *   - `reset-db` from `npm run reset:db` before the test suites (refused on prod)
- *   Only lambda:InvokeFunction reaches these, never the HTTP API: API Gateway events always carry
- *   `requestContext`, so HTTP traffic can never take this branch.
+ * - a background sync job, `{ "action": "sync-run" | "gcal-run", … }`: an async invocation of
+ *   this function by itself (services/syncJobs.ts), run by sync/worker.ts. It throws when a retry
+ *   may help, so Lambda's async invocation runs it again. A malformed job is dropped (400).
+ * - a maintenance action, `{ "action": … }`:
+ *   - `sync-db`       from `npm run deploy:backend` (every stage)
+ *   - `reset-db`      from `npm run reset:db` before the test suites (refused on prod)
+ *   - `sync-dispatch` one background sync run per dispatchable integration
+ *   - `gcal-dispatch` one background Google Calendar push + pull per OAuth integration
+ *   - `purge`         hard-delete rows soft-deleted more than 30 days ago, end dead sync runs
+ *   - `seed`          demo data, dev only (refused elsewhere)
+ *   No schedule invokes them for now: they run when the function is invoked directly. A refused
+ *   action answers with its AppError's status code.
+ * Only lambda:InvokeFunction reaches the jobs and the actions, never the HTTP API: API Gateway
+ * events always carry `requestContext`, so HTTP traffic can never take those branches.
  */
 
 await initDB();
@@ -29,26 +57,28 @@ await initDB();
 // the app ever sends binary bodies, list their content types in a `binary` option here.
 const http = serverlessHttp(createApp());
 
-interface ActionEvent {
-  action: ApiAction;
-}
-
 interface ActionResult {
   statusCode: number;
   body: string;
 }
 
-function isActionEvent(event: unknown): event is ActionEvent {
-  if (typeof event !== 'object' || event === null || 'requestContext' in event) {
-    return false;
-  }
-  const { action } = event as { action?: unknown };
+/** The `action` of a direct invoke; null for an HTTP event or an event without one. */
+function directAction(event: unknown): unknown {
+  if (typeof event !== 'object' || event === null || 'requestContext' in event) return null;
+  return (event as { action?: unknown }).action ?? null;
+}
+
+function isApiAction(action: unknown): action is ApiAction {
   return (API_ACTIONS as readonly unknown[]).includes(action);
 }
 
 const ACTIONS: Record<ApiAction, () => Promise<unknown>> = {
   [SYNC_DB_ACTION]: syncSchema,
   [RESET_DB_ACTION]: resetStage,
+  [SYNC_DISPATCH_ACTION]: () => dispatchAllSyncs('schedule'),
+  [GCAL_DISPATCH_ACTION]: () => dispatchGcalSyncs(),
+  [PURGE_ACTION]: () => purgeDeleted(),
+  [SEED_ACTION]: () => seedStage(),
 };
 
 async function runAction(action: ApiAction): Promise<ActionResult> {
@@ -57,15 +87,31 @@ async function runAction(action: ApiAction): Promise<ActionResult> {
     const result = await ACTIONS[action]();
     return { statusCode: 200, body: JSON.stringify(result) };
   } catch (error) {
+    if (error instanceof AppError) {
+      console.warn('%s refused: %s', action, error.message);
+      return { statusCode: error.statusCode, body: JSON.stringify({ error: error.message }) };
+    }
     console.error('%s failed:', action, error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     return { statusCode: 500, body: JSON.stringify({ error: message }) };
   }
 }
 
-export const handler = async (event: unknown, context: Context): Promise<unknown> => {
-  if (isActionEvent(event)) {
-    return runAction(event.action);
+/** One background job. A throw is deliberate: Lambda then retries the async invocation. */
+async function runJob(event: unknown): Promise<ActionResult> {
+  const job = parseSyncJob(event);
+  if (job === null) {
+    // Never retried: the same payload would be malformed again.
+    logger.warn('background job dropped: malformed');
+    return { statusCode: 400, body: JSON.stringify({ error: 'Malformed job' }) };
   }
+  await runSyncJob(job);
+  return { statusCode: 200, body: JSON.stringify({ ok: true }) };
+}
+
+export const handler = async (event: unknown, context: Context): Promise<unknown> => {
+  const action = directAction(event);
+  if (action === SYNC_RUN_ACTION || action === GCAL_RUN_ACTION) return runJob(event);
+  if (isApiAction(action)) return runAction(action);
   return http(event as object, context);
 };

@@ -1,13 +1,13 @@
-# Elytra Backend API Tests (Postman)
+# TodoList Backend API Tests (Postman)
 
 [← Back to main README](../README.md)
 
-Run these against a live API or the local API (`cd server && npm run dev`). For the full list of hardcoded URLs to change, see [Getting Started → Change Hardcoded URLs](../README.md#2-change-hardcoded-urls-and-branding) in the main README. API tests use the **Postman CLI** or **Postman desktop app**. For frontend E2E tests (Playwright), see [client/tests/README.md](../client/tests/README.md).
+Run these against the local API (`cd server && npm run dev`) or the deployed qa API. Both are backed by a deployed stage (its Cognito, database and resources): there is no offline mode and the collection needs no seed, because every account is created through Mail.tm and the real signup flow. For the full list of hardcoded URLs to change, see [Getting Started → Change Hardcoded URLs](../README.md#2-change-hardcoded-urls-and-branding) in the main README. API tests use the **Postman CLI** or **Postman desktop app**. For frontend E2E tests (Playwright), see [client/tests/README.md](../client/tests/README.md).
 
 ## Import
 
-1. **Collection**: Import `postman/collections/Elytra API` (V3 folder format).
-2. **Environments**: Import `postman/environments/Elytra Local.environment.yaml` and `postman/environments/Elytra QA.environment.yaml`.
+1. **Collection**: Import `postman/collections/TodoList API` (V3 folder format).
+2. **Environments**: Import `postman/environments/TodoList Local.environment.yaml` and `postman/environments/TodoList QA.environment.yaml`.
 
 ## What to Change Before Running
 
@@ -15,21 +15,21 @@ Run these against a live API or the local API (`cd server && npm run dev`). For 
 
 The template ships with hardcoded URLs. Replace them with your own:
 
-| File                                                        | Variable  | Template value                        | Change to                       |
-| ----------------------------------------------------------- | --------- | ------------------------------------- | ------------------------------- |
-| `postman/environments/Elytra QA.environment.yaml`           | `baseUrl` | `https://qa.elytra.shalev396.com/api` | `https://qa.yourdomain.com/api` |
-| `postman/collections/Elytra API/.resources/definition.yaml` | `baseUrl` | `https://qa.elytra.shalev396.com/api` | Same as QA environment above    |
+| File                                                          | Variable  | Template value                        | Change to                       |
+| ------------------------------------------------------------- | --------- | ------------------------------------- | ------------------------------- |
+| `postman/environments/TodoList QA.environment.yaml`           | `baseUrl` | `https://qa.todolist.example.com/api` | `https://qa.yourdomain.com/api` |
+| `postman/collections/TodoList API/.resources/definition.yaml` | `baseUrl` | `https://qa.todolist.example.com/api` | Same as QA environment above    |
 
 In your active environment, set `baseUrl`:
 
-- **Local**: `http://localhost:3000/api` (run `npm run dev` from `server/` first)
-- **QA**: Your QA API URL, e.g. `https://qa.yourdomain.com/api`
+- **Local**: `http://localhost:3000/api` (run `npm run dev` from `server/` first: the local API against the `dev` stage, or `npm run start:local -- --stage qa`; it needs `server/.env.<stage>` and AWS credentials)
+- **QA**: Your QA API URL, e.g. `https://qa.yourdomain.com/api`. CI does not use the file's value: the PR-to-main tests (`.github/workflows/_test-qa.yml`) pass `--env-var "baseUrl=https://<DOMAIN_NAME>/api"` from the qa environment's `DOMAIN_NAME` variable, as the Playwright job does.
 
 ### 2. Authentication -- Tokens
 
 Tokens are set automatically when you run the collection (Login and Mail.tm flows save them). If you run individual requests or your environment resets:
 
-- `idToken` -- From login; used for Elytra API (`/private/me`, `/private/me/export`, `/private/dashboard`)
+- `idToken` -- From login; used for TodoList API (`/private/me`, `/private/me/export`, `/private/dashboard`)
 - `mailTmToken` -- From Mail.tm Get Token; used for `api.mail.tm` (Poll Inbox, Read Message)
 
 Paste values into the environment if needed. The collection uses beforeRequest scripts to add `Authorization: Bearer <token>` from these variables.
@@ -39,19 +39,31 @@ Paste values into the environment if needed. The collection uses beforeRequest s
 From `server/`:
 
 ```bash
-npm run test:local  # Against http://localhost:3000/api
-npm run test:qa     # Against QA (baseUrl from Elytra QA.environment.yaml)
+npm run test:local  # Against the local API at http://localhost:3000/api (start it first, on a stage)
+npm run test:qa     # Against QA (baseUrl from TodoList QA.environment.yaml)
+npm run test:qa -- --env-var "baseUrl=https://qa.yourdomain.com/api"  # Against QA, without editing the file
 ```
+
+`test:qa` waits 600 ms between requests (`--delay-request 600`): the deployed stage's API Gateway throttles the public auth routes to 2 requests a second with a burst of 5 (`server/infra/lib/config.ts`, qa's `authRate`/`authBurst`), and the collection's back-to-back auth checks would otherwise get 429s. The local API has no API Gateway in front of it, so `test:local` runs without the delay.
 
 Both scripts `cd ..` and run the collection from the repo root with `--working-dir .`, because the "Upload to S3" request reads its file body from `postman/fixtures/test-image.png`. When running the Postman CLI yourself, do the same from the repo root:
 
 ```bash
-postman collection run "postman/collections/Elytra API" --environment "postman/environments/Elytra Local.environment.yaml" --working-dir .
+postman collection run "postman/collections/TodoList API" --environment "postman/environments/TodoList Local.environment.yaml" --working-dir .
 ```
 
 `.postman/resources.yaml` also links the OpenAPI spec (`server/openapi.yaml`) into the Postman workspace.
 
-Configure `baseUrl` in each environment file (Local: `postman/environments/Elytra Local.environment.yaml`, QA: `postman/environments/Elytra QA.environment.yaml`). The collection `postman/collections/Elytra API/.resources/definition.yaml` also has a `baseUrl` variable — keep it in sync with your QA environment.
+Configure `baseUrl` in each environment file (Local: `postman/environments/TodoList Local.environment.yaml`, QA: `postman/environments/TodoList QA.environment.yaml`). The collection `postman/collections/TodoList API/.resources/definition.yaml` also has a `baseUrl` variable — keep it in sync with your QA environment.
+
+## Mail.tm Rate Limits
+
+Thirteen requests (Setup 2-4, 6, 7 and the Signup and Forgot Password flows) call `api.mail.tm`, which allows 8 requests per second per IP and also sends `RateLimit-Policy: 10; w=60` on some endpoints. CI runners share egress IPs, so a 429 can happen even when the run is slow, and a missed 429 on a poll means the signup code never arrives and every later step fails. Each of those requests carries the same small guard (marked `mail.tm rate-limit guard` in its scripts). It lives in each request because v3 collection files do not accept collection-level scripts.
+
+- **Spacing:** the `beforeRequest` script keeps at least 1.5 s between mail.tm calls (`mailtmLastCallAt`).
+- **429 retry:** the `afterResponse` script waits for `Retry-After` (seconds, 0-60) or else 2, 4, 8, 16, then 30 s, and re-runs the same request. It retries at most 5 times per request (counter `mailtm429:<request name>`), then lets the request's own assertions fail.
+- **No false failures:** while a 429 is being retried the guard sets `mailtmRetrying` to `1`, and the request skips its assertions and side effects (polls do not advance `pollRetryCount`). Any other response resets the counter and the flag.
+- **Refused usernames:** mail.tm rejects some random usernames as "not valid" (422). The two "Create Mail.tm Account" requests then run again, which generates a new random address, at most twice (counter `mailtm422:<request name>`), skipping the refused attempt's assertions the same way.
 
 ## Collection Structure
 
@@ -137,16 +149,16 @@ All `/private/*` endpoints use the same `expressAuth` middleware. No-token and i
 
 Successful responses use `{ data: T }` (no `success` field). Error responses use `{ message: string }`. Success vs failure is determined by the HTTP status code, not a boolean in the JSON body.
 
-### 401 Response Format: Local vs QA/Prod
+### 401 Response Format: Local API vs QA/Prod
 
 Protected routes (`/private/*`, `/private/dashboard`) use the **API Gateway Cognito JWT authorizer** when deployed. The "Response indicates failure" assertion in no-token and invalid-token tests checks for a non-2xx status and an error-style body (typically `{ message: ... }`).
 
-| Environment               | Who responds                                   | Body (typical)                |
-| ------------------------- | ---------------------------------------------- | ----------------------------- |
-| **Local** (`npm run dev`) | Express app + `expressAuth`                    | `{ message: string }`         |
-| **QA/Prod** (deployed)    | API Gateway Cognito authorizer (before Lambda) | `{ message: "Unauthorized" }` |
+| Environment                   | Who responds                                   | Body (typical)                |
+| ----------------------------- | ---------------------------------------------- | ----------------------------- |
+| **Local API** (`npm run dev`) | Express app + `expressAuth`                    | `{ message: string }`         |
+| **QA/Prod** (deployed)        | API Gateway Cognito authorizer (before Lambda) | `{ message: "Unauthorized" }` |
 
-Local tests hit the Express app directly (there is no API Gateway locally), so `expressAuth` answers. In QA/prod, the authorizer rejects invalid/missing tokens before the Lambda is invoked, so the response comes from API Gateway, not our app.
+Local-API tests hit the Express app directly (there is no API Gateway in front of it), so `expressAuth` answers. In QA/prod, the authorizer rejects invalid/missing tokens before the Lambda is invoked, so the response comes from API Gateway, not our app.
 
 ## Total: 83 requests
 

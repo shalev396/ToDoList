@@ -1,0 +1,43 @@
+{
+  "key": "two-jobs-studies-side-project@1",
+  "version": 1,
+  "titles": { "en": "Two jobs + studies + side project", "he": "שתי עבודות + לימודים + פרויקט צד" },
+  "descriptions": {
+    "en": "Four pages, one per part of your week, with workload views to see what fits.",
+    "he": "ארבעה עמודים, אחד לכל חלק בשבוע, עם תצוגות עומס כדי לראות מה נכנס."
+  },
+  "topics": [
+    {
+      "slug": "work",
+      "names": { "en": "Job 1", "he": "עבודה 1" },
+      "icon": "briefcase",
+      "colour": "teal",
+      "page": "work@1",
+      "views": ["my-open-work@1", "workload-this-week@1"]
+    },
+    {
+      "slug": "job-2",
+      "names": { "en": "Job 2", "he": "עבודה 2" },
+      "icon": "building",
+      "colour": "amber",
+      "page": "work@1",
+      "views": ["my-open-work@1", "workload-this-week@1"]
+    },
+    {
+      "slug": "college",
+      "names": { "en": "Studies", "he": "לימודים" },
+      "icon": "graduation-cap",
+      "colour": "blue",
+      "page": "college@1",
+      "views": ["study-dashboard@1", "deadlines-agenda@1", "this-week@1"]
+    },
+    {
+      "slug": "side-project",
+      "names": { "en": "Side project", "he": "פרויקט צד" },
+      "icon": "code",
+      "colour": "violet",
+      "page": "personal@1",
+      "views": ["by-status@1", "workload-this-week@1"]
+    }
+  ]
+}

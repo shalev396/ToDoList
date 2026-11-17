@@ -36,3 +36,18 @@ postman-results.xml
 
 # Serverless CLI state (its mcp command writes .serverless/meta.json with org and user ids)
 .serverless/
+
+# Plain .env files are never committed either (server/.env.example is the committed reference)
+.env
+# Left by the removed offline mode (old exports and env file stay ignored on machines that still have them)
+.local-storage/
+# Design research captures (third-party screenshots, reference only, never shipped)
+design/research/
+# Playwright MCP session logs (browser automation scratch)
+.playwright-mcp/
+
+# E2E screenshots written by the suites
+client/screens/
+
+# Git worktrees for isolated agent work
+.worktrees/

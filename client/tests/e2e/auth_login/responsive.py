@@ -15,5 +15,5 @@ def test_login_responsive(page: Page, app_url: str):
         page.goto(f"{app_url}/auth/login", wait_until="domcontentloaded")
         page.wait_for_load_state("networkidle")
         expect(page.get_by_label("Email")).to_be_visible(timeout=NORMAL_TIMEOUT)
-        expect(page.get_by_role("button", name="Login", exact=True)).to_be_visible(timeout=NORMAL_TIMEOUT)
+        expect(page.get_by_role("button", name="Log in", exact=True)).to_be_visible(timeout=NORMAL_TIMEOUT)
         assert_no_horizontal_overflow(page, vp["name"], vp["width"])

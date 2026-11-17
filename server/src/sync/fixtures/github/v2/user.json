@@ -1,0 +1,12 @@
+{
+  "request": { "url": "https://api.github.com/user" },
+  "response": {
+    "body": {
+      "login": "shalev396",
+      "id": 9100001,
+      "node_id": "U_FAKE_shalev396",
+      "type": "User",
+      "html_url": "https://example.invalid/github/shalev396"
+    }
+  }
+}

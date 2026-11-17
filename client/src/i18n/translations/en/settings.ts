@@ -1,0 +1,88 @@
+/** Workspace settings (/:lng/settings). */
+export const settings = {
+  title: 'Settings',
+  tabs: {
+    label: 'Workspace settings',
+    general: 'General',
+    members: 'Members',
+    agentKeys: 'Agent keys',
+  },
+  readOnly: {
+    viewer: 'You’re a viewer here. Only owners can change these settings.',
+    editor: 'You’re an editor here. Only owners can change these settings.',
+  },
+  agents: {
+    publish: 'Let agents publish dashboards',
+    publishHint:
+      'When on, an agent key with the publish access can make dashboard changes visible to everyone. When off, agents can only edit drafts.',
+    failed: 'The setting couldn’t be saved. Try again.',
+  },
+  mcp: {
+    title: 'Connect an agent',
+    hint: 'Give your AI assistant this address and one of the keys above.',
+    address: 'MCP address',
+    readonly: 'Read-only address (tools that only read)',
+    signedInWith: 'Signed in with {{client}}',
+    signInNote:
+      'Agents that support sign-in only need the address: they open TodoList for you to approve. Otherwise, use a key.',
+    howTo:
+      'Claude Code: install the TodoList plugin and paste the address and the key when it asks. Claude, Cursor and other MCP clients: add a remote MCP server with this address and the header Authorization: Bearer <your key>.',
+  },
+  sections: {
+    agents: 'AI agents',
+    agentsHint: 'What assistants connected through agent keys may do here.',
+    workspace: 'Workspace',
+    workspaceHint: 'How the workspace appears to its members.',
+    time: 'Time',
+    timeHint: 'Dashboards show “today”, weeks and dates with these.',
+    topics: 'Topics',
+    topicsHint: 'The workspace’s pages, in the sidebar. Everyone in it sees all of them.',
+    rules: 'Topic rules',
+    rulesHint:
+      'Put synced items into a topic by their project or repository. The first rule that matches wins.',
+  },
+  fields: {
+    name: 'Name',
+    slug: 'Link name',
+    slugHint: 'It can’t be changed yet.',
+    timezone: 'Time zone',
+    timezoneSearch: 'Search time zones',
+    timezoneEmpty: 'No time zone matches.',
+    weekStart: 'Week starts on',
+    sunday: 'Sunday',
+    monday: 'Monday',
+  },
+  noTopics: 'No pages yet.',
+  rules: {
+    match: 'Matches',
+    matchPlaceholder: 'shalev396/*',
+    matchHint: '* stands for any text, so shalev396/* matches every repository of shalev396.',
+    topic: 'Topic',
+    rule: 'Rule {{n}}',
+    add: 'Add rule',
+    remove: 'Remove rule {{n}}',
+    moveUp: 'Move rule {{n}} up',
+    moveDown: 'Move rule {{n}} down',
+    empty: 'No rules yet. Synced items keep the topic their source gives them.',
+    matchRequired: 'Enter a pattern, or remove the rule.',
+  },
+  save: 'Save changes',
+  saving: 'Saving…',
+  saved: 'Settings saved',
+  discard: 'Discard',
+  saveFailed: 'The settings couldn’t be saved. Try again.',
+  danger: {
+    title: 'Delete workspace',
+    body: 'Deletes {{workspace}} for everyone: its dashboards, connected sources, synced items and memberships. This can’t be undone.',
+    button: 'Delete workspace',
+    dialogTitle: 'Delete {{workspace}}?',
+    dialogBody:
+      'Everything in it is deleted for every member and its sources are disconnected. Type the workspace’s name to confirm.',
+    confirmLabel: 'Workspace name',
+    cancel: 'Cancel',
+    confirm: 'Delete workspace',
+    deleting: 'Deleting…',
+    deleted: '{{workspace}} was deleted',
+    failed: 'The workspace couldn’t be deleted. Try again.',
+  },
+};

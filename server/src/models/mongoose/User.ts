@@ -9,6 +9,7 @@ interface UserFields {
   email: string | null;
   photoId: string | null;
   lastLoginAt: Date | null;
+  defaultWorkspaceId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,6 +46,10 @@ const userSchema = new mongoose.Schema<UserDocument>(
       type: Date,
       default: null,
     },
+    defaultWorkspaceId: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: true,
@@ -70,6 +75,7 @@ function toUserData(doc: UserDocument): UserData {
     email: doc.email,
     photoId: doc.photoId,
     lastLoginAt: doc.lastLoginAt,
+    defaultWorkspaceId: doc.defaultWorkspaceId ?? null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -83,6 +89,15 @@ export const UserRepository: IUserRepository = {
 
   async findByCognitoSub(sub: string): Promise<UserData | null> {
     const doc = await UserMongoModel.findOne({ cognitoSub: sub });
+    return doc ? toUserData(doc) : null;
+  },
+
+  async findByEmail(email: string): Promise<UserData | null> {
+    // Cognito keeps an email's case as typed; strength 2 compares case-insensitively.
+    const doc = await UserMongoModel.findOne({ email: email.trim() }).collation({
+      locale: 'en',
+      strength: 2,
+    });
     return doc ? toUserData(doc) : null;
   },
 
@@ -118,6 +133,16 @@ export const UserRepository: IUserRepository = {
     if (data.photoId !== undefined) update['photoId'] = data.photoId;
 
     const doc = await UserMongoModel.findByIdAndUpdate(id, { $set: update }, { new: true });
+    if (doc === null) throw new Error('User not found');
+    return toUserData(doc);
+  },
+
+  async setDefaultWorkspace(userId: string, workspaceId: string | null): Promise<UserData> {
+    const doc = await UserMongoModel.findByIdAndUpdate(
+      userId,
+      { $set: { defaultWorkspaceId: workspaceId } },
+      { new: true },
+    );
     if (doc === null) throw new Error('User not found');
     return toUserData(doc);
   },

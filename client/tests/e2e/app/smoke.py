@@ -16,10 +16,10 @@ from playwright.sync_api import Page, Route, expect
 from tests.config import NORMAL_TIMEOUT
 
 
-APP_NAME = "Elytra"
-THEME_STORAGE_KEY = "elytra-ui-theme"
-# Hex of --background in index.css (light: oklch(0.99 0.005 270), dark: oklch(0.12 0.02 270))
-THEME_COLORS = {"light": "#fafcff", "dark": "#04050d"}
+APP_NAME = "TodoList"
+THEME_STORAGE_KEY = "todolist-ui-theme"
+# Hex of --background in index.css (docs/design/DESIGN.md: the page plane, light and dark)
+THEME_COLORS = {"light": "#f7f4ee", "dark": "#16130e"}
 
 
 def _png_size(body: bytes) -> tuple[int, int]:

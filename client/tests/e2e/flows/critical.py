@@ -47,13 +47,13 @@ def test_forgot_password_form_submits(page: Page, app_url: str, shared_test_user
     expect(page).to_have_url(f"{app_url}/auth/forgot-password", timeout=SHORT_TIMEOUT)
 
     # Wait for ForgotPasswordForm to mount (LoginPage's #email shares the same ID)
-    expect(page.get_by_role("button", name="Send Reset Link")).to_be_visible(timeout=SHORT_TIMEOUT)
+    expect(page.get_by_role("button", name="Send reset code")).to_be_visible(timeout=SHORT_TIMEOUT)
 
     email_input = page.locator("#email")
     email_input.fill(shared_test_user.email, timeout=SHORT_TIMEOUT)
     expect(email_input).to_have_value(shared_test_user.email, timeout=SHORT_TIMEOUT)
 
-    page.get_by_role("button", name="Send Reset Link").click(timeout=SHORT_TIMEOUT)
+    page.get_by_role("button", name="Send reset code").click(timeout=SHORT_TIMEOUT)
     page.wait_for_load_state("networkidle")
     # Form submitted; redirect may or may not occur depending on Cognito config
     expect(page).to_have_url(
@@ -70,13 +70,13 @@ def test_forgot_password_redirects_to_reset(page: Page, app_url: str, shared_tes
     expect(page).to_have_url(f"{app_url}/auth/forgot-password", timeout=SHORT_TIMEOUT)
 
     # Wait for ForgotPasswordForm to mount (LoginPage's #email shares the same ID)
-    expect(page.get_by_role("button", name="Send Reset Link")).to_be_visible(timeout=SHORT_TIMEOUT)
+    expect(page.get_by_role("button", name="Send reset code")).to_be_visible(timeout=SHORT_TIMEOUT)
 
     email_input = page.locator("#email")
     email_input.fill(shared_test_user.email, timeout=SHORT_TIMEOUT)
     expect(email_input).to_have_value(shared_test_user.email, timeout=SHORT_TIMEOUT)
 
-    page.get_by_role("button", name="Send Reset Link").click(timeout=SHORT_TIMEOUT)
+    page.get_by_role("button", name="Send reset code").click(timeout=SHORT_TIMEOUT)
 
     try:
         page.wait_for_url(
@@ -84,7 +84,7 @@ def test_forgot_password_redirects_to_reset(page: Page, app_url: str, shared_tes
             timeout=FORGOT_PASSWORD_TIMEOUT,
         )
     except Exception:
-        error_el = page.locator(".bg-destructive\\/10")
+        error_el = page.get_by_role("alert")
         if error_el.is_visible():
             actual_error = error_el.text_content() or "unknown"
             pytest.fail(f"Forgot-password API returned an error: {actual_error}")
@@ -102,13 +102,14 @@ def test_edit_profile_flow(page: Page, app_url: str, shared_test_user):
     assert "/auth/login" not in page.url, "Authentication failed: redirected to login page"
     page.get_by_role("link", name="Edit Profile").click(timeout=NORMAL_TIMEOUT)
     page.wait_for_load_state("networkidle")
-    name_input = page.get_by_label("Name")
+    name_input = page.get_by_label("Name", exact=True)
     unique_name = f"Updated Name {int(time.time())}"
     name_input.fill(unique_name)
     page.get_by_role("button", name="Save Changes").click(timeout=NORMAL_TIMEOUT)
     page.wait_for_load_state("networkidle")
     expect(page).to_have_url(f"{app_url}/profile", timeout=NORMAL_TIMEOUT)
-    expect(page.get_by_text(unique_name)).to_be_visible(timeout=NORMAL_TIMEOUT)
+    # The page's own copy: the sidebar's account button shows the new name too.
+    expect(page.get_by_role("main").get_by_text(unique_name)).to_be_visible(timeout=NORMAL_TIMEOUT)
 
 
 def test_export_data_flow(page: Page, app_url: str, shared_test_user):

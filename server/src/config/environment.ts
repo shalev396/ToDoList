@@ -1,40 +1,27 @@
 import type { DatabaseProvider, Env } from '../types/env.d.ts';
+import { rateLimitsOffForLocalServer } from './localSwitches.js';
+import { rateLimitsOffForTests } from './testSwitches.js';
 
 /**
  * Runtime configuration. Only DOMAIN_NAME and DATABASE_URL are human inputs; everything else is
  * wired by the CDK stack (Lambda) or read from its outputs (local dev, see local.ts).
+ *
+ * Each value is read from `process.env` when it is asked for, never when this module loads: what
+ * a module imports, and in which order, never fixes a value early (a test sets DATABASE_URL after
+ * its imports, once its database runs). A Lambda's environment is fixed at boot, so a server reads
+ * the same values either way.
  */
-class Environment {
-  readonly #env: Env;
-  readonly #awsRegion: string;
-  readonly #databaseUrl: string;
-  readonly #s3AssetsBucketName: string;
-  readonly #cognitoClientId: string;
-  readonly #cognitoUserPoolId: string;
-  readonly #domainName: string;
-  readonly #rateLimitEnabled: boolean;
-
-  constructor() {
-    this.#env = process.env.ENV;
-    this.#awsRegion = process.env.AWS_REGION;
-    this.#databaseUrl = process.env.DATABASE_URL;
-    this.#s3AssetsBucketName = process.env.S3_ASSETS_BUCKET_NAME;
-    this.#cognitoClientId = process.env.COGNITO_CLIENT_ID;
-    this.#cognitoUserPoolId = process.env.COGNITO_USER_POOL_ID;
-    this.#domainName = process.env.DOMAIN_NAME;
-    this.#rateLimitEnabled = process.env.DISABLE_RATE_LIMIT !== 'true';
-  }
-
+export class Environment {
   get env(): Env {
-    return this.#env;
+    return process.env.ENV;
   }
 
   get awsRegion(): string {
-    return this.#awsRegion;
+    return process.env.AWS_REGION;
   }
 
   get databaseUrl(): string {
-    return this.#databaseUrl;
+    return process.env.DATABASE_URL;
   }
 
   /**
@@ -44,43 +31,47 @@ class Environment {
    * error.
    */
   get databaseProvider(): DatabaseProvider {
-    if (/^mongodb(\+srv)?:\/\//i.test(this.#databaseUrl)) return 'mongoose';
-    if (/^postgres(ql)?:\/\//i.test(this.#databaseUrl)) return 'sequelize';
-    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(this.#databaseUrl)?.[1] ?? '(none)';
+    const url = this.databaseUrl;
+    if (/^mongodb(\+srv)?:\/\//i.test(url)) return 'mongoose';
+    if (/^postgres(ql)?:\/\//i.test(url)) return 'sequelize';
+    const scheme = /^([a-z][a-z0-9+.-]*):/i.exec(url)?.[1] ?? '(none)';
     throw new Error(
       `Unsupported DATABASE_URL scheme "${scheme}": use mongodb://, mongodb+srv://, postgres:// or postgresql://`,
     );
   }
 
   get s3AssetsBucketName(): string {
-    return this.#s3AssetsBucketName;
+    return process.env.S3_ASSETS_BUCKET_NAME;
   }
 
   get cognitoClientId(): string {
-    return this.#cognitoClientId;
+    return process.env.COGNITO_CLIENT_ID;
   }
 
   get cognitoUserPoolId(): string | undefined {
-    return this.#cognitoUserPoolId;
+    return process.env.COGNITO_USER_POOL_ID;
   }
 
   /** Derived from region + user pool id. */
   get cognitoIssuer(): string {
-    return `https://cognito-idp.${this.#awsRegion}.amazonaws.com/${this.#cognitoUserPoolId}`;
+    return `https://cognito-idp.${this.awsRegion}.amazonaws.com/${String(this.cognitoUserPoolId)}`;
   }
 
   get domainName(): string {
-    return this.#domainName;
+    return process.env.DOMAIN_NAME;
   }
 
-  /** In-app rate limits. Only the local dev server turns them off (DISABLE_RATE_LIMIT, local.ts). */
+  /**
+   * In-app rate limits are always on. Only a test (config/testSwitches.ts) or the local server's
+   * `--no-rate-limits` (config/localSwitches.ts) turns them off, never a Lambda.
+   */
   get rateLimitEnabled(): boolean {
-    return this.#rateLimitEnabled;
+    return !rateLimitsOffForTests() && !rateLimitsOffForLocalServer();
   }
 
   /** The destructive reset-db action is allowed on every stage except prod. */
   get allowsStageReset(): boolean {
-    return this.#env !== 'prod';
+    return this.env !== 'prod';
   }
 }
 

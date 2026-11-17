@@ -12,6 +12,10 @@ export interface MeResponseData {
   name: string;
   photoUrl: string | null;
   lastLoginAt: Date | null;
+  /** As at sign-in: false means onboarding (create a workspace or accept an invite). */
+  hasWorkspaces: boolean;
+  /** The workspace to open: the last used one while still mine, else my oldest; null without any. */
+  defaultWorkspaceId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

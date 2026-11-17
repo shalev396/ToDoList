@@ -1,5 +1,1 @@
-<!-- Light theme: primary background + white symbol, no extra halo -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <rect width="24" height="24" rx="6" fill="#8b5cf6"/>
-  <path d="M 13 2 L 3 14 h 9 l -1 8 10 -12 h -9 l 1 -8 z" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-linecap="butt" stroke-linejoin="miter"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect width="24" height="24" rx="7" fill="#F7F4EE"/><path d="M12 12V1.7H17A5.3 5.3 0 0 1 22.3 7V17A5.3 5.3 0 0 1 20.748 20.748Z" fill="#F2C14E"/><rect x="1.7" y="1.7" width="20.6" height="20.6" rx="5.3" fill="none" stroke="#1F1A12" stroke-width="3.4"/><path d="M12 12L16.95 16.95" fill="none" stroke="#1F1A12" stroke-width="3" stroke-linecap="round"/></svg>

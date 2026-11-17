@@ -7,6 +7,7 @@
   "scripts": {
     "prepare": "husky",
     "format": "prettier . --write",
-    "format:check": "prettier . --check"
+    "format:check": "prettier . --check",
+    "secrets:scan": "cd server && npx tsx scripts/scan-secrets.ts"
   }
 }

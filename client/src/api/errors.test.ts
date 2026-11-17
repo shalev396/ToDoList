@@ -1,0 +1,218 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import type { TFunction } from 'i18next';
+import { ERROR_CODES } from '@api-types/errorCodes.ts';
+import { en } from '../i18n/translations/en/index.ts';
+import { he } from '../i18n/translations/he/index.ts';
+import { limits } from '../data/limits.ts';
+import {
+  ERROR_CODE_KEYS,
+  apiErrorCode,
+  apiErrorDetails,
+  apiErrorStatus,
+  apiOpenIn,
+  cleanupProgressOf,
+  errorKey,
+  errorMessage,
+} from './errors.ts';
+
+/** An axios-shaped error with a response. */
+function failed(status: number, data: unknown = {}): unknown {
+  return Object.assign(new Error(`Request failed with status code ${String(status)}`), {
+    isAxiosError: true,
+    response: { status, data },
+  });
+}
+
+const FALLBACK = 'members.invite.failed';
+
+describe('apiErrorStatus and apiErrorCode', () => {
+  it('read the status and a known code', () => {
+    const error = failed(409, { message: 'That slug is already taken', code: 'slug_taken' });
+    assert.equal(apiErrorStatus(error), 409);
+    assert.equal(apiErrorCode(error), 'slug_taken');
+  });
+
+  it('ignore unknown codes and errors without a response', () => {
+    assert.equal(apiErrorCode(failed(409, { code: 'made_up_code' })), undefined);
+    assert.equal(apiErrorCode(new Error('Network Error')), undefined);
+    assert.equal(apiErrorStatus(new Error('Network Error')), undefined);
+    assert.equal(apiErrorStatus('boom'), undefined);
+  });
+});
+
+describe('errorKey (code, then status, then the fallback)', () => {
+  it('a known code wins', () => {
+    assert.equal(
+      errorKey(failed(409, { code: 'workspace_full' }), FALLBACK),
+      ERROR_CODE_KEYS.workspace_full,
+    );
+    assert.equal(
+      errorKey(failed(401, { code: 'invalid_credentials' }), FALLBACK),
+      ERROR_CODE_KEYS.invalid_credentials,
+    );
+  });
+
+  it('without a code, a status with a generic text', () => {
+    assert.equal(
+      errorKey(failed(409, { message: 'Conflict' }), FALLBACK),
+      'errors.status.conflict',
+    );
+    assert.equal(errorKey(failed(429), FALLBACK), 'errors.status.tooMany');
+    assert.equal(errorKey(failed(403), FALLBACK), 'errors.status.forbidden');
+  });
+
+  it('otherwise the caller’s fallback: server errors, 401, network failures', () => {
+    assert.equal(errorKey(failed(500), FALLBACK), FALLBACK);
+    assert.equal(errorKey(failed(401, { message: 'Login failed' }), FALLBACK), FALLBACK);
+    assert.equal(errorKey(new Error('Network Error'), FALLBACK), FALLBACK);
+    assert.equal(errorKey(undefined, FALLBACK), FALLBACK);
+  });
+
+  it('never returns the server’s English message', () => {
+    const key = errorKey(
+      failed(400, { message: 'Email, password, and name are required' }),
+      FALLBACK,
+    );
+    assert.equal(key, 'errors.status.badRequest');
+  });
+});
+
+describe('errorMessage', () => {
+  it('translates the key, with the free-tier limits for interpolation', () => {
+    const calls: [string, Record<string, unknown> | undefined][] = [];
+    const t = (key: string, options?: Record<string, unknown>) => {
+      calls.push([key, options]);
+      return `<${key}>`;
+    };
+    assert.equal(
+      errorMessage(t as unknown as TFunction, failed(409, { code: 'workspace_limit' }), FALLBACK),
+      `<${ERROR_CODE_KEYS.workspace_limit}>`,
+    );
+    assert.equal(calls[0]?.[1]?.['workspacesCreatedPerUser'], limits.workspacesCreatedPerUser);
+  });
+});
+
+describe('every code has text in both languages', () => {
+  function lookup(tree: unknown, key: string): unknown {
+    return key
+      .split('.')
+      .reduce<unknown>(
+        (node, part) =>
+          typeof node === 'object' && node !== null
+            ? (node as Record<string, unknown>)[part]
+            : undefined,
+        tree,
+      );
+  }
+
+  it('en and he', () => {
+    for (const code of ERROR_CODES) {
+      const key = ERROR_CODE_KEYS[code];
+      assert.equal(typeof lookup(en, key), 'string', `en ${key}`);
+      assert.equal(typeof lookup(he, key), 'string', `he ${key}`);
+    }
+    for (const key of [
+      'errors.status.badRequest',
+      'errors.status.forbidden',
+      'errors.status.notFound',
+      'errors.status.conflict',
+      'errors.status.gone',
+      'errors.status.tooLarge',
+      'errors.status.tooMany',
+    ]) {
+      assert.equal(typeof lookup(en, key), 'string', `en ${key}`);
+      assert.equal(typeof lookup(he, key), 'string', `he ${key}`);
+    }
+  });
+});
+
+describe('apiOpenIn', () => {
+  const failure = (status: number, data: unknown) => ({ response: { status, data } });
+
+  it('reads the provider link of a mirrored-item 409', () => {
+    assert.deepEqual(
+      apiOpenIn(failure(409, { message: 'x', openIn: { provider: 'jira', url: 'https://j/1' } })),
+      { provider: 'jira', url: 'https://j/1' },
+    );
+  });
+
+  it('is null for other failures', () => {
+    assert.equal(apiOpenIn(failure(409, { message: 'x', currentVersion: 3 })), null);
+    assert.equal(apiOpenIn(failure(400, { openIn: { provider: 'jira', url: 'u' } })), null);
+    assert.equal(apiOpenIn(new Error('x')), null);
+  });
+});
+
+describe('cleanupProgressOf', () => {
+  const progress = {
+    events: 12,
+    calendars: 1,
+    calendarsKept: 0,
+    remaining: 30,
+    skipped: 2,
+    failed: 3,
+  };
+  it('reads skipped and failed, which default to 0 when absent', () => {
+    const old = { events: 12, calendars: 1, calendarsKept: 0, remaining: 30 };
+    const error = failed(409, { code: 'cleanup_incomplete', progress: old });
+    assert.deepEqual(cleanupProgressOf(error), { ...old, skipped: 0, failed: 0 });
+  });
+  it('reads the progress of a cleanup_incomplete 409', () => {
+    const error = failed(409, { message: 'Out of time', code: 'cleanup_incomplete', progress });
+    assert.deepEqual(cleanupProgressOf(error), progress);
+  });
+  it('is null for other codes, other statuses and a broken body', () => {
+    assert.equal(cleanupProgressOf(failed(409, { code: 'slug_taken', progress })), null);
+    assert.equal(cleanupProgressOf(failed(500, { code: 'cleanup_incomplete', progress })), null);
+    assert.equal(cleanupProgressOf(failed(409, { code: 'cleanup_incomplete' })), null);
+    assert.equal(
+      cleanupProgressOf(failed(409, { code: 'cleanup_incomplete', progress: { events: 'x' } })),
+      null,
+    );
+    assert.equal(cleanupProgressOf(new Error('offline')), null);
+  });
+});
+
+describe('apiErrorDetails', () => {
+  const failure = (status: number, data: unknown) => ({ response: { status, data } });
+
+  it('reads the field names and the item’s link of a write-back refusal', () => {
+    assert.deepEqual(
+      apiErrorDetails(
+        failure(409, {
+          message: 'x',
+          code: 'provider_partial_write',
+          details: { written: ['title'], refused: ['status'], uncertain: [] },
+        }),
+      ),
+      { written: ['title'], refused: ['status'], uncertain: [] },
+    );
+    assert.deepEqual(
+      apiErrorDetails(
+        failure(422, {
+          code: 'field_not_writable',
+          details: { fields: ['dueAt'], openIn: { provider: 'jira', url: 'https://j/1' } },
+        }),
+      ),
+      { fields: ['dueAt'], openIn: { provider: 'jira', url: 'https://j/1' } },
+    );
+  });
+
+  it('leaves out what isn’t a list of names or a known provider', () => {
+    assert.deepEqual(
+      apiErrorDetails(
+        failure(409, {
+          details: { written: ['title', 3], fields: 'dueAt', openIn: { provider: 'x', url: 'u' } },
+        }),
+      ),
+      {},
+    );
+  });
+
+  it('is null without details', () => {
+    assert.equal(apiErrorDetails(failure(409, { message: 'x' })), null);
+    assert.equal(apiErrorDetails(failure(409, { details: ['x'] })), null);
+    assert.equal(apiErrorDetails(new Error('x')), null);
+  });
+});

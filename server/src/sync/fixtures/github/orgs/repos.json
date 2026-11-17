@@ -1,0 +1,40 @@
+{
+  "request": { "url": "https://api.github.com/orgs/acme-labs/repos" },
+  "response": {
+    "headers": { "ETag": "W/\"FAKE-etag-acme-labs-repos\"" },
+    "body": [
+      {
+        "id": 9200011,
+        "node_id": "R_FAKE_acme_api",
+        "name": "api",
+        "full_name": "acme-labs/api",
+        "owner": { "login": "acme-labs", "type": "Organization" },
+        "private": true,
+        "html_url": "https://example.invalid/github/acme-labs/api",
+        "fork": false,
+        "archived": false,
+        "language": "Go",
+        "default_branch": "main",
+        "open_issues_count": 7,
+        "pushed_at": "{{datetime:-1d@15:45}}",
+        "updated_at": "{{datetime:-1d@15:45}}"
+      },
+      {
+        "id": 9200012,
+        "node_id": "R_FAKE_acme_website",
+        "name": "website-archive",
+        "full_name": "acme-labs/website-archive",
+        "owner": { "login": "acme-labs", "type": "Organization" },
+        "private": false,
+        "html_url": "https://example.invalid/github/acme-labs/website-archive",
+        "fork": false,
+        "archived": true,
+        "language": "HTML",
+        "default_branch": "main",
+        "open_issues_count": 0,
+        "pushed_at": "{{datetime:-500d@10:00}}",
+        "updated_at": "{{datetime:-500d@10:00}}"
+      }
+    ]
+  }
+}

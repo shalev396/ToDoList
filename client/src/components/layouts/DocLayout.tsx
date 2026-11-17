@@ -2,13 +2,14 @@ import { Outlet } from 'react-router-dom';
 import NavBar from '@/components/shared/NavBar';
 import Footer from '@/components/shared/Footer';
 
+/** Long-form pages (Privacy, Terms): the public nav and footer around a reading column. */
 export function DocLayout() {
   return (
-    <div className="flex min-h-svh flex-col bg-muted">
+    <div className="flex min-h-svh flex-col bg-background">
       <NavBar />
-      <div className="container mx-auto max-w-4xl flex-1 px-4 py-12 sm:px-6 lg:px-8">
+      <main className="flex-1">
         <Outlet />
-      </div>
+      </main>
       <Footer />
     </div>
   );

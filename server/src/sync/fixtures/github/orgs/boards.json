@@ -1,0 +1,13 @@
+{
+  "request": { "graphql": "Boards", "variables": { "owner": "acme-labs" } },
+  "response": {
+    "body": {
+      "data": {
+        "repositoryOwner": {
+          "login": "acme-labs",
+          "projectsV2": { "pageInfo": { "hasNextPage": false, "endCursor": null }, "nodes": [] }
+        }
+      }
+    }
+  }
+}

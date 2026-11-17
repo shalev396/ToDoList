@@ -1,0 +1,10 @@
+{
+  "request": { "graphql": "RepoCounts", "variables": { "ids": ["R_FAKE_acme_api"] } },
+  "response": {
+    "body": {
+      "data": {
+        "nodes": [{ "issues": { "totalCount": 5 }, "pullRequests": { "totalCount": 2 } }]
+      }
+    }
+  }
+}

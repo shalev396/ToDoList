@@ -1,5 +1,5 @@
 import { environment } from '../config/environment.js';
-import { resetDatabase, syncDB } from '../config/database.js';
+import { migrateDB, resetDatabase, syncDB } from '../config/database.js';
 import { clearAllCognitoUsers } from '../utils/cognitoReset.js';
 import { clearUserUploadedAssets } from '../utils/s3Util.js';
 import type { DatabaseProvider } from '../types/env.d.ts';
@@ -19,9 +19,11 @@ export interface ResetStageResult {
   message: string;
 }
 
+/** sync-db: indexes and validators, then the pending data migrations (migrations/index.ts). */
 export async function syncSchema(): Promise<SyncSchemaResult> {
   const results = await syncDB();
-  return { provider: environment.databaseProvider, results };
+  const migrations = await migrateDB();
+  return { provider: environment.databaseProvider, results: [...results, ...migrations] };
 }
 
 /**

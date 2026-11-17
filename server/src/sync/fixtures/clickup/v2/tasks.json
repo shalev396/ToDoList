@@ -1,0 +1,627 @@
+[
+  {
+    "request": {
+      "url": "https://api.clickup.com/api/v2/team/9001/task?page=0"
+    },
+    "response": {
+      "body": {
+        "tasks": [
+          {
+            "id": "86f0t1",
+            "custom_id": null,
+            "name": "Fix room search pagination",
+            "text_content": null,
+            "description": "",
+            "status": {
+              "status": "in progress",
+              "color": "#4194f6",
+              "type": "custom",
+              "orderindex": 1
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:-1d@12:00}}",
+            "date_closed": null,
+            "date_done": null,
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              }
+            ],
+            "tags": [
+              {
+                "name": "search"
+              },
+              {
+                "name": "bug"
+              }
+            ],
+            "parent": null,
+            "priority": {
+              "id": "2",
+              "priority": "high"
+            },
+            "due_date": "{{epochms:-2d@17:00}}",
+            "due_date_time": true,
+            "start_date": "{{epochms:-6d@09:00}}",
+            "points": null,
+            "time_estimate": 7200000,
+            "custom_fields": [
+              {
+                "id": "cf-b2",
+                "name": "Sprint",
+                "type": "drop_down",
+                "value": 1
+              },
+              {
+                "id": "cf-a1",
+                "name": "Customer",
+                "type": "short_text",
+                "value": "Acme"
+              }
+            ],
+            "list": {
+              "id": "80001",
+              "name": "API",
+              "access": true
+            },
+            "folder": {
+              "id": "70001",
+              "name": "Backend",
+              "hidden": false
+            },
+            "space": {
+              "id": "90010"
+            },
+            "url": "https://example.invalid/clickup/t/86f0t1"
+          },
+          {
+            "id": "86f0t2",
+            "custom_id": null,
+            "name": "Add rate limiting to public API (per key)",
+            "text_content": null,
+            "description": "",
+            "status": {
+              "status": "to do",
+              "color": "#d3d3d3",
+              "type": "open",
+              "orderindex": 0
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:+0d@09:30}}",
+            "date_closed": null,
+            "date_done": null,
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              }
+            ],
+            "tags": [],
+            "parent": null,
+            "priority": {
+              "id": "1",
+              "priority": "urgent"
+            },
+            "due_date": "{{epochms:+2d@18:00}}",
+            "due_date_time": true,
+            "start_date": null,
+            "points": null,
+            "time_estimate": null,
+            "custom_fields": [],
+            "list": {
+              "id": "80001",
+              "name": "API",
+              "access": true
+            },
+            "folder": {
+              "id": "70001",
+              "name": "Backend",
+              "hidden": false
+            },
+            "space": {
+              "id": "90010"
+            },
+            "url": "https://example.invalid/clickup/t/86f0t2"
+          },
+          {
+            "id": "86f0t3",
+            "custom_id": null,
+            "name": "Rotate staging database credentials",
+            "text_content": null,
+            "description": "",
+            "status": {
+              "status": "to do",
+              "color": "#d3d3d3",
+              "type": "open",
+              "orderindex": 0
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:-3d@14:00}}",
+            "date_closed": null,
+            "date_done": null,
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              },
+              {
+                "id": 184,
+                "username": "Noa Teammate",
+                "email": "noa@example.invalid"
+              }
+            ],
+            "tags": [],
+            "parent": null,
+            "priority": {
+              "id": "3",
+              "priority": "normal"
+            },
+            "due_date": "{{epochms:+1d@12:00}}",
+            "due_date_time": true,
+            "start_date": null,
+            "points": null,
+            "time_estimate": null,
+            "custom_fields": [],
+            "list": {
+              "id": "80002",
+              "name": "Infra",
+              "access": true
+            },
+            "folder": {
+              "id": "70001",
+              "name": "Backend",
+              "hidden": false
+            },
+            "space": {
+              "id": "90010"
+            },
+            "url": "https://example.invalid/clickup/t/86f0t3"
+          },
+          {
+            "id": "86f0t4",
+            "custom_id": null,
+            "name": "Write Roonga onboarding doc",
+            "text_content": "Draft the onboarding steps for new venue owners.",
+            "description": "Draft the onboarding steps for new venue owners.",
+            "status": {
+              "status": "to do",
+              "color": "#d3d3d3",
+              "type": "open",
+              "orderindex": 0
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:-5d@11:00}}",
+            "date_closed": null,
+            "date_done": null,
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              }
+            ],
+            "tags": [],
+            "parent": null,
+            "priority": {
+              "id": "4",
+              "priority": "low"
+            },
+            "due_date": "{{epochms:+3d@12:00}}",
+            "due_date_time": true,
+            "start_date": null,
+            "points": null,
+            "time_estimate": null,
+            "custom_fields": [],
+            "list": {
+              "id": "80003",
+              "name": "Backlog",
+              "access": true
+            },
+            "folder": {
+              "id": "1",
+              "name": "hidden",
+              "hidden": true
+            },
+            "space": {
+              "id": "90010"
+            },
+            "url": "https://example.invalid/clickup/t/86f0t4"
+          },
+          {
+            "id": "86f0t5",
+            "custom_id": null,
+            "name": "Push notification for free spots",
+            "text_content": null,
+            "description": "",
+            "status": {
+              "status": "in progress",
+              "color": "#4194f6",
+              "type": "custom",
+              "orderindex": 1
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:-1d@16:30}}",
+            "date_closed": null,
+            "date_done": null,
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              }
+            ],
+            "tags": [
+              {
+                "name": "mobile"
+              }
+            ],
+            "parent": null,
+            "priority": {
+              "id": "2",
+              "priority": "high"
+            },
+            "due_date": "{{epochms:+2d@12:00}}",
+            "due_date_time": true,
+            "start_date": "{{epochms:-1d@09:00}}",
+            "points": null,
+            "time_estimate": null,
+            "custom_fields": [],
+            "list": {
+              "id": "80010",
+              "name": "Mobile app",
+              "access": true
+            },
+            "folder": {
+              "id": "2",
+              "name": "hidden",
+              "hidden": true
+            },
+            "space": {
+              "id": "90020"
+            },
+            "url": "https://example.invalid/clickup/t/86f0t5"
+          },
+          {
+            "id": "86f0t6",
+            "custom_id": null,
+            "name": "Fix iOS map clustering",
+            "text_content": null,
+            "description": "",
+            "status": {
+              "status": "complete",
+              "color": "#6bc950",
+              "type": "closed",
+              "orderindex": 3
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:+0d@10:15}}",
+            "date_closed": "{{epochms:+0d@10:15}}",
+            "date_done": "{{epochms:+0d@10:15}}",
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              }
+            ],
+            "tags": [],
+            "parent": null,
+            "priority": {
+              "id": "2",
+              "priority": "high"
+            },
+            "due_date": "{{epochms:-1d@12:00}}",
+            "due_date_time": true,
+            "start_date": null,
+            "points": null,
+            "time_estimate": null,
+            "custom_fields": [],
+            "list": {
+              "id": "80010",
+              "name": "Mobile app",
+              "access": true
+            },
+            "folder": {
+              "id": "2",
+              "name": "hidden",
+              "hidden": true
+            },
+            "space": {
+              "id": "90020"
+            },
+            "url": "https://example.invalid/clickup/t/86f0t6"
+          }
+        ],
+        "last_page": false
+      }
+    }
+  },
+  {
+    "request": {
+      "url": "https://api.clickup.com/api/v2/team/9001/task?page=1"
+    },
+    "response": {
+      "body": {
+        "tasks": [
+          {
+            "id": "86f0t7",
+            "custom_id": null,
+            "name": "Prepare launch checklist",
+            "text_content": null,
+            "description": "",
+            "status": {
+              "status": "to do",
+              "color": "#d3d3d3",
+              "type": "open",
+              "orderindex": 0
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:-4d@09:00}}",
+            "date_closed": null,
+            "date_done": null,
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              }
+            ],
+            "tags": [],
+            "parent": null,
+            "priority": {
+              "id": "3",
+              "priority": "normal"
+            },
+            "due_date": "{{epochms:+5d@00:00}}",
+            "due_date_time": false,
+            "start_date": null,
+            "points": null,
+            "time_estimate": null,
+            "custom_fields": [],
+            "list": {
+              "id": "80011",
+              "name": "Launch",
+              "access": true
+            },
+            "folder": {
+              "id": "3",
+              "name": "hidden",
+              "hidden": true
+            },
+            "space": {
+              "id": "90020"
+            },
+            "url": "https://example.invalid/clickup/t/86f0t7"
+          },
+          {
+            "id": "86f0t8",
+            "custom_id": null,
+            "name": "Stripe webhook retries",
+            "text_content": null,
+            "description": "",
+            "status": {
+              "status": "complete",
+              "color": "#6bc950",
+              "type": "closed",
+              "orderindex": 3
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:-2d@15:00}}",
+            "date_closed": "{{epochms:-2d@15:00}}",
+            "date_done": "{{epochms:-2d@15:00}}",
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              }
+            ],
+            "tags": [],
+            "parent": null,
+            "priority": {
+              "id": "2",
+              "priority": "high"
+            },
+            "due_date": "{{epochms:-3d@12:00}}",
+            "due_date_time": true,
+            "start_date": null,
+            "points": null,
+            "time_estimate": null,
+            "custom_fields": [],
+            "list": {
+              "id": "80012",
+              "name": "Checkout",
+              "access": true
+            },
+            "folder": {
+              "id": "70002",
+              "name": "Web",
+              "hidden": false
+            },
+            "space": {
+              "id": "90020"
+            },
+            "url": "https://example.invalid/clickup/t/86f0t8"
+          },
+          {
+            "id": "86f0t10",
+            "custom_id": null,
+            "name": "Imported task without a link",
+            "text_content": null,
+            "description": "",
+            "status": {
+              "status": "to do",
+              "color": "#d3d3d3",
+              "type": "open",
+              "orderindex": 0
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:-7d@10:00}}",
+            "date_closed": null,
+            "date_done": null,
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              }
+            ],
+            "tags": [],
+            "parent": null,
+            "priority": null,
+            "due_date": null,
+            "start_date": null,
+            "points": null,
+            "time_estimate": null,
+            "custom_fields": [],
+            "list": {
+              "id": "80001",
+              "name": "API",
+              "access": true
+            },
+            "folder": {
+              "id": "70001",
+              "name": "Backend",
+              "hidden": false
+            },
+            "space": {
+              "id": "90010"
+            }
+          },
+          {
+            "id": "86f0t11",
+            "custom_id": null,
+            "name": "Cover search edge cases (subtask)",
+            "text_content": null,
+            "description": "",
+            "status": {
+              "status": "to do",
+              "color": "#d3d3d3",
+              "type": "open",
+              "orderindex": 0
+            },
+            "orderindex": "1",
+            "date_created": "{{epochms:-20d@09:00}}",
+            "date_updated": "{{epochms:-2d@09:00}}",
+            "date_closed": null,
+            "date_done": null,
+            "archived": false,
+            "creator": {
+              "id": 183,
+              "username": "Demo Dev"
+            },
+            "assignees": [
+              {
+                "id": 183,
+                "username": "Demo Dev",
+                "email": "demo.dev@example.invalid",
+                "color": "#7b68ee",
+                "profilePicture": null
+              }
+            ],
+            "tags": [],
+            "parent": "86f0t1",
+            "priority": null,
+            "due_date": "{{epochms:-1d@12:00}}",
+            "due_date_time": true,
+            "start_date": null,
+            "points": null,
+            "time_estimate": null,
+            "custom_fields": [],
+            "list": {
+              "id": "80001",
+              "name": "API",
+              "access": true
+            },
+            "folder": {
+              "id": "70001",
+              "name": "Backend",
+              "hidden": false
+            },
+            "space": {
+              "id": "90010"
+            },
+            "url": "https://example.invalid/clickup/t/86f0t11"
+          }
+        ],
+        "last_page": true
+      }
+    }
+  }
+]

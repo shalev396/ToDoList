@@ -1,0 +1,44 @@
+{
+  "key": "by-status@1",
+  "version": 1,
+  "titles": {
+    "en": "By status",
+    "he": "לפי סטטוס"
+  },
+  "type": "board",
+  "vars": {},
+  "blocks": [
+    {
+      "id": "blk_board",
+      "type": "kanban",
+      "titles": {
+        "en": "By status",
+        "he": "לפי סטטוס"
+      },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "field": "topic",
+              "operator": "=",
+              "value": "$page.topic"
+            }
+          ]
+        },
+        "groupBy": ["status"],
+        "limit": 100
+      },
+      "viz": {
+        "kind": "kanban"
+      },
+      "listen": ["$page.topic"]
+    }
+  ],
+  "layouts": {
+    "lg": [],
+    "md": [],
+    "sm": []
+  }
+}

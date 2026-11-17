@@ -4,11 +4,11 @@
 
 ## Branch → stage
 
-| Push to | Deploys       | PR gate into the branch                      |
-| ------- | ------------- | -------------------------------------------- |
-| `dev`   | `elytra-dev`  | lint + build + infra tests on push           |
-| `qa`    | `elytra-qa`   | PR: lint/build/infra tests, local API tests  |
-| `main`  | `elytra-prod` | PR: lint/build/infra tests, tests against qa |
+| Push to | Deploys         | PR gate into the branch                      |
+| ------- | --------------- | -------------------------------------------- |
+| `dev`   | `todolist-dev`  | lint + build + infra tests on push           |
+| `qa`    | `todolist-qa`   | PR: lint/build/infra tests, local API tests  |
+| `main`  | `todolist-prod` | PR: lint/build/infra tests, tests against qa |
 
 All deploy logic is in Node scripts under [`server/scripts`](../server/scripts); the workflows only install dependencies and run them. Every deploy ([`_deploy.yml`](../.github/workflows/_deploy.yml)) runs two jobs in order, never two deploys at once per stage:
 
@@ -114,6 +114,15 @@ npx cdk bootstrap aws://<ACCOUNT_ID>/<REGION>   # the stack region; us-east-1 by
         "arn:aws:s3:::<DOMAIN_NAME>-assets/tmp/*",
         "arn:aws:ses:<REGION>:<ACCOUNT_ID>:identity/*"
       ]
+    },
+    {
+      "Sid": "LocalApiSecretsAndKeys",
+      "Effect": "Allow",
+      "Action": ["kms:Decrypt", "kms:GenerateDataKey", "secretsmanager:GetSecretValue"],
+      "Resource": [
+        "arn:aws:kms:<REGION>:<ACCOUNT_ID>:key/*",
+        "arn:aws:secretsmanager:<REGION>:<ACCOUNT_ID>:secret:todolist/*"
+      ]
     }
   ]
 }
@@ -139,11 +148,8 @@ npx cdk bootstrap aws://<ACCOUNT_ID>/<REGION>   # the stack region; us-east-1 by
 | Repository secret (optional)                    | `WAF_WEB_ACL_ARN`     | Global web ACL to attach to every stage, same value for all of them. Here: the shared `shalev396-shared-acl` ([Staging access](staging-access.md)) |
 | Environment secret (`dev`, `qa` only)           | `BASIC_AUTH_PASSWORD` | Password for that host. Username is that stage's `DOMAIN_NAME`. Browser tests on the deployed site send it. `/api/` is not gated. No prod value    |
 | Repository variable (optional)                  | `AWS_REGION`          | Stack region; `us-east-1` when unset                                                                                                               |
-| Environment variable (optional)                 | `WWW_ALIAS`           | `true` also serves `www.DOMAIN_NAME` (see below)                                                                                                   |
 
 That is the whole configuration. A stage that needs its own certificate or web ACL can override the repository secret with an environment secret of the same name; GitHub gives the environment value precedence.
-
-**Optional `www.` alias.** With `WWW_ALIAS=true` (GitHub environment variable, or `server/.env.<stage>` locally) the stage also answers on `www.DOMAIN_NAME`, from the same distribution: a second CloudFront alias, a `www` alias record, and `https://www.DOMAIN_NAME` added to the HTTP API and assets bucket CORS origins. No redirect: the canonical link (`app.baseUrl`) should stay the bare domain. It is opt-in rather than tied to prod because a domain like `app.example.com` would otherwise get `www.app.example.com`. A certificate the stack creates gets `www` as a second name; a `CERTIFICATE_ARN` you supply must already cover it. An existing `www` record in the hosted zone makes the deploy fail, so remove it first.
 
 ## Deploying from your machine
 
@@ -160,7 +166,9 @@ These are exactly the commands CI runs.
 
 ## First deploy of a stage
 
-The first deploy takes longest: certificate validation, the CloudFront rollout, and SES verifying the new domain before Cognito is created. SES domain verification typically takes about 1–2 minutes (it can take much longer). The stack waits for SES itself ([Infrastructure → Waiting for SES before Cognito](infrastructure.md#waiting-for-ses-before-cognito)), so the first deploy needs nothing by hand.
+The first deploy takes longest: certificate validation, the CloudFront rollout, and SES verifying the new domain before Cognito is created. Nothing waits for SES; the stack only orders the resources ([Infrastructure → SES before Cognito](infrastructure.md#ses-before-cognito)): the SES identity and its DKIM records first, then the CloudFront distribution (several minutes to create), then the Cognito user pool. SES domain verification typically takes about 1–2 minutes, so the domain is usually verified by the time Cognito needs it.
+
+When it is not (SES can take much longer; 44 minutes has been seen), the first deploy fails on the user pool: Cognito refuses an SES sender that is not verified yet. CloudFormation rolls the new stack back. **Run the deploy again** (`npm run deploy:backend -- <stage>`, or re-run the failed CI job): CDK deletes the rolled-back stack and creates it from scratch. Only the first deploy of a brand-new stage can hit this; later deploys keep the verified identity.
 
 ## Troubleshooting
 
@@ -174,4 +182,4 @@ The first deploy takes longest: certificate validation, the CloudFront rollout, 
 | Prod stack deleted and re-created fails on bucket or user pool | Prod retains its assets bucket and user pool by design. Delete (or import) the retained resources first.   |
 | Deleting a dev/qa stack fails on a bucket                      | Buckets are not auto-emptied. Empty both (all versions for assets) and retry.                              |
 | Frontend deploy hangs ~10 minutes, then `TimeoutError`         | The CI role lacks `cloudfront:GetInvalidation` (step 3); the waiter retries on `AccessDenied`.             |
-| `WwwAliasRecord` fails: record already exists                  | `WWW_ALIAS=true` and the zone already has a `www` record. Delete it (or unset `WWW_ALIAS`) and redeploy.   |
+| First deploy of a new stage fails on the Cognito user pool     | SES had not verified the new domain yet ([First deploy](#first-deploy-of-a-stage)). Run the deploy again.  |

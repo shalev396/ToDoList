@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "todolist": {
+      "url": "${env:TODOLIST_MCP_URL}",
+      "headers": {
+        "Authorization": "Bearer ${env:TODOLIST_AGENT_KEY}"
+      }
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import { DataTypes, Model } from 'sequelize';
+import { DataTypes, Model, col, fn, where } from 'sequelize';
 import { getSequelize } from '../../config/providers/sequelize.js';
 import { type UserData, type IUserRepository, USER_TABLE_NAME } from '../definitions/User.js';
 
@@ -9,6 +9,7 @@ class UserModel extends Model {
   declare email: string | null;
   declare photoId: string | null;
   declare lastLoginAt: Date | null;
+  declare defaultWorkspaceId: string | null;
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
 }
@@ -50,6 +51,12 @@ UserModel.init(
       type: DataTypes.DATE,
       allowNull: true,
     },
+    // Workspaces are MongoDB-only; kept for parity of the Users shape.
+    defaultWorkspaceId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      defaultValue: null,
+    },
   },
   {
     sequelize,
@@ -75,6 +82,7 @@ function toUserData(model: UserModel): UserData {
     email: model.email,
     photoId: model.photoId,
     lastLoginAt: model.lastLoginAt,
+    defaultWorkspaceId: model.defaultWorkspaceId,
     createdAt: model.createdAt,
     updatedAt: model.updatedAt,
   };
@@ -88,6 +96,13 @@ export const UserRepository: IUserRepository = {
 
   async findByCognitoSub(sub: string): Promise<UserData | null> {
     const user = await UserModel.findOne({ where: { cognitoSub: sub } });
+    return user ? toUserData(user) : null;
+  },
+
+  async findByEmail(email: string): Promise<UserData | null> {
+    const user = await UserModel.findOne({
+      where: where(fn('lower', col('email')), email.trim().toLowerCase()),
+    });
     return user ? toUserData(user) : null;
   },
 
@@ -118,6 +133,18 @@ export const UserRepository: IUserRepository = {
     if (affectedCount === 0) throw new Error('User not found');
 
     const user = await UserModel.findByPk(id);
+    if (user === null) throw new Error('User not found');
+    return toUserData(user);
+  },
+
+  async setDefaultWorkspace(userId: string, workspaceId: string | null): Promise<UserData> {
+    const [affectedCount] = await UserModel.update(
+      { defaultWorkspaceId: workspaceId },
+      { where: { id: userId } },
+    );
+    if (affectedCount === 0) throw new Error('User not found');
+
+    const user = await UserModel.findByPk(userId);
     if (user === null) throw new Error('User not found');
     return toUserData(user);
   },

@@ -1,17 +1,15 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Field, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
+import { AuthHeading, FormError, FormField } from '@/components/auth/auth-ui';
 import { pathTo, ROUTES } from '@/router/routes';
 import { useLanguage } from '@/hooks/useLanguage';
 import { resetPassword } from '@/api/services/authService';
-import type { AxiosError } from 'axios';
-import type { ApiErrorResponse } from '@api-types/api-contracts';
+import { errorMessage } from '@/api/errors';
 
-export function ResetPasswordForm({ className, ...props }: React.ComponentProps<'div'>) {
+export function ResetPasswordForm() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -34,93 +32,89 @@ export function ResetPasswordForm({ className, ...props }: React.ComponentProps<
     }
 
     setIsLoading(true);
-
     try {
       await resetPassword({ email, code, password }, { suppressErrorToast: true });
       void navigate(pathTo(ROUTES.AUTH.LOGIN, language));
     } catch (err) {
-      const axiosError = err as AxiosError<ApiErrorResponse>;
-      setError(axiosError.response?.data.message ?? t('auth.resetPassword.error'));
+      setError(errorMessage(t, err, 'auth.resetPassword.error'));
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className={cn('flex flex-col gap-6', className)} {...props}>
-      <div className="flex flex-col gap-2 text-center">
-        <h1 className="text-xl font-semibold">{t('auth.resetPassword.title')}</h1>
-        <p className="text-muted-foreground text-sm">{t('auth.resetPassword.description')}</p>
-      </div>
-      <form onSubmit={(e) => void handleSubmit(e)}>
-        <FieldGroup>
-          {error && (
-            <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
-          )}
-          <Field>
-            <FieldLabel htmlFor="email">{t('auth.forgotPassword.email')}</FieldLabel>
-            <Input
-              id="email"
-              type="email"
-              value={email}
-              onChange={(e) => {
-                setEmail(e.target.value);
-              }}
-              required
-              disabled={isLoading}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="code">{t('auth.resetPassword.code')}</FieldLabel>
-            <Input
-              id="code"
-              type="text"
-              placeholder="123456"
-              value={code}
-              onChange={(e) => {
-                setCode(e.target.value);
-              }}
-              required
-              disabled={isLoading}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="password">{t('auth.resetPassword.newPassword')}</FieldLabel>
-            <Input
-              id="password"
-              type="password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-              }}
-              required
-              minLength={8}
-              disabled={isLoading}
-            />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="confirm-password">
-              {t('auth.resetPassword.confirmPassword')}
-            </FieldLabel>
-            <Input
-              id="confirm-password"
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => {
-                setConfirmPassword(e.target.value);
-              }}
-              required
-              minLength={8}
-              disabled={isLoading}
-            />
-            <FieldDescription>{t('auth.resetPassword.passwordHint')}</FieldDescription>
-          </Field>
-          <Field>
-            <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? t('auth.resetPassword.resetting') : t('auth.resetPassword.submit')}
-            </Button>
-          </Field>
-        </FieldGroup>
+    <div className="flex flex-col gap-6">
+      <AuthHeading
+        title={t('auth.resetPassword.title')}
+        description={t('auth.resetPassword.description')}
+      />
+      <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-5">
+        {error === null ? null : <FormError>{error}</FormError>}
+        <FormField label={t('auth.forgotPassword.email')} htmlFor="email">
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => {
+              setEmail(e.target.value);
+            }}
+            required
+            disabled={isLoading}
+          />
+        </FormField>
+        <FormField label={t('auth.resetPassword.code')} htmlFor="code">
+          <Input
+            id="code"
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="123456"
+            className="tabular-nums tracking-[0.2em]"
+            value={code}
+            onChange={(e) => {
+              setCode(e.target.value);
+            }}
+            required
+            disabled={isLoading}
+          />
+        </FormField>
+        <FormField
+          label={t('auth.resetPassword.newPassword')}
+          htmlFor="password"
+          hint={t('auth.resetPassword.passwordHint')}
+        >
+          <Input
+            id="password"
+            type="password"
+            autoComplete="new-password"
+            aria-describedby="password-hint"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+            }}
+            required
+            minLength={8}
+            disabled={isLoading}
+          />
+        </FormField>
+        <FormField label={t('auth.resetPassword.confirmPassword')} htmlFor="confirm-password">
+          <Input
+            id="confirm-password"
+            type="password"
+            autoComplete="new-password"
+            value={confirmPassword}
+            onChange={(e) => {
+              setConfirmPassword(e.target.value);
+            }}
+            required
+            minLength={8}
+            disabled={isLoading}
+          />
+        </FormField>
+        <Button type="submit" className="h-10 w-full" disabled={isLoading}>
+          {isLoading ? t('auth.resetPassword.resetting') : t('auth.resetPassword.submit')}
+        </Button>
       </form>
     </div>
   );

@@ -1,27 +1,33 @@
 import { useState } from 'react';
-import { useNavigate, useLocation, Navigate, Link } from 'react-router-dom';
-import { useTranslation, Trans } from 'react-i18next';
-import { useSelector } from 'react-redux';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Trans, useTranslation } from 'react-i18next';
+import { CircleCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { AuthHeading, FormError, FormField, authActionLinkClass } from '@/components/auth/auth-ui';
 import { pathTo, ROUTES } from '@/router/routes';
+import { safeNextPath } from '@/router/next';
 import { useLanguage } from '@/hooks/useLanguage';
 import { PageMetadata } from '@/components/shared/PageMetadata';
 import { pageTitle } from '@/data/pageTitles';
 import { confirmSignup } from '@/api/services/authService';
-import { selectIsAuthenticated } from '@/store/userSlice';
-import type { AxiosError } from 'axios';
-import type { ApiErrorResponse } from '@api-types/api-contracts';
+import { errorMessage } from '@/api/errors';
+
+interface ConfirmState {
+  email?: string;
+  /** The page to return to after logging in (an invite link, say). */
+  next?: string | null;
+}
 
 export default function ConfirmSignUpPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const { language } = useLanguage();
   const location = useLocation();
-  const isAuthenticated = useSelector(selectIsAuthenticated);
 
-  const emailFromState = (location.state as { email?: string } | null)?.email ?? '';
+  const state = location.state as ConfirmState | null;
+  const emailFromState = state?.email ?? '';
+  const next = safeNextPath(state?.next ?? null);
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -31,6 +37,10 @@ export default function ConfirmSignUpPage() {
     return <Navigate to={pathTo(ROUTES.AUTH.LOGIN, language)} replace />;
   }
 
+  const loginTarget = `${pathTo(ROUTES.AUTH.LOGIN, language)}${
+    next === null ? '' : `?next=${encodeURIComponent(next)}`
+  }`;
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
@@ -39,17 +49,11 @@ export default function ConfirmSignUpPage() {
     try {
       await confirmSignup({ email: emailFromState, code }, { suppressErrorToast: true });
       setIsConfirmed(true);
-
-      const target = isAuthenticated
-        ? pathTo(ROUTES.DASHBOARD, language)
-        : pathTo(ROUTES.AUTH.LOGIN, language);
-
       setTimeout(() => {
-        void navigate(target);
+        void navigate(loginTarget);
       }, 2000);
     } catch (err) {
-      const axiosError = err as AxiosError<ApiErrorResponse>;
-      setError(axiosError.response?.data.message ?? t('auth.confirm.error'));
+      setError(errorMessage(t, err, 'auth.confirm.error'));
     } finally {
       setIsLoading(false);
     }
@@ -58,17 +62,13 @@ export default function ConfirmSignUpPage() {
   if (isConfirmed) {
     return (
       <>
-        <PageMetadata title={pageTitle('Confirm Sign Up')} noIndex />
-        <div className="flex flex-col gap-2 text-center">
-          <h1 className="text-3xl font-bold bg-linear-to-r from-gradient-from to-gradient-to bg-clip-text text-transparent">
-            {t('auth.confirm.title')}
-          </h1>
-          <p className="text-muted-foreground text-balance">{t('auth.confirm.confirmed')}</p>
-          <p className="text-sm text-muted-foreground">
-            {isAuthenticated
-              ? t('auth.confirm.redirectingToDashboard')
-              : t('auth.confirm.redirectingToLogin')}
-          </p>
+        <PageMetadata title={pageTitle(t('auth.confirm.title'))} noIndex />
+        <div className="flex flex-col gap-4" role="status">
+          <CircleCheck className="size-6 text-status-good" aria-hidden="true" />
+          <AuthHeading
+            title={t('auth.confirm.confirmed')}
+            description={t('auth.confirm.redirectingToLogin')}
+          />
         </div>
       </>
     );
@@ -76,52 +76,50 @@ export default function ConfirmSignUpPage() {
 
   return (
     <>
-      <PageMetadata title={pageTitle('Confirm Sign Up')} noIndex />
-      <div className="flex flex-col gap-2 text-center">
-        <h1 className="text-3xl font-bold bg-linear-to-r from-gradient-from to-gradient-to bg-clip-text text-transparent">
-          {t('auth.confirm.title')}
-        </h1>
-        <p className="text-muted-foreground text-balance">
-          <Trans i18nKey="auth.confirm.codeSentTo" values={{ email: emailFromState }}>
-            We sent a code to <strong>{{ email: emailFromState } as unknown as string}</strong>.
-            Check your inbox.
-          </Trans>
-        </p>
-      </div>
+      <PageMetadata title={pageTitle(t('auth.confirm.title'))} noIndex />
+      <div className="flex flex-col gap-6">
+        <AuthHeading
+          title={t('auth.confirm.title')}
+          description={
+            <Trans
+              i18nKey="auth.confirm.codeSentTo"
+              values={{ email: emailFromState }}
+              components={{ strong: <strong className="font-medium text-foreground" /> }}
+            />
+          }
+        />
 
-      <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
-        {error && (
-          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
-        )}
+        <form onSubmit={(e) => void handleSubmit(e)} className="flex flex-col gap-5">
+          {error === null ? null : <FormError>{error}</FormError>}
 
-        <div className="space-y-2">
-          <Label htmlFor="code">{t('auth.confirm.codeLabel')}</Label>
-          <Input
-            id="code"
-            type="text"
-            placeholder="123456"
-            value={code}
-            onChange={(e) => {
-              setCode(e.target.value);
-            }}
-            required
-            disabled={isLoading}
-          />
-        </div>
+          <FormField label={t('auth.confirm.codeLabel')} htmlFor="code">
+            <Input
+              id="code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              placeholder="123456"
+              className="tabular-nums tracking-[0.2em]"
+              value={code}
+              onChange={(e) => {
+                setCode(e.target.value);
+              }}
+              required
+              disabled={isLoading}
+            />
+          </FormField>
 
-        <Button type="submit" variant="gradient" className="w-full" disabled={isLoading}>
-          {isLoading ? t('auth.confirm.verifying') : t('auth.confirm.verify')}
-        </Button>
+          <Button type="submit" className="h-10 w-full" disabled={isLoading}>
+            {isLoading ? t('auth.confirm.verifying') : t('auth.confirm.verify')}
+          </Button>
+        </form>
 
-        <p className="text-center text-sm text-muted-foreground">
-          <Link
-            to={pathTo(ROUTES.AUTH.LOGIN, language)}
-            className="text-primary hover:underline font-medium underline-offset-4"
-          >
+        <p className="text-center text-sm">
+          <Link to={loginTarget} className={authActionLinkClass}>
             {t('auth.confirm.goToLogin')}
           </Link>
         </p>
-      </form>
+      </div>
     </>
   );
 }

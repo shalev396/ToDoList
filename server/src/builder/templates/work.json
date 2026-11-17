@@ -1,0 +1,125 @@
+{
+  "key": "work@1",
+  "version": 1,
+  "titles": { "en": "Work", "he": "עבודה" },
+  "scope": { "topicId": null, "containerId": null, "page": "topic", "groupVar": null },
+  "vars": { "range": "this_week", "project": null, "provider": null, "topic": null },
+  "blocks": [
+    {
+      "id": "blk_project",
+      "type": "filter",
+      "titles": { "en": "Project", "he": "פרויקט" },
+      "viz": { "kind": "select", "field": "containerId" },
+      "sets": "$page.project"
+    },
+    {
+      "id": "blk_provider",
+      "type": "filter",
+      "titles": { "en": "Source", "he": "מקור" },
+      "viz": { "kind": "chips", "field": "source.provider" },
+      "sets": "$page.provider"
+    },
+    {
+      "id": "blk_calendar",
+      "type": "calendar",
+      "titles": { "en": "Calendar", "he": "יומן" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "combinator": "or",
+              "rules": [
+                { "field": "startAt", "operator": "notNull" },
+                { "field": "dueAt", "operator": "notNull" }
+              ]
+            },
+            { "field": "topic", "operator": "=", "value": "$page.topic" },
+            { "field": "containerId", "operator": "=", "value": "$page.project" },
+            { "field": "source.provider", "operator": "=", "value": "$page.provider" }
+          ]
+        },
+        "dateRange": "$page.range",
+        "dateField": "any",
+        "sort": [{ "field": "startAt", "dir": "asc" }]
+      },
+      "viz": { "kind": "calendar", "view": "week", "allowMonth": true },
+      "listen": ["$page.topic", "$page.range", "$page.project", "$page.provider"]
+    },
+    {
+      "id": "blk_projects",
+      "type": "table",
+      "titles": { "en": "Projects", "he": "פרויקטים" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            { "field": "status", "operator": "in", "value": ["open", "in_progress"] },
+            { "field": "topic", "operator": "=", "value": "$page.topic" },
+            { "field": "containerId", "operator": "=", "value": "$page.project" },
+            { "field": "source.provider", "operator": "=", "value": "$page.provider" }
+          ]
+        },
+        "groupBy": ["containerId"],
+        "sort": [{ "field": "dueAt", "dir": "asc" }],
+        "limit": 50
+      },
+      "viz": { "kind": "table" },
+      "listen": ["$page.topic", "$page.project", "$page.provider"]
+    },
+    {
+      "id": "blk_deadlines",
+      "type": "deadlines",
+      "titles": { "en": "Deadlines", "he": "תאריכי יעד" },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            { "field": "dueAt", "operator": "notNull" },
+            { "field": "status", "operator": "in", "value": ["open", "in_progress"] },
+            { "field": "topic", "operator": "=", "value": "$page.topic" },
+            { "field": "containerId", "operator": "=", "value": "$page.project" },
+            { "field": "source.provider", "operator": "=", "value": "$page.provider" }
+          ]
+        },
+        "dateRange": "upcoming_14d",
+        "dateField": "dueAt",
+        "sort": [{ "field": "dueAt", "dir": "asc" }]
+      },
+      "rules": [
+        {
+          "if": { "field": "dueAt", "operator": "<", "value": "@now" },
+          "then": { "tone": "destructive" }
+        }
+      ],
+      "viz": { "kind": "deadlines", "overdueOnTop": true },
+      "listen": ["$page.topic", "$page.project", "$page.provider"]
+    }
+  ],
+  "layouts": {
+    "lg": [
+      { "i": "blk_project", "x": 0, "y": 0, "w": 6, "h": 2 },
+      { "i": "blk_provider", "x": 6, "y": 0, "w": 6, "h": 2 },
+      { "i": "blk_calendar", "x": 0, "y": 2, "w": 8, "h": 10 },
+      { "i": "blk_deadlines", "x": 8, "y": 2, "w": 4, "h": 10 },
+      { "i": "blk_projects", "x": 0, "y": 12, "w": 12, "h": 8 }
+    ],
+    "md": [
+      { "i": "blk_project", "x": 0, "y": 0, "w": 4, "h": 2 },
+      { "i": "blk_provider", "x": 4, "y": 0, "w": 4, "h": 2 },
+      { "i": "blk_calendar", "x": 0, "y": 2, "w": 8, "h": 10 },
+      { "i": "blk_deadlines", "x": 0, "y": 12, "w": 8, "h": 10 },
+      { "i": "blk_projects", "x": 0, "y": 22, "w": 8, "h": 8 }
+    ],
+    "sm": [
+      { "i": "blk_project", "x": 0, "y": 0, "w": 1, "h": 2 },
+      { "i": "blk_provider", "x": 0, "y": 2, "w": 1, "h": 2 },
+      { "i": "blk_calendar", "x": 0, "y": 4, "w": 1, "h": 10 },
+      { "i": "blk_deadlines", "x": 0, "y": 14, "w": 1, "h": 10 },
+      { "i": "blk_projects", "x": 0, "y": 24, "w": 1, "h": 8 }
+    ]
+  }
+}

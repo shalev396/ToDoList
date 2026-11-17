@@ -1,14 +1,10 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { ArrowLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Separator } from '@/components/ui/separator';
-import { FadeContent } from '@/components/animations/FadeContent';
-import { ArrowLeft } from 'lucide-react';
 import { PageMetadata } from '@/components/shared/PageMetadata';
 import { ImageUpload } from '@/components/shared/ImageUpload';
 import { useMe, useUpdateMe } from '@/api/queries';
@@ -16,6 +12,8 @@ import { stageFile, StagedUploadError, UPLOAD_RULES } from '@/api/services/stage
 import { pageTitle } from '@/data/pageTitles';
 import { useLanguage } from '@/hooks/useLanguage';
 import { pathTo, ROUTES } from '@/router/routes';
+import { PageContainer, PageHeader } from '@/features/shell/PageHeader';
+import { SettingsSection } from '@/pages/settings/SettingsLayout';
 import type { UpdateMeRequestBody } from '@api-types/api-contracts';
 
 const PHOTO_RULE = UPLOAD_RULES['account-photo'];
@@ -84,95 +82,78 @@ export default function EditProfilePage() {
   }
 
   return (
-    <div className="container mx-auto px-4 py-12 sm:px-6 lg:px-8">
+    <PageContainer width="reading">
       <PageMetadata title={pageTitle(t('profile.edit.title'))} noIndex />
-      <div className="mx-auto max-w-2xl space-y-6">
-        <FadeContent>
-          <div className="mb-8">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mb-4"
-              onClick={() => {
-                void navigate(pathTo(ROUTES.PROFILE, language));
+      <PageHeader title={t('profile.edit.title')} description={t('profile.edit.subtitle')}>
+        <Link
+          to={pathTo(ROUTES.PROFILE, language)}
+          className="-order-1 inline-flex w-fit items-center gap-1.5 rounded-sm text-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+        >
+          <ArrowLeft className="size-4 rtl:-scale-x-100" aria-hidden="true" />
+          {t('profile.title')}
+        </Link>
+      </PageHeader>
+
+      <form onSubmit={(e) => void handleSubmit(e)}>
+        <SettingsSection
+          id="edit-photo"
+          title={t('profile.edit.photoLabel')}
+          hint={t('profile.edit.photoHint')}
+        >
+          <ImageUpload
+            value={photoRemoved ? null : currentPhotoUrl}
+            onChange={handlePhotoChange}
+            rule={PHOTO_RULE}
+            chooseLabel={t('profile.edit.chooseFile')}
+            changeLabel={t('profile.edit.changeFile')}
+            removeLabel={t('profile.edit.removeFile')}
+            previewAlt={t('profile.edit.photoPreviewAlt')}
+            disabled={isSaving}
+          />
+          {photoFile ? (
+            <p className="truncate text-xs text-muted-foreground">{photoFile.name}</p>
+          ) : null}
+        </SettingsSection>
+
+        <SettingsSection id="edit-details" title={t('profile.info.title')}>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="name" className="text-sm font-medium">
+              {t('profile.edit.nameLabel')}
+            </label>
+            <Input
+              id="name"
+              value={name}
+              autoComplete="name"
+              onChange={(e) => {
+                setNameDraft(e.target.value);
               }}
-            >
-              <ArrowLeft className="me-2 size-4" />
-              {t('profile.title')}
-            </Button>
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-              {t('profile.edit.title')}
-            </h1>
-            <p className="text-muted-foreground mt-1">{t('profile.edit.subtitle')}</p>
+              placeholder={t('profile.edit.namePlaceholder')}
+            />
           </div>
-        </FadeContent>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="email" className="text-sm font-medium">
+              {t('profile.edit.emailLabel')}
+            </label>
+            <Input
+              id="email"
+              value={meData?.email ?? ''}
+              readOnly
+              dir="ltr"
+              aria-describedby="email-hint"
+              className="bg-sunken text-start text-muted-foreground"
+            />
+            <p id="email-hint" className="text-[13px] text-muted-foreground">
+              {t('profile.edit.emailReadonly')}
+            </p>
+          </div>
+        </SettingsSection>
 
-        <form onSubmit={(e) => void handleSubmit(e)} className="space-y-6">
-          <FadeContent delay={50}>
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('profile.edit.photoLabel')}</CardTitle>
-                <CardDescription>{t('profile.edit.photoHint')}</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ImageUpload
-                  value={photoRemoved ? null : currentPhotoUrl}
-                  onChange={handlePhotoChange}
-                  rule={PHOTO_RULE}
-                  chooseLabel={t('profile.edit.chooseFile')}
-                  changeLabel={t('profile.edit.changeFile')}
-                  removeLabel={t('profile.edit.removeFile')}
-                  previewAlt={t('profile.edit.photoPreviewAlt')}
-                  disabled={isSaving}
-                />
-                {photoFile && (
-                  <p className="text-muted-foreground mt-2 truncate text-xs">{photoFile.name}</p>
-                )}
-              </CardContent>
-            </Card>
-          </FadeContent>
-
-          <FadeContent delay={100}>
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('profile.info.title')}</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="name">{t('profile.edit.nameLabel')}</Label>
-                  <Input
-                    id="name"
-                    value={name}
-                    onChange={(e) => {
-                      setNameDraft(e.target.value);
-                    }}
-                    placeholder={t('profile.edit.namePlaceholder')}
-                  />
-                </div>
-                <Separator />
-                <div className="space-y-2">
-                  <Label htmlFor="email">{t('profile.edit.emailLabel')}</Label>
-                  <Input
-                    id="email"
-                    value={meData?.email ?? ''}
-                    disabled
-                    className="bg-muted cursor-not-allowed"
-                  />
-                  <p className="text-muted-foreground text-xs">{t('profile.edit.emailReadonly')}</p>
-                </div>
-              </CardContent>
-            </Card>
-          </FadeContent>
-
-          <FadeContent delay={150}>
-            <div className="flex justify-end">
-              <Button type="submit" disabled={isSaving || !hasChanges}>
-                {isSaving ? t('profile.edit.submitting') : t('profile.edit.submit')}
-              </Button>
-            </div>
-          </FadeContent>
-        </form>
-      </div>
-    </div>
+        <div className="flex justify-end border-t pt-5">
+          <Button type="submit" disabled={isSaving || !hasChanges}>
+            {isSaving ? t('profile.edit.submitting') : t('profile.edit.submit')}
+          </Button>
+        </div>
+      </form>
+    </PageContainer>
   );
 }

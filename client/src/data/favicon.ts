@@ -1,7 +1,7 @@
 /**
- * Single source of truth: paths to favicon SVGs in public/.
- * Used for both the tab favicon (theme-provider) and the in-app logo (LogoIcon).
- * To change the icon, replace favicon-light.svg and favicon-dark.svg in public/.
+ * The tab favicons in public/, one per theme; theme-provider swaps the <link rel="icon"> with the
+ * theme. Both are the square dial filled with its page plane, so each reads on a light or a dark
+ * tab strip. Generated from data/logo.ts by `npm run generate:icons`; don't edit them by hand.
  */
 export const FAVICON = {
   light: '/favicon-light.svg',

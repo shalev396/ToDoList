@@ -1,10 +1,16 @@
 // i18n configuration and language utilities
 
 /** Set when the user explicitly picks a language (LanguageSwitcher); wins over the browser. */
-export const LANGUAGE_PREFERENCE_STORAGE_KEY = 'elytra-language-preference';
+export const LANGUAGE_PREFERENCE_STORAGE_KEY = 'todolist-language-preference';
 
 export const SUPPORTED_LANGUAGES = ['en', 'he'] as const;
 export type Language = (typeof SUPPORTED_LANGUAGES)[number];
+
+/** Each language's own name for itself, for language pickers. */
+export const LANGUAGE_NAMES: Record<Language, string> = {
+  en: 'English',
+  he: 'עברית',
+};
 
 // RTL languages
 export const RTL_LANGUAGES: Language[] = ['he'];

@@ -1,0 +1,216 @@
+{
+  "key": "study-dashboard@1",
+  "version": 1,
+  "titles": {
+    "en": "Study dashboard",
+    "he": "לוח לימודים"
+  },
+  "type": "dashboard",
+  "vars": {
+    "range": "this_week"
+  },
+  "blocks": [
+    {
+      "id": "blk_clock",
+      "type": "clock",
+      "titles": {
+        "en": "Today",
+        "he": "היום"
+      },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "field": "kind",
+              "operator": "=",
+              "value": "event"
+            },
+            {
+              "field": "topic",
+              "operator": "=",
+              "value": "$page.topic"
+            }
+          ]
+        },
+        "dateRange": "today",
+        "dateField": "startAt",
+        "sort": [
+          {
+            "field": "startAt",
+            "dir": "asc"
+          }
+        ]
+      },
+      "viz": {
+        "kind": "clock24",
+        "needle": "now",
+        "showNext": true
+      },
+      "listen": ["$page.topic"]
+    },
+    {
+      "id": "blk_deadlines",
+      "type": "deadlines",
+      "titles": {
+        "en": "Deadlines",
+        "he": "תאריכי יעד"
+      },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "field": "dueAt",
+              "operator": "notNull"
+            },
+            {
+              "field": "status",
+              "operator": "in",
+              "value": ["open", "in_progress"]
+            },
+            {
+              "field": "topic",
+              "operator": "=",
+              "value": "$page.topic"
+            }
+          ]
+        },
+        "dateRange": "upcoming_14d",
+        "dateField": "dueAt",
+        "sort": [
+          {
+            "field": "dueAt",
+            "dir": "asc"
+          }
+        ]
+      },
+      "viz": {
+        "kind": "deadlines",
+        "overdueOnTop": true
+      },
+      "listen": ["$page.topic"]
+    },
+    {
+      "id": "blk_calendar",
+      "type": "calendar",
+      "titles": {
+        "en": "Calendar",
+        "he": "יומן"
+      },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "combinator": "or",
+              "rules": [
+                {
+                  "field": "startAt",
+                  "operator": "notNull"
+                },
+                {
+                  "field": "dueAt",
+                  "operator": "notNull"
+                }
+              ]
+            },
+            {
+              "field": "topic",
+              "operator": "=",
+              "value": "$page.topic"
+            }
+          ]
+        },
+        "dateRange": "$page.range",
+        "dateField": "any",
+        "sort": [
+          {
+            "field": "startAt",
+            "dir": "asc"
+          }
+        ]
+      },
+      "viz": {
+        "kind": "calendar",
+        "view": "week",
+        "allowMonth": true
+      },
+      "listen": ["$page.topic", "$page.range"]
+    }
+  ],
+  "layouts": {
+    "lg": [
+      {
+        "i": "blk_clock",
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 8
+      },
+      {
+        "i": "blk_deadlines",
+        "x": 4,
+        "y": 0,
+        "w": 8,
+        "h": 8
+      },
+      {
+        "i": "blk_calendar",
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 10
+      }
+    ],
+    "md": [
+      {
+        "i": "blk_clock",
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 8
+      },
+      {
+        "i": "blk_deadlines",
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 8
+      },
+      {
+        "i": "blk_calendar",
+        "x": 0,
+        "y": 8,
+        "w": 8,
+        "h": 10
+      }
+    ],
+    "sm": [
+      {
+        "i": "blk_clock",
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 8
+      },
+      {
+        "i": "blk_deadlines",
+        "x": 0,
+        "y": 8,
+        "w": 1,
+        "h": 8
+      },
+      {
+        "i": "blk_calendar",
+        "x": 0,
+        "y": 16,
+        "w": 1,
+        "h": 10
+      }
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 export const common = {
-  app: { name: '{{appName}}' },
   aria: { toggleTheme: 'Toggle theme' },
+  saveStatus: { saving: 'Saving…', saved: 'Saved', error: 'Couldn’t save' },
   theme: { light: 'Light', dark: 'Dark', system: 'System' },
   nav: {
     signIn: 'Sign In',
@@ -13,6 +13,14 @@ export const common = {
     myAccount: 'My account',
     logOut: 'Log out',
     guest: 'Guest',
+    primary: 'Main',
+    logIn: 'Log in',
+    signUp: 'Sign up',
+    openMenu: 'Open menu',
+    menu: 'Menu',
+    closeMenu: 'Close menu',
+    language: 'Language',
+    theme: 'Theme',
   },
   imageUpload: {
     choose: 'Choose image',

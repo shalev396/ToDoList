@@ -22,3 +22,20 @@ export async function runWithConcurrency<T, R>(
   await Promise.all(Array.from({ length: workers }, worker));
   return results;
 }
+
+/**
+ * Promise.all that waits for every task to end, so none is still running (still writing) when it
+ * throws; then answers the results in order, or throws the failure of the first task in `tasks`
+ * that failed (by position, not by time), so which error wins never depends on timing.
+ */
+export async function settleAll<T extends readonly unknown[]>(tasks: {
+  readonly [K in keyof T]: PromiseLike<T[K]>;
+}): Promise<T> {
+  const settled = await Promise.allSettled(tasks as readonly PromiseLike<unknown>[]);
+  const values: unknown[] = [];
+  for (const result of settled) {
+    if (result.status === 'rejected') throw result.reason;
+    values.push(result.value);
+  }
+  return values as unknown as T;
+}
