@@ -1,0 +1,243 @@
+# Travel time: design
+
+Status: draft for Shalev's review (2026-11-17). Nothing is built until he approves this document.
+
+## Why
+
+Shalev's days happen in places: home, Braude (lectures, on his personal Google calendar "braude"), TLVTech (work). Getting between them takes real time. Today TodoList knows _when_ things happen but not _where_, so the clock shows free time that is actually spent on a bus or in the car, and nothing protects it.
+
+He wants that time to appear and be protected like a lecture: "It should be like a task. It's not really a task, but it takes time. And this time is taken."
+
+## What it is (his decisions)
+
+- A **travel block** shows wherever tasks and events show (clock, calendar, timeline, agenda), takes its time, and is **done automatically** once it ends, like a calendar event.
+- Travel blocks are added **automatically by criteria**, using the same logic builder the dashboards use. They can also be added **by hand**:
+  - when creating a to-do, the form asks whether to add travel time;
+  - on an existing event, such as a lecture from Google Calendar, he can mark it for travel.
+- If the event **repeats**, TodoList asks whether to apply travel to every occurrence, so the whole semester is covered.
+- Three modes, as tabs: **walk**, **drive**, **public transport**.
+  - Each mode computes a duration from a free (or free-tier) API.
+  - The duration is multiplied by a **factor the user sets**, a global setting per mode.
+- Each block keeps links that open that trip in the right app:
+  - walking: Google Maps;
+  - driving: Waze;
+  - public transport: Moovit (Egged's new "egg" app has no public link format).
+- Public transport follows the real timetable. If the bus arrives 20 minutes early, the block ends at the bus's arrival. The spare time before the event stays as it is; nothing merges.
+
+## Goals
+
+1. Every located, timed commitment he cares about gets a travel block before it and, where needed, after it.
+2. Windows between events at the same place don't produce travel. Real moves between places do.
+3. One semester rule, e.g. "lectures on the braude calendar, by public transport", covers every week without per-week work.
+4. Times come from real routing, multiplied by his factors, and each block says where its time came from.
+5. One tap opens the trip in Waze, Google Maps or Moovit.
+
+## Non-goals (first version)
+
+- Live traffic.
+- Real-time bus tracking.
+- "Leave now" notifications.
+- Multi-stop route optimisation.
+- Cycling.
+- Travel for all-day events.
+- A different start place per day ("I slept elsewhere").
+- Agents creating travel rules over MCP. Agents do **see** travel blocks as busy time.
+
+## Anti-goals (would make this a failure even if it works)
+
+- Travel blocks that look and count like to-dos to tick. They are time, not work: they don't count in "open tasks", and nobody ticks them.
+- A block that silently shows a wrong or stale time, or disappears without a reason he can see.
+- Rules that create blocks he didn't ask for.
+- Travel that edits his lectures or anything at a provider. Rules only ever **add** TodoList's own blocks, and the read-only guarantee still holds.
+- His home address leaking to the workspace, to agents, or into logs.
+- A surprise bill from a maps API.
+
+## Concepts
+
+1. **Places**, per member and private.
+   - A place is a name, an address, coordinates and optional aliases. Examples: Home; Braude (aliases "ORT Braude", "בראודה"); TLVTech.
+   - Exactly one place is **Home**, the start and end of every day.
+   - A calendar or project can have a **default place**: the "braude" calendar maps to Braude, for events that have no location.
+2. **Where an event is.** In this order:
+   1. its location text matches a place's name or alias;
+   2. its location is geocoded once and matched to the nearest saved place within 300 m;
+   3. its calendar or project's default place applies;
+   4. otherwise it has no place and gets no travel. The block UI offers "set place".
+
+   Google events already sync their `location` (`props.location`).
+
+3. **Travel rule.** Its shape: "When [a where-group, the dashboard logic builder] → travel by [mode], [there / back / both]".
+   - Example: "calendar is braude → public transport, both".
+   - Rules live in Settings → Travel.
+   - Marking one recurring event "every week" creates a rule scoped to that series.
+4. **Manual travel**, on one item: the same choice stored on that to-do or occurrence (mode, there/back).
+5. **Travel settings**, his "global variables". The defaults are my call:
+
+   | Setting                  | Default                                                                   |
+   | ------------------------ | ------------------------------------------------------------------------- |
+   | Factor, walking          | ×1.0                                                                      |
+   | Factor, driving          | ×1.15                                                                     |
+   | Factor, public transport | ×1.0                                                                      |
+   | Buffer, walking          | +0 min                                                                    |
+   | Buffer, driving          | +10 min (parking)                                                         |
+   | Buffer, public transport | +5 min (to the stop)                                                      |
+   | Go home in a window      | off; when on, at least 3 h, and only if it leaves at least 60 min at home |
+   | Default mode             | public transport                                                          |
+
+## The day plan
+
+This answers his question "how do you know when the day starts, with windows between lectures?". The plan is derived per day, in the workspace time zone:
+
+1. **Anchors** are the day's timed items that have travel (from a rule or set by hand) and a place.
+2. **Stays.** Sort the anchors by start. Consecutive anchors at the same place merge into one stay.
+   - Lectures 10–12 and 14–16 at Braude are one stay, 10–16, and the window in between is spent there. No travel.
+   - Exception: with "go home in a window" on, a long enough window at a place is split into two stays, with travel home and back.
+3. **Legs:**
+   - Home → the first stay, arriving by its start. That leg is where the day starts, so no "day start" setting is needed.
+   - Between stays at different places: leave after the first ends, arrive by the next starts.
+   - The last stay → Home, leaving after it ends.
+   - "There" and "back" on a rule control only the first and last legs of the day.
+   - A leg between two stays always exists when both have travel. It uses the **destination** anchor's mode (bus to Braude, then car to TLVTech: the Braude → TLVTech leg drives). A to-do's own manual choice beats any rule.
+4. **Times.**
+   - Driving and walking: arrive by the anchor's start, minus nothing. The block is `[start − duration × factor − buffer, start]`.
+   - Public transport: ask for the itinerary that arrives by the start, minus the buffer. The block runs from the itinerary's departure (minus the buffer) to its arrival. Any time left before the anchor stays free.
+   - A return leg starts when the stay ends.
+5. **Conflicts.** A leg that doesn't fit is still shown, starting at the earlier stay's end, and is marked as a conflict (red edge, "you can't make it": e.g. A ends 12:00, B starts 12:15, travel takes 40 min). The plan never moves or edits his events.
+6. Items with no place, all-day events, and anchors already in the past (that day) don't create new legs.
+
+## Generation and lifecycle (my calls after review)
+
+- **Stored, not computed on read.** Travel legs are stored items. Every view, MCP tool and the optional Google push then gets them for free. Their status (upcoming / done) is derived from the time.
+- **Key.** One leg per (anchor item, occurrence start, direction). Regeneration upserts by that key, so running it twice changes nothing.
+- **Triggers.** A day's plan is regenerated when:
+  - a sync changes an anchor (moved, cancelled, new occurrence);
+  - a to-do with travel is created or edited;
+  - a rule, a place or a setting changes;
+  - once a day for days entering the 14-day horizon.
+
+  How the daily pass runs inside the one-Lambda setup is left to the builder: the existing scheduled run, or the first app open of the day.
+
+- **Removal is visible.** When a leg's anchor is cancelled, moved away or no longer matches, the leg is removed. The day's travel panel shows the reason for that day (e.g. "Bus to Braude removed: the lecture was cancelled"). A soft-deleted tombstone holds it until the day ends.
+- **Cost cap: per workspace, 300 routing calls a day.** Past the cap:
+  - walking and driving fall to OpenRouteService, then to the estimate;
+  - public transport keeps the leg's last computed time.
+
+  Either way the block is labelled "estimate". Nothing fails silently.
+
+- **First milestone without Google.** Until the billing account exists, walking and driving use OpenRouteService, and public transport uses the estimate, labelled as such. Transit becomes real the day the key is added. No code changes, only the secret.
+
+## Durations and links
+
+**Provider (my call).**
+
+- **Google Routes API** for all three modes. It is the only service with Israeli public transport (Ministry of Transport data, all operators). Driving without traffic-awareness, walking and transit all bill as "Essentials", which is free up to 10,000 requests a month. Transit being Essentials is likely but must be confirmed with a test bill. That is about 100× his use.
+- **OpenRouteService** (free key) is the fallback for walking and driving.
+- The last resort is a straight-line estimate (walking 4.5 km/h × 1.3; driving 40 km/h), labelled "estimate".
+- Waze has no public travel-time API.
+
+**Needs from Shalev.**
+
+- A billing account on the TodoList Google Cloud project; it requires a card even inside the free tier.
+- A budget alert and a daily quota cap (e.g. 500 requests/day) in the Cloud console.
+
+The API key goes into the stage's existing secret (merge, never overwrite).
+
+**Caching and Google's terms.** Google's terms bar storing route results.
+
+- We store only each block's start and end (our own schedule, like an event he'd write), plus `computedAt` and the source. We never store routes, steps or polylines.
+- A leg is recomputed when its anchor or place changes, when settings change, and once on the day itself.
+- Requests for the same (from, to, mode, time rounded to 5 min) within one run are reused.
+- If he prefers zero doubt: walking and driving can use OpenRouteService, which allows storage, and only transit uses Google.
+
+**Links**, kept on each block:
+
+- **Walking:** Google Maps, `https://www.google.com/maps/dir/?api=1&origin=…&destination=…&travelmode=walking`.
+- **Driving:** Waze, `https://waze.com/ul?ll=<lat>,<lon>&navigate=yes`. Waze always starts from where the phone is. The Google Maps driving link is offered as a second choice.
+- **Public transport:**
+  - Moovit app: `moovit://directions?orig_lat=…&orig_lon=…&dest_lat=…&dest_lon=…&date=<ISO>&auto_run=true`, with its install link as the fallback;
+  - plus the Google Maps transit link.
+
+## Where travel comes from (three entry points)
+
+1. **New to-do.** The create form has an "Add travel time" switch, collapsed by default.
+   - When it's on: tabs Walk / Drive / Public transport.
+   - **From** defaults to the plan's previous place, or Home, and can be edited.
+   - **To** is the to-do's place: pick a saved place or type an address. It is required.
+   - **There / back** choice.
+   - A live preview, e.g. "Leave 13:20 · arrive 13:52 · 32 min (Google)", with its links.
+   - A to-do needs a start time for travel. If it has only a due date, the form asks for a time.
+2. **An existing event.** The item sheet has "Add travel" with the same panel. If the event repeats: "Every occurrence (until the series ends)?"
+   - **Yes** creates a series-scoped rule.
+   - **No** applies to this occurrence only.
+3. **Rules.** Settings → Travel lists rules, built with the logic builder, plus Places and the factors.
+
+## Repeating events and how far ahead
+
+Google repeating events sync as **one series item**: the master carries its RRULE, and exceptions carry `recurringEventId`. Today only the client expands them (`client/src/features/dashboards/blocks/time/occurrences.ts`).
+
+- The day plan runs on the server, so expansion must run there too. Share or port that logic next to the server's existing `RecurrenceRule`, so the client and server agree occurrence by occurrence.
+- A series-scoped rule keys on the series master's item id.
+- **Horizon (my call):** legs exist for the next **14 days** and are regenerated as days come into range.
+- A rule covers the whole semester because it persists. Blocks appear as the weeks approach, with fresh times.
+- Generating a full semester up front would mean many API calls, and times would go stale.
+
+## How it shows
+
+- **Time views** (clock ring, calendar, timeline, agenda): a block in its topic's colour family, using the "travel" shade with hatching (see the topic colours design), and an icon for its mode. The clock's Now/Next names it, e.g. "Bus to Braude".
+- **Task views and counts:** not included. "Open tasks", charts and lists filter out `kind = travel` by default.
+- **Done:** past blocks are dimmed and shown as done. A block can be **skipped** (hidden for that day); it cannot be ticked or edited directly. Changing mode or place recomputes it.
+- **Busy:** MCP `list_today` and `get_calendar` include travel blocks as busy time. Agents (Grok Bot) see them and plan around them.
+- **Google Calendar push:** optional and off by default. The existing push can include travel blocks so other calendars see the time as busy.
+
+## Object model ("implement or extend")
+
+- **`TravelLeg extends Item implements Schedulable`.**
+  - A travel block **is an item**, so it shows wherever items show, but it is **not a to-do**: it is a sibling of `Todo` and `MirroredItem`, not a subclass.
+  - It does **not** implement `Completable` or `Editable`. Its status derives from time, and its only actions are skip and recompute.
+  - New item kind: `travel`.
+  - Fields:
+    - anchor item id, plus the occurrence start for a series;
+    - direction (`there` / `back` / `between`);
+    - from place, to place, mode;
+    - `startAt`, `endAt`;
+    - source (`google` / `ors` / `estimate`), `computedAt`;
+    - conflict flag;
+    - links.
+- **`Place extends WorkspaceEntity implements Owned`**: private to its member.
+- **`TravelRule extends WorkspaceEntity implements Owned, Auditable`**: holds a `Query` (the existing where-group value object), plus mode and direction.
+- **`interface RouteProvider { readonly modes; estimate(from, to, mode, arriveBy) }`**, implemented by `GoogleRoutes`, `OpenRouteService` and `StraightLine`. **`RouteChain`** tries them in order (strategy plus fallback).
+- **`DayPlanner`** (pure, no I/O): anchors, places and settings in; legs out. This is the heart, and gets the most tests: same place, windows, go-home threshold, conflicts, midnight, DST change days, repeating occurrences, a cancelled occurrence.
+- **`TravelLinks`** (pure): a leg in, its app links out.
+
+## Privacy and safety
+
+- **Travel blocks are private to their member.** They are visible only on that member's views and to that member's agents, never to other members of a shared workspace.
+- Titles use place **names** only ("Bus to Braude", "Drive home"), never an address. That keeps the optional Google push and agent views from leaking Home.
+- Places, and Home above all, are visible only to their member.
+  - Never shared with the workspace.
+  - Never in audit-log details.
+  - Never returned to agents. MCP shows place **names** only.
+- Addresses and coordinates are sent to Google (and the fallback) to compute routes. The privacy page must say so.
+- Rules and manual travel only create TodoList's own blocks. They never edit the anchor or anything at a provider.
+- Cost: the per-workspace daily cap is enforced in the app as well as in the Cloud console.
+
+## Left to the builder
+
+- Exact storage shape and indexes.
+- Which mechanism runs the daily pass (see Generation and lifecycle).
+- UI layout details within the existing design system.
+- i18n copy (en and he).
+- Test structure.
+
+## Open for Shalev
+
+1. **Google billing account.** Is it OK to add a card to the TodoList Google Cloud project, with a budget alert and a quota cap? It stays inside the free tier for personal use. Without it, public transport stays an estimate (see "First milestone without Google").
+
+## Calls I made (for Shalev to check)
+
+- Google Routes for all modes, with OpenRouteService and a straight-line estimate as fallbacks. This needs a Google billing account.
+- A 14-day horizon instead of the whole semester up front.
+- Stay at the same place through windows. Going home is optional and off.
+- The default factors and buffers in the table above.
+- Travel blocks are hidden from task counts and lists, and visible in time views and to agents.
+- No travel for all-day events. No per-day start place in the first version.
