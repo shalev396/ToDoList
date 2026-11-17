@@ -7,7 +7,7 @@ import { existsSync } from 'node:fs';
 import express from 'express';
 import { resolveRegion } from '../infra/lib/constants.js';
 import { readStackOutputs } from '../infra/lib/stack-outputs.js';
-import { turnRateLimitsOffForLocalServer } from './config/localSwitches.js';
+import { turnRateLimitsOffForLocalServer, useLocalServerPool } from './config/localSwitches.js';
 import { parseLocalArgs, type LocalServerArgs } from './devtools/localArgs.js';
 
 /**
@@ -16,7 +16,8 @@ import { parseLocalArgs, type LocalServerArgs } from './devtools/localArgs.js';
  * Usage: tsx watch src/local.ts --stage dev [--no-rate-limits]
  *
  * `--no-rate-limits` turns the in-app rate limits off for this process (config/localSwitches.ts):
- * CI's browser tests send everything from 127.0.0.1. A Lambda has no such switch.
+ * CI's browser tests send everything from 127.0.0.1. The process always takes the local server's
+ * Mongo pool, because it serves every browser at once. A Lambda has neither switch.
  *
  * Inputs: DOMAIN_NAME and DATABASE_URL, from the shell or server/.env.<stage>.
  * Everything else (Cognito ids, assets bucket, KMS key) is read from the deployed todolist-<stage>
@@ -34,6 +35,7 @@ try {
   process.exit(1);
 }
 const { stage } = args;
+useLocalServerPool();
 if (!args.rateLimits) {
   turnRateLimitsOffForLocalServer();
   console.warn('[local] in-app rate limits are OFF for this process (--no-rate-limits)');

@@ -409,6 +409,13 @@ class MailTmClient:
         """The first active domain."""
         return self.domains()[0]
 
+    def forget_domains(self) -> None:
+        """Drops the cached domain list, in this process and in the state dir, so the next
+        `domains()` asks mail.tm again. Mail.tm retires domains, and refuses an address at one it
+        no longer serves (422) the way it refuses a taken one."""
+        self._domains, self._domains_at = None, 0.0
+        self.limiter.store_shared("domains", None)
+
     def create_account(self, address: str, password: str) -> dict:
         """Creates the inbox `address` (at one of `domains()`). Returns the account (`id`,
         `address`, ...)."""

@@ -32,6 +32,11 @@ jobs:
   test-backend-qa:
     name: Backend Tests (Postman vs QA)
     runs-on: ubuntu-latest
+    # Test jobs against qa take turns, here and in _test-local.yml (the PR-to-qa runs): each resets
+    # the stage first.
+    concurrency:
+      group: tests-qa
+      cancel-in-progress: false
     environment:
       name: qa
     steps:
@@ -49,13 +54,22 @@ jobs:
       - name: Reset the qa stage
         run: npm run reset:db -- qa
         working-directory: server
+      # The QA environment file only holds a placeholder baseUrl: the real one comes from the qa
+      # environment's DOMAIN_NAME, as for the Playwright job below.
       - name: Run Postman against QA API
-        run: npm run test:qa
+        env:
+          QA_API_BASE_URL: https://${{ vars.DOMAIN_NAME }}/api
+        run: npm run test:qa -- --env-var "baseUrl=$QA_API_BASE_URL"
         working-directory: server
 
   test-frontend-qa:
     name: Frontend Tests (Playwright vs QA)
     runs-on: ubuntu-latest
+    # Test jobs against qa take turns, here and in _test-local.yml (the PR-to-qa runs): each resets
+    # the stage first.
+    concurrency:
+      group: tests-qa
+      cancel-in-progress: false
     needs: test-backend-qa
     environment:
       name: qa

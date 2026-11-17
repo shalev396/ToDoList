@@ -20,7 +20,7 @@
     "reset:db": "tsx scripts/reset-db.ts",
     "deploy:frontend": "tsx scripts/deploy-frontend.ts",
     "test:local": "cd .. && postman collection run \"postman/collections/TodoList API\" --environment \"postman/environments/TodoList Local.environment.yaml\" --working-dir .",
-    "test:qa": "cd .. && postman collection run \"postman/collections/TodoList API\" --environment \"postman/environments/TodoList QA.environment.yaml\" --working-dir .",
+    "test:qa": "cd .. && postman collection run \"postman/collections/TodoList API\" --environment \"postman/environments/TodoList QA.environment.yaml\" --working-dir . --delay-request 600",
     "mcp:smoke": "tsx scripts/mcp-smoke.ts"
   },
   "engines": {
