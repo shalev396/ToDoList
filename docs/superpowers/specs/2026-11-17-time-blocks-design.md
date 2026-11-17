@@ -1,6 +1,6 @@
 # Scheduled blocks (study time and other time you reserve): design
 
-Status: draft for Shalev's review (2026-11-17). Nothing is built until he approves this document.
+Status: approved by Shalev (2026-11-17). "Areas: painting time for a part of life" was added after his follow-up the same day.
 
 ## Why
 
@@ -118,7 +118,7 @@ classDiagram
   - It also has a subject, a topic, and **Repeat**: none, weekly on the chosen days, or custom; plus an end date, defaulting to none.
   - It offers the travel time option, like any timed item.
 - **Week view:** dragging across a free slot in the calendar or timeline week view opens the block form with that time filled in.
-- **MCP:** a `create_time_block` tool, plus the same "this one / all" edits (scope `items:write`). Agents such as Grok Bot can then lay out his study week, which is what he wants to move them to.
+- **MCP:** a `create_time_block` tool (with `recurrence`, `subject`, `topic`, `layer`), plus an `edit_time_block` tool with the same "this one / all" edits and skip (scope `items:write`). Agents such as Grok Bot can then lay out his study week, which is what he wants to move them to.
 
 ## How blocks show
 
@@ -156,6 +156,25 @@ classDiagram
      - MCP `query_items`, search and `list_deadlines`.
    - Any query that names the kinds explicitly (the logic builder, or MCP with `kind`) gets them.
    - Time-shaped results always include them: the calendar, clock, timeline, agenda and workload blocks, and MCP `list_today` and `get_calendar`.
+
+## Areas: painting time for a part of life (_Added 2026-11-17_)
+
+Shalev: "I want to … paint … every time that I'm allocating to work … or to study or to personal project, but don't say exactly the task … it says studying in general, and then I can put blocks in it for studying certain stuff. These … can be repetitive."
+
+- **An area is a time block with `layer: 'area'`** (a plain block has `layer: 'block'`). Same record, same one-record repeat, same "this one / all" edits. Class: `TimeArea extends TimeBlock`; `Item.classOf` picks it by the layer.
+- **What it holds:** a general title ("Studying", "Work", "Side projects") and a topic. No subject is needed; one may be set.
+- **How it shows:**
+  - calendar and timeline: a band in the family's lightest tint (topic-colours "Area" role) behind everything, its label at the top; events, to-dos and blocks inside it draw on top as usual;
+  - clock: a thin band on the ring's outer edge, under the item arcs;
+  - agenda: a section header ("Studying 13:00–17:00") with the blocks and items inside it listed under it.
+- **Blocks inside it:** dragging inside an area in the week view creates a block with the area's topic pre-filled. Nothing links the two records: an area is time, a block is a more specific use of that time. Overlap is expected and fine.
+- **Not work:** like blocks, areas are hidden from task views and counts, have no status, and are never ticked.
+- **Busy time:** areas are not busy time for agents by default (they are a plan, not a commitment); blocks inside them are. MCP `list_today` and `get_calendar` return areas with `layer: 'area'` so an agent can plan inside them ("put the Math block inside Studying").
+- **Travel:** an area can carry travel like any timed item (e.g. "Work 9–17 at TLVTech, by car").
+- **Create form:** the kind choice becomes three options: "To-do (I'll tick it off)", "Time block (reserve the time)", "Area (paint time for a part of life)".
+- **MCP:** `create_time_block` takes `layer` (`block` by default).
+
+**What I think (my recommendation, given as asked):** keep areas as a layer of the same block, not a third kind of thing. It's the same data (time, repeat, topic), so repeats, edits, travel and agents work on day one. Drawing areas behind everything keeps the week readable even when they overlap lectures. And putting blocks inside them stays a free choice, not a nesting rule, so he never has to fix a broken hierarchy.
 
 ## Non-goals (first version)
 

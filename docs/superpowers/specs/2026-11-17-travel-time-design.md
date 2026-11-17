@@ -1,6 +1,11 @@
 # Travel time: design
 
-Status: draft for Shalev's review (2026-11-17). Nothing is built until he approves this document.
+Status: approved by Shalev (2026-11-17). Changes from his follow-up the same day:
+
+- **Agents may set up travel over MCP** (he asked for his week to be populated through the MCP): places, rules and settings, for the key's own member only. Places stay private: tools accept an address but never return one; reads give place names only.
+- **Rough values are fine to start.** He will correct them later, so the first setup may use estimated lengths (labelled "estimate" or entered as his remembered length).
+- **Without an OpenRouteService key** (he hasn't created the account yet), walking and driving use the remembered length, then the straight-line estimate. The key is read from the stage's secret when present; nothing else changes.
+- **The daily pass runs from the hourly schedule** (see the UI and sync design): after the sync dispatch, each workspace with travel rules gets its 14-day horizon refreshed, at most once a day, plus on the triggers below.
 
 ## Why
 
@@ -45,7 +50,7 @@ He wants that time to appear and be protected like a lecture: "It should be like
 - Cycling.
 - Travel for all-day events.
 - A different start place per day ("I slept elsewhere").
-- Agents creating travel rules over MCP. Agents do **see** travel blocks as busy time.
+- ~~Agents creating travel rules over MCP~~ (now in scope, see Status). Agents also **see** travel blocks as busy time.
 
 ## Anti-goals (would make this a failure even if it works)
 
