@@ -4,6 +4,8 @@ import type {
   ApiSuccessResponse,
   ConsumeConnectLinkResponseData,
   CreateIntegrationRequestBody,
+  FileUnderRequestBody,
+  FileUnderResponseData,
   GcalSyncRequestBody,
   GcalSyncResponseData,
   CreateIntegrationResponseData,
@@ -314,6 +316,22 @@ export async function listOAuthResources(
 ) {
   const response = await api.get<ApiSuccessResponse<ListOAuthResourcesResponseData>>(
     `${integrationPath(workspaceId, integrationId)}/oauth/resources`,
+    config,
+  );
+  return response.data;
+}
+
+/** File under for one calendar or project: PUT …/containers/:cid/file-under (owner only). */
+export async function fileContainerUnder(
+  workspaceId: string,
+  integrationId: string,
+  containerId: string,
+  body: FileUnderRequestBody,
+  config?: ApiRequestConfig,
+) {
+  const response = await api.put<ApiSuccessResponse<FileUnderResponseData>>(
+    `${integrationPath(workspaceId, integrationId)}/containers/${encodeURIComponent(containerId)}/file-under`,
+    body,
     config,
   );
   return response.data;

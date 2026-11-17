@@ -5,6 +5,7 @@ import { QUERY_STALE_TIME_PRIVATE_MS } from '@/api/queries/queryOptions';
 import {
   createIntegration,
   deleteIntegration,
+  fileContainerUnder,
   getIntegrationConfig,
   clearPrimaryCalendar,
   getIntegrationSharing,
@@ -274,5 +275,39 @@ export function useOAuthResources(workspaceId: string, integrationId: string) {
       });
       return response.data;
     },
+  });
+}
+
+/**
+ * File under for one calendar or project. The server re-files what is stored at once, so the
+ * workspace (its rules), items (every block and sheet), facets and integrations are all stale.
+ */
+export function useFileContainerUnder(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      integrationId: string;
+      containerId: string;
+      topicId: string | null;
+    }) =>
+      (
+        await fileContainerUnder(
+          workspaceId,
+          input.integrationId,
+          input.containerId,
+          { topicId: input.topicId },
+          { suppressErrorToast: true },
+        )
+      ).data,
+    onSuccess: () =>
+      Promise.all(
+        [
+          queryKeys.workspaces,
+          queryKeys.facets(workspaceId),
+          queryKeys.integrations(workspaceId),
+          workspaceKey(workspaceId, 'block'),
+          workspaceKey(workspaceId, 'item'),
+        ].map((queryKey) => queryClient.invalidateQueries({ queryKey })),
+      ),
   });
 }
