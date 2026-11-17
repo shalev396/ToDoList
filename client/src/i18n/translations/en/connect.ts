@@ -177,9 +177,11 @@ export const connect = {
     health: {
       ok: 'Connected',
       syncing: 'Syncing',
+      attention: 'Needs a look',
       needs_reconnect: 'Reconnect to finish',
       error: 'Needs attention',
     },
+    manageLabel: 'Manage {{name}} accounts',
     manage: 'Manage',
     panelTitle: '{{name}} accounts',
     close: 'Close accounts',
@@ -318,8 +320,8 @@ export const connect = {
   },
   oauth: {
     reconnect: 'Reconnect',
-    connected: 'Google Calendar connected.',
-    startFailed: 'Google Calendar couldn’t be connected. Try again.',
+    connected: 'Account connected.',
+    startFailed: 'The account couldn’t be connected. Try again.',
     calendars: 'Calendars',
     pickerTitle: 'Calendars of {{account}}',
     pickerDescription: 'Choose the calendars to read from.',

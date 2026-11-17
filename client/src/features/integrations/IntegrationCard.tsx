@@ -484,7 +484,7 @@ export function IntegrationCard({
                   <ExternalLink aria-hidden="true" className="size-3.5" />
                 </a>
               )}
-              {onReconnect === undefined ? null : (
+              {onReconnect === undefined || integration.needsReconnect ? null : (
                 <Button
                   type="button"
                   variant="ghost"
@@ -569,7 +569,17 @@ export function IntegrationCard({
       </AlertDialog>
 
       <AlertDialog open={reconnectOffer} onOpenChange={setReconnectOffer}>
-        <AlertDialogContent data-reconnect-confirm>
+        <AlertDialogContent
+          data-reconnect-confirm
+          onCloseAutoFocus={(event) => {
+            // "Later" leaves the card as it was: back on the switch that was just turned on.
+            const target = card.current?.querySelector<HTMLElement>('[data-mode-switch]');
+            if (target !== null && target !== undefined) {
+              event.preventDefault();
+              target.focus();
+            }
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>{t('connect.reconnect.title', { name })}</AlertDialogTitle>
             <AlertDialogDescription>{t('connect.reconnect.body', { name })}</AlertDialogDescription>

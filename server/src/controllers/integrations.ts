@@ -30,16 +30,17 @@ import { parseOr400, routeParam } from '../utils/validation.js';
 /** The caller's own integrations only: other members' show as provider icons on Members. */
 const list: RequestHandler = async (req, res): Promise<void> => {
   const request = req as WorkspaceRequest;
+  const own = await Integration.listOwn(request.caller);
+  // One query for every grant's scopes (`needsReconnect`), not one per connection.
+  const byId = new Map((await Integration.toStatusViews(own)).map((view) => [view.id, view]));
   const data: ListIntegrationsResponseData = await Promise.all(
-    (await Integration.listOwn(request.caller)).map(async (integration) =>
+    own.map(async (integration) => {
+      const view = byId.get(integration.id) ?? (await integration.toStatusView());
       // A Google Calendar's live pushed events, so an earlier workspace calendar's can be removed.
-      isAddedContentRemover(integration)
-        ? {
-            ...(await integration.toStatusView()),
-            pushedEvents: await integration.pushedEventCount(request.caller),
-          }
-        : await integration.toStatusView(),
-    ),
+      return isAddedContentRemover(integration)
+        ? { ...view, pushedEvents: await integration.pushedEventCount(request.caller) }
+        : view;
+    }),
   );
   res.success(data);
 };

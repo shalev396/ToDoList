@@ -1,5 +1,5 @@
-import type { ProviderCapabilities } from '@api-types/integrations.ts';
-import { isRunActive } from './status.ts';
+import type { ProviderCapabilities, SyncRunView } from '@api-types/integrations.ts';
+import { daysUntil, isRunActive, needsRenewalHint } from './status.ts';
 
 /** What the summary reads of a connection (a slice of the status view; no server route types). */
 export interface AccountState {
@@ -7,10 +7,11 @@ export interface AccountState {
   accountLabel: string;
   status: string;
   needsReconnect: boolean;
+  expiresAt: string | Date | null;
 }
 
 /** What a provider's card says about all its accounts together, worst first. */
-export type ProviderHealth = 'error' | 'needs_reconnect' | 'syncing' | 'ok';
+export type ProviderHealth = 'error' | 'attention' | 'needs_reconnect' | 'syncing' | 'ok';
 
 export interface ProviderSummary {
   /** How many accounts of this provider are connected. */
@@ -21,24 +22,40 @@ export interface ProviderSummary {
   label: string | null;
 }
 
+/** What the latest sync run of a connection says, by connection id. */
+export interface RunFacts {
+  syncing: (integrationId: string) => boolean;
+  failed: (integrationId: string) => boolean;
+}
+
 /**
- * The provider card's one line: the number of accounts and the worst state among them. A
- * connection that is expired or in error is worst, then one that must reconnect to finish
- * switching to read & write, then one whose latest sync run is still going.
+ * The provider card's one line: the number of accounts and the worst state among them. Worst
+ * first: expired, in error or past its expiry (error); then one that expires within 14 days or
+ * whose latest sync failed (attention); then one that must reconnect to finish switching to
+ * read & write; then one whose latest sync run is still going.
  */
 export function summarizeProvider(
   integrations: readonly AccountState[],
-  syncing: (integrationId: string) => boolean,
+  runs: RunFacts,
+  now: Date,
 ): ProviderSummary {
   if (integrations.length === 0) {
     return { count: 0, health: undefined, label: null };
   }
+  const lapsed = (entry: AccountState): boolean => {
+    const days = daysUntil(entry.expiresAt, now);
+    return entry.status !== 'connected' || (days !== null && days <= 0);
+  };
   let health: ProviderHealth = 'ok';
-  if (integrations.some((entry) => entry.status !== 'connected')) {
+  if (integrations.some(lapsed)) {
     health = 'error';
+  } else if (
+    integrations.some((entry) => needsRenewalHint(entry.expiresAt, now) || runs.failed(entry.id))
+  ) {
+    health = 'attention';
   } else if (integrations.some((entry) => entry.needsReconnect)) {
     health = 'needs_reconnect';
-  } else if (integrations.some((entry) => syncing(entry.id))) {
+  } else if (integrations.some((entry) => runs.syncing(entry.id))) {
     health = 'syncing';
   }
   return {
@@ -46,6 +63,11 @@ export function summarizeProvider(
     health,
     label: integrations.length === 1 ? (integrations[0]?.accountLabel ?? null) : null,
   };
+}
+
+/** True when a connection's latest sync run failed or only partly worked. */
+export function isFailed(run: Pick<SyncRunView, 'status'> | undefined): boolean {
+  return run !== undefined && (run.status === 'failed' || run.status === 'partial');
 }
 
 /** True while a sync run of this connection is queued or running. */

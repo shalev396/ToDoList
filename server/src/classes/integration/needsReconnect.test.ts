@@ -100,4 +100,17 @@ describe('IntegrationStatusView.needsReconnect', () => {
     const github = await connection({ provider: 'github', scopes: ['read:user'] });
     assert.equal((await github.toStatusView()).needsReconnect, false);
   });
+
+  it('toStatusViews answers a list the same way, per connection', async () => {
+    const lacking = await connection({ provider: 'jira', scopes: ['read:jira-work'] });
+    const having = await connection({ provider: 'jira', scopes: ['write:jira-work'] });
+    const readOnly = await connection({ provider: 'linear', mode: 'read', scopes: [] });
+    const key = await connection({ provider: 'jira', authMethod: 'api_token_basic' });
+    const views = await Integration.toStatusViews([lacking, having, readOnly, key]);
+    assert.deepEqual(
+      views.map((view) => view.needsReconnect),
+      [true, false, false, false],
+    );
+    assert.deepEqual(await Integration.toStatusViews([]), []);
+  });
 });

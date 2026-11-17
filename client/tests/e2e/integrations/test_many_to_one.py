@@ -61,8 +61,10 @@ def test_two_jira_connections_show_in_the_card_the_editor_and_disconnect_one(
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, "/en/integrations")
     expect(_card(page)).to_have_count(1, timeout=NORMAL_TIMEOUT)
-    expect(page.locator("[data-connect-another=jira]")).to_have_count(0)
+    # Nothing connected: Connect, no Manage button and no panel.
+    expect(_card(page).locator("[data-oauth-connect=jira]")).to_be_visible()
     expect(page.locator("[data-integration-manage=jira]")).to_have_count(0)
+    expect(page.locator("[data-integration-panel=jira]")).to_have_count(0)
 
     _connect_jira(page, SITES[0], first=True)
     # One account: the card names it and offers Manage.

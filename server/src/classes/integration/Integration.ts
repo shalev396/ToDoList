@@ -509,8 +509,43 @@ export abstract class Integration<
    * token, for demo data and while read-only.
    */
   async needsReconnect(): Promise<boolean> {
-    if (this.demo || !this.mode.allowsWrites) return false;
+    if (!this.mayNeedReconnect()) return false;
     return this.needsWriteConsent();
+  }
+
+  /**
+   * The status views of a list: the scopes of every grant that could need a reconnect are read in
+   * one query, not one each.
+   */
+  static async toStatusViews(
+    integrations: readonly Integration[],
+  ): Promise<IntegrationStatusView[]> {
+    const candidates = integrations.filter((integration) => integration.mayNeedReconnect());
+    const metas =
+      candidates.length === 0
+        ? []
+        : await Credential.metaOf(
+            candidates[0]?.workspaceId ?? '',
+            candidates.map((integration) => integration.id),
+          );
+    const granted = new Map(metas.map((meta) => [meta.integrationId, meta.scopes]));
+    return integrations.map((integration) => ({
+      ...integration.toView(),
+      needsReconnect:
+        integration.mayNeedReconnect() &&
+        integration.writeScopesMissing(new Set(granted.get(integration.id) ?? [])),
+    }));
+  }
+
+  /** Read & write over an OAuth grant, never demo data: the only case that can need a reconnect. */
+  protected mayNeedReconnect(): boolean {
+    return !this.demo && this.mode.allowsWrites && this.auth instanceof OAuthAuth;
+  }
+
+  /** Whether `granted` lacks any of this OAuth connection's write scopes. */
+  protected writeScopesMissing(granted: ReadonlySet<string>): boolean {
+    const auth = this.auth;
+    return auth instanceof OAuthAuth && auth.writeScopes.some((scope) => !granted.has(scope));
   }
 
   /** How it connects: its auth strategy's kind (`oauth`, `api_key`, `service_account`). */

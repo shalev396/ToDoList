@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router-dom';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { ProviderIcon } from '@/features/landing/ProviderIcon';
 import { cn } from '@/lib/utils';
 import type { IntegrationStatusView } from '@api-types/api-contracts';
@@ -15,7 +15,7 @@ import type {
 import { integrationAnchor } from './anchor';
 import { IntegrationCard } from './IntegrationCard';
 import { comingSoonOf, hasTokenFallback, type OAuthMode } from './oauthSetup';
-import { isSyncing, summarizeProvider, type ProviderHealth } from './providerSummary';
+import { isFailed, isSyncing, summarizeProvider, type ProviderHealth } from './providerSummary';
 import { PROVIDER_REGISTRY } from './providers';
 import { latestRun } from './status';
 import { TokenFallback } from './TokenFallback';
@@ -50,6 +50,7 @@ interface ProviderCardProps {
 
 const HEALTH_DOT: Record<ProviderHealth, string> = {
   error: 'bg-destructive',
+  attention: 'bg-destructive',
   needs_reconnect: 'bg-destructive',
   syncing: 'bg-muted-foreground',
   ok: 'bg-success',
@@ -86,7 +87,14 @@ export function ProviderCard({
   const name = t(`sources.${provider}`);
   const comingSoon = comingSoonOf(capabilities, provider);
   const accounts = comingSoon ? [] : integrations;
-  const summary = summarizeProvider(accounts, (id) => isSyncing(latestRun(runs, id)));
+  const summary = summarizeProvider(
+    accounts,
+    {
+      syncing: (id) => isSyncing(latestRun(runs, id)),
+      failed: (id) => isFailed(latestRun(runs, id)),
+    },
+    now,
+  );
   // The item sheet links to `#integration-<id>`: the panel of that connection opens, and its card
   // takes the focus (the panel's own opening focus yields to it).
   const named = accounts.some((entry) => hash === `#${integrationAnchor(entry.id)}`);
@@ -98,8 +106,13 @@ export function ProviderCard({
       setOpened(true);
     }
   }
-  // Its last account was disconnected: nothing is left to manage.
+  // Its last account was disconnected: nothing is left to manage, and the panel must not come
+  // back by itself when an account appears again (a connect form may be open over it).
+  if (opened && accounts.length === 0) {
+    setOpened(false);
+  }
   const open = opened && accounts.length > 0;
+  const connectButton = useRef<HTMLButtonElement>(null);
 
   const connectLabel =
     signInMode === 'unavailable'
@@ -108,107 +121,108 @@ export function ProviderCard({
   const connectDisabled = starting || signInMode !== 'connect';
 
   return (
-    <article
-      data-integration-card={provider}
-      data-count={summary.count}
-      data-health={summary.health ?? 'none'}
-      data-coming-soon={comingSoon ? 'true' : undefined}
-      aria-label={name}
-      className="flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4"
-    >
-      <header className="flex items-start gap-3">
-        <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sunken">
-          <ProviderIcon name={spec.icon} className="size-5" />
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col">
-          <h2 className="text-sm leading-snug font-semibold">{name}</h2>
-          {summary.count === 0 ? null : (
+    <Sheet open={open} onOpenChange={setOpened}>
+      <article
+        data-integration-card={provider}
+        data-count={summary.count}
+        data-health={summary.health ?? 'none'}
+        data-coming-soon={comingSoon ? 'true' : undefined}
+        aria-label={name}
+        className="flex min-w-0 flex-col gap-4 rounded-lg border bg-card p-4"
+      >
+        <header className="flex items-start gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-md bg-sunken">
+            <ProviderIcon name={spec.icon} className="size-5" />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <h2 className="text-sm leading-snug font-semibold">{name}</h2>
+            {summary.count === 0 ? null : (
+              <p
+                className="truncate text-[13px] text-muted-foreground"
+                title={summary.label ?? undefined}
+                data-provider-summary
+                dir="auto"
+              >
+                {summary.label ?? t('connect.provider.accounts', { count: summary.count })}
+              </p>
+            )}
+          </div>
+          {comingSoon ? (
             <p
-              className="truncate text-[13px] text-muted-foreground"
-              title={summary.label ?? undefined}
-              data-provider-summary
-              dir="auto"
+              data-coming-soon-badge
+              className="shrink-0 rounded-full border px-2 py-0.5 text-[12px] font-medium text-muted-foreground"
             >
-              {summary.label ?? t('connect.provider.accounts', { count: summary.count })}
+              {t('connect.signin.comingSoon')}
+            </p>
+          ) : (
+            <p
+              data-status-text
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 text-[13px]',
+                summary.health === undefined && 'text-muted-foreground',
+                (summary.health === 'error' || summary.health === 'needs_reconnect') &&
+                  'text-destructive',
+              )}
+            >
+              {summary.health === undefined ? null : (
+                <span
+                  aria-hidden="true"
+                  className={cn('size-2 rounded-full', HEALTH_DOT[summary.health])}
+                />
+              )}
+              {t(
+                summary.health === undefined
+                  ? 'connect.status.none'
+                  : `connect.provider.health.${summary.health}`,
+              )}
             </p>
           )}
-        </div>
-        {comingSoon ? (
-          <p
-            data-coming-soon-badge
-            className="shrink-0 rounded-full border px-2 py-0.5 text-[12px] font-medium text-muted-foreground"
-          >
-            {t('connect.signin.comingSoon')}
-          </p>
-        ) : (
-          <p
-            data-status-text
-            className={cn(
-              'flex shrink-0 items-center gap-1.5 text-[13px]',
-              summary.health === undefined && 'text-muted-foreground',
-              (summary.health === 'error' || summary.health === 'needs_reconnect') &&
-                'text-destructive',
-            )}
-          >
-            {summary.health === undefined ? null : (
-              <span
-                aria-hidden="true"
-                className={cn('size-2 rounded-full', HEALTH_DOT[summary.health])}
-              />
-            )}
-            {t(
-              summary.health === undefined
-                ? 'connect.status.none'
-                : `connect.provider.health.${summary.health}`,
-            )}
-          </p>
-        )}
-      </header>
+        </header>
 
-      {summary.count === 0 ? (
-        <p className="text-[13px] text-muted-foreground">{t(`connect.about.${provider}`)}</p>
-      ) : null}
-
-      <footer className="mt-auto flex flex-wrap items-center gap-2">
-        {summary.count > 0 ? (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="max-md:h-11"
-            data-integration-manage={provider}
-            onClick={() => {
-              setOpened(true);
-            }}
-          >
-            {t('connect.provider.manage')}
-          </Button>
-        ) : canConnect && !comingSoon ? (
-          <>
-            <Button
-              type="button"
-              size="sm"
-              className="max-md:h-11"
-              data-oauth-connect={provider}
-              data-oauth-mode={signInMode}
-              disabled={signInMode !== 'connect'}
-              onClick={onConnect}
-            >
-              {connectLabel}
-            </Button>
-            {signInMode === 'connect' ? (
-              <p className="basis-full text-[13px] text-muted-foreground" data-oauth-consent>
-                {t(`connect.signin.consent.${provider}`)}
-              </p>
-            ) : null}
-            {hasTokenFallback(provider) ? (
-              <TokenFallback provider={provider} name={name} onOpen={onTokenConnect} />
-            ) : null}
-          </>
+        {summary.count === 0 ? (
+          <p className="text-[13px] text-muted-foreground">{t(`connect.about.${provider}`)}</p>
         ) : null}
-      </footer>
 
-      <Sheet open={open} onOpenChange={setOpened}>
+        <footer className="mt-auto flex flex-wrap items-center gap-2">
+          {summary.count > 0 ? (
+            <SheetTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="max-md:h-11"
+                data-integration-manage={provider}
+                aria-label={t('connect.provider.manageLabel', { name })}
+              >
+                {t('connect.provider.manage')}
+              </Button>
+            </SheetTrigger>
+          ) : canConnect && !comingSoon ? (
+            <>
+              <Button
+                type="button"
+                size="sm"
+                className="max-md:h-11"
+                ref={connectButton}
+                data-oauth-connect={provider}
+                data-oauth-mode={signInMode}
+                disabled={signInMode !== 'connect'}
+                onClick={onConnect}
+              >
+                {connectLabel}
+              </Button>
+              {signInMode === 'connect' ? (
+                <p className="basis-full text-[13px] text-muted-foreground" data-oauth-consent>
+                  {t(`connect.signin.consent.${provider}`)}
+                </p>
+              ) : null}
+              {hasTokenFallback(provider) ? (
+                <TokenFallback provider={provider} name={name} onOpen={onTokenConnect} />
+              ) : null}
+            </>
+          ) : null}
+        </footer>
+
         <SheetContent
           aria-describedby={undefined}
           closeLabel={t('connect.provider.close')}
@@ -217,6 +231,13 @@ export function ProviderCard({
           onOpenAutoFocus={(event) => {
             if (named) {
               event.preventDefault();
+            }
+          }}
+          onCloseAutoFocus={(event) => {
+            // Manage is gone with the last account: Connect is where the person is, now.
+            if (accounts.length === 0) {
+              event.preventDefault();
+              connectButton.current?.focus();
             }
           }}
         >
@@ -282,7 +303,7 @@ export function ProviderCard({
             </div>
           </ScrollArea>
         </SheetContent>
-      </Sheet>
-    </article>
+      </article>
+    </Sheet>
   );
 }

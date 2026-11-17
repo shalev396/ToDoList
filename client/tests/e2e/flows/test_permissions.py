@@ -42,8 +42,10 @@ def _headers(user) -> dict:
 
 def _jira_card(page: Page):
     """The connection's own card: it lives in the provider's Manage panel, opened here."""
-    page.locator("[data-integration-manage=jira]").click()
-    expect(page.locator("[data-integration-panel=jira]")).to_be_visible(timeout=NORMAL_TIMEOUT)
+    panel = page.locator("[data-integration-panel=jira]")
+    if not panel.is_visible():  # already open: its overlay would block the Manage button
+        page.locator("[data-integration-manage=jira]").click()
+    expect(panel).to_be_visible(timeout=NORMAL_TIMEOUT)
     return page.locator("[data-integration-account=jira]").filter(has_text=SITE)
 
 

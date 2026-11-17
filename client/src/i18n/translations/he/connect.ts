@@ -176,9 +176,11 @@ export const connect = {
     health: {
       ok: 'מחובר',
       syncing: 'מסתנכרן',
+      attention: 'שווה לבדוק',
       needs_reconnect: 'צריך להתחבר מחדש',
       error: 'דורש תשומת לב',
     },
+    manageLabel: 'ניהול חשבונות {{name}}',
     manage: 'ניהול',
     panelTitle: 'חשבונות {{name}}',
     close: 'סגירת החשבונות',
@@ -319,8 +321,8 @@ export const connect = {
   },
   oauth: {
     reconnect: 'חיבור מחדש',
-    connected: 'יומן Google חובר.',
-    startFailed: 'לא הצלחנו לחבר את יומן Google. נסו שוב.',
+    connected: 'החשבון חובר.',
+    startFailed: 'לא הצלחנו לחבר את החשבון. נסו שוב.',
     calendars: 'יומנים',
     pickerTitle: 'היומנים של {{account}}',
     pickerDescription: 'בחרו מאילו יומנים לקרוא.',
