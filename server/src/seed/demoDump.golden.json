@@ -14047,7 +14047,21 @@
     "Topics": [
       {
         "__v": 0,
-        "colour": null,
+        "colour": "blue",
+        "createdAt": "<time>",
+        "createdBy": null,
+        "icon": "leaf",
+        "name": "Personal",
+        "order": 0,
+        "slug": "personal",
+        "updatedAt": "<time>",
+        "workspaceId": "workspace:Demo dump",
+        "#id": "topic:personal",
+        "#created": 0
+      },
+      {
+        "__v": 0,
+        "colour": "orange",
         "createdAt": "<time>",
         "createdBy": null,
         "icon": "briefcase",
@@ -14061,7 +14075,7 @@
       },
       {
         "__v": 0,
-        "colour": null,
+        "colour": "teal",
         "createdAt": "<time>",
         "createdBy": null,
         "icon": "graduation-cap",
@@ -14072,20 +14086,6 @@
         "workspaceId": "workspace:Demo dump",
         "#id": "topic:college",
         "#created": 2
-      },
-      {
-        "__v": 0,
-        "colour": null,
-        "createdAt": "<time>",
-        "createdBy": null,
-        "icon": "leaf",
-        "name": "Personal",
-        "order": 0,
-        "slug": "personal",
-        "updatedAt": "<time>",
-        "workspaceId": "workspace:Demo dump",
-        "#id": "topic:personal",
-        "#created": 0
       }
     ],
     "Users": [
@@ -28566,7 +28566,21 @@
     "Topics": [
       {
         "__v": 0,
-        "colour": null,
+        "colour": "blue",
+        "createdAt": "<time>",
+        "createdBy": null,
+        "icon": "leaf",
+        "name": "Personal",
+        "order": 0,
+        "slug": "personal",
+        "updatedAt": "<time>",
+        "workspaceId": "workspace:Demo dump",
+        "#id": "topic:personal",
+        "#created": 0
+      },
+      {
+        "__v": 0,
+        "colour": "orange",
         "createdAt": "<time>",
         "createdBy": null,
         "icon": "briefcase",
@@ -28580,7 +28594,7 @@
       },
       {
         "__v": 0,
-        "colour": null,
+        "colour": "teal",
         "createdAt": "<time>",
         "createdBy": null,
         "icon": "graduation-cap",
@@ -28591,20 +28605,6 @@
         "workspaceId": "workspace:Demo dump",
         "#id": "topic:college",
         "#created": 2
-      },
-      {
-        "__v": 0,
-        "colour": null,
-        "createdAt": "<time>",
-        "createdBy": null,
-        "icon": "leaf",
-        "name": "Personal",
-        "order": 0,
-        "slug": "personal",
-        "updatedAt": "<time>",
-        "workspaceId": "workspace:Demo dump",
-        "#id": "topic:personal",
-        "#created": 0
       }
     ],
     "Users": [

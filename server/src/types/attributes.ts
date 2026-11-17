@@ -8,6 +8,8 @@
  */
 import { z } from 'zod';
 
+import { TOPIC_COLOURS } from './topics.js';
+
 export const ATTRIBUTE_TYPES = [
   'rating',
   'number',
@@ -28,13 +30,30 @@ export const BUILTIN_IMPORTANCE_DEFAULT = 3;
 export const RATING_MIN = 1;
 export const RATING_MAX = 5;
 export const MAX_ATTRIBUTE_OPTIONS = 30;
+/** The attribute whose options are the workspace's subjects (each lesson its own colour). */
+export const SUBJECT_ATTRIBUTE_KEY = 'subject';
+export const OPTION_PATTERNS_MAX = 10;
+export const OPTION_PATTERN_LENGTH_MAX = 100;
+const RENAMES_MAX = 30;
 /** The longest text attribute value. */
 export const ATTRIBUTE_TEXT_MAX = 500;
 const DEFAULT_NUMBER_MIN = 0;
 const DEFAULT_NUMBER_MAX = 100;
 
 const NameSchema = z.string().trim().min(1).max(40);
-const OptionsSchema = z.array(z.string().trim().min(1).max(40)).max(MAX_ATTRIBUTE_OPTIONS);
+const OptionSchema = z.string().trim().min(1).max(40);
+const OptionsSchema = z.array(OptionSchema).max(MAX_ATTRIBUTE_OPTIONS);
+
+/** How one option of a select looks: its colour family and the title globs that pick it. */
+export const OptionLookSchema = z.strictObject({
+  option: OptionSchema,
+  colour: z.enum(TOPIC_COLOURS),
+  patterns: z
+    .array(z.string().trim().min(1).max(OPTION_PATTERN_LENGTH_MAX))
+    .max(OPTION_PATTERNS_MAX),
+});
+export type OptionLook = z.infer<typeof OptionLookSchema>;
+const OptionLooksSchema = z.array(OptionLookSchema).max(MAX_ATTRIBUTE_OPTIONS);
 
 export const AttributeKeySchema = z
   .string()
@@ -47,6 +66,8 @@ export const AttributeDefSchema = z.strictObject({
   type: z.enum(ATTRIBUTE_TYPES),
   /** select and multiSelect: the allowed values. */
   options: OptionsSchema.optional(),
+  /** select: how options look (colour family, title patterns); an option without one has none. */
+  optionLooks: OptionLooksSchema.optional(),
   /** number: the range the importance formula normalises against (default 0-100). */
   min: z.number().optional(),
   max: z.number().optional(),
@@ -57,6 +78,7 @@ export type AttributeDef = z.infer<typeof AttributeDefSchema>;
 interface Shape {
   type: AttributeType;
   options?: string[] | undefined;
+  optionLooks?: OptionLook[] | undefined;
   min?: number | undefined;
   max?: number | undefined;
 }
@@ -68,6 +90,30 @@ function refineShape(def: Shape, ctx: z.RefinementCtx): void {
   }
   if (!listed && def.options !== undefined) {
     ctx.addIssue({ code: 'custom', path: ['options'], message: 'only a select has options' });
+  }
+  if (def.optionLooks !== undefined) {
+    if (def.type !== 'select') {
+      ctx.addIssue({ code: 'custom', path: ['optionLooks'], message: 'only a select has looks' });
+    } else {
+      const seen = new Set<string>();
+      for (const [index, look] of def.optionLooks.entries()) {
+        if (def.options !== undefined && !def.options.includes(look.option)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['optionLooks', index, 'option'],
+            message: 'a look names an option',
+          });
+        }
+        if (seen.has(look.option)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['optionLooks', index, 'option'],
+            message: 'one look per option',
+          });
+        }
+        seen.add(look.option);
+      }
+    }
   }
   if (def.type !== 'number' && (def.min !== undefined || def.max !== undefined)) {
     ctx.addIssue({ code: 'custom', path: ['min'], message: 'only a number has a range' });
@@ -88,6 +134,7 @@ export const NewAttributeSchema = z
     name: NameSchema,
     type: z.enum(ATTRIBUTE_TYPES),
     options: OptionsSchema.optional(),
+    optionLooks: OptionLooksSchema.optional(),
     min: z.number().optional(),
     max: z.number().optional(),
   })
@@ -99,6 +146,12 @@ export const AttributePatchSchema = z
   .strictObject({
     name: NameSchema.optional(),
     options: OptionsSchema.optional(),
+    optionLooks: OptionLooksSchema.optional(),
+    /** Options renamed in this edit: stored values move with them. */
+    renames: z
+      .array(z.strictObject({ from: OptionSchema, to: OptionSchema }))
+      .max(RENAMES_MAX)
+      .optional(),
     min: z.number().optional(),
     max: z.number().optional(),
   })

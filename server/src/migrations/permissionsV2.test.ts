@@ -83,6 +83,8 @@ describe('in the migrations list', () => {
         '2026-11-15-orphaned-dashboards',
         // And their topics, before the cascade's topics step.
         '2026-11-16-orphaned-topics',
+        // Every topic a colour family.
+        '2026-11-17-topic-colours',
       ],
     );
   });

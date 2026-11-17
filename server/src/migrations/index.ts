@@ -18,6 +18,7 @@ import { orphanedTopics } from './orphanedTopics.js';
 import { primaryCalendar } from './primaryCalendar.js';
 import { primaryCalendarRead } from './primaryCalendarRead.js';
 import { removeGoogleDrive } from './removeGoogleDrive.js';
+import { topicColours } from './topicColours.js';
 import type { Db, Migration } from './types.js';
 
 export type { Db, Migration } from './types.js';
@@ -38,6 +39,7 @@ export const MIGRATIONS: readonly Migration[] = [
   calendarLinkDeleteAnswered,
   orphanedDashboards,
   orphanedTopics,
+  topicColours,
 ];
 
 interface MigrationRecord {

@@ -14,6 +14,7 @@
 import { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { TopicRule } from '../../models/definitions/Workspace.js';
+import { matchesGlob } from '../../types/glob.js';
 import { exactRuleFor, sameRuleMatch } from '../../types/topicRules.js';
 
 export interface TopicInput {
@@ -21,16 +22,6 @@ export interface TopicInput {
   matchKey: string;
   /** The topic when no rule matches: the integration's (defaultFor); null = none. */
   defaultTopicId: string | null;
-}
-
-const REGEXP_SYNTAX = /[.*+?^${}()|[\]\\/]/g;
-
-function globToRegExp(pattern: string): RegExp {
-  const source = pattern
-    .split('*')
-    .map((part) => part.replace(REGEXP_SYNTAX, '\\$&'))
-    .join('.*');
-  return new RegExp(`^${source}$`, 'isu');
 }
 
 export class TopicRules {
@@ -70,7 +61,7 @@ export class TopicRules {
 
   /** True when the glob `pattern` matches all of `key`, ignoring case. */
   static matches(pattern: string, key: string): boolean {
-    return globToRegExp(pattern).test(key);
+    return matchesGlob(pattern, key);
   }
 
   /** The topic an integration's records get when no rule or override applies (set at connect time). */
