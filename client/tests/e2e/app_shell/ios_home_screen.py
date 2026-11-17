@@ -102,6 +102,24 @@ def test_home_screen_app_with_a_short_viewport_has_no_gap(base_url: str, authent
         assert control_box is not None and control_box["y"] >= SAFE_TOP
 
 
+def test_home_screen_app_tabs_sit_low_but_clear_the_home_indicator(base_url: str, authenticated_page: Page):
+    page = authenticated_page
+    page.add_init_script(FAKE_HOME_SCREEN_APP)
+    _open_dashboard(page, base_url, IPHONE)
+
+    # The viewport reaches the bottom: the app keeps 20px of the 34px inset (BOTTOM_INSET_CAP_PX),
+    # so the tabs sit 14px lower than in a Safari tab, still clear of the home indicator.
+    tabs = page.locator(TAB_BAR).first
+    expect(tabs).to_have_css("padding-bottom", "20px")
+    box = _box(page, TAB_BAR)
+    assert round(box["y"] + box["height"]) == IPHONE["height"], "the tab bar does not reach the bottom"
+    for link in page.locator(f"{TAB_BAR} a").all():
+        link_box = link.bounding_box()
+        assert link_box is not None
+        assert link_box["y"] + link_box["height"] <= IPHONE["height"] - 20 + 0.5, "a tab reaches the home indicator"
+    _bottom_edge_is_the_tab_bar(page)
+
+
 def test_auth_header_clears_the_iphone_top_inset(app_url: str, page: Page):
     page.set_viewport_size(IPHONE)
     page.goto(f"{app_url}/login", wait_until="load")
