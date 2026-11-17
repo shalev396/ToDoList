@@ -1,6 +1,6 @@
 /**
- * The dispatched sync (the API function's `sync-dispatch` action, invoked directly; no schedule
- * for now): one queued run per dispatchable integration, i.e. not deleted, `active`, `expiring` or
+ * The dispatched sync (the API function's `sync-dispatch` action, invoked hourly by the schedule,
+ * or directly): one queued run per dispatchable integration, i.e. not deleted, `active`, `expiring` or
  * `error`, not failed on auth, and with a credential. Expired and paused ones, those whose last
  * error is `auth_failed`, and those without a credential yet (R6) wait for the user (a reconnect,
  * or the credential). Each run is a background job carrying ids and the mode only

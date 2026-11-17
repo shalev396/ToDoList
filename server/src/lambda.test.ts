@@ -112,6 +112,19 @@ describe('lambda handler: maintenance actions', () => {
   });
 });
 
+describe('lambda handler: scheduled tick', () => {
+  it('runs the scheduled tick on sync-dispatch', async () => {
+    const result = (await handler({ action: 'sync-dispatch' }, context)) as {
+      statusCode: number;
+      body: string;
+    };
+    assert.equal(result.statusCode, 200);
+    const body = JSON.parse(result.body) as { dispatch: { dispatched: unknown }; passes: unknown };
+    assert.equal(typeof body.dispatch.dispatched, 'number');
+    assert.deepEqual(body.passes, {});
+  });
+});
+
 describe('lambda handler: HTTP', () => {
   it('serves an API Gateway event through Express, even one that carries job keys', async () => {
     const path = '/api/public/no-such-route';

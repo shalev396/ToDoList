@@ -9,11 +9,11 @@ import { createApp } from './app.js';
 import { initDB } from './config/database.js';
 import { AppError } from './errors/AppError.js';
 import { purgeDeleted } from './jobs/purge.js';
+import { runScheduledTick } from './jobs/scheduledTick.js';
 import { seedStage } from './jobs/seed.js';
 import { logger } from './services/logger.js';
 import { resetStage, syncSchema } from './services/stageMaintenance.js';
 import { parseSyncJob } from './services/syncJobs.js';
-import { dispatchAllSyncs } from './sync/dispatcher.js';
 import { dispatchGcalSyncs } from './sync/gcalDispatcher.js';
 import { runSyncJob } from './sync/worker.js';
 import {
@@ -41,12 +41,13 @@ import {
  * - a maintenance action, `{ "action": … }`:
  *   - `sync-db`       from `npm run deploy:backend` (every stage)
  *   - `reset-db`      from `npm run reset:db` before the test suites (refused on prod)
- *   - `sync-dispatch` one background sync run per dispatchable integration
+ *   - `sync-dispatch` one background sync run per dispatchable integration, then the
+ *                    after-dispatch passes (jobs/scheduledTick.ts)
  *   - `gcal-dispatch` one background Google Calendar push + pull per OAuth integration
  *   - `purge`         hard-delete rows soft-deleted more than 30 days ago, end dead sync runs
  *   - `seed`          demo data, dev only (refused elsewhere)
- *   No schedule invokes them for now: they run when the function is invoked directly. A refused
- *   action answers with its AppError's status code.
+ *   `sync-dispatch` also runs hourly from the stack's one EventBridge rule; the others run only
+ *   when invoked directly. A refused action answers with its AppError's status code.
  * Only lambda:InvokeFunction reaches the jobs and the actions, never the HTTP API: API Gateway
  * events always carry `requestContext`, so HTTP traffic can never take those branches.
  */
@@ -75,7 +76,7 @@ function isApiAction(action: unknown): action is ApiAction {
 const ACTIONS: Record<ApiAction, () => Promise<unknown>> = {
   [SYNC_DB_ACTION]: syncSchema,
   [RESET_DB_ACTION]: resetStage,
-  [SYNC_DISPATCH_ACTION]: () => dispatchAllSyncs('schedule'),
+  [SYNC_DISPATCH_ACTION]: () => runScheduledTick(),
   [GCAL_DISPATCH_ACTION]: () => dispatchGcalSyncs(),
   [PURGE_ACTION]: () => purgeDeleted(),
   [SEED_ACTION]: () => seedStage(),
