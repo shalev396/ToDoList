@@ -212,6 +212,29 @@
   }
 }
 
+/*
+ * Safe-area insets. Components use var(--safe-*), never env(): the raw insets live in --inset-*
+ * (a test can force iPhone values, top 59px and bottom 34px, on a desktop browser).
+ * In the iPhone Home Screen app, src/lib/standaloneInsets.ts sets two more (both no-ops
+ * everywhere else): --offscreen-bottom, the part of the screen already below the viewport, comes
+ * off the bottom inset; and --bottom-inset-cap keeps at most 20px of it, as iOS 26's own tab bars
+ * do, so the tabs sit low instead of above a band the height of a fingertip. 20px still clears
+ * the home indicator (8–13px from the bottom).
+ */
+:root {
+  --inset-top: env(safe-area-inset-top, 0px);
+  --inset-bottom: env(safe-area-inset-bottom, 0px);
+  --offscreen-bottom: 0px;
+  --bottom-inset-cap: 999px;
+  --safe-top: var(--inset-top);
+  --safe-bottom: max(
+    0px,
+    min(calc(var(--inset-bottom) - var(--offscreen-bottom)), var(--bottom-inset-cap))
+  );
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -220,11 +243,12 @@
     @apply bg-background text-foreground;
     min-width: 320px;
     /* Landscape notch: keep content clear of the side insets (viewport-fit=cover). */
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
   }
 
   html {
+    @apply bg-background;
     font-family: var(--font-sans);
     font-size: 16px;
     -webkit-font-smoothing: antialiased;

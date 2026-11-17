@@ -24,7 +24,7 @@ export default function Footer() {
 
   return (
     <footer className="border-t bg-background">
-      <div className="mx-auto max-w-[1200px] px-4 pt-10 pb-[calc(2.5rem+env(safe-area-inset-bottom))] sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1200px] px-4 pt-10 pb-[calc(2.5rem+var(--safe-bottom))] sm:px-6 lg:px-8">
         <div className="flex flex-col gap-8 md:flex-row md:items-start md:justify-between">
           <div className="flex flex-col gap-2">
             <Link
