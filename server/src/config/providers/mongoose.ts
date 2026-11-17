@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { environment } from '../environment.js';
+import { mongoPoolSize } from '../localSwitches.js';
 import { COLLECTION_VALIDATORS } from '../../models/validators.js';
 
 export async function connectMongo(): Promise<void> {
@@ -12,8 +13,9 @@ export async function connectMongo(): Promise<void> {
   }
 
   await mongoose.connect(environment.databaseUrl, {
-    // Atlas + Lambda: https://www.mongodb.com/docs/atlas/manage-connections-aws-lambda/
-    maxPoolSize: 2,
+    // Atlas + Lambda: https://www.mongodb.com/docs/atlas/manage-connections-aws-lambda/ (a small
+    // pool per execution environment); the local server takes a larger one (config/localSwitches.ts).
+    maxPoolSize: mongoPoolSize(),
     minPoolSize: 0,
     maxIdleTimeMS: 60_000,
     serverSelectionTimeoutMS: 5000,

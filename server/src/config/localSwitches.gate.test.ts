@@ -1,11 +1,13 @@
 /**
- * The Lambda can never turn the in-app rate limits off (config/localSwitches.ts):
+ * The Lambda can never throw a local-server switch (config/localSwitches.ts): turn the in-app rate
+ * limits off, or take the local server's large Mongo pool.
  * - lambda.ts (the bundle's only entry, scripts/build-layers.ts) never reaches src/local.ts or the
- *   local command line (devtools/localArgs.ts), and no module it reaches names the local switch's
- *   setter, except the module that defines it;
+ *   local command line (devtools/localArgs.ts), and no module it reaches names a setter, except
+ *   the module that defines it;
  * - every import in that graph is a literal, so the walk below sees every edge esbuild bundles;
- * - outside tests, only local.ts names the setter, and only local.ts imports devtools/localArgs.ts;
- * - the setter refuses to run in a Lambda execution environment (AWS_LAMBDA_FUNCTION_NAME set).
+ * - outside tests, only local.ts names a setter, and only local.ts imports devtools/localArgs.ts;
+ * - each setter refuses to run in a Lambda execution environment (AWS_LAMBDA_FUNCTION_NAME set);
+ * - the Mongo provider takes its pool size from the switch module: 2 in a Lambda.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +30,8 @@ const LAMBDA = 'lambda.ts';
 const LOCAL = 'local.ts';
 const SWITCHES = 'config/localSwitches.ts';
 const LOCAL_ARGS = 'devtools/localArgs.ts';
-const SETTER = 'turnRateLimitsOffForLocalServer';
+const SETTERS = ['turnRateLimitsOffForLocalServer', 'useLocalServerPool'] as const;
+const MONGO_PROVIDER = 'config/providers/mongoose.ts';
 
 /** Tests and what only tests import: `*.test.ts`, src/testing, `__tests__` folders, test kits. */
 const isTestOnly = (file: string): boolean =>
@@ -81,7 +84,7 @@ function names(file: string, name: string): boolean {
   return scanned !== undefined && new RegExp(`\\b${name}\\b`).test(nameText(scanned));
 }
 
-describe('the Lambda bundle cannot reach the local rate-limit switch', () => {
+describe('the Lambda bundle cannot reach the local switches', () => {
   const lambda = reachable(LAMBDA);
 
   it('walks a real graph: lambda.ts reaches the app and the switch module it reads', () => {
@@ -102,19 +105,29 @@ describe('the Lambda bundle cannot reach the local rate-limit switch', () => {
     assert.equal(lambda.modules.has(LOCAL_ARGS), false);
   });
 
-  it(`no module lambda.ts reaches names ${SETTER}, besides its definition`, () => {
-    const naming = [...lambda.modules].filter((file) => file !== SWITCHES && names(file, SETTER));
-    assert.deepEqual(naming, []);
+  for (const setter of SETTERS) {
+    it(`no module lambda.ts reaches names ${setter}, besides its definition`, () => {
+      const naming = [...lambda.modules].filter((file) => file !== SWITCHES && names(file, setter));
+      assert.deepEqual(naming, []);
+    });
+  }
+
+  it('the Mongo provider it reaches takes its pool size from the switch module', () => {
+    assert.ok(lambda.modules.has(MONGO_PROVIDER));
+    assert.ok(names(MONGO_PROVIDER, 'mongoPoolSize'));
+    assert.doesNotMatch(files.get(MONGO_PROVIDER) ?? '', /maxPoolSize:\s*\d/);
   });
 });
 
 describe('only the local server throws the local switches', () => {
   const server = [...files.keys()].filter((file) => !file.startsWith('../') && !isTestOnly(file));
 
-  it(`outside tests, only local.ts names ${SETTER}`, () => {
-    const naming = server.filter((file) => file !== SWITCHES && names(file, SETTER));
-    assert.deepEqual(naming, [LOCAL]);
-  });
+  for (const setter of SETTERS) {
+    it(`outside tests, only local.ts names ${setter}`, () => {
+      const naming = server.filter((file) => file !== SWITCHES && names(file, setter));
+      assert.deepEqual(naming, [LOCAL]);
+    });
+  }
 
   it('outside tests, only local.ts imports the local command line', () => {
     const importers = server.filter((file) =>
@@ -124,18 +137,42 @@ describe('only the local server throws the local switches', () => {
   });
 });
 
-describe('the switch at run time', () => {
+/** Runs `fn` as inside a Lambda execution environment, then restores the environment. */
+function inLambda(fn: () => void): void {
+  const saved = process.env.AWS_LAMBDA_FUNCTION_NAME;
+  process.env.AWS_LAMBDA_FUNCTION_NAME = 'todolist-prod-api';
+  try {
+    fn();
+  } finally {
+    if (saved === undefined) Reflect.deleteProperty(process.env, 'AWS_LAMBDA_FUNCTION_NAME');
+    else process.env.AWS_LAMBDA_FUNCTION_NAME = saved;
+  }
+}
+
+describe('the Mongo pool at run time', () => {
+  it('a Lambda keeps 2 connections: it serves one request at a time', () => {
+    inLambda(() => {
+      assert.throws(() => {
+        switches.useLocalServerPool();
+      }, /runs only in the local server/);
+    });
+    assert.equal(switches.mongoPoolSize(), 2);
+  });
+
+  it('the local server takes 20: one process serves every browser and test at once', () => {
+    assert.equal(process.env.AWS_LAMBDA_FUNCTION_NAME, undefined);
+    switches.useLocalServerPool();
+    assert.equal(switches.mongoPoolSize(), 20);
+  });
+});
+
+describe('the rate-limit switch at run time', () => {
   it('refuses to run in a Lambda execution environment', () => {
-    const saved = process.env.AWS_LAMBDA_FUNCTION_NAME;
-    process.env.AWS_LAMBDA_FUNCTION_NAME = 'todolist-prod-api';
-    try {
+    inLambda(() => {
       assert.throws(() => {
         switches.turnRateLimitsOffForLocalServer();
       }, /runs only in the local server/);
-    } finally {
-      if (saved === undefined) Reflect.deleteProperty(process.env, 'AWS_LAMBDA_FUNCTION_NAME');
-      else process.env.AWS_LAMBDA_FUNCTION_NAME = saved;
-    }
+    });
     assert.equal(switches.rateLimitsOffForLocalServer(), false);
     assert.equal(environment.rateLimitEnabled, true);
   });
