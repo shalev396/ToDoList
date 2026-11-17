@@ -41,13 +41,13 @@ import {
  *   connections, so this caps the stage's Atlas connections (see docs/dashboard/DEPLOY-PLAN.md,
  *   "Atlas connection math").
  *
- * dev and qa stay low (a handful of testers); prod is higher. qa also serves the whole Playwright
- * suite on every PR to main (4 workers, each dashboard page loading all its blocks at once, about
- * 20 requests in one go). At dev's limits it was throttled twice: Lambda at 15 executions (503s),
- * then API Gateway at a burst of 20 (429s). qa takes a burst of 40 at 20 a second, and 40
- * executions to serve a full burst at once (concurrency follows the burst: 19 at its peak behind a
- * burst of 20). Account-wide, Lambda keeps at least 10 unreserved executions, so the sum of all
- * reserved concurrency must leave that room.
+ * dev and qa stay low (a handful of testers); prod is higher. Low is still enough for one page:
+ * a dashboard loads all its blocks at once, about 20 requests in one go, and concurrency follows
+ * the burst (19 at its peak behind a burst of 20). The PR-to-main suite against qa (4 workers) was
+ * throttled at the old low limits twice: Lambda at 15 executions (503s), then API Gateway at a
+ * burst of 20 (429s), and one person on a full dashboard was at the same edge. So low is a burst
+ * of 40 at 20 a second with 40 executions, for dev and qa alike. Account-wide, Lambda keeps at
+ * least 10 unreserved executions, so the sum of all reserved concurrency must leave that room.
  */
 export interface StageLimits {
   readonly defaultRate: number;
@@ -60,18 +60,18 @@ export interface StageLimits {
 }
 
 const LOW_LIMITS: StageLimits = {
-  defaultRate: 10,
-  defaultBurst: 20,
+  defaultRate: 20,
+  defaultBurst: 40,
   authRate: 2,
   authBurst: 5,
   mcpRate: 5,
   mcpBurst: 10,
-  apiReservedConcurrency: 10,
+  apiReservedConcurrency: 40,
 };
 
 export const STAGE_LIMITS: Readonly<Record<Stage, StageLimits>> = {
   dev: LOW_LIMITS,
-  qa: { ...LOW_LIMITS, defaultRate: 20, defaultBurst: 40, apiReservedConcurrency: 40 },
+  qa: LOW_LIMITS,
   prod: {
     defaultRate: 100,
     defaultBurst: 200,

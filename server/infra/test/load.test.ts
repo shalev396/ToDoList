@@ -15,13 +15,13 @@ function synth(stage: Stage, extra: Record<string, string> = {}): Template {
 
 const EXPECTED: Record<Stage, StageLimits> = {
   dev: {
-    defaultRate: 10,
-    defaultBurst: 20,
+    defaultRate: 20,
+    defaultBurst: 40,
     authRate: 2,
     authBurst: 5,
     mcpRate: 5,
     mcpBurst: 10,
-    apiReservedConcurrency: 10,
+    apiReservedConcurrency: 40,
   },
   qa: {
     defaultRate: 20,
