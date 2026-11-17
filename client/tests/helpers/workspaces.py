@@ -4,6 +4,7 @@ tests/helpers/users.py (real Cognito users). A test owns a workspace it creates,
 account can serve many tests.
 """
 import re
+import time
 from typing import Any, Optional
 
 import requests
@@ -17,14 +18,41 @@ def _check(response: requests.Response, what: str) -> Any:
     return response.json().get("data")
 
 
-def delete_workspace(api_base_url: str, user, workspace_id: str) -> None:
-    """DELETE /private/workspaces/:wid (owner). Never raises: a test may have deleted it already."""
+# Answers a delete is worth trying again after: the stage throttled it (API Gateway's 429, a
+# throttled Lambda's 503) or was busy. A full suite's bursts meet both on a deployed stage.
+_RETRY_STATUSES = {429, 500, 502, 503, 504}
+_DELETE_ATTEMPTS = 4
+
+
+def _pause(response: Optional[requests.Response], attempt: int) -> float:
+    """Seconds before the next try: the server's Retry-After (at most 10), else 1, 2, 4."""
+    header = response.headers.get("Retry-After", "") if response is not None else ""
     try:
-        requests.delete(
-            f"{api_base_url}/private/workspaces/{workspace_id}", headers=_headers(user), timeout=30
-        )
-    except requests.RequestException:
-        pass
+        return min(float(header), 10.0)
+    except ValueError:
+        return float(2**attempt)
+
+
+def delete_workspace(api_base_url: str, user, workspace_id: str) -> bool:
+    """DELETE /private/workspaces/:wid (owner). Never raises; answers whether the workspace is gone
+    (deleted now, or already: 404). A throttled or failed delete is tried again a few times. One
+    that still fails used to pass in silence and leave the workspace behind, where the next test
+    opened it instead of its own; now it marks the account for forget_left_behind."""
+    for attempt in range(_DELETE_ATTEMPTS):
+        try:
+            response: Optional[requests.Response] = requests.delete(
+                f"{api_base_url}/private/workspaces/{workspace_id}", headers=_headers(user), timeout=30
+            )
+        except requests.RequestException:
+            response = None
+        if response is not None and (response.status_code < 400 or response.status_code == 404):
+            return True
+        if response is not None and response.status_code not in _RETRY_STATUSES:
+            break
+        if attempt + 1 < _DELETE_ATTEMPTS:
+            time.sleep(_pause(response, attempt))
+    _LEFT_BEHIND.add((api_base_url, user.email))
+    return False
 
 
 def _headers(user) -> dict:
@@ -50,14 +78,15 @@ def get_workspace(api_base_url: str, user, workspace_id: str) -> dict:
 # workers create at once. A create is never retried here.
 CREATE_TIMEOUT = 30
 # Demo data (server/src/seed) is a few dozen batched queries, about 7 s at 150 ms a round trip. A
-# remote stage is slow, though (150-200 ms a round trip from CI's runners), and the four workers'
-# seeds share the API's two database connections: a safety net of two minutes.
+# remote stage is slow, though (150-200 ms a round trip from CI's runners), and the four workers
+# seed at once: a safety net of two minutes.
 DEMO_CREATE_TIMEOUT = 120
 
-# Accounts one of whose creates timed out here. The server may still have made that workspace, and
-# with nothing stored the app opens an account's oldest workspace, so the next test would open the
-# one left behind instead of its own: forget_left_behind deletes it first.
-_TIMED_OUT: set = set()
+# Accounts that may own a workspace no test owns any more: one of their creates timed out here (the
+# server may still have made it), or deleting one failed. With nothing stored the app opens an
+# account's oldest workspace, so the next test would open the one left behind instead of its own:
+# forget_left_behind deletes it first.
+_LEFT_BEHIND: set = set()
 
 
 def create_workspace(api_base_url: str, user, name: str, **extra: Any) -> dict:
@@ -71,22 +100,28 @@ def create_workspace(api_base_url: str, user, name: str, **extra: Any) -> dict:
             timeout=timeout,
         )
     except requests.Timeout:
-        _TIMED_OUT.add((api_base_url, user.email))
+        _LEFT_BEHIND.add((api_base_url, user.email))
         raise
     return _check(response, f"Creating workspace {name!r}")
 
 
 def forget_left_behind(api_base_url: str, user) -> None:
-    """After a create of this account timed out (see _TIMED_OUT), deletes every workspace it owns;
-    otherwise does nothing. Only for a pooled account about to get the workspace a test or a
-    module owns, while it owns no other on purpose."""
+    """When this account may have left a workspace behind (see _LEFT_BEHIND), deletes every
+    workspace it owns; otherwise does nothing. Only for a pooled account about to get the workspace
+    a test or a module owns, while it owns no other on purpose. Raises when one cannot be deleted:
+    the test would open that one instead of its own."""
     key = (api_base_url, user.email)
-    if key not in _TIMED_OUT:
+    if key not in _LEFT_BEHIND:
         return
+    _LEFT_BEHIND.discard(key)
     for entry in list_workspaces(api_base_url, user):
         if entry["role"] == "owner":
             delete_workspace(api_base_url, user, entry["workspace"]["id"])
-    _TIMED_OUT.discard(key)
+    if key in _LEFT_BEHIND:
+        raise RuntimeError(
+            f"{user.email} still owns a workspace an earlier test left behind, and the app would "
+            "open that oldest one instead of this test's"
+        )
 
 
 DEFAULT_TOPIC_NAMES = {"work": "Work", "college": "College", "personal": "Personal"}
