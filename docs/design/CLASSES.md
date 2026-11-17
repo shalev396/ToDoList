@@ -497,7 +497,9 @@ classDiagram
     +allowsWrites: boolean
     +authKind: AuthKind
     +canCreate: boolean
-    +toView() IntegrationStatusView
+    +toView() IntegrationStatusBase
+    +toStatusView() Promise~IntegrationStatusView~
+    +needsReconnect() Promise~boolean~
     +readConfig(caller)
     +update(caller, input) Promise~Integration~
     +checkMode(caller, mode) Mode
@@ -1060,6 +1062,8 @@ recurrence)` with one RRULE line parsed by `RecurrenceRule`.
   owner's membership, who has no standing of the member's own).
 - `canSwitchMode` (never demo data) is in the REST view and on the create targets, so the client
   offers the switch, and the "switch to Read & write" hint, only where it can work.
+- `needsReconnect` (read & write over an OAuth grant that lacks the provider's write scope) is in the
+  REST view only: the client then offers "Reconnect now" and shows "Reconnect to finish".
 
 ## 4. Items, containers and the calendar (phases 4 and 5)
 

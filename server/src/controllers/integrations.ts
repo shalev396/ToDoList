@@ -35,10 +35,10 @@ const list: RequestHandler = async (req, res): Promise<void> => {
       // A Google Calendar's live pushed events, so an earlier workspace calendar's can be removed.
       isAddedContentRemover(integration)
         ? {
-            ...integration.toView(),
+            ...(await integration.toStatusView()),
             pushedEvents: await integration.pushedEventCount(request.caller),
           }
-        : integration.toView(),
+        : await integration.toStatusView(),
     ),
   );
   res.success(data);
@@ -71,7 +71,7 @@ const create: RequestHandler = async (req, res): Promise<void> => {
   const body = parseOr400(CreateIntegrationBody, req.body);
   const request = req as WorkspaceRequest;
   const created = await Integration.connectWithKey(request.caller, body);
-  const data: CreateIntegrationResponseData = created.toView();
+  const data: CreateIntegrationResponseData = await created.toStatusView();
   res.success(data, 201);
 };
 
@@ -122,7 +122,7 @@ const update: RequestHandler = async (req, res): Promise<void> => {
     integration = await integration.update(request.caller, fields);
   }
   if (mode !== undefined) integration = await integration.setMode(request.caller, mode);
-  const data: UpdateIntegrationResponseData = integration.toView();
+  const data: UpdateIntegrationResponseData = await integration.toStatusView();
   res.success(data);
 };
 
