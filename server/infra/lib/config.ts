@@ -41,11 +41,13 @@ import {
  *   connections, so this caps the stage's Atlas connections (see docs/dashboard/DEPLOY-PLAN.md,
  *   "Atlas connection math").
  *
- * dev and qa stay low (a handful of testers); prod is higher. qa's function also serves the whole
- * Playwright suite on every PR to main (4 workers, each page loading its blocks at once), which
- * peaked past 15 concurrent executions and was throttled (503s), hence its 30. Account-wide, Lambda
- * keeps at least 10 unreserved executions, so the sum of all reserved concurrency must leave that
- * room.
+ * dev and qa stay low (a handful of testers); prod is higher. qa also serves the whole Playwright
+ * suite on every PR to main (4 workers, each dashboard page loading all its blocks at once, about
+ * 20 requests in one go). At dev's limits it was throttled twice: Lambda at 15 executions (503s),
+ * then API Gateway at a burst of 20 (429s). qa takes a burst of 40 at 20 a second, and 40
+ * executions to serve a full burst at once (concurrency follows the burst: 19 at its peak behind a
+ * burst of 20). Account-wide, Lambda keeps at least 10 unreserved executions, so the sum of all
+ * reserved concurrency must leave that room.
  */
 export interface StageLimits {
   readonly defaultRate: number;
@@ -69,7 +71,7 @@ const LOW_LIMITS: StageLimits = {
 
 export const STAGE_LIMITS: Readonly<Record<Stage, StageLimits>> = {
   dev: LOW_LIMITS,
-  qa: { ...LOW_LIMITS, apiReservedConcurrency: 30 },
+  qa: { ...LOW_LIMITS, defaultRate: 20, defaultBurst: 40, apiReservedConcurrency: 40 },
   prod: {
     defaultRate: 100,
     defaultBurst: 200,
