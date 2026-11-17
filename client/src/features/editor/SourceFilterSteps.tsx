@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { QueryBuilder, type RuleGroupType } from 'react-querybuilder';
 import {
@@ -43,13 +43,14 @@ import {
   type QbContext,
 } from './qbControls';
 import {
+  builderGroup,
   facetSelection,
   fieldTypes,
   fromQueryBuilder,
   propsFieldsIn,
   queryBuilderFields,
-  toQueryBuilder,
   withFacetSelection,
+  type BuilderCopy,
 } from './queryBuilder';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useFacets } from '@/api/queries/items';
@@ -573,6 +574,10 @@ export function FilterStep({
   const [advanced, setAdvanced] = useState(
     draft.query !== undefined && !toSentence(draft.query).ok,
   );
+  // The rule tree's own group, ids and all, so its rows keep their keys (builderGroup).
+  const [builderCopy, setBuilderCopy] = useState<BuilderCopy | null>(null);
+  const where = draft.query?.where;
+  const builderQuery = useMemo(() => builderGroup(where, builderCopy), [where, builderCopy]);
   if (draft.savedViewId !== null || draft.query === undefined) {
     return <p className="text-sm text-muted-foreground">{t('editor.filter.viewNote')}</p>;
   }
@@ -630,15 +635,17 @@ export function FilterStep({
         ) : null}
         <QueryBuilder
           fields={fields}
-          query={toQueryBuilder(query.where)}
+          query={builderQuery}
           context={context}
           listsAsArrays
           showNotToggle
           resetOnFieldChange
           resetOnOperatorChange={false}
           onQueryChange={(next: RuleGroupType) => {
-            const where = fromQueryBuilder(next, types);
-            onChange(patchQuery(draft, { where: where.rules.length === 0 ? undefined : where }));
+            const built = fromQueryBuilder(next, types);
+            const nextWhere = built.rules.length === 0 ? undefined : built;
+            setBuilderCopy({ where: nextWhere, group: next });
+            onChange(patchQuery(draft, { where: nextWhere }));
           }}
           onAddRule={(rule, _path, current) =>
             canAddRule(fromQueryBuilder(current, types)) ? rule : false

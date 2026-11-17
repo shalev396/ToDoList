@@ -58,8 +58,9 @@ def get_mailtm_domain() -> str:
 def create_mailtm_account(domain: str) -> tuple[str, str, str]:
     """Create Mail.tm account. Returns (email, mailtm_password, app_password).
 
-    If the random address turns out to be someone else's (AddressTaken), it tries once more with
-    a new one: that is Mail.tm's side, not the test's."""
+    If Mail.tm refuses the random address (AddressTaken), it tries once more with a new one, at a
+    domain looked up again: the address may be someone else's, or at a domain Mail.tm has retired
+    since the list was cached. Either is Mail.tm's side, not the test's."""
     for attempt in range(2):
         r1 = secrets.token_hex(4)
         r2 = secrets.token_hex(3)
@@ -71,6 +72,8 @@ def create_mailtm_account(domain: str) -> tuple[str, str, str]:
         except AddressTaken:
             if attempt == 1:
                 raise
+            get_mailtm_client().forget_domains()
+            domain = get_mailtm_client().domain()
             continue
         return email, mailtm_password, app_password
     raise AssertionError("unreachable")

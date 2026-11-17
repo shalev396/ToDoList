@@ -115,6 +115,7 @@ Each route key has its own throttle bucket. A throttled request gets a 429 from 
 - dev: 10 x 2 = 20
 - qa: 30 x 2 = 60 (the PR-to-main Playwright suite runs against qa and throttled at 15)
 - prod: 55 x 2 = 110
+- the local server (`src/local.ts`, a developer's or CI's): one process with a pool of up to 20 (`config/localSwitches.ts`), because it serves every browser at once
 
 Atlas limits per tier: M0/Flex 500, M10 1500. A cluster shared by all three stages stays at about 190 plus monitors, well inside those. Each stage's count includes 5 for background syncs (they had a worker function with 5 of its own before C0-ARCH); syncs and HTTP requests share the pool, so a burst of syncs can take those slots from requests. If prod concurrency is raised, keep the total times 2 under about 80% of the tier limit. Lambda also needs at least 10 unreserved executions account-wide: on a new account whose concurrency quota is still 10, reserving anything fails until a quota increase is approved (NEEDS SHALEV: check Service Quotas, Lambda, concurrent executions).
 

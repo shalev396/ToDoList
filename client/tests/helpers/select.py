@@ -8,10 +8,10 @@ _CLICK_OPENS_WITHIN = 3_000
 def choose(trigger: Locator, option_name: str) -> None:
     """Open the select behind `trigger` and pick the option with this visible name.
 
-    A click that lands while the trigger's row re-renders (a rule just added, a preview that just
-    answered) can focus the trigger without opening it: Radix opens on the pointer-down, and the
-    re-render drops that gesture. The keyboard opens a focused Radix select every time, so when the
-    list has not opened, ArrowDown on the trigger opens it.
+    A click that lands while the trigger's row is remounted can focus the trigger without opening
+    it: Radix opens on the pointer-down, and the remount drops that gesture. The rule tree used to
+    remount every row on each render (src/features/editor/queryBuilder.ts, builderGroup, fixes
+    that); the keyboard stays as the fallback, because it opens a focused Radix select every time.
     """
     page = trigger.page
     listbox = page.get_by_role("listbox")

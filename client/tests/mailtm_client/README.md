@@ -83,7 +83,7 @@ message = mail.wait_for_message(
 
 - **A 429** is retried for idempotent calls (GET, DELETE, and `POST /token`, which only issues a token) and for account creation. A 429 is a refusal, so no account exists yet, and sending the request again cannot make a second one. Any other call (a PATCH, say) gets the 429 back, but every process still pauses.
 - **A dropped connection, a timeout or a 502/503/504** is retried only for idempotent calls. Account creation is not retried then: the account may already exist, and a retry would turn a clear error into "address already used".
-- **"Address already used" (422) on account creation**: the client tries to sign in with the password it was given. If that works, an earlier attempt really created the inbox, so it's returned as created (nobody else can have set that password). If not, the address is someone else's and `AddressTaken` is raised, so the caller can pick a new random address and try again.
+- **"Address already used" (422) on account creation**: the client tries to sign in with the password it was given. If that works, an earlier attempt really created the inbox, so it's returned as created (nobody else can have set that password). If not, the address is someone else's and `AddressTaken` is raised, so the caller can pick a new random address and try again. mail.tm answers 422 the same way for an address at a domain it has retired ("The domain … is not valid"), which a cached list can still name: call `forget_domains()` before the retry, and the next `domain()` asks mail.tm again, for every process.
 - **Anything else** (400, 401, 404, 500) is returned or raised at once.
 
 ## Copying it into another project

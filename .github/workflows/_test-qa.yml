@@ -32,6 +32,11 @@ jobs:
   test-backend-qa:
     name: Backend Tests (Postman vs QA)
     runs-on: ubuntu-latest
+    # Test jobs against qa take turns, here and in _test-local.yml (the PR-to-qa runs): each resets
+    # the stage first.
+    concurrency:
+      group: tests-qa
+      cancel-in-progress: false
     environment:
       name: qa
     steps:
@@ -60,6 +65,11 @@ jobs:
   test-frontend-qa:
     name: Frontend Tests (Playwright vs QA)
     runs-on: ubuntu-latest
+    # Test jobs against qa take turns, here and in _test-local.yml (the PR-to-qa runs): each resets
+    # the stage first.
+    concurrency:
+      group: tests-qa
+      cancel-in-progress: false
     needs: test-backend-qa
     environment:
       name: qa
