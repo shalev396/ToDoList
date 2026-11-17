@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { isDraggable, statusAfterDrop } from './kanbanDrag.ts';
+import { clipToViewport, isDraggable, pointIn, statusAfterDrop } from './kanbanDrag.ts';
 import { kanbanColumns } from './kanbanColumns.ts';
 
 const local = { source: { provider: 'local' }, status: 'open' };
@@ -50,5 +50,26 @@ describe('kanbanColumns', () => {
       columns.map((column) => column.key),
       ['done', 'open'],
     );
+  });
+});
+
+describe('clipToViewport', () => {
+  const rect = { top: 0, left: 0, bottom: 900, right: 200 };
+  const viewport = { top: 100, left: 0, bottom: 400, right: 200 };
+
+  it('keeps the part of the rect inside the viewport', () => {
+    assert.deepEqual(clipToViewport(rect, viewport), viewport);
+  });
+
+  it('is null when the rect and the viewport do not meet', () => {
+    assert.equal(clipToViewport({ top: 500, left: 0, bottom: 900, right: 200 }, viewport), null);
+  });
+
+  it('a pointer below the viewport is outside the clipped rect, though inside the full one', () => {
+    const point = { x: 10, y: 450 };
+    assert.equal(pointIn(point, rect), true);
+    const clipped = clipToViewport(rect, viewport);
+    assert.ok(clipped);
+    assert.equal(pointIn(point, clipped), false);
   });
 });
