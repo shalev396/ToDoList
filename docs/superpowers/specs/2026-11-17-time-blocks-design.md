@@ -126,6 +126,37 @@ classDiagram
 - **Task views** (lists, "open tasks", counts): not shown by default. They are time, not work.
 - **Past occurrences** need no status; they are simply in the past.
 
+## Decisions after review (my calls)
+
+1. **Item kinds.**
+   - Two new `ItemKind` values: `block` for `TimeBlock` and `travel` for `TravelLeg`.
+   - `Item.classOf` reads them. A local item of kind `block` or `travel` is never a `Todo`.
+   - `CalendarEvent` stays where it is, under `MirroredItem`. `ScheduledItem` is only TodoList's own reserved time.
+   - The build starts with an **audit of every place that assumes "local = to-do"**: status filters, open-task counts, `list_today`, completion paths, MCP tools, charts. This is a step of its own.
+2. **Where a repeat lives.** On the series record itself:
+   - `recurrence`: the RRULE lines, the same shape as a `CalendarEvent`'s;
+   - `exceptions[]`: `{ originalStart, startAt?, endAt?, skipped? }`.
+
+   There are no child items. One record is the whole series.
+
+3. **Time zone.** Rules expand on the wall clock in the **workspace's** time zone, exactly as Google series do today. "Sunday 13:00" stays 13:00 across daylight-saving changes.
+4. **One expansion, shared.** The expansion becomes one pure module under `server/src/types/` (e.g. `recurrence/occurrences.ts`).
+   - The client already imports runtime code from there through the `@api-types` alias (e.g. `errorCodes.ts`).
+   - It handles both shapes: Google masters with exceptions, and local `recurrence` plus `exceptions[]`. The client's `occurrences.ts` becomes a thin caller.
+   - The server needs the `rrule` dependency, as the client has.
+   - Parity tests run the same cases on both sides.
+5. **Subject is an attribute value, not a separate field.**
+   - In the diagram, `subject` is an accessor over the item's "Subject" attribute.
+   - A workspace "Subject" attribute (`select`) is created on first use when it doesn't exist.
+   - The topic of a new block defaults to the page it is created from. Failing that, it takes the topic last used with that subject. No topic is assumed to exist.
+6. **Visibility.** Time blocks follow the same visibility as TodoList's own to-dos. Travel legs are private to their member, which is a new branch in `ItemPolicy` by kind.
+7. **Hidden from task views, by default.**
+   - `ItemQuery` excludes `block` and `travel` by default for task-shaped results:
+     - lists, open-task counts, deadlines, charts;
+     - MCP `query_items`, search and `list_deadlines`.
+   - Any query that names the kinds explicitly (the logic builder, or MCP with `kind`) gets them.
+   - Time-shaped results always include them: the calendar, clock, timeline, agenda and workload blocks, and MCP `list_today` and `get_calendar`.
+
 ## Non-goals (first version)
 
 - "This and following" edits.

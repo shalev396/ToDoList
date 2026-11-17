@@ -116,7 +116,20 @@ This answers his question "how do you know when the day starts, with windows bet
 ## Generation and lifecycle (my calls after review)
 
 - **Stored, not computed on read.** Travel legs are stored items. Every view, MCP tool and the optional Google push then gets them for free. Their status (upcoming / done) is derived from the time.
-- **Key.** One leg per (anchor item, occurrence start, direction). Regeneration upserts by that key, so running it twice changes nothing.
+- **Key.** One leg per (anchor item, the occurrence's **original** start, direction). The original start doesn't change when one occurrence is moved: Google's `originalStartTime`, or a time block exception's `originalStart`. Regeneration upserts by that key, so running it twice changes nothing.
+- **Anchors.**
+  - Any `CalendarEvent`, `Todo` with a start, or `TimeBlock` (including one occurrence of a repeating block) can be an anchor.
+  - A `TravelLeg` never is.
+  - Travel on a repeating time block works like travel on a Google series: a series-scoped rule keyed on the series record, or per occurrence.
+- **When an anchor moves or is skipped.**
+  - A skipped or cancelled occurrence removes its legs, with the reason shown.
+  - A moved one moves its legs, since they are regenerated from the new time.
+  - A leg he **edited by hand** keeps his times. If its anchor moved, it is flagged ("the event moved; check this trip") instead of being dropped or silently shifted. Reset brings back the computed times.
+- **Storage.** Plain documents in the existing database through classes, with no new infrastructure:
+  - places;
+  - travel rules;
+  - remembered lengths, per member: (from place, to place, mode) → minutes. A trip without both places is not remembered;
+  - one daily counter document per workspace for the routing cap.
 - **Triggers.** A day's plan is regenerated when:
   - a sync changes an anchor (moved, cancelled, new occurrence);
   - a to-do with travel is created or edited;
