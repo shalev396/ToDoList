@@ -114,8 +114,7 @@ describe('the Lambda bundle cannot reach the local switches', () => {
 
   it('the Mongo provider it reaches takes its pool size from the switch module', () => {
     assert.ok(lambda.modules.has(MONGO_PROVIDER));
-    assert.ok(names(MONGO_PROVIDER, 'mongoPoolSize'));
-    assert.doesNotMatch(files.get(MONGO_PROVIDER) ?? '', /maxPoolSize:\s*\d/);
+    assert.match(files.get(MONGO_PROVIDER) ?? '', /maxPoolSize:\s*mongoPoolSize\(\)/);
   });
 });
 
