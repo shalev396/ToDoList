@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import FullCalendar from '@fullcalendar/react';
@@ -10,6 +10,7 @@ import type { EventContentArg, EventMountArg } from '@fullcalendar/core';
 import { CalendarClock, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useBlockData } from '@/api/queries/blocks';
 import { Button } from '@/components/ui/button';
+import { SelectField } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { dateLocale, shortDate, timeOfDay } from '@/components/items/format';
 import { sourceNameKey } from '@/components/items/sources';
@@ -34,11 +35,16 @@ import {
   type WeekStart,
 } from '../time/occurrences';
 import { toEventInput, type CalendarEventProps, type DisplayedOccurrence } from './calendarEvents';
-import { useSaveCalendarView } from './useSaveCalendarView';
+import { readStartHour, slotTime, startScrollTop } from './startHour';
+import { useSaveCalendarViz } from './useSaveCalendarViz';
 
 type View = 'week' | 'month';
 
 const PLUGINS = [dayGridPlugin, timeGridPlugin, listPlugin];
+const START_HOURS = Array.from({ length: 24 }, (_, hour) => {
+  const label = `${String(hour).padStart(2, '0')}:00`;
+  return { value: String(hour), label: <span dir="ltr">{label}</span> };
+});
 const EVENT_TIME = { hour: '2-digit', minute: '2-digit', hour12: false } as const;
 
 /** FullCalendar's view for the choice: lists on a phone (a grid is too narrow to read). */
@@ -105,7 +111,9 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     [range],
   );
   const data = useBlockData(dashboard, block, { ...vars, range: rangeVar });
-  const save = useSaveCalendarView(dashboard, block);
+  const save = useSaveCalendarViz(dashboard, block);
+  const [startHour, setStartHour] = useState(() => readStartHour(block.viz));
+  const region = useRef<HTMLDivElement>(null);
 
   const displayed = useMemo<DisplayedOccurrence[]>(() => {
     const rows = (data.data?.rows ?? []).filter(isTimeRow);
@@ -132,12 +140,36 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     calendar.current?.getApi().changeView(viewName, wallDate(anchor, timeZone));
   }, [viewName, anchor, timeZone]);
 
+  // Scrolls the week grid so the start hour's row sits under the day header; measured from the
+  // rendered row. Only the week grid has hours to scroll to (month and lists skip it).
+  const scrollToStart = useCallback(() => {
+    const box = region.current;
+    if (box === null || calendar.current?.getApi().view.type !== 'timeGridWeek') {
+      return;
+    }
+    const slot = box.querySelector(`.fc-timegrid-slot-lane[data-time="${slotTime(startHour)}"]`);
+    if (slot === null) {
+      return;
+    }
+    const sticky = box.querySelector('.fc-scrollgrid-section-header');
+    box.scrollTop = startScrollTop({
+      slotTop: slot.getBoundingClientRect().top,
+      regionTop: box.getBoundingClientRect().top,
+      scrollTop: box.scrollTop,
+      stickyHeight: sticky?.getBoundingClientRect().height ?? 0,
+    });
+  }, [startHour]);
+  const scrollSoon = useCallback(() => {
+    requestAnimationFrame(scrollToStart);
+  }, [scrollToStart]);
+  useEffect(scrollSoon, [scrollSoon]);
+
   const choose = (next: string) => {
     if ((next !== 'week' && next !== 'month') || next === view) {
       return;
     }
     setView(next);
-    save(next);
+    save({ view: next });
   };
   // A new history entry, so the back button closes the Sheet.
   const openItem = (id: string) => {
@@ -216,17 +248,34 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         void data.refetch();
       }}
       actions={
-        options.month && !editing ? (
-          <ToggleGroup
-            type="single"
-            value={view}
-            onValueChange={choose}
-            aria-label={t('timeBlocks.calendar.viewLabel')}
-          >
-            <ToggleGroupItem value="week">{t('timeBlocks.calendar.week')}</ToggleGroupItem>
-            <ToggleGroupItem value="month">{t('timeBlocks.calendar.month')}</ToggleGroupItem>
-          </ToggleGroup>
-        ) : undefined
+        editing ? undefined : (
+          <>
+            {view === 'week' && !phone && !options.list ? (
+              <SelectField
+                aria-label={t('timeBlocks.calendar.startsAt')}
+                value={String(startHour)}
+                options={START_HOURS}
+                onValueChange={(next) => {
+                  const hour = Number(next);
+                  setStartHour(hour);
+                  save({ startHour: hour });
+                }}
+                triggerClassName="h-7 min-h-7 w-auto gap-1 pointer-coarse:h-11 pointer-coarse:min-h-11"
+              />
+            ) : null}
+            {options.month ? (
+              <ToggleGroup
+                type="single"
+                value={view}
+                onValueChange={choose}
+                aria-label={t('timeBlocks.calendar.viewLabel')}
+              >
+                <ToggleGroupItem value="week">{t('timeBlocks.calendar.week')}</ToggleGroupItem>
+                <ToggleGroupItem value="month">{t('timeBlocks.calendar.month')}</ToggleGroupItem>
+              </ToggleGroup>
+            ) : null}
+          </>
+        )
       }
     >
       <div className="flex h-full min-h-72 flex-col gap-2" data-calendar-view={view}>
@@ -274,8 +323,10 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
           </p>
         ) : null}
         <div
+          ref={region}
           role="region"
           tabIndex={0}
+          data-start-hour={startHour}
           aria-label={t('timeBlocks.calendar.scrollRegion')}
           className="todolist-calendar min-h-0 flex-1 overflow-auto focus-visible:ring-2 focus-visible:ring-ring"
           dir={language === 'he' ? 'rtl' : 'ltr'}
@@ -298,7 +349,8 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             allDaySlot
             allDayText={t('timeBlocks.calendar.allDay')}
             slotDuration="00:30:00"
-            scrollTime="07:00:00"
+            viewDidMount={scrollSoon}
+            datesSet={scrollSoon}
             defaultTimedEventDuration="00:30:00"
             eventTimeFormat={EVENT_TIME}
             slotLabelFormat={EVENT_TIME}

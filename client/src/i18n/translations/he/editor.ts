@@ -212,6 +212,7 @@ export const editor = {
       columns: 'עמודות',
       view: 'תצוגת יומן',
       allowMonth: 'לאפשר תצוגה חודשית',
+      startHour: 'שעת פתיחה',
       showTotal: 'להציג את הסך הכול',
       legend: 'מקרא',
       needle: 'מחוג',

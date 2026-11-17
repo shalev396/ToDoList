@@ -13,6 +13,7 @@ export const timeBlocks = {
     allDay: 'כל היום',
     eventLabel: '{{title}}, {{when}}, {{source}}',
     dueLabel: 'מועד הגשה: {{title}}, {{when}}, {{source}}',
+    startsAt: 'מתחיל ב־',
     saveFailed: 'תצוגת היומן לא נשמרה. כדאי לנסות שוב.',
   },
   clock: {

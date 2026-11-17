@@ -520,6 +520,8 @@ export const VIZ_SCHEMAS = {
     /** Week unless set (FRONTEND.md §9). */
     view: z.enum(CALENDAR_VIEWS).optional(),
     allowMonth: z.boolean().optional(),
+    /** The hour the week view opens scrolled to (0-23); 7 unless set. */
+    startHour: z.int().min(0).max(23).optional(),
   }),
   chart: z.strictObject({
     kind: z.enum(CHART_KINDS),

@@ -135,7 +135,7 @@ The registry pattern is FRONTEND.md §5: adding a type means **one catalog entry
 { "id": "blk_cal", "type": "calendar", "title": "Week",
   "query": { "source": "items", "dateRange": "$page.range", "where": { "combinator": "or", "rules": [
       { "field": "startAt", "operator": "notNull" }, { "field": "dueAt", "operator": "notNull" } ] } },
-  "viz": { "kind": "calendar", "view": "week", "allowMonth": true }, "listen": ["$page.area", "$page.provider"] }
+  "viz": { "kind": "calendar", "view": "week", "allowMonth": true, "startHour": 8 }, "listen": ["$page.area", "$page.provider"] }
 ```
 **Deadlines for one course (a College course page; `$page.course` = `Containers` id):**
 ```json

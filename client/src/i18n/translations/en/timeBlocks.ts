@@ -13,6 +13,7 @@ export const timeBlocks = {
     allDay: 'All day',
     eventLabel: '{{title}}, {{when}}, {{source}}',
     dueLabel: 'Due: {{title}}, {{when}}, {{source}}',
+    startsAt: 'Starts at',
     saveFailed: 'The calendar view wasn’t saved. Try again.',
   },
   clock: {
