@@ -109,6 +109,8 @@ def test_auth_header_clears_the_iphone_top_inset(app_url: str, page: Page):
     expect(header).to_be_visible(timeout=NORMAL_TIMEOUT)
     page.evaluate(FORCE_INSETS)
     assert _box(page, "header")["height"] >= SAFE_TOP + 56
-    for control in header.locator("button, a").all():
+    controls = header.locator("button:visible, a:visible").all()
+    assert controls, "the header shows no controls"
+    for control in controls:
         box = control.bounding_box()
         assert box is not None and box["y"] >= SAFE_TOP, f"a control starts at {box and box['y']}px"
