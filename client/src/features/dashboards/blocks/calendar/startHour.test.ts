@@ -27,14 +27,21 @@ describe('slotTime', () => {
 describe('startScrollTop', () => {
   it('puts the slot just under the sticky header', () => {
     assert.equal(
-      startScrollTop({ slotTop: 500, regionTop: 100, scrollTop: 40, stickyHeight: 60 }),
+      startScrollTop({ hour: 8, slotTop: 500, regionTop: 100, scrollTop: 40, stickyHeight: 60 }),
       380,
     );
   });
 
   it('never goes negative', () => {
     assert.equal(
-      startScrollTop({ slotTop: 90, regionTop: 100, scrollTop: 0, stickyHeight: 60 }),
+      startScrollTop({ hour: 8, slotTop: 90, regionTop: 100, scrollTop: 0, stickyHeight: 60 }),
+      0,
+    );
+  });
+
+  it('opens midnight at the very top, whatever the offsets', () => {
+    assert.equal(
+      startScrollTop({ hour: 0, slotTop: 500, regionTop: 100, scrollTop: 40, stickyHeight: 60 }),
       0,
     );
   });

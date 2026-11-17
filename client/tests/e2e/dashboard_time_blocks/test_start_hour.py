@@ -116,5 +116,5 @@ def test_midnight(page: Page, base_url: str, api_base_url: str, fresh_owner):
     assert saved.value.status == 200
     page.reload()
     expect(page.locator(REGION)).to_have_attribute("data-start-hour", "0", timeout=NORMAL_TIMEOUT)
-    _expect_offset(page, "00:00:00")
+    expect(page.locator(".fc-timegrid-slot-lane[data-time='00:00:00']")).to_be_visible()
     assert _scroll_top(page) == 0

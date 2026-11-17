@@ -153,6 +153,7 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     }
     const sticky = box.querySelector('.fc-scrollgrid-section-header');
     box.scrollTop = startScrollTop({
+      hour: startHour,
       slotTop: slot.getBoundingClientRect().top,
       regionTop: box.getBoundingClientRect().top,
       scrollTop: box.scrollTop,

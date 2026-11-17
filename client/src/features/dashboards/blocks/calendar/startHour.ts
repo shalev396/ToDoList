@@ -14,12 +14,19 @@ export function slotTime(hour: number): string {
   return `${String(hour).padStart(2, '0')}:00:00`;
 }
 
-/** The scrollTop that puts the slot's row right under the sticky day header, from measured rects. */
+/**
+ * The scrollTop that puts the slot's row right under the sticky day header, from measured rects.
+ * Midnight opens at the very top, so the all-day row (between the header and 00:00) stays in view.
+ */
 export function startScrollTop(m: {
+  hour: number;
   slotTop: number;
   regionTop: number;
   scrollTop: number;
   stickyHeight: number;
 }): number {
+  if (m.hour === 0) {
+    return 0;
+  }
   return Math.max(0, m.slotTop - m.regionTop + m.scrollTop - m.stickyHeight);
 }
