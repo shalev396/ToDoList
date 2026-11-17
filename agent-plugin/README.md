@@ -10,15 +10,21 @@ The same page shows **Connect an agent**: the MCP address of the site you are on
 
 ## 2. Claude Code
 
+Install it from this repository, which is also its marketplace (`.claude-plugin/marketplace.json` at the root lists this folder). In Claude Code:
+
+```
+/plugin marketplace add shalev396/TodoList
+/plugin install todolist@todolist
+```
+
+Or from a terminal: `claude plugin marketplace add shalev396/TodoList --sparse .claude-plugin agent-plugin` (the sparse checkout skips the app's code), then `claude plugin install todolist@todolist`. Claude Code reads the marketplace from the repository's default branch (`main`); `/plugin marketplace update todolist` picks up a newer version later. From a checkout of another branch, add the marketplace by its path instead: `/plugin marketplace add <path to the checkout>`.
+
+To try it from a checkout without installing:
+
 ```sh
-claude --plugin-dir ./agent-plugin          # try it from a checkout
+claude --plugin-dir ./agent-plugin          # this session only
 claude plugin validate ./agent-plugin       # optional: check the manifest
-```
-
-Install from a marketplace that lists this folder (the marketplace is the GitHub repository that holds its `marketplace.json`):
-
-```
-/plugin install todolist --marketplace shalev396/TodoList
+claude plugin validate .                    # optional: check the marketplace
 ```
 
 When the plugin is enabled, Claude Code asks for two values (the plugin's `userConfig`):
@@ -68,11 +74,3 @@ Hooks fail open: unparseable input or another MCP server's tools are ignored.
 ## Tests
 
 `node --test agent-plugin/hooks/*.test.mjs` (hooks and manifest shape).
-
-## Install from a marketplace (once the repo exists)
-
-```
-/plugin install todolist --marketplace shalev396/TodoList
-```
-
-Replace `<owner>/<repo>` with the GitHub repository that publishes this plugin's `marketplace.json`. It's a placeholder until the TodoList repo is created.
