@@ -86,7 +86,7 @@ export function SettingsForm({
       />
 
       {canEdit && (dirty || error !== null) ? (
-        <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-10 -mx-4 flex flex-col gap-3 border-t bg-background/95 px-4 py-3 backdrop-blur-sm md:bottom-0 md:-mx-8 md:px-8">
+        <div className="sticky bottom-[calc(3.5rem+var(--safe-bottom))] z-10 -mx-4 flex flex-col gap-3 border-t bg-background/95 px-4 py-3 backdrop-blur-sm md:bottom-0 md:-mx-8 md:px-8">
           {error === null ? null : <FormError>{error}</FormError>}
           <div className="flex items-center justify-end gap-2">
             <Button

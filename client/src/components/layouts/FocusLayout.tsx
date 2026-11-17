@@ -26,7 +26,7 @@ export default function FocusLayout() {
 
   return (
     <div className="flex min-h-svh flex-col bg-background">
-      <header className="flex h-14 items-center gap-2 border-b px-3 pt-[env(safe-area-inset-top)] sm:px-5">
+      <header className="flex min-h-[calc(3.5rem+var(--safe-top))] items-center gap-2 border-b px-3 pt-[var(--safe-top)] sm:px-5">
         <Link
           to={pathTo(ROUTES.HOME, language)}
           className="flex min-h-11 items-center rounded-sm pointer-fine:min-h-9 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
