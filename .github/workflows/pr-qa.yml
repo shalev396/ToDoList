@@ -9,6 +9,10 @@ on:
       - 'server/**'
       - 'postman/**'
       - '.github/workflows/**'
+      # The agent plugin and its marketplace: a plugin-only PR must still run the required checks,
+      # or the ruleset blocks it waiting for them.
+      - 'agent-plugin/**'
+      - '.claude-plugin/**'
 
 permissions:
   id-token: write
