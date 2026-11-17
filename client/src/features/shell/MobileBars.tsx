@@ -33,7 +33,7 @@ export function MobileTopBar({ className }: { className?: string }) {
   return (
     <header
       className={cn(
-        'sticky top-0 z-30 flex h-12 items-center gap-2 border-b bg-background/90 px-2 pt-[env(safe-area-inset-top)] backdrop-blur-md supports-[backdrop-filter]:bg-background/75',
+        'sticky top-0 z-30 flex min-h-[calc(3rem+var(--safe-top))] items-center gap-2 border-b bg-background/90 px-2 pt-[var(--safe-top)] backdrop-blur-md supports-[backdrop-filter]:bg-background/75',
         className,
       )}
     >
@@ -86,7 +86,7 @@ function MoreSheet({ entries }: { entries: NavEntry[] }) {
           <SheetTitle className="text-sm">{t('app.shell.more')}</SheetTitle>
         </SheetHeader>
         <ScrollArea className="max-h-[70svh]" viewportClassName="max-h-[inherit]">
-          <div className="flex flex-col gap-5 px-3 pb-[calc(1.25rem+env(safe-area-inset-bottom))]">
+          <div className="flex flex-col gap-5 px-3 pb-[calc(1.25rem+var(--safe-bottom))]">
             <ul className="flex flex-col">
               {entries.map((entry) => {
                 const Icon = entry.icon;
@@ -207,7 +207,7 @@ export function MobileTabBar({ className }: { className?: string }) {
     <nav
       aria-label={t('app.shell.sections')}
       className={cn(
-        'fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md supports-[backdrop-filter]:bg-background/80',
+        'fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 pb-[var(--safe-bottom)] backdrop-blur-md supports-[backdrop-filter]:bg-background/80',
         className,
       )}
     >

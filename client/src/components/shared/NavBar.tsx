@@ -48,7 +48,7 @@ function MobileMenu({ isAuthenticated }: { isAuthenticated: boolean }) {
           <SheetTitle className="text-sm">{t('nav.menu')}</SheetTitle>
         </SheetHeader>
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-6 px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+          <div className="flex flex-col gap-6 px-4 pb-[calc(1.5rem+var(--safe-bottom))]">
             <ul className="flex flex-col">
               <li>
                 <SheetClose asChild>
@@ -147,7 +147,7 @@ export default function NavBar() {
   const home = pathTo(ROUTES.HOME, language);
 
   return (
-    <header className="sticky top-0 z-40 border-b bg-background/90 pt-[env(safe-area-inset-top)] backdrop-blur-md supports-[backdrop-filter]:bg-background/75">
+    <header className="sticky top-0 z-40 border-b bg-background/90 pt-[var(--safe-top)] backdrop-blur-md supports-[backdrop-filter]:bg-background/75">
       <nav
         aria-label={t('nav.primary')}
         className="mx-auto flex h-14 max-w-[1200px] items-center gap-1 px-4 sm:px-6 lg:px-8"

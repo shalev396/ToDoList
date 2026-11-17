@@ -212,6 +212,28 @@
   }
 }
 
+/*
+ * Every safe-area inset goes through these properties, so a test can force iPhone values
+ * (top 59px, bottom 34px) on a desktop browser. Use var(--safe-*) in components, never env().
+ */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+}
+
+/*
+ * iOS 26 Home Screen app with viewport-fit=cover and a translucent status bar: the layout viewport
+ * can come out shorter than the screen (WebKit bug 301108), leaving an empty band at the bottom.
+ * Let the page grow by the top inset, capped at the large viewport. Only the installed app matches.
+ */
+@media all and (display-mode: standalone) {
+  html {
+    min-height: min(100lvh, calc(100% + var(--safe-top)));
+  }
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -220,11 +242,12 @@
     @apply bg-background text-foreground;
     min-width: 320px;
     /* Landscape notch: keep content clear of the side insets (viewport-fit=cover). */
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
+    padding-left: var(--safe-left);
+    padding-right: var(--safe-right);
   }
 
   html {
+    @apply bg-background;
     font-family: var(--font-sans);
     font-size: 16px;
     -webkit-font-smoothing: antialiased;
