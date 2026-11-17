@@ -12,10 +12,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import './i18n';
 import './index.css';
 import App from './App.tsx';
-import { watchStandaloneInsets } from './lib/standaloneInsets.ts';
+import { applyStandaloneInsets } from './lib/standaloneInsets.ts';
 import { store } from './store';
 
-watchStandaloneInsets(window);
+applyStandaloneInsets(window);
 
 // Create a client for React Query
 const queryClient = new QueryClient({
