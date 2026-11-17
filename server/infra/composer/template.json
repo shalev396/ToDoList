@@ -488,8 +488,8 @@
 				},
 				"AutoDeploy": true,
 				"DefaultRouteSettings": {
-					"ThrottlingBurstLimit": 20,
-					"ThrottlingRateLimit": 10
+					"ThrottlingBurstLimit": 40,
+					"ThrottlingRateLimit": 20
 				},
 				"RouteSettings": {
 					"ANY /api/public/auth/{proxy+}": {
