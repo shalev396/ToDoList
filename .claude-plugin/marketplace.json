@@ -1,0 +1,16 @@
+{
+  "name": "todolist",
+  "owner": {
+    "name": "shalev396"
+  },
+  "metadata": {
+    "description": "The TodoList agent plugin: the TodoList MCP server, skills for the task methodology and hooks that enforce it."
+  },
+  "plugins": [
+    {
+      "name": "todolist",
+      "source": "./agent-plugin",
+      "description": "Connect agents to TodoList over MCP, with skills that teach the task methodology and hooks that enforce it."
+    }
+  ]
+}
