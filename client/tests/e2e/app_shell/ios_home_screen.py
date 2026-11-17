@@ -31,6 +31,7 @@ FAKE_HOME_SCREEN_APP = f"""
 Object.defineProperty(Navigator.prototype, 'standalone', {{ get: () => true, configurable: true }});
 Object.defineProperty(Screen.prototype, 'width', {{ get: () => {IPHONE["width"]}, configurable: true }});
 Object.defineProperty(Screen.prototype, 'height', {{ get: () => {IPHONE["height"] + 50}, configurable: true }});
+Object.defineProperty(ScreenOrientation.prototype, 'type', {{ get: () => 'portrait-primary', configurable: true }});
 """
 
 
