@@ -25,6 +25,15 @@ permissions:
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
 
+# Each job resets the stage it runs against, so two runs on one stage at once wipe each other's
+# accounts mid-test, and so does a run beside the stage's deploy or the PR-to-main suite against it
+# (_test-qa.yml). All three share the stage's `deploy-<stage>` group and take turns. GitHub keeps
+# only one PENDING run per group: a newly queued run replaces an older pending one, which then
+# shows as cancelled and needs a re-run (a running one is never cancelled).
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
 jobs:
   test-backend:
     name: Backend Tests (Postman)
