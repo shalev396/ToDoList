@@ -30,7 +30,7 @@ const EXPECTED: Record<Stage, StageLimits> = {
     authBurst: 5,
     mcpRate: 5,
     mcpBurst: 10,
-    apiReservedConcurrency: 15,
+    apiReservedConcurrency: 30,
   },
   prod: {
     defaultRate: 100,

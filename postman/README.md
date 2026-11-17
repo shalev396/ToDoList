@@ -23,7 +23,7 @@ The template ships with hardcoded URLs. Replace them with your own:
 In your active environment, set `baseUrl`:
 
 - **Local**: `http://localhost:3000/api` (run `npm run dev` from `server/` first: the local API against the `dev` stage, or `npm run start:local -- --stage qa`; it needs `server/.env.<stage>` and AWS credentials)
-- **QA**: Your QA API URL, e.g. `https://qa.yourdomain.com/api`
+- **QA**: Your QA API URL, e.g. `https://qa.yourdomain.com/api`. CI does not use the file's value: the PR-to-main tests (`.github/workflows/_test-qa.yml`) pass `--env-var "baseUrl=https://<DOMAIN_NAME>/api"` from the qa environment's `DOMAIN_NAME` variable, as the Playwright job does.
 
 ### 2. Authentication -- Tokens
 
@@ -41,7 +41,10 @@ From `server/`:
 ```bash
 npm run test:local  # Against the local API at http://localhost:3000/api (start it first, on a stage)
 npm run test:qa     # Against QA (baseUrl from TodoList QA.environment.yaml)
+npm run test:qa -- --env-var "baseUrl=https://qa.yourdomain.com/api"  # Against QA, without editing the file
 ```
+
+`test:qa` waits 600 ms between requests (`--delay-request 600`): the deployed stage's API Gateway throttles the public auth routes to 2 requests a second with a burst of 5 (`server/infra/lib/config.ts`, qa's `authRate`/`authBurst`), and the collection's back-to-back auth checks would otherwise get 429s. The local API has no API Gateway in front of it, so `test:local` runs without the delay.
 
 Both scripts `cd ..` and run the collection from the repo root with `--working-dir .`, because the "Upload to S3" request reads its file body from `postman/fixtures/test-image.png`. When running the Postman CLI yourself, do the same from the repo root:
 
