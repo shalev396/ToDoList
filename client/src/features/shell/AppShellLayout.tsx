@@ -148,7 +148,7 @@ export default function AppShellLayout() {
               <main
                 id="main"
                 tabIndex={-1}
-                className="flex-1 pb-[calc(3.5rem+env(safe-area-inset-bottom))] outline-none md:pb-0"
+                className="flex-1 pb-[calc(3.5rem+var(--safe-bottom))] outline-none md:pb-0"
               >
                 <Suspense fallback={<PageSkeleton />}>
                   <Fragment key={generation}>

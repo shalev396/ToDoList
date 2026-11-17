@@ -18,7 +18,7 @@ export function AuthLayout() {
 
   return (
     <div className="flex min-h-svh flex-col bg-background">
-      <header className="flex h-14 items-center justify-end gap-1 px-3 pt-[env(safe-area-inset-top)] sm:px-5">
+      <header className="flex min-h-[calc(3.5rem+var(--safe-top))] items-center justify-end gap-1 px-3 pt-[var(--safe-top)] sm:px-5">
         <LanguageSwitcher />
         <ModeToggle />
       </header>
