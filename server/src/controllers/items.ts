@@ -168,14 +168,14 @@ const update: RequestHandler = async (req, res): Promise<void> => {
   }
 };
 
-/** Local to-dos only (a mirrored item is deleted at its source: 409 with `openIn`). */
+/**
+ * Local to-dos, time blocks and areas (a mirrored item is deleted at its source: 409 with
+ * `openIn`; a travel leg is skipped, never deleted: 409 `not_deletable`).
+ */
 const remove: RequestHandler = async (req, res): Promise<void> => {
   const { caller } = req as WorkspaceRequest;
   const item = await Item.find(caller, routeParam(req, 'id'));
-  if (!(item instanceof Todo)) {
-    throw new MirroredItemError(item.provider, item.sourceUrl);
-  }
-  await item.delete(caller);
+  await item.deletable().delete(caller);
   res.status(204).end();
 };
 
@@ -188,15 +188,15 @@ const overlay: RequestHandler = async (req, res): Promise<void> => {
   res.success(data);
 };
 
-/** Local to-dos only (a mirrored item is completed at its source: 409 with `openIn`). */
+/**
+ * Local to-dos only (a mirrored item is completed at its source: 409 with `openIn`; a time block,
+ * an area or a travel leg has no status: 409 `not_completable`).
+ */
 const complete: RequestHandler = async (req, res): Promise<void> => {
   const { done } = parseOr400(CompleteItemBody, req.body);
   const { caller } = req as WorkspaceRequest;
   const item = await Item.find(caller, routeParam(req, 'id'));
-  if (!(item instanceof Todo)) {
-    throw new MirroredItemError(item.provider, item.sourceUrl);
-  }
-  const updated = await item.complete(caller, done);
+  const updated = await item.completable().complete(caller, done);
   const data: CompleteItemResponseData = await (await ItemQuery.for(caller)).detail(updated);
   res.success(data);
 };

@@ -7,6 +7,7 @@ import type { Caller } from '../base/Caller.js';
 import type { CreateCopyOutcome, CreateCopyRequestBody } from '../../types/providerCreate.js';
 import type { Provider } from '../../types/domain.js';
 import type { DueDate } from './DueDate.js';
+import type { Item } from './Item.js';
 import type { ItemEdit } from './ItemEdit.js';
 import type { TimeRange } from './TimeRange.js';
 
@@ -15,7 +16,10 @@ export interface Editable<TSelf> {
   update(caller: Caller, edit: ItemEdit): Promise<TSelf>;
 }
 
-/** Can be marked done, and open again. */
+/**
+ * Can be marked done, and open again: a to-do. Scheduled time (a time block, an area, a travel
+ * leg) never is: ScheduledItem does not implement it, so the compiler refuses to complete one.
+ */
 export interface Completable<TSelf> {
   complete(caller: Caller, done: boolean): Promise<TSelf>;
 }
@@ -41,9 +45,19 @@ export interface ProviderLinked {
   readonly openIn: { readonly provider: Provider; readonly url: string };
 }
 
-/** Has a time span (a calendar event): its start, its end and whether it is all day. */
+/** Has a time span (an event, a time block): its start, its end and whether it is all day. */
 export interface Schedulable {
   readonly timeRange: TimeRange | null;
+}
+
+/**
+ * May repeat: one record whose rule (RRULE lines, as Google keeps them) makes its occurrences (a
+ * Google series' master, a repeating time block).
+ */
+export interface Recurring {
+  readonly isRecurring: boolean;
+  /** Its rule's lines; empty when it doesn't repeat. */
+  readonly recurrenceLines: readonly string[];
 }
 
 /**
@@ -53,4 +67,14 @@ export interface Schedulable {
 export interface RateLimiter {
   reserve(): Promise<boolean>;
   release(): Promise<void>;
+}
+
+/** True when the item can be completed (a to-do; never scheduled time or a mirrored item). */
+export function isCompletable(item: Item): item is Item & Completable<Item> {
+  return typeof (item as Partial<Completable<Item>>).complete === 'function';
+}
+
+/** True when the item can be deleted here (a to-do, a time block; never a travel leg). */
+export function isDeletable(item: Item): item is Item & Deletable {
+  return typeof (item as Partial<Deletable>).delete === 'function';
 }

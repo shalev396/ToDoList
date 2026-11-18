@@ -1,6 +1,7 @@
 /**
- * A Google Calendar event mirrored by its integration (Schedulable): the calendar, clock, agenda
- * and timeline blocks read its time range, and the workspace calendar's push leaves it alone.
+ * A Google Calendar event mirrored by its integration (Schedulable, Recurring): the calendar,
+ * clock, agenda and timeline blocks read its time range, a series' master holds its rule, and the
+ * workspace calendar's push leaves it alone.
  *
  * - Its provider half goes to CalendarProvider#updateEvent, by its item (never a raw calendar or
  *   event id): its title and its time, given whole (a new start keeps the duration unless an end
@@ -37,7 +38,8 @@ import type { ItemData } from '../../models/definitions/Item.js';
 import { logger } from '../../services/logger.js';
 import { calendarEventExternalId, mapCalendarEvent } from '../../sync/providers/google_calendar.js';
 import type { MappedItem } from '../../sync/types.js';
-import type { Schedulable } from './contracts.js';
+import { isSeriesRow } from '../../types/recurrence/occurrences.js';
+import type { Recurring, Schedulable } from './contracts.js';
 import { CreateQuota } from './CreateQuota.js';
 import { eventHasGuests } from './guests.js';
 import { Item } from './Item.js';
@@ -85,7 +87,7 @@ function createFailure(result: Exclude<WriteResult, { kind: 'created' }>): AppEr
   }
 }
 
-export class CalendarEvent extends MirroredItem implements Schedulable {
+export class CalendarEvent extends MirroredItem implements Schedulable, Recurring {
   static {
     Item.register('event', (data) => new CalendarEvent(data));
   }
@@ -105,6 +107,16 @@ export class CalendarEvent extends MirroredItem implements Schedulable {
     return Array.isArray(lines)
       ? (lines as unknown[]).filter((line): line is string => typeof line === 'string')
       : null;
+  }
+
+  /** A series' master: an RRULE line in its recurrence. */
+  get isRecurring(): boolean {
+    return isSeriesRow({ props: this.data.props });
+  }
+
+  /** Its series' rule lines; empty for a single event or one occurrence of a series. */
+  get recurrenceLines(): readonly string[] {
+    return this.recurrence ?? [];
   }
 
   protected override needsGuestNotice(): boolean {

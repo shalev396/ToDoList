@@ -16,6 +16,7 @@ import type { ItemData, LocalItemPatch } from '../../models/definitions/Item.js'
 import { MirroredItemError as StoredMirroredItemError } from '../../models/errors.js';
 import { getItemRepository } from '../../models/index.js';
 import type { CreateCopyOutcome, CreateCopyRequestBody } from '../../types/providerCreate.js';
+import { isScheduledKind } from '../../types/scheduled.js';
 import { Container } from './Container.js';
 import type { Completable, Copyable, Deletable, Editable, HasDueDate } from './contracts.js';
 import { Item } from './Item.js';
@@ -205,10 +206,17 @@ export class Todo
     });
   }
 
-  /** The caller's own live to-do (anyone else's, or a mirrored item: 404). */
+  /**
+   * The caller's own live to-do (anyone else's, a mirrored item, or reserved time such as a time
+   * block or a travel leg: 404).
+   */
   static async findOwn(caller: Caller, id: string): Promise<Todo> {
     const stored = await (await getItemRepository()).findById(caller.workspaceId, id);
-    if (stored?.source.provider !== 'local' || stored.ownerUserId !== caller.userId) {
+    if (
+      stored?.source.provider !== 'local' ||
+      stored.ownerUserId !== caller.userId ||
+      isScheduledKind(stored.kind)
+    ) {
       throw new NotFoundError();
     }
     return new Todo(stored);

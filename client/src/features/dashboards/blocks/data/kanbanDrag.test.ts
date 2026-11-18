@@ -3,13 +3,22 @@ import { describe, it } from 'node:test';
 import { clipToViewport, isDraggable, pointIn, statusAfterDrop } from './kanbanDrag.ts';
 import { kanbanColumns } from './kanbanColumns.ts';
 
-const local = { source: { provider: 'local' }, status: 'open' };
-const jira = { source: { provider: 'jira' }, status: 'open' };
+const local = { kind: 'todo', source: { provider: 'local' }, status: 'open' };
+const jira = { kind: 'issue', source: { provider: 'jira' }, status: 'open' };
+const block = { kind: 'block', source: { provider: 'local' }, status: 'open' };
+const leg = { kind: 'travel', source: { provider: 'local' }, status: 'open' };
 
 describe('kanban drag guard', () => {
-  it('only local items are draggable', () => {
+  it('only local to-dos are draggable', () => {
     assert.equal(isDraggable(local), true);
     assert.equal(isDraggable(jira), false);
+  });
+
+  it('a time block or a travel leg is never dragged between status columns', () => {
+    assert.equal(isDraggable(block), false);
+    assert.equal(isDraggable(leg), false);
+    assert.equal(statusAfterDrop(block, 'done'), null);
+    assert.equal(statusAfterDrop(leg, 'in_progress'), null);
   });
 
   it('a mirrored card never produces a write', () => {

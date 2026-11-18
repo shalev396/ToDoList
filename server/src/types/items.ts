@@ -1,4 +1,5 @@
 import type { ContainerType, IntegrationMode, ItemKind, ItemStatus, Provider } from './domain.js';
+import type { BlockLayer } from './scheduled.js';
 import type { WritableField } from './integrations.js';
 
 /** Item and facet shapes of the items routes (routes/private/items.ts), kept apart so the client can import them without the controllers. */
@@ -158,6 +159,8 @@ export interface ItemSummary {
   /** Provider copies of a local to-do (H5); empty otherwise. */
   copies: ItemCopyView[];
   lastSeenAt: Date | null;
+  /** A time block's layer (`block`, or `area` for painted time); absent on every other item. */
+  layer?: BlockLayer;
 }
 
 /** The full item. */

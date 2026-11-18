@@ -81,6 +81,8 @@ export const editor = {
     file: 'Files',
     message: 'Messages',
     pr: 'Pull requests',
+    block: 'Time blocks',
+    travel: 'Travel',
   },
   filter: {
     viewNote: 'A saved view brings its own filter and grouping.',

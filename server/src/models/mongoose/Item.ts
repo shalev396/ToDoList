@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import mongoose from 'mongoose';
 
 import { ATTRIBUTE_KEY_PATTERN } from '../../types/attributes.js';
-import { ITEM_KINDS, ITEM_STATUSES, VISIBILITIES, type ItemStatus } from '../../types/domain.js';
+import {
+  ITEM_KINDS,
+  ITEM_STATUSES,
+  SCHEDULED_KINDS,
+  VISIBILITIES,
+  type ItemStatus,
+} from '../../types/domain.js';
 import {
   ITEM_TABLE_NAME,
   localItemUrl,
@@ -445,7 +451,11 @@ async function refreshCopyProps(workspaceId: string, id: string): Promise<ItemFi
   ).lean<ItemFields>();
 }
 
-/** Live local items marked private whose owner is none of `memberIds`: former members'. */
+/**
+ * Live local items marked private whose owner is none of `memberIds`: former members' to-dos (and
+ * time blocks). Never a travel leg: legs are no to-dos, and travel storage removes a leaving
+ * member's legs itself (Ruling 25), so the count and the delete agree.
+ */
 function formerMembersPrivateLocal(
   workspaceId: string,
   memberIds: readonly string[],
@@ -456,6 +466,7 @@ function formerMembersPrivateLocal(
     visibility: 'private',
     deletedAt: null,
     ownerUserId: { $nin: [...memberIds] },
+    kind: { $ne: 'travel' },
   };
 }
 
@@ -618,6 +629,8 @@ export const ItemRepository: IItemRepository = {
         workspaceId,
         deletedAt: null,
         'source.provider': 'local',
+        // A to-do only: reserved time (a time block, a travel leg) is never copied to a provider.
+        kind: { $nin: [...SCHEDULED_KINDS] },
         'copies.requestId': { $ne: copy.requestId },
         ...(options.allowActive === true
           ? {}

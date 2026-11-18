@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import type { WorkspaceSettings } from '../../models/definitions/Workspace.js';
 import { seedIntegration, shareIntegrations } from '../../testing/integrationFixtures.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
-import type { Provider, Role as RoleName } from '../../types/domain.js';
+import type { ItemKind, Provider, Role as RoleName } from '../../types/domain.js';
 import type { Actor as ActorClass } from '../base/Actor.js';
 import type { Caller as CallerClass } from '../base/Caller.js';
 import type { ItemFacts, ItemPolicy as ItemPolicyClass } from './ItemPolicy.js';
@@ -73,6 +73,32 @@ const ITEMS: Doc[] = [
     visibility: 'workspace',
     topicId: 't1',
   },
+  // Scheduled items: a block follows a to-do's visibility; a travel leg is its member's only,
+  // even when it is stored workspace-visible (Ruling 8: belt and braces).
+  {
+    _id: 'block-b-shared',
+    integrationId: null,
+    ownerUserId: 'u-b',
+    visibility: 'workspace',
+    topicId: 't1',
+    kind: 'block',
+  },
+  {
+    _id: 'travel-a-shared',
+    integrationId: null,
+    ownerUserId: 'u-a',
+    visibility: 'workspace',
+    topicId: 't1',
+    kind: 'travel',
+  },
+  {
+    _id: 'travel-b-private',
+    integrationId: null,
+    ownerUserId: 'u-b',
+    visibility: 'private',
+    topicId: null,
+    kind: 'travel',
+  },
   { _id: 'jira-a', integrationId: 'i-a', provider: 'jira', topicId: 't1' },
   { _id: 'jira-a-no-topic', integrationId: 'i-a', provider: 'jira' },
   { _id: 'jira-b-shared', integrationId: 'i-b', provider: 'jira', topicId: 't2' },
@@ -106,6 +132,8 @@ function factsOf(doc: Doc): ItemFacts {
     topicId: text(doc['topicId']),
     deletedAt: doc['deletedAt'] instanceof Date ? doc['deletedAt'] : null,
     source,
+    // A row without a kind reads as a to-do (itemRecord.ts).
+    kind: (text(doc['kind']) ?? 'todo') as ItemKind,
   };
 }
 
@@ -288,6 +316,39 @@ describe('ItemPolicy: the filter and canRead agree', () => {
     }
   });
 
+  it('travel is readable by its owner only, even if stored workspace-visible', async () => {
+    const [leg, theirLeg, block] = ['travel-a-shared', 'travel-b-private', 'block-b-shared'].map(
+      (id) => {
+        const doc = docs.find((candidate) => candidate['_id'] === id);
+        assert.ok(doc, id);
+        return doc;
+      },
+    );
+    assert.ok(leg && theirLeg && block);
+    for (const userId of USERS) {
+      for (const role of ROLES) {
+        const caller = callerOf(userId, role);
+        const policy = await ItemPolicy.for(caller);
+        const mine = userId === 'u-a';
+        const label = `${userId}/${role}`;
+        assert.equal(policy.canRead(caller, factsOf(leg)), mine, label);
+        assert.equal(
+          (await find(await ItemPolicy.filterFor(caller))).includes('travel-a-shared'),
+          mine,
+          label,
+        );
+        assert.equal(
+          (await find(policy.itemFilterUnabsorbed(caller.context))).includes('travel-a-shared'),
+          mine,
+          label,
+        );
+        // Nor anyone else's private leg; a shared block is everyone's to see.
+        assert.equal(policy.canRead(caller, factsOf(theirLeg)), userId === 'u-b', label);
+        assert.equal(policy.canRead(caller, factsOf(block)), true, label);
+      }
+    }
+  });
+
   it('the matrix is not vacuous: each rule picks something and leaves something out', async () => {
     const a = callerOf('u-a', 'editor');
     const seen = inMemory(await ItemPolicy.for(a), a);
@@ -297,6 +358,8 @@ describe('ItemPolicy: the filter and canRead agree', () => {
       'jira-a',
       'jira-b-shared',
       'todo-a-no-integration-field',
+      'block-b-shared',
+      'travel-a-shared',
     ]) {
       assert.ok(seen.includes(id), id);
     }
@@ -307,6 +370,7 @@ describe('ItemPolicy: the filter and canRead agree', () => {
       'todo-a-deleted',
       'todo-b-elsewhere',
       'gone-integration',
+      'travel-b-private',
     ]) {
       assert.ok(!seen.includes(id), id);
     }

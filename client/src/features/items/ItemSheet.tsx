@@ -25,6 +25,7 @@ import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { ITEM_STATUSES, type ItemStatus } from '@api-types/domain';
 import type { ItemDetail } from '@api-types/api-contracts';
 import { isKnownProvider } from './providers';
+import { isMarkable } from './kinds';
 import { AlsoCreateIn } from './create/AlsoCreateIn';
 import { CopyChips } from './CopyChips';
 import { SourcePreview } from './SourcePreview';
@@ -124,8 +125,11 @@ function ItemBody({ item }: { item: ItemDetail }) {
   const timeZone = workspace?.settings.timezone ?? 'UTC';
   const canWrite = role === 'editor' || role === 'owner';
   const isLocal = item.source.provider === 'local';
+  // A to-do: its status and due date are edited here, and it can be created in a provider too. A
+  // time block, an area or a travel leg is local but has no status (never completed or copied).
+  const markable = isMarkable(item);
   const me = useMe();
-  const mine = isLocal && canWrite && item.ownerUserId === me.data?.id;
+  const mine = markable && canWrite && item.ownerUserId === me.data?.id;
   const [focus, setFocus] = useState<{ integrationId: string; anyway: boolean } | null>(null);
   const sourceName = t(`sources.${item.source.provider}`);
   const fields = describeProps(item.props);
@@ -221,7 +225,7 @@ function ItemBody({ item }: { item: ItemDetail }) {
         ) : null}
 
         {isLocal ? (
-          canWrite ? (
+          canWrite && markable ? (
             <LocalEditor item={item} timeZone={timeZone} />
           ) : null
         ) : (

@@ -28,12 +28,15 @@ import type {
   ListItemsQuery,
   ListItemsResponseData,
 } from '../../types/items.js';
-// Every item class registers as its module loads: a list made here is Todos, TaskItems, pull
-// requests and events whoever imported this module first.
+// Every item class registers as its module loads: a list made here is Todos, time blocks, areas,
+// travel legs, TaskItems, pull requests and events whoever imported this module first.
 import './CalendarEvent.js';
 import './PullRequest.js';
 import './TaskItem.js';
+import './TimeArea.js';
+import './TimeBlock.js';
 import './Todo.js';
+import './TravelLeg.js';
 import { Container } from './Container.js';
 import { Copies, type LiveStatuses } from './Copies.js';
 import { Item } from './Item.js';

@@ -45,6 +45,7 @@ import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { getCalendarLinkRepository, getItemRepository } from '../../models/index.js';
 import { redactString } from '../../services/secretPatterns.js';
 import { zonedTime } from '../../sync/transports/fixtureDates.js';
+import { SCHEDULED_KINDS } from '../../types/domain.js';
 import { CalendarLink } from './CalendarLink.js';
 import { PushCommit, type CommitCounts } from './PushCommit.js';
 import { PushPlan, readGcalConfig, type PlanNarrowing } from './PushPlan.js';
@@ -97,13 +98,16 @@ function datedWithin(span: Span): Filter {
 }
 
 /**
- * The push set's own rules on what the sync stores: not Google Calendar's, not turned off. Being
- * dated in the window (datedWithin) is checked on the effective values, after the projection.
+ * The push set's own rules on what the sync stores: not Google Calendar's, not turned off, and
+ * not TodoList's own reserved time (time blocks, areas and travel legs stay out of the workspace
+ * calendar in this version, whatever their `calendarSync`: Ruling 26). Being dated in the window
+ * (datedWithin) is checked on the effective values, after the projection.
  */
 function pushRule(): Filter[] {
   return [
     { 'source.provider': { $ne: 'google_calendar' } },
     { 'overlay.calendarSync': { $ne: false } },
+    { kind: { $nin: [...SCHEDULED_KINDS] } },
   ];
 }
 

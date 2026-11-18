@@ -14,6 +14,7 @@ import { pathTo, topicPath } from '@/router/routes';
 import { useItemParam } from '@/features/items/useItemParam';
 import { CopyChips } from '@/features/items/CopyChips';
 import { copiesOfProps } from '@/features/items/copies';
+import { isMarkable } from '@/features/items/kinds';
 import { SourceLink } from '@/features/items/SourceLink';
 import { topicById } from '@/features/workspaces/topics';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
@@ -59,7 +60,9 @@ function ListRows({
   return (
     <ul className="m-0 flex list-none flex-col p-0">
       {rows.map(({ row, tone, badges }) => {
-        const local = row.source.provider === 'local';
+        // A to-do is ticked here; a time block or a travel leg has no status, a mirrored item is
+        // completed at its provider.
+        const markable = isMarkable(row);
         const done = row.status === 'done';
         const title = truncateText(row.title, MAX_TITLE) || t('dataBlocks.noTitle');
         // A group page lives under its topic's URL; an Unsorted row has none to open.
@@ -79,7 +82,7 @@ function ListRows({
                   openItem(row.id);
                 }}
                 checkbox={
-                  local ? (
+                  markable ? (
                     <RoundCheckbox
                       checked={done}
                       label={t(done ? 'dataBlocks.list.markOpen' : 'dataBlocks.list.markDone', {
@@ -117,7 +120,10 @@ function ListRows({
   );
 }
 
-/** Todoist-style list (FRONTEND.md §5): checkbox for local to-dos only, priority and due chips. */
+/**
+ * Todoist-style list (FRONTEND.md §5): checkbox for local to-dos only (never a time block or a
+ * travel leg), priority and due chips.
+ */
 export default function ListBlock({ dashboard, block }: BlockComponentProps) {
   const { t } = useTranslation();
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);

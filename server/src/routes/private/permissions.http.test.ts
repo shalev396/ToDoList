@@ -479,6 +479,15 @@ describe('members, leaving and roles', () => {
       visibility: 'private',
     });
     const open = dataOf(await call('ben', 'POST', `${f.base}/items`, { title: 'Ben open to-do' }));
+    // His travel leg is private too, but it is no to-do: never counted here (Ruling 25: travel
+    // storage removes a leaving member's legs).
+    const leg = await items.createLocal(f.wid, {
+      ownerUserId: ids.ben,
+      title: 'Bus to Braude',
+      topicId: null,
+      kind: 'travel',
+      visibility: 'private',
+    });
     const path = `${f.base}/former-member-todos`;
     assert.deepEqual(dataOf(await call('ann', 'GET', path)), { count: 0 }, 'still a member');
     assert.equal((await call('ben', 'DELETE', `${f.base}/members/me`)).status, 204);
@@ -491,6 +500,7 @@ describe('members, leaving and roles', () => {
     assert.deepEqual(dataOf(await call('ann', 'DELETE', path)), { deleted: 1 });
     assert.deepEqual(dataOf(await call('ann', 'GET', path)), { count: 0 });
     assert.equal(await items.findById(f.wid, secret.id), null);
+    assert.notEqual(await items.findById(f.wid, leg.id), null, 'a leg is not a to-do');
     // A to-do the workspace could see stays.
     assert.equal((await call('ann', 'GET', `${f.base}/items/${open['id'] as string}`)).status, 200);
     const [entry] = await (

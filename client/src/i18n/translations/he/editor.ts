@@ -79,6 +79,8 @@ export const editor = {
     file: 'קבצים',
     message: 'הודעות',
     pr: 'בקשות מיזוג',
+    block: 'בלוקי זמן',
+    travel: 'נסיעות',
   },
   filter: {
     viewNote: 'תצוגה שמורה מביאה איתה סינון וקיבוץ משלה.',

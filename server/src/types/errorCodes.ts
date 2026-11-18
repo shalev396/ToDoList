@@ -93,6 +93,11 @@ export const ERROR_CODES = [
    * another member's (or an unknown) integration is not found (404, never 403).
    */
   'integration_not_found',
+  // Scheduled items (a time block, an area, a travel leg): reserved time, not a to-do
+  /** Completing an item that has no status: a time block, an area or a travel leg. */
+  'not_completable',
+  /** Deleting a travel leg: legs are skipped, never deleted. */
+  'not_deletable',
   // Google Calendar OAuth (the start route, and `?oauth_error=` on the callback's redirect)
   'oauth_unavailable',
   'oauth_denied',

@@ -1,13 +1,18 @@
+import { isMarkable } from '../../../items/kinds.ts';
 import { ITEM_STATUS_ORDER, type KanbanStatus } from './kanbanColumns.ts';
 
 export interface DragSubject {
+  kind: string;
   source: { provider: string };
   status: string;
 }
 
-/** Only local items are draggable: a mirrored card belongs to its provider ("Open in ..."). */
+/**
+ * Only local to-dos are draggable: a mirrored card belongs to its provider ("Open in ..."), and a
+ * time block or a travel leg has no status column to move to.
+ */
 export function isDraggable(row: DragSubject): boolean {
-  return row.source.provider === 'local';
+  return isMarkable(row);
 }
 
 /**

@@ -76,6 +76,8 @@ export const errors = {
     scopeNotAllowed: 'Your role can’t give an agent that access. Choose fewer permissions.',
     requestExpired: 'This sign-in expired. Go back to your agent and connect again.',
     agentKeyCap: 'You have the maximum number of agents here. Revoke one in Agent keys first.',
+    notCompletable: 'A time block or travel has no status to complete.',
+    notDeletable: 'Travel can’t be deleted. Skip it instead.',
   },
   generic: 'Something went wrong. Try again in a moment.',
   status: {

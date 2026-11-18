@@ -477,3 +477,117 @@ describe('facets', () => {
     assert.equal(other.containers.length, 1);
   });
 });
+
+describe('scheduled items: time blocks, areas and travel legs', () => {
+  let blockId = '';
+  let areaId = '';
+  let legId = '';
+  let sharedLegId = '';
+
+  before(async () => {
+    const models = await import('../../models/index.js');
+    const editor = await (
+      await models.getUserRepository()
+    ).findByEmail('items-http-editor@example.test');
+    assert.ok(editor);
+    const items = await models.getItemRepository();
+    const timed = {
+      startAt: new Date('2026-11-22T11:00:00.000Z'),
+      endAt: new Date('2026-11-22T15:00:00.000Z'),
+    };
+    blockId = (
+      await items.createLocal(wid, {
+        ownerUserId: editor.id,
+        title: 'Study: Math',
+        topicId: 'college',
+        kind: 'block',
+        props: { layer: 'block', recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'] },
+        ...timed,
+      })
+    ).id;
+    areaId = (
+      await items.createLocal(wid, {
+        ownerUserId: editor.id,
+        title: 'Studying',
+        topicId: 'college',
+        kind: 'block',
+        props: { layer: 'area' },
+        ...timed,
+      })
+    ).id;
+    const travel = {
+      ownerUserId: editor.id,
+      title: 'Bus to Braude',
+      topicId: 'college',
+      kind: 'travel' as const,
+      startAt: new Date('2026-11-22T10:20:00.000Z'),
+      endAt: new Date('2026-11-22T11:00:00.000Z'),
+      props: { travel: { anchorItemId: blockId, direction: 'there' } },
+    };
+    legId = (await items.createLocal(wid, { ...travel, visibility: 'private' })).id;
+    // Stored workspace-visible by mistake: still its member's only.
+    sharedLegId = (await items.createLocal(wid, { ...travel, visibility: 'workspace' })).id;
+  });
+
+  it('POST /items/:id/complete on a block → 409 not_completable', async () => {
+    for (const id of [blockId, areaId, legId]) {
+      const res = await call('editor', 'POST', `/items/${id}/complete`, { done: true });
+      assert.equal(res.status, 409, res.text);
+      // Not the mirrored answer: no openIn.
+      assert.deepEqual(
+        [res.body?.['code'], res.body?.['message'], res.body?.['openIn']],
+        ['not_completable', 'A time block or travel has no status', undefined],
+      );
+    }
+    const block = data(await call('editor', 'GET', `/items/${blockId}`)) as Summary & {
+      closedAt: string | null;
+    };
+    assert.deepEqual([block.status, block.closedAt], ['open', null]);
+  });
+
+  it('DELETE a travel leg → 409 not_deletable', async () => {
+    const res = await call('editor', 'DELETE', `/items/${legId}`);
+    assert.equal(res.status, 409, res.text);
+    assert.deepEqual(
+      [res.body?.['code'], res.body?.['message']],
+      ['not_deletable', 'Travel is skipped, not deleted'],
+    );
+    assert.equal((await call('editor', 'GET', `/items/${legId}`)).status, 200);
+  });
+
+  it('DELETE a block → 204', async () => {
+    assert.equal((await call('viewer', 'DELETE', `/items/${areaId}`)).status, 403);
+    assert.equal((await call('editor2', 'DELETE', `/items/${areaId}`)).status, 204);
+    assert.equal((await call('editor', 'GET', `/items/${areaId}`)).status, 404);
+  });
+
+  it('a generic edit of a block or a leg waits for its own route (400)', async () => {
+    const block = await call('editor', 'PATCH', `/items/${blockId}`, { status: 'done' });
+    assert.equal(block.status, 400, block.text);
+    assert.match(String(block.body?.['message']), /time-blocks/);
+    const leg = await call('editor', 'PATCH', `/items/${legId}`, { title: 'Moved' });
+    assert.equal(leg.status, 400, leg.text);
+    assert.match(String(leg.body?.['message']), /travel\/legs/);
+  });
+
+  it('a block is shared like a to-do; a leg is read by its member only', async () => {
+    const blockRead = await call('editor2', 'GET', `/items/${blockId}`);
+    assert.equal(blockRead.status, 200, blockRead.text);
+    assert.equal((data(blockRead) as { layer?: string }).layer, 'block');
+    for (const who of ['owner', 'editor2', 'viewer'] as const) {
+      for (const id of [legId, sharedLegId]) {
+        assert.equal((await call(who, 'GET', `/items/${id}`)).status, 404, `${who} ${id}`);
+        // A viewer is refused any write by role first, whatever the id (the role matrix).
+        if (who !== 'viewer') {
+          assert.equal((await call(who, 'DELETE', `/items/${id}`)).status, 404, `${who} ${id}`);
+          const done = await call(who, 'POST', `/items/${id}/complete`, { done: true });
+          assert.equal(done.status, 404, `${who} ${id}`);
+        }
+      }
+      const page = data(await call(who, 'GET', '/items?kind=travel')) as Page;
+      assert.deepEqual(page.items, [], who);
+    }
+    const mine = data(await call('editor', 'GET', '/items?kind=travel')) as Page;
+    assert.deepEqual(mine.items.map((item) => item.id).sort(), [legId, sharedLegId].sort());
+  });
+});

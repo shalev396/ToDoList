@@ -1,21 +1,19 @@
 import { z } from 'zod';
 
-import { Item, Todo } from '../../../classes/item/index.js';
-import { MirroredItemError } from '../../../errors/MirroredItemError.js';
+import { Item, type Deletable } from '../../../classes/item/index.js';
 import { confirmField } from '../../middleware/confirm.js';
 import { defineTool, type ToolContext } from '../../tool.js';
 import { ItemId, ItemSummaryView, itemCaller, itemReads, toItemSummaryView } from '../itemViews.js';
 
 /**
- * The to-do as it is, for the preview and the answer. A mirrored item is refused at once: it is
- * deleted at its source, never here.
+ * The to-do (or time block) as it is, for the preview and the answer. A mirrored item is refused at
+ * once: it is deleted at its source, never here. So is a travel leg: it is skipped, not deleted.
  */
 async function localItem(
   ctx: ToolContext,
   id: string,
-): Promise<{ todo: Todo; view: ItemSummaryView }> {
-  const item = await Item.find(itemCaller(ctx), id);
-  if (!(item instanceof Todo)) throw new MirroredItemError(item.provider, item.sourceUrl);
+): Promise<{ todo: Item & Deletable; view: ItemSummaryView }> {
+  const item = (await Item.find(itemCaller(ctx), id)).deletable();
   return {
     todo: item,
     view: toItemSummaryView(await (await itemReads(ctx)).detail(item, { live: true })),
@@ -26,12 +24,12 @@ export const deleteTodo = defineTool({
   name: 'delete_todo',
   title: 'Delete a to-do',
   description:
-    'Deletes a local to-do (it is purged 30 days later). Without confirm: true it only previews the deletion and changes nothing. A mirrored item is deleted at its source: the answer is an error with its Open in link.',
+    'Deletes a local to-do, a time block or an area (it is purged 30 days later). Without confirm: true it only previews the deletion and changes nothing. A mirrored item is deleted at its source: the answer is an error with its Open in link. A travel leg is skipped, never deleted: the answer is an error.',
   toolset: 'items',
   inputSchema: z.strictObject({ id: ItemId, confirm: confirmField }),
   outputSchema: z.object({
     applied: z.boolean().describe('false: a preview, nothing changed'),
-    item: ItemSummaryView.describe('The to-do as it was'),
+    item: ItemSummaryView.describe('The item as it was'),
     summary: z.string(),
   }),
   annotations: {
@@ -49,7 +47,7 @@ export const deleteTodo = defineTool({
         applied: false,
         item,
         summary:
-          'Preview: this to-do would be deleted. Nothing changed; call again with confirm: true to delete it.',
+          'Preview: this item would be deleted. Nothing changed; call again with confirm: true to delete it.',
       },
       target: { type: 'item', id: item.id },
     };
@@ -58,7 +56,7 @@ export const deleteTodo = defineTool({
     const { todo, view: item } = await localItem(ctx, input.id);
     await todo.delete(itemCaller(ctx));
     return {
-      output: { applied: true, item, summary: 'The to-do was deleted.' },
+      output: { applied: true, item, summary: 'The item was deleted.' },
       target: { type: 'item', id: item.id },
     };
   },

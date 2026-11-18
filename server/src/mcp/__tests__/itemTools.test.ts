@@ -8,6 +8,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 
+import type { ItemData } from '../../models/definitions/Item.js';
 import type * as Models from '../../models/index.js';
 import { insertAgentKey, type TestKey } from './helpers/agentKeys.js';
 import { errorText, startMcpHarness, structured, type McpHarness } from './helpers/mcpHarness.js';
@@ -299,6 +300,88 @@ describe('delete_todo', () => {
     assert.equal(deleted.applied, true);
     const gone = await call(editorKey, 'get_item', { id: item.id });
     assert.equal(gone.isError, true);
+  });
+});
+
+describe('the to-do tools on time blocks, areas and travel legs', () => {
+  /** A scheduled item of the editor's, stored as TodoList stores one. */
+  async function scheduled(
+    kind: 'block' | 'travel',
+    props: Record<string, unknown> = {},
+  ): Promise<ItemData> {
+    return (await models.getItemRepository()).createLocal(team.workspace.id, {
+      ownerUserId: team.editor.id,
+      title: kind === 'block' ? 'Study: Math' : 'Bus to Braude',
+      topicId: 'college',
+      kind,
+      startAt: new Date('2026-11-22T11:00:00.000Z'),
+      endAt: new Date('2026-11-22T15:00:00.000Z'),
+      props,
+      ...(kind === 'travel' ? { visibility: 'private' as const } : {}),
+    });
+  }
+
+  it('complete_todo has nothing to complete on one (not the mirrored answer)', async () => {
+    for (const item of [
+      await scheduled('block'),
+      await scheduled('block', { layer: 'area' }),
+      await scheduled('travel'),
+    ]) {
+      const result = await call(editorKey, 'complete_todo', { id: item.id });
+      assert.equal(result.isError, true);
+      assert.equal(errorText(result), 'A time block or travel has no status');
+    }
+  });
+
+  it('delete_todo deletes a block or an area; a leg is skipped, not deleted', async () => {
+    const leg = await scheduled('travel');
+    for (const args of [{ id: leg.id }, { id: leg.id, confirm: true }]) {
+      const result = await call(editorKey, 'delete_todo', args);
+      assert.equal(result.isError, true);
+      assert.equal(errorText(result), 'Travel is skipped, not deleted');
+    }
+    const items = await models.getItemRepository();
+    assert.equal((await items.findById(team.workspace.id, leg.id))?.deletedAt, null);
+    for (const block of [await scheduled('block'), await scheduled('block', { layer: 'area' })]) {
+      const preview = structured(await call(editorKey, 'delete_todo', { id: block.id })) as {
+        applied: boolean;
+      };
+      assert.equal(preview.applied, false);
+      const deleted = structured(
+        await call(editorKey, 'delete_todo', { id: block.id, confirm: true }),
+      ) as { applied: boolean; summary: string };
+      assert.equal(deleted.applied, true);
+      assert.equal(await items.findById(team.workspace.id, block.id), null);
+    }
+  });
+
+  it('update_todo names the tool that edits a block or a leg (400)', async () => {
+    const block = await call(editorKey, 'update_todo', {
+      id: (await scheduled('block')).id,
+      status: 'done',
+    });
+    assert.equal(block.isError, true);
+    assert.match(errorText(block), /edit_time_block/);
+    const area = await call(editorKey, 'update_todo', {
+      id: (await scheduled('block', { layer: 'area' })).id,
+      title: 'Work',
+    });
+    assert.match(errorText(area), /edit_time_block/);
+    const leg = await call(editorKey, 'update_todo', {
+      id: (await scheduled('travel')).id,
+      startAt: '2026-11-22T10:00:00.000Z',
+    });
+    assert.equal(leg.isError, true);
+    assert.match(errorText(leg), /travel_edit_leg/);
+  });
+
+  it('another member never finds a leg', async () => {
+    const leg = await scheduled('travel');
+    for (const name of ['get_item', 'complete_todo', 'delete_todo']) {
+      const result = await call(studentKey, name, { id: leg.id });
+      assert.equal(result.isError, true, name);
+      assert.equal(errorText(result), 'Not found', name);
+    }
   });
 });
 

@@ -312,7 +312,8 @@ export interface IItemRepository {
   /**
    * H5: records a copy on a local to-do. False when a copy with this `requestId` exists already
    * (a repeat), when (unless `allowActive`) a copy at the same integration is pending, created
-   * or unknown (the claim is atomic per to-do and integration), or the item is not a live local one.
+   * or unknown (the claim is atomic per to-do and integration), or the item is not a live local
+   * to-do (reserved time, a time block or a travel leg, is never copied).
    */
   addCopy(
     workspaceId: string,
@@ -336,7 +337,8 @@ export interface IItemRepository {
   softDeleteForWorkspace(workspaceId: string): Promise<number>;
   /**
    * Local items marked private whose owner is none of `memberIds` (former members' to-dos,
-   * PERMISSIONS-V2 ruling 6), not deleted: how many. Never their content.
+   * PERMISSIONS-V2 ruling 6), not deleted, travel legs left out (travel storage removes those):
+   * how many. Never their content.
    */
   countPrivateLocalOfFormerMembers(
     workspaceId: string,

@@ -193,10 +193,11 @@ describe('compileQuery: base filter', () => {
 
   it('sees its own and the shared integrations, shared to-dos and its own private ones', () => {
     const match = compileQuery({ source: 'items' }, context()).pipeline[0]?.['$match'];
+    // Another member's travel leg never, whatever its visibility (Ruling 8).
     assert.deepEqual((match as Record<string, unknown>)['$or'], [
       { integrationId: { $in: ['i-own', 'i-shared'] } },
       { integrationId: null, ownerUserId: 'u-1' },
-      { integrationId: null, visibility: 'workspace' },
+      { integrationId: null, visibility: 'workspace', kind: { $ne: 'travel' } },
     ]);
   });
 
@@ -222,7 +223,7 @@ describe('compileQuery: base filter', () => {
     ] as Record<string, unknown>;
     assert.deepEqual(items['$or'], [
       { integrationId: null, ownerUserId: 'u-1' },
-      { integrationId: null, visibility: 'workspace' },
+      { integrationId: null, visibility: 'workspace', kind: { $ne: 'travel' } },
     ]);
     const containers = compileQuery({ source: 'containers' }, context({ access: none }))
       .pipeline[0]?.['$match'] as Record<string, unknown>;

@@ -104,7 +104,7 @@ describe('syncMongo (sync-db on MongoDB)', () => {
     assert.deepEqual(now?.weights, { title: 5, bodyPreview: 1, 'overlay.overrides.title': 5 });
   });
 
-  it('the Items validator rejects a raw insert with kind "bogus"', async () => {
+  it('the Items validator rejects a raw insert with kind "bogus", and takes block and travel', async () => {
     const items = connection.collection('Items');
     await assert.rejects(items.insertOne(rawItem({ kind: 'bogus' })), isValidationFailure);
     await assert.rejects(
@@ -112,6 +112,17 @@ describe('syncMongo (sync-db on MongoDB)', () => {
       isValidationFailure,
     );
     await items.insertOne(rawItem());
+    // TodoList's own reserved time: the validator sync-db installs takes the new kinds.
+    const source = (externalId: string): Record<string, unknown> => ({
+      provider: 'local',
+      accountId: '',
+      externalId,
+      url: `/w/w-raw/items/${externalId}`,
+    });
+    await items.insertOne(
+      rawItem({ kind: 'block', props: { layer: 'area' }, source: source('b') }),
+    );
+    await items.insertOne(rawItem({ kind: 'travel', visibility: 'private', source: source('t') }));
   });
 
   it('the Containers and Credentials validators reject documents without source or enc parts', async () => {

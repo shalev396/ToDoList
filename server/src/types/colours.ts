@@ -27,8 +27,8 @@ export const FAMILY_ASSIGN_ORDER = [
   'red',
 ] as const;
 
-/** Kinds the resolver knows: today's ItemKind plus the two the time-blocks plan adds. */
-export type ColourKind = ItemKind | 'block' | 'travel';
+/** Kinds the resolver knows: every ItemKind (time blocks and travel legs included). */
+export type ColourKind = ItemKind;
 export type ColourLayer = 'block' | 'area';
 
 export interface ColourInput {
