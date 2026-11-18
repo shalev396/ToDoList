@@ -184,6 +184,18 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 | `delete_todo` | Soft delete (`deletedAt`); needs `confirm` | D |
 | `set_overlay` | Pin, hide or annotate a **mirrored** item via DATA.md `overlay.*` (local-only, never written to the provider) | D=false, I |
 | `set_subject` | Create or change a Subject (a lesson): its colour family, title patterns and, with `rename`, its name; `{name, rename?, family?, patterns?}` → `{subject, created}`; editor+ | D=false, I |
+| `travel_list_places` | The key's own member's saved places (Home, campus, the gym): `{places: [{id, name, aliases, home}]}`, oldest first; never an address or a coordinate. Scope `read`; editor+ | RO, I |
+| `travel_set_place` | Save a place (a new one needs `name`, and `lat` + `lon` or an `address` that is looked up; a `"lat, lon"` address needs no lookup) or change one (`id`; `name`, `address`, `lat`, `lon`, `aliases`, `home`) → `{place}` (name view); editor+ | D=false, open-world |
+| `travel_remove_place` | `{id, confirm}`: removes a place with what points at it (rules naming it name none, pins go); without `confirm: true` only previews → `{applied, summary, …}`; editor+ | D |
+| `travel_list_rules` | The member's travel rules, oldest first (where-rules apply in that order): `{rules: [{id, scope, mode, direction, place (a name), createdAt}]}`. Scope `read`; editor+ | RO, I |
+| `travel_set_rule` | Add or change a rule: exactly one of `where` (a rule group over items), `seriesItemId` or `itemId` (with `occurrenceStart`, or `"single"`), plus `mode` (`walk`, `drive`, `transit`), `direction` (`there`, `back`, `both`) and `place` (a saved name or alias; null removes it); `id` changes one; never on an area; at most 50 → `{rule}`; editor+ | D=false |
+| `travel_remove_rule` | `{id, confirm}`: removes a rule; the legs it made go as no longer matching; without `confirm: true` only previews; editor+ | D |
+| `travel_mark_item` | Mark one timed item (event, to-do with a start, time block; not an area, a leg, an all-day item or one with no start) for travel: `itemId`, `mode`, `direction`, and optionally `occurrenceStart` (one occurrence, by its original start), `every: true` (every occurrence), `place` and `minutes` (a rough length by hand, remembered for that trip) → `{rule, legs}`; editor+ | D=false, I |
+| `travel_get_settings` | The member's travel settings: `factors` and `buffers` per mode, `goHome` (`enabled`, `minWindowMinutes`, `minAtHomeMinutes`), `defaultMode`, `containerPlaces` (by id) and `orsAvailable`. Scope `read`; editor+ | RO, I |
+| `travel_set_settings` | Change any part of the settings (what is left out stays; checked whole; factor 0.5 to 3, buffer 0 to 120 minutes, `minWindowMinutes` at least 180, `minAtHomeMinutes` at least 60) → the settings; editor+ | D=false, I |
+| `travel_edit_leg` | Set one leg by hand: `legId` and one or two of `startAt`, `endAt`, `minutes` (the third is worked out; one alone keeps the length, or the arrival for a new length) → `{leg}`; the leg is the member's own until `travel_reset_leg`; editor+ | D=false, I |
+| `travel_skip_leg` | `{legId}`: skip a leg for its day; no regeneration brings it back until reset → `{legId, skipped}`; editor+ | D=false, I |
+| `travel_reset_leg` | `{legId}`: back to computed (a skip is undone, hand times and the "event moved" flag cleared) → `{leg}`; editor+ | D=false, I |
 
 ```json
 // create_todo.inputSchema (strict)
@@ -197,6 +209,8 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
     "allDay": { "type": "boolean", "description": "The due date has no time of day" },
     "topic": { "type": "string", "description": "A topic slug as workspace_get lists them; null: Unsorted" },
     "containerId": { "type": "string" },
+    "startAt": { "type": "string", "format": "date-time", "description": "When it starts (with an offset); lets travel anchor the to-do. Not with recurrence" },
+    "endAt": { "type": "string", "format": "date-time", "description": "When it ends; not before startAt" },
     "priority": { "type": "integer", "minimum": 0, "maximum": 4 },
     "idempotencyKey": { "type": "string", "description": "Makes retries safe: the same key gives back the same to-do" },
     "targets": { "type": "array", "description": "Also create it in these of the caller's own provider integrations (needs confirm and providers:create)" },
@@ -220,6 +234,14 @@ A recurring to-do exists **in Google Calendar only**, never as a local to-do:
 #### `create_time_block` and `edit_time_block`
 
 Time blocks and areas are TodoList's own reserved time (`docs/superpowers/specs/2026-11-17-time-blocks-design.md`): not tasks (no status, never completed, left out of task-shaped reads), shown by `list_today` (`scheduled[]`) and `get_calendar` (one entry per occurrence, with `occurrence.seriesId` and `originalStart`). A repeating one is one record (`props.recurrence`, `props.exceptions`, `props.recurrenceEnd`). Both tools take the REST routes' schemas (`POST/PATCH …/time-blocks`, strict), with `topic` (a slug) in place of `topicId`; `edit_time_block` adds `id` and `skip`. `scope: "this"` takes only `originalStart` and the new times (or `skip`); an `originalStart` that is none of the series' starts is an error (`not_an_occurrence`). `update_todo` refuses a block and names `edit_time_block`; `delete_todo` deletes one.
+
+#### The `travel_*` tools
+
+Travel time is TodoList's own legs between the places a member's day happens in (`docs/superpowers/specs/2026-11-17-travel-time-design.md`). The tools join the `items` toolset (so no change to the order in §7) and act for the **key's own member** only, as an editor or owner (`minRole: 'editor'`: a viewer's key cannot use them). Reads need the `read` scope, writes `items:write`.
+
+- **Names only.** Places come back as `{id, name, aliases, home}`, a rule's place as its name, a leg as an item with a title like "Bus to Braude" and `props.travel` (place names, mode, minutes, source). An address or a coordinate is accepted by `travel_set_place` and never returned, logged or audited; app links (which carry coordinates) are never sent over MCP. Another member's places, rules and legs are never listed, and `get_item` of another member's leg is refused.
+- **Set up in order:** save Home first (`travel_set_place` with `home: true`), then rules (`travel_set_rule`, or `travel_mark_item` for one item). Rough minutes are fine: `minutes` on `travel_mark_item` is remembered for that trip. Marking with no Home is 409 `travel_home_missing`; a 31st place or a 51st rule is 409 `travel_limit`.
+- The member's legs are made again before a write answers (a short wait, cached geocodes only), so the next `get_calendar` shows them. A leg is **not a to-do**: `complete_todo` on one is 409 `not_completable`, `delete_todo` is 409 `not_deletable` (use `travel_skip_leg`), and `update_todo` names `travel_edit_leg`.
 
 #### `update_todo`: local to-dos versus mirrored items
 

@@ -33,3 +33,27 @@ def test_privacy_links_to_terms(page: Page, app_url: str):
     link = page.get_by_role("main").get_by_role("link", name="Terms of service")
     expect(link).to_be_visible(timeout=NORMAL_TIMEOUT)
     expect(link).to_have_attribute("href", "/en/legal/terms")
+
+
+def _travel_section_text(page: Page, app_url: str, lang: str) -> str:
+    """Opens the privacy page in a language and returns the text of its travel section."""
+    base = app_url.removesuffix("/en")
+    page.goto(f"{base}/{lang}/legal/privacy", wait_until="domcontentloaded")
+    page.wait_for_load_state("networkidle")
+    section = page.locator("section#travel")
+    expect(section).to_be_visible(timeout=NORMAL_TIMEOUT)
+    section.scroll_into_view_if_needed()
+    return section.inner_text()
+
+
+def test_privacy_names_openrouteservice(page: Page, app_url: str):
+    """Asserts the travel section names the two routing and geocoding services and says places stay private, in English and Hebrew."""
+    en = _travel_section_text(page, app_url, "en")
+    assert "OpenRouteService" in en
+    assert "OpenStreetMap Nominatim" in en
+    assert "never shared" in en and "never logged" in en
+    assert "place names only" in en
+    he = _travel_section_text(page, app_url, "he")
+    assert "OpenRouteService" in he
+    assert "Nominatim" in he
+    assert re.search(r"[א-ת]", he)

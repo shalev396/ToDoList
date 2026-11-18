@@ -45,6 +45,10 @@ export const legal = {
         title: 'Sharing and who can see what',
         body: 'Members of a workspace see that workspace’s mirrored items, within their topic scope: an owner can limit a member to certain topics, and a member then sees only those.\n\nYou bring people in with an email invite or a join link. Anyone who joins can see what their role and scope allow, so share links only with people you trust. Remove a member or revoke a link at any time.',
       },
+      travel: {
+        title: 'Places and travel time',
+        body: 'Travel time is optional. When you turn it on, TodoList keeps the places you save (Home, campus, the gym) with their addresses and coordinates, together with your travel rules and settings.\n\nTo work out how long a trip takes, TodoList sends the coordinates of two of your places to OpenRouteService, a routing service. To find a place from an address you type, or from the location of an event you mark for travel, it sends that address to OpenRouteService’s geocoder or to OpenStreetMap Nominatim. Both are free services, and their own privacy policies cover what they do with a request. Without an OpenRouteService key, trips use the length you entered or a rough estimate from the distance.\n\nYour places, addresses and coordinates are private to you: they are never shared with other members of a workspace, never logged, and never given to AI agents, which see place names only. A travel leg on your calendar carries place names only, and only you can see it. When you leave a workspace, your places, travel rules and travel settings are deleted at once, and so are your legs.',
+      },
       retention: {
         title: 'How long we keep things',
         body: 'When you delete an item, it is purged for good after 30 days. When you disconnect a source, its items disappear from view right away and are purged on the same schedule.\n\nWhen you delete your account, we delete the workspaces it owns, with their data and secrets, and remove your memberships in other workspaces.',

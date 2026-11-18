@@ -206,3 +206,51 @@ Shalev reviewed the stack in Infrastructure Composer and asked for it much simpl
 - The `fileTree` block type is removed end to end (schema, catalog, college-course template, client block and tests, MCP schema, builder docs, agent-plugin skill): Drive's Notability backup was its only data source (Moodle has no file items). The college-course template is now deadlines plus calendar. Why: a block nothing can feed. Cost: re-adding file items needs the block back.
 - New migration `2026-11-15-remove-google-drive` cleans a stage that held Drive data: Drive integrations are disconnected as a user's disconnect would be (credential deleted, items and containers soft-deleted, audit entry), and `fileTree` blocks leave dashboard drafts and published copies with their layout cells. History snapshots are untouched. Why: a stored dashboard or integration naming a removed type would fail validation. Cost: reverting to a pre-cleanup snapshot of a dashboard with a file tree would bring the block back and fail validation. No executed migration was edited (permissionsV2.test.ts only swaps its sample provider to `notion` and lists the new migration id).
 - The Google Calendar service-account method stays on the server, no longer reachable by users: the demo's fixture-mode calendar reads through it, and a real OAuth refresh can't be replayed from fixtures. The UI has no service-account form (the client registry has no Google Calendar credential fields), and a non-demo `POST …/integrations` for `google_calendar` is refused 400 (connect with Google sign-in). The secrets suites seed Moodle and the service-account calendar straight into the repository, since REST refuses them. Why: removing it would mean rebuilding the demo calendar on OAuth fixtures. Cost: a dead-end credential path (`classes/integration/auth/googleServiceAccount.ts`, the `service_account` credential schema) remains for the demo; delete it when the demo calendar moves to OAuth.
+
+### Time blocks, areas and travel time (plan 2026-11-17, `docs/superpowers/plans/2026-11-17-time-blocks-areas-travel.md`)
+
+Rulings 1 to 26 of the plan, one line each:
+
+1. Storage: a block, an area (`props.layer: 'area'`) or a leg is a local item of kind `block` or `travel`; a series is one record (`props.recurrence`, `props.exceptions`); a leg keeps `props.travel` and `props.travelKey`; the subject sits at `overlay.attrs.subject`.
+2. "This one" changes only start and end; title, subject, topic and rule change for all occurrences; an "All" edit that moves the time or the rule drops exceptions that are no longer occurrences.
+3. A block lasts 1 minute to 24 hours, with at most 366 exceptions (`PLAN_LIMITS.timeBlockExceptionsMax`).
+4. A series row also matches a date range when its `startAt` is before the range end, and expansion trims it (Google masters too), so a semester series shows every week.
+5. Time-shaped block types (`calendar`, `clock`, `timeline`, `agenda`, `workload`) include blocks and travel; every other query is task-shaped and excludes them unless a rule on `kind` names them.
+6. `get_calendar` returns one entry per occurrence (with `occurrence` and `busy`); `list_today` gains `scheduled[]`.
+7. Completing reserved time is 409 `not_completable`, deleting a leg is 409 `not_deletable` (skip it); a generic `PATCH` of a block is an "All" edit, of a leg a hand edit of start and end.
+8. Legs are stored private and owned by their member, and `ItemPolicy` adds a kind branch on top.
+9. A leg's key is `ownerUserId|anchorItemId|occurrence|direction`; a moved Google occurrence anchors on its series master, so two members can share a lecture.
+10. App links are computed on read, served to the owner by REST only, never stored and never sent over MCP, since they carry coordinates.
+11. One `TravelRule` model with three scopes (`where`, `series`, `item`); precedence item, then series, then where-rules oldest first.
+12. Regeneration is one member's whole 14-day horizon; the daily pass runs per member and gets 120 s per tick, the rest wait for the next hour.
+13. Factor and buffer apply to computed lengths only, never to the member's own entries; public transport's straight-line speed is 25 km/h with a 1.3 detour.
+14. Geocoding uses OpenRouteService's geocoder when the key exists, else Nominatim; at most 10 new lookups per regeneration, cached per member; "lat, lon" typed as an address is taken as coordinates.
+15. Places are not audited; rule changes are audited with `mode`, `direction` and `scopeKind` only.
+16. Travel is for editors and owners (`requireWorkspace('editor')`, MCP `minRole: 'editor'`), and its MCP tools join the `items` toolset.
+17. Travel hears about item writes through an `ItemChanges` observer, and a travel failure never fails the item write.
+18. The timeline has no time grid, so it gets a "+" per day instead of drag.
+19. Leg titles are stored from English templates (for MCP and push); the UI draws a leg from `props.travel` through i18n; the day panel opens from a leg's sheet, Settings, Travel and an agenda chip.
+20. A skipped leg is a tombstone with reason `skipped`; regeneration never restores it, Reset does.
+21. One `rrule` copy: the server adds it, and the client's Vite config has `resolve.dedupe: ['rrule']`.
+22. New error codes: `not_completable`, `not_deletable`, `not_an_occurrence`, `place_not_found`, `travel_home_missing`, `travel_limit`.
+23. Limits: 30 places and 50 travel rules per member.
+24. Marking travel with no Home is 409 `travel_home_missing`.
+25. When a membership ends, the member's places, rules and profile are hard-deleted and their legs soft-deleted; deleting a workspace removes all its travel documents.
+26. The workspace-calendar push leaves out blocks and travel in this version, with no setting.
+
+Rulings made during the build that changed behaviour and that a developer would trip over:
+
+- Areas never anchor travel (spec: painted time, not a commitment): marking one is a 400, and the UI offers no "Add travel" on an area.
+- A stored leg that has started (`startAt` before now) is left alone by regeneration: never shifted, never removed. A planned leg already past is not updated either. If its anchor moved into the past before it started, the leg goes as `moved`.
+- Write-path regeneration (an item write, a rule or setting change) waits at most about 8 s and reads cached geocodes only; new places are geocoded on the sync or daily pass. A regeneration error after a change is stored is logged, never a 500.
+- The after-dispatch passes (`TravelHorizonPass`) run even if the sync dispatch throws, each in its own try/catch, and the tick still reports the dispatch failure. One member's error never stops the pass.
+- Geocoding is three-valued: a provider that fails throws, `null` means not found. Only a real "not found" is cached; an outage is never cached, and `Place.create` answers 503 (`provider_unreachable`) when it cannot look an address up.
+- Agents see place names only: `travel_*` tools return names, aliases and the Home flag, never an address or a coordinate; places are named by saved name or alias.
+- A second "every occurrence" mark of a series updates the rule in place instead of adding one.
+- A moved Google occurrence's mark lives under its series master and its original start; the client resolves a mark the same way (the item view carries `seriesOccurrence` (`seriesId`, `originalStart`), ids and times only), and one name matcher (`normalize`, `byName`) is shared by server and client.
+- Marking checks the occurrence against the shared expansion: a start that is none of the series' occurrences is 400 `not_an_occurrence` and stores nothing.
+- A leg the member edited keeps his times until Reset, and is flagged `anchorMoved` ("the event moved; check this trip") when its anchor moves; his next edit acknowledges it. A leg whose mode or place changed is recomputed. An edited leg that has not started is still removed as `moved` when its anchor moves into the past.
+- A removed leg is a tombstone carrying `mode`, `fromName`, `toName`, `fromHome` and `toHome`, so the day panel can say what it was ("Bus to Braude removed: the event was cancelled"); the purge keeps it until the leg is over, so a skip survives. The reason says "the event", since a removed row has no anchor kind.
+- A leg's sheet has no status and no tick (never `complete_todo` on a leg); its length edit sends exactly the fields that stand (any two of start, end and length), and a length-only edit on a back leg keeps its departure.
+- The leg is private to the member: `get_item`, search and the calendar tools never return another member's leg or any place data.
+- Block and travel e2e that create stored legs or blocks are strict `xfail` ("DEFERRED until merge to dev") until the dev deploy installs the new `Items` validator; nothing runs `sync-db` by hand against the shared dev database.

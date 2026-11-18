@@ -16,6 +16,7 @@ Answer "what is on my plate" from TodoList's read tools. Never write anything in
 - `list_deadlines`: upcoming due dates, grouped by topic, container (project or course) and provider. Use it for "what is coming up".
 - `get_calendar`: events, dated items, time blocks, areas and travel for a week, a month or a custom range. Each occurrence of a repeating event or block is its own entry, with `occurrence` (`seriesId`, `originalStart`) and `busy`.
 - `get_item`: one item in full, with its source and `openIn` link.
+- Travel legs (kind `travel`, such as "Bus to Braude") are the member's own and show in `scheduled[]` and `get_calendar` as busy time. Mention a leg next to the event it serves ("leave 08:10 for the 09:00 lecture"); a leg with `props.travel.conflict` cannot be made in time, say so. Never offer to complete one. To set travel up or change a leg, use the `todolist-tasks` skill.
 - `search_items` and `list_facets`: for "find my X" and to learn the topics, providers and containers that exist.
 
 All of them accept a `topic` filter where it makes sense: the slugs of the workspace's topics (its pages), as `workspace_get` lists them (for example `work`, `college`, `personal`, or one the user added).
