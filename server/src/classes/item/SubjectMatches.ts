@@ -7,15 +7,22 @@
  * The candidates come from one read through the caller's item access (ItemPolicy) and the
  * effective values (ItemQuery.effectiveStage); at most `scanMax` are counted.
  */
+import mongoose from 'mongoose';
+
+import { AppError } from '../../errors/AppError.js';
 import { getItemRepository } from '../../models/index.js';
 import { SUBJECT_ATTRIBUTE_KEY } from '../../types/attributes.js';
 import { subjectOf, type ColourSubject } from '../../types/colours.js';
 import { globSource } from '../../types/glob.js';
+import { logger } from '../../services/logger.js';
 import type { Caller } from '../base/Caller.js';
 import { ItemPolicy } from '../policies/ItemPolicy.js';
 import { ItemQuery } from './ItemQuery.js';
 
 export const SUBJECT_MATCH_SCAN_MAX = 5000;
+/** Server-side limit of the count read: patterns are the viewer's, and a regex can backtrack. */
+export const SUBJECT_MATCH_MAX_TIME_MS = 5000;
+const MAX_TIME_MS_EXPIRED = 50;
 
 export interface SubjectPatterns {
   name: string;
@@ -39,6 +46,50 @@ export class SubjectMatches {
     return new SubjectMatches(caller, scanMax).#count(subjects);
   }
 
+  /**
+   * The candidate rows: the visible items (copies absorbed, as every view the colours paint) whose
+   * own Subject or effective title could match. A read past its time limit is a 503, as the
+   * query builder's (ItemQuery#run).
+   */
+  async #read(
+    policy: ItemPolicy,
+    names: readonly string[],
+    patterns: readonly string[],
+  ): Promise<Record<string, unknown>[]> {
+    const caller = this.#caller;
+    try {
+      return await (
+        await getItemRepository()
+      ).aggregate(
+        caller.workspaceId,
+        [
+          { $match: policy.itemFilter(caller.context) },
+          ItemQuery.effectiveStage(),
+          {
+            $match: {
+              $or: [
+                { [`overlay.attrs.${SUBJECT_ATTRIBUTE_KEY}`]: { $in: [...names] } },
+                ...patterns.map((pattern) => ({
+                  title: { $regex: globSource(pattern), $options: 'is' },
+                })),
+              ],
+            },
+          },
+          { $sort: { _id: 1 } },
+          { $limit: this.#scanMax + 1 },
+          { $project: { title: 1, [`overlay.attrs.${SUBJECT_ATTRIBUTE_KEY}`]: 1 } },
+        ],
+        { maxTimeMS: SUBJECT_MATCH_MAX_TIME_MS },
+      );
+    } catch (error) {
+      if (error instanceof mongoose.mongo.MongoServerError && error.code === MAX_TIME_MS_EXPIRED) {
+        logger.warn('Subject match count hit its time limit', { workspaceId: caller.workspaceId });
+        throw new AppError(503, 'Counting took too long; use shorter or fewer patterns');
+      }
+      throw error;
+    }
+  }
+
   async #count(
     subjects: readonly SubjectPatterns[],
   ): Promise<{ counts: number[]; capped: boolean }> {
@@ -49,25 +100,7 @@ export class SubjectMatches {
     const policy = await ItemPolicy.for(caller);
     const names = subjects.map((subject) => subject.name);
     const patterns = subjects.flatMap((subject) => subject.patterns);
-    const rows = await (
-      await getItemRepository()
-    ).aggregate(caller.workspaceId, [
-      { $match: policy.itemFilterUnabsorbed(caller.context) },
-      ItemQuery.effectiveStage(),
-      {
-        $match: {
-          $or: [
-            { [`overlay.attrs.${SUBJECT_ATTRIBUTE_KEY}`]: { $in: names } },
-            ...patterns.map((pattern) => ({
-              title: { $regex: globSource(pattern), $options: 'is' },
-            })),
-          ],
-        },
-      },
-      { $sort: { _id: 1 } },
-      { $limit: scanMax + 1 },
-      { $project: { title: 1, [`overlay.attrs.${SUBJECT_ATTRIBUTE_KEY}`]: 1 } },
-    ]);
+    const rows = await this.#read(policy, names, patterns);
     const request: ColourSubject[] = subjects.map((subject) => ({
       name: subject.name,
       family: 'gray',

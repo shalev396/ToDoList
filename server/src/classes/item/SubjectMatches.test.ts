@@ -68,6 +68,56 @@ const calc = { name: 'Calculus', patterns: ['*חדו"א*'] };
 const alg = { name: 'Algebra', patterns: ['*אלגברה*', '*חדו"א*'] };
 
 describe('SubjectMatches.count', () => {
+  it('counts a to-do copied to a provider once', async () => {
+    const ws = await workspace();
+    const todoId = await todo(ws, 'חדו"א copied');
+    const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+    await seedIntegration(ws.id, {
+      id: 'i-copy',
+      ownerUserId: ME,
+      provider: 'jira',
+      accountId: 'a',
+    });
+    const repo = await models.getItemRepository();
+    await repo.bulkUpsert(ws.id, [
+      {
+        integrationId: 'i-copy',
+        kind: 'issue',
+        topicId: null,
+        title: 'חדו"א copied',
+        status: 'open',
+        source: {
+          provider: 'jira',
+          accountId: 'a',
+          externalId: 'J-1',
+          key: 'J-1',
+          url: 'https://jira.example/J-1',
+          updatedAtSource: null,
+          etag: null,
+          hash: null,
+        },
+      },
+    ]);
+    const [row] = await repo.aggregate(ws.id, [{ $match: { 'source.externalId': 'J-1' } }]);
+    await repo.setOverlay(ws.id, String(row?.['_id']), {
+      copyOf: todoId,
+      copyOfOwner: ME,
+      copyOfShared: true,
+    });
+    const { counts } = await SubjectMatches.count(callerOf(ws, ME), [calc]);
+    assert.deepEqual(counts, [1]);
+  });
+
+  it('answers a read past its time limit with a 503', async (t) => {
+    const ws = await workspace();
+    const repo = await models.getItemRepository();
+    const { default: mongoose } = await import('mongoose');
+    t.mock.method(repo, 'aggregate', () =>
+      Promise.reject(new mongoose.mongo.MongoServerError({ message: 'too slow', code: 50 })),
+    );
+    await assert.rejects(SubjectMatches.count(callerOf(ws, ME), [calc]), { statusCode: 503 });
+  });
+
   it('counts a Hebrew title by its pattern, and one written with gershayim', async () => {
     const ws = await workspace();
     await todo(ws, 'חדו"א 1מ פרופ\' ילין מרק');
