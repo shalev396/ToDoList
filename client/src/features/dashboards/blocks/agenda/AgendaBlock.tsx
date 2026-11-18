@@ -1,8 +1,12 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CalendarCheck } from 'lucide-react';
-import { SourceDot } from '@/components/items/SourceDot';
+import { SourceIcon } from '@/components/items/SourceIcon';
 import { dateLocale, timeOfDay } from '@/components/items/format';
+import { ColourDot } from '@/features/colours/ColourDot';
+import { colourVar, paintOf } from '@/features/colours/palette';
+import { useRowColours } from '@/features/colours/useColours';
+import type { ItemColour } from '@api-types/colours';
 import { SourceLink } from '@/features/items/SourceLink';
 import { useItemParam } from '@/features/items/useItemParam';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -12,7 +16,9 @@ import type { BlockComponentProps } from '../../registry/types';
 import { displayProvider } from '../data/rows';
 import { truncateText } from '../data/truncate';
 import { useDataBlock } from '../data/useDataBlock';
+import { nestInAreas } from '../time/areas';
 import type { Occurrence } from '../time/occurrences';
+import { AgendaAreaHeader } from './AgendaAreaHeader';
 import { buildAgenda, isEmptyAgenda, type AgendaModel } from './agendaModel';
 
 type Part = keyof AgendaModel;
@@ -30,10 +36,12 @@ function AgendaRow({
   occurrence,
   timeZone,
   locale,
+  colour,
 }: {
   occurrence: Occurrence;
   timeZone: string;
   locale: string;
+  colour: ItemColour;
 }) {
   const { t } = useTranslation();
   const { openItem } = useItemParam();
@@ -47,7 +55,7 @@ function AgendaRow({
       <span className="w-16 shrink-0 text-[13px] text-muted-foreground tabular-nums" dir="ltr">
         {time}
       </span>
-      <SourceDot source={displayProvider(row.source.provider)} />
+      <ColourDot colour={colour} />
       <button
         type="button"
         onClick={() => {
@@ -58,6 +66,7 @@ function AgendaRow({
       >
         {title}
       </button>
+      <SourceIcon source={displayProvider(row.source.provider)} />
       <SourceLink source={row.source} title={title} />
     </li>
   );
@@ -73,16 +82,42 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
   const title = blockTitle(block, t);
   const locale = dateLocale(language);
-  const model = useMemo(
-    () =>
-      buildAgenda(
-        rows.map((entry) => entry.row),
+  const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
+  const colourOf = useRowColours(itemRows);
+  // Areas are split off before the agenda is built; items nest under them by time.
+  const { model, areaModel } = useMemo(() => {
+    const isArea = (row: { id: string }) => colourOf(row.id).role === 'area';
+    return {
+      model: buildAgenda(
+        itemRows.filter((row) => !isArea(row)),
         now,
         timeZone,
       ),
-    [rows, now, timeZone],
-  );
-  const status = loadState !== 'ready' ? loadState : isEmptyAgenda(model) ? 'empty' : 'ready';
+      areaModel: buildAgenda(itemRows.filter(isArea), now, timeZone),
+    };
+  }, [itemRows, colourOf, now, timeZone]);
+  const groupsOf = (part: Part) => {
+    const holds = (area: Occurrence, item: Occurrence) =>
+      area.start <= item.start && item.start < (area.end ?? area.start);
+    const allItems = PARTS.flatMap((p) => model[p]);
+    // An area with no items anywhere is listed in the part where it starts.
+    const emptyHere = areaModel[part].filter((area) => !allItems.some((item) => holds(area, item)));
+    const areas = [
+      ...PARTS.flatMap((p) => areaModel[p]).filter((area) =>
+        model[part].some((item) => holds(area, item)),
+      ),
+      ...emptyHere,
+    ];
+    return nestInAreas(model[part], areas).filter(
+      ({ area, items }) => area === null || items.length > 0 || emptyHere.includes(area),
+    );
+  };
+  const status =
+    loadState !== 'ready'
+      ? loadState
+      : isEmptyAgenda(model) && isEmptyAgenda(areaModel)
+        ? 'empty'
+        : 'ready';
   return (
     <BlockFrame
       title={title}
@@ -94,23 +129,63 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
       emptyMessage={t('timeBlocks.agenda.empty')}
     >
       <div data-agenda className="flex flex-col gap-3">
-        {PARTS.filter((part) => model[part].length > 0).map((part) => (
-          <section key={part} data-agenda-part={part} aria-label={t(`timeBlocks.agenda.${part}`)}>
-            <h3 className="pt-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-              {t(`timeBlocks.agenda.${part}`)}
-            </h3>
-            <ul className="m-0 list-none p-0">
-              {model[part].map((occurrence) => (
-                <AgendaRow
-                  key={occurrence.key}
-                  occurrence={occurrence}
-                  timeZone={timeZone}
-                  locale={locale}
-                />
-              ))}
-            </ul>
-          </section>
-        ))}
+        {PARTS.filter((part) => model[part].length > 0 || areaModel[part].length > 0).map(
+          (part) => {
+            const groups = groupsOf(part);
+            if (groups.length === 0) {
+              return null;
+            }
+            const row = (occurrence: Occurrence) => (
+              <AgendaRow
+                key={occurrence.key}
+                occurrence={occurrence}
+                timeZone={timeZone}
+                locale={locale}
+                colour={colourOf(occurrence.row.id)}
+              />
+            );
+            return (
+              <section
+                key={part}
+                data-agenda-part={part}
+                aria-label={t(`timeBlocks.agenda.${part}`)}
+              >
+                <h3 className="pt-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                  {t(`timeBlocks.agenda.${part}`)}
+                </h3>
+                <ul className="m-0 list-none p-0">
+                  {groups.map(({ area, items }) =>
+                    area === null ? (
+                      items.map(row)
+                    ) : (
+                      <li
+                        key={area.key}
+                        data-agenda-area
+                        className="my-1 rounded-md px-2"
+                        style={{
+                          backgroundColor: paintOf(colourOf(area.row.id)).fill,
+                          boxShadow: `inset 0 0 0 1px ${colourVar(colourOf(area.row.id).family, 'scheduled')}`,
+                        }}
+                      >
+                        <AgendaAreaHeader
+                          title={truncateText(area.row.title, 160) || t('dataBlocks.noTitle')}
+                          start={area.start}
+                          end={area.end ?? area.start}
+                          colour={colourOf(area.row.id)}
+                          timeZone={timeZone}
+                          locale={locale}
+                        />
+                        {items.length > 0 ? (
+                          <ul className="m-0 list-none p-0">{items.map(row)}</ul>
+                        ) : null}
+                      </li>
+                    ),
+                  )}
+                </ul>
+              </section>
+            );
+          },
+        )}
       </div>
     </BlockFrame>
   );

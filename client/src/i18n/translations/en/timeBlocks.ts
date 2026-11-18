@@ -45,10 +45,12 @@ export const timeBlocks = {
     laterToday: 'Later today',
     tomorrow: 'Tomorrow',
     allDay: 'All day',
+    areaRange: '{{title}} {{start}}–{{end}}',
     empty: 'Nothing on today or tomorrow',
   },
   timeline: {
     allDay: 'All day',
+    areaRange: '{{title}} {{start}}–{{end}}',
     due: 'Due',
     empty_one: 'Nothing in the next day',
     empty_other: 'Nothing in the next {{count}} days',

@@ -23,9 +23,11 @@ import { GripVertical, SquareKanban } from 'lucide-react';
 import { useSetItemStatus } from '@/api/queries/blockItems';
 import { BoardCard } from '@/components/items/BoardCard';
 import { cn } from '@/lib/utils';
+import { useRowColours } from '@/features/colours/useColours';
 import { useItemParam } from '@/features/items/useItemParam';
 import { SourceLink } from '@/features/items/SourceLink';
 import type { ItemQueryRow } from '@api-types/builder';
+import type { ItemColour } from '@api-types/colours';
 import { BlockFrame } from '../BlockFrame';
 import { blockTitle } from '../chrome';
 import type { BlockComponentProps } from '../registry/types';
@@ -61,11 +63,13 @@ function Card({
   entry,
   now,
   timeZone,
+  colour,
   dragging = false,
 }: {
   entry: Entry;
   now: Date;
   timeZone: string;
+  colour: ItemColour;
   dragging?: boolean;
 }) {
   const { t } = useTranslation();
@@ -104,6 +108,7 @@ function Card({
           due={dateOf(row.dueAt)}
           timeZone={timeZone}
           assignee={assignee}
+          colour={colour}
           onOpen={() => {
             openItem(row.id);
           }}
@@ -126,6 +131,7 @@ function Column({
   now,
   timeZone,
   droppable,
+  colourOf,
 }: {
   id: string;
   label: string;
@@ -133,6 +139,7 @@ function Column({
   now: Date;
   timeZone: string;
   droppable: boolean;
+  colourOf: (rowId: string) => ItemColour;
 }) {
   const { t } = useTranslation();
   const { setNodeRef, isOver } = useDroppable({ id, disabled: !droppable });
@@ -164,7 +171,13 @@ function Column({
           ) : (
             <ul aria-labelledby={headingId} className="m-0 flex list-none flex-col gap-2 p-0">
               {entries.map((entry) => (
-                <Card key={entry.row.id} entry={entry} now={now} timeZone={timeZone} />
+                <Card
+                  key={entry.row.id}
+                  entry={entry}
+                  now={now}
+                  timeZone={timeZone}
+                  colour={colourOf(entry.row.id)}
+                />
               ))}
             </ul>
           )}
@@ -214,6 +227,8 @@ const visibleCollisions: CollisionDetection = (args) => {
 export default function KanbanBlock({ dashboard, block }: BlockComponentProps) {
   const { t } = useTranslation();
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
+  const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
+  const colourOf = useRowColours(itemRows);
   const setStatus = useSetItemStatus();
   const [activeId, setActiveId] = useState<string | null>(null);
   const field = block.query?.groupBy?.[0] ?? 'status';
@@ -311,6 +326,7 @@ export default function KanbanBlock({ dashboard, block }: BlockComponentProps) {
                 now={now}
                 timeZone={timeZone}
                 droppable={byStatus && hasLocal}
+                colourOf={colourOf}
               />
             ))}
           </div>
@@ -324,6 +340,7 @@ export default function KanbanBlock({ dashboard, block }: BlockComponentProps) {
                 now={now}
                 due={dateOf(active.row.dueAt)}
                 timeZone={timeZone}
+                colour={colourOf(active.row.id)}
               />
             </div>
           )}

@@ -1,10 +1,12 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+import { paintOf } from '@/features/colours/palette';
+import type { ItemColour } from '@api-types/colours';
 import { DueChip } from './DueChip';
 import { initials } from './format';
 import { OpenTitle } from './OpenTitle';
-import { SourceDot } from './SourceDot';
+import { SourceIcon } from './SourceIcon';
 import type { Provider } from './types';
 
 export interface BoardCardProps {
@@ -22,6 +24,8 @@ export interface BoardCardProps {
   onOpen?: (() => void) | undefined;
   /** The "Open in <provider>" slot. */
   openIn?: ReactNode;
+  /** The item's colour (topic family and role): a 4px edge at the card's start. */
+  colour?: ItemColour | undefined;
   className?: string | undefined;
 }
 
@@ -36,12 +40,18 @@ export function BoardCard({
   assignee,
   onOpen,
   openIn,
+  colour,
   className,
 }: BoardCardProps) {
   const { t } = useTranslation();
 
   return (
-    <div className={cn('rounded-md border bg-card p-3', className)}>
+    <div
+      data-family={colour?.family}
+      data-role={colour?.role}
+      className={cn('rounded-md border bg-card p-3', colour && 'border-s-4', className)}
+      style={colour ? { borderInlineStartColor: paintOf(colour).fill } : undefined}
+    >
       <div className="flex items-start gap-2">
         <OpenTitle
           as="p"
@@ -54,7 +64,7 @@ export function BoardCard({
         {openIn}
       </div>
       <div className="mt-2.5 flex items-center gap-2 text-xs text-muted-foreground">
-        <SourceDot source={source} />
+        <SourceIcon source={source} />
         {reference ? <span className="truncate tabular-nums">{reference}</span> : null}
         <span className="flex-1" />
         {due ? <DueChip due={due} now={now} timeZone={timeZone} /> : null}

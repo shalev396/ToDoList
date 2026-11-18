@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+import { ColourDot } from '@/features/colours/ColourDot';
+import type { ItemColour } from '@api-types/colours';
 import { DueChip } from './DueChip';
 import { OpenTitle } from './OpenTitle';
-import { SourceDot } from './SourceDot';
+import { SourceIcon } from './SourceIcon';
 import type { Provider } from './types';
 
 export interface TaskRowProps {
@@ -25,10 +27,12 @@ export interface TaskRowProps {
   onOpen?: (() => void) | undefined;
   /** The "Open in <provider>" slot. */
   openIn?: ReactNode;
+  /** The item's colour (topic family and role): a dot before the title. */
+  colour?: ItemColour | undefined;
   className?: string | undefined;
 }
 
-/** A Todoist-style task row: checkbox, title, due chip, source dot and an open-in slot. */
+/** A Todoist-style task row: checkbox, title, due chip, colour dot, source icon and an open-in slot. */
 export function TaskRow({
   title,
   source,
@@ -40,6 +44,7 @@ export function TaskRow({
   meta,
   onOpen,
   openIn,
+  colour,
   className,
 }: TaskRowProps) {
   const { t } = useTranslation();
@@ -47,6 +52,7 @@ export function TaskRow({
   return (
     <div className={cn('flex min-h-11 items-center gap-2 pointer-fine:min-h-9', className)}>
       {checkbox ?? <span aria-hidden="true" className="w-7 shrink-0 pointer-fine:w-6" />}
+      {colour ? <ColourDot colour={colour} /> : null}
       <OpenTitle
         as="span"
         title={title}
@@ -64,7 +70,7 @@ export function TaskRow({
       </OpenTitle>
       {meta}
       {due ? <DueChip due={due} now={now} timeZone={timeZone} done={done} /> : null}
-      <SourceDot source={source} className="px-1" />
+      <SourceIcon source={source} className="px-1" />
       {openIn}
     </div>
   );

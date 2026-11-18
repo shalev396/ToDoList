@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowUpRight, List as ListIcon, Plus } from 'lucide-react';
@@ -6,6 +7,7 @@ import { RoundCheckbox } from '@/components/items/RoundCheckbox';
 import { TaskRow } from '@/components/items/TaskRow';
 import { Button } from '@/components/ui/button';
 import { buttonVariants } from '@/components/ui/button-variants';
+import { useRowColours } from '@/features/colours/useColours';
 import { useShellUi } from '@/features/shell/shellUi';
 import { useLanguage } from '@/hooks/useLanguage';
 import { pathTo, topicPath } from '@/router/routes';
@@ -16,6 +18,7 @@ import { SourceLink } from '@/features/items/SourceLink';
 import { topicById } from '@/features/workspaces/topics';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { ItemQueryRow } from '@api-types/builder';
+import type { ItemColour } from '@api-types/colours';
 import { BlockFrame } from '../BlockFrame';
 import { blockTitle } from '../chrome';
 import type { BlockComponentProps } from '../registry/types';
@@ -39,11 +42,13 @@ function ListRows({
   now,
   timeZone,
   linkToGroup,
+  colourOf,
 }: {
   rows: readonly DisplayedRow<ItemQueryRow>[];
   now: Date;
   timeZone: string;
   linkToGroup: boolean;
+  colourOf: (rowId: string) => ItemColour;
 }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -69,6 +74,7 @@ function ListRows({
                 due={dateOf(row.dueAt)}
                 timeZone={timeZone}
                 done={done}
+                colour={colourOf(row.id)}
                 onOpen={() => {
                   openItem(row.id);
                 }}
@@ -115,6 +121,8 @@ function ListRows({
 export default function ListBlock({ dashboard, block }: BlockComponentProps) {
   const { t } = useTranslation();
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
+  const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
+  const colourOf = useRowColours(itemRows);
 
   const { role } = useCurrentWorkspace();
   const { openNewTodoIn } = useShellUi();
@@ -152,7 +160,13 @@ export default function ListBlock({ dashboard, block }: BlockComponentProps) {
       footer={
         rows.length > visible ? (
           <ShowAll title={title} count={rows.length}>
-            <ListRows rows={rows} now={now} timeZone={timeZone} linkToGroup={linkToGroup} />
+            <ListRows
+              rows={rows}
+              now={now}
+              timeZone={timeZone}
+              linkToGroup={linkToGroup}
+              colourOf={colourOf}
+            />
           </ShowAll>
         ) : undefined
       }
@@ -162,6 +176,7 @@ export default function ListBlock({ dashboard, block }: BlockComponentProps) {
         now={now}
         timeZone={timeZone}
         linkToGroup={linkToGroup}
+        colourOf={colourOf}
       />
     </BlockFrame>
   );
