@@ -151,7 +151,9 @@ def _todo_with_travel(page: Page, base_url: str, api_base_url: str, fresh_owner)
     return created.value, marked.value, home, braude, tomorrow, previews
 
 
-def test_new_todo_with_travel_makes_a_leg(page: Page, base_url: str, api_base_url: str, fresh_owner):
+def test_new_todo_with_travel_starts_at_its_time_and_is_marked(
+    page: Page, base_url: str, api_base_url: str, fresh_owner
+):
     user, workspace = fresh_owner
     created, marked, home, braude, tomorrow, previews = _todo_with_travel(
         page, base_url, api_base_url, fresh_owner
@@ -236,6 +238,13 @@ def test_due_only_todo_asks_for_a_time(page: Page, base_url: str, api_base_url: 
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, "/en/settings", h1="Settings")
     tomorrow = _tomorrow(page)
+    setup_reads: list = []
+    page.on(
+        "request",
+        lambda request: setup_reads.append(request.url)
+        if "/travel/places" in request.url or "/travel/settings" in request.url
+        else None,
+    )
 
     sheet = open_new_sheet(page)
     form = sheet.locator("form")
@@ -245,10 +254,28 @@ def test_due_only_todo_asks_for_a_time(page: Page, base_url: str, api_base_url: 
     expect(time).to_have_value("")
     save = form.locator("[data-new-todo-save]")
     expect(save).to_be_enabled()
+    # The form reads no travel setup until "Add travel time" is turned on.
+    assert setup_reads == [], setup_reads
 
-    form.get_by_role("switch", name="Add travel time").click()
+    # When the places can't be read, turning it on says so (the switch stays usable).
+    def refuse(route):
+        route.fulfill(status=500, json={"message": "Internal server error"})
+
+    page.route("**/travel/places", refuse)
+    switch = form.get_by_role("switch", name="Add travel time")
+    switch.click()
+    expect(form.locator("[data-travel-setup-failed]")).to_have_text(
+        "Your places couldn’t be loaded, so travel can’t be added right now.",
+        timeout=NORMAL_TIMEOUT,
+    )
+    expect(form.locator("[data-travel-panel]")).to_have_count(0)
+    switch.click()
+    expect(form.locator("[data-travel-setup-failed]")).to_have_count(0)
+    page.unroute("**/travel/places", refuse)
+
+    switch.click()
     panel = form.locator("[data-travel-panel]")
-    expect(panel).to_be_visible()
+    expect(panel).to_be_visible(timeout=NORMAL_TIMEOUT)
     # A due date only: travel needs a time, which the form asks for, and nothing can be saved.
     asks = form.locator("[data-travel-needs-time]")
     expect(asks).to_have_text("Travel needs a time: add when it starts.")
@@ -390,14 +417,32 @@ def test_series_every_occurrence_creates_rule(
     expect(dialog).to_be_hidden()
     expect(travel.locator("[data-travel-save]")).to_be_focused()
 
-    # Every occurrence: a series rule, with no occurrence sent.
-    marked = _mark_through_dialog(page, travel, "every")
+    # A series: the hint says up front that every occurrence keeps a length only.
+    expect(panel.locator("[data-travel-span]")).to_contain_text(
+        "For every occurrence only the length is kept, arriving as each one starts."
+    )
+    # He types a 30-minute bus arriving at 09:50: choosing every occurrence is told it keeps the
+    # 30 minutes only (each occurrence arrives as it starts), never dropped without a word.
+    panel.get_by_label("Length, in minutes").fill("30")
+    panel.get_by_label("Arrive", exact=True).fill("09:50")
+    expect(panel.get_by_label("Leave", exact=True)).to_have_value("09:20")
+    travel.locator("[data-travel-save]").click()
+    expect(dialog.locator("[data-every-length-only]")).to_have_text(
+        "Every occurrence keeps only the length you typed (30 min), arriving as each one starts. "
+        "The leave and arrive times you typed are kept if you choose This one only."
+    )
+    with page.expect_response(_is_mark, timeout=APP_REQUEST_TIMEOUT) as answered:
+        dialog.locator("[data-every-choice=every]").click()
+    expect(dialog).to_be_hidden()
+    marked = answered.value
+    # Every occurrence: a series rule, with no occurrence sent, and the length he typed.
     assert marked.url.split("?")[0].endswith(f"/travel/items/{lecture['id']}")
     assert marked.request.post_data_json == {
         "mode": "transit",
         "direction": "both",
         "placeId": None,
         "every": True,
+        "there": {"minutes": 30, "fromPlaceId": home["id"]},
     }
     assert marked.status == 200, marked.text()[:300]
     series_rule = marked.json()["data"]["rule"]
@@ -469,6 +514,83 @@ def test_series_every_occurrence_creates_rule(
     expect(travel.locator("[data-travel-note]")).to_have_text("Travel removed.")
     assert list_rules(api_base_url, user, workspace["id"]) == []
 
+    # A save that fails leaves focus on what went wrong, not on the page.
+    def refuse(route):
+        route.fulfill(status=500, json={"message": "Internal server error"})
+
+    page.route("**/travel/items/**", refuse)
+    travel.get_by_role("button", name="Add travel").click()
+    _mark_through_dialog(page, travel, "every")
+    error = travel.locator("[data-travel-error]")
+    expect(error).to_contain_text("Travel couldn’t be added.")
+    expect(error).to_be_focused()
+    page.unroute("**/travel/items/**", refuse)
+    assert list_rules(api_base_url, user, workspace["id"]) == []
+
+
+def test_moved_occurrence_shows_its_mark(page: Page, base_url: str, api_base_url: str, demo_owner):
+    """The demo's lecture 6 days ago was moved from 10:00 to 13:00: a row of its own, whose marks
+    the server keeps under the series at the original start. Its sheet finds them there."""
+    user, workspace = demo_owner
+    _seed_places(api_base_url, user, workspace["id"])
+    lecture = _lecture(api_base_url, user, workspace["id"])
+    headers = {"Authorization": f"Bearer {user.id_token}"}
+    response = requests.get(
+        f"{api_base_url}/private/workspaces/{workspace['id']}/items",
+        params={"provider": "google_calendar", "q": "Data Structures"},
+        headers=headers,
+        timeout=30,
+    )
+    rows = [
+        item
+        for item in response.json()["data"]["items"]
+        if item["props"].get("recurringEventId") == lecture["props"]["eventId"]
+        and item["status"] != "cancelled"
+    ]
+    assert len(rows) == 1, rows
+    moved = rows[0]
+    original = moved["props"]["originalStartAt"]
+    # Its view names its series and original start: ids and times only.
+    detail = requests.get(
+        f"{api_base_url}/private/workspaces/{workspace['id']}/items/{moved['id']}",
+        headers=headers,
+        timeout=30,
+    ).json()["data"]
+    assert detail["seriesOccurrence"]["seriesId"] == lecture["id"]
+    assert _same_instant(detail["seriesOccurrence"]["originalStart"], original)
+
+    page.set_viewport_size(DESKTOP_VIEWPORT)
+    open_as(page, base_url, user, "/en/settings", h1="Settings")
+    page.goto(f"{base_url}/en/dashboard?item={moved['id']}&occurrence={_epoch_ms(original)}")
+    sheet = page.locator("[data-item-sheet]")
+    expect(sheet.locator("[data-item-title]")).to_have_text(
+        "Data Structures lecture", timeout=NORMAL_TIMEOUT
+    )
+    travel = sheet.locator("[data-item-travel]")
+    travel.get_by_role("button", name="Add travel").click()
+    # A moved occurrence is one of a series: Save asks, and "This one only" names its slot.
+    marked = _mark_through_dialog(page, travel, "one")
+    assert marked.url.split("?")[0].endswith(f"/travel/items/{moved['id']}")
+    assert _same_instant(marked.request.post_data_json["occurrence"], original)
+    assert marked.status == 200, marked.text()[:300]
+    scope = marked.json()["data"]["rule"]["scope"]
+    assert (scope["kind"], scope["itemId"]) == ("item", lecture["id"])
+    assert _same_instant(scope["occurrence"], original)
+    # The sheet shows the mark kept under the series, with Change and Remove.
+    status = travel.locator("[data-travel-status]")
+    expect(status).to_contain_text("Public transport · There and back", timeout=NORMAL_TIMEOUT)
+    expect(status).to_contain_text("This occurrence")
+    expect(travel.get_by_role("button", name="Change travel")).to_be_visible()
+    with page.expect_response(
+        lambda r: r.request.method == "DELETE" and "/travel/items/" in r.url,
+        timeout=APP_REQUEST_TIMEOUT,
+    ) as removed:
+        travel.get_by_role("button", name="Remove travel", exact=True).click()
+    assert removed.value.status == 204
+    assert "occurrence=" in removed.value.url
+    expect(travel.get_by_role("button", name="Add travel")).to_be_visible(timeout=NORMAL_TIMEOUT)
+    assert list_rules(api_base_url, user, workspace["id"]) == []
+
 
 @pytest.mark.xfail(strict=True, reason=DEFERRED)
 def test_series_every_occurrence_makes_legs_each_week(
@@ -485,20 +607,40 @@ def test_series_every_occurrence_makes_legs_each_week(
     assert marked.status == 200, marked.text()[:300]
     legs = marked.json()["data"]["legs"]
     tomorrow = _tomorrow(page)
-    in_8_days = add_days(tomorrow, 7)
-    # Tomorrow's lecture (10:00–12:00): the bus there, arriving at 10:00, and the bus home at
-    # 12:00. The occurrence in 8 days is cancelled: no legs. Nothing else in the next 14 days.
-    soon = [leg for leg in legs if leg["props"]["travel"]["occurrence"][:10] <= in_8_days]
-    assert [leg["props"]["travel"]["direction"] for leg in soon] == ["there", "back"], legs
-    there, back = soon
-    for leg in soon:
-        trip = leg["props"]["travel"]
-        assert trip["anchorItemId"] == lecture["id"]
-        assert _same_instant(trip["occurrence"], slot)
-        assert trip["mode"] == "transit"
-    assert there["title"] == "Bus to Braude"
+    # The whole 14-day horizon holds exactly two legs, tomorrow's: the bus there, arriving as the
+    # 10:00 lecture starts, and the bus home as it ends at 12:00. The occurrence in 8 days is
+    # cancelled, and the next one (in 15 days) is past the horizon.
+    assert [
+        (
+            leg["title"],
+            leg["props"]["travel"]["direction"],
+            leg["props"]["travel"]["anchorItemId"],
+            leg["props"]["travel"]["mode"],
+        )
+        for leg in legs
+    ] == [
+        ("Bus to Braude", "there", lecture["id"], "transit"),
+        ("Bus home", "back", lecture["id"], "transit"),
+    ], legs
+    there, back = legs
+    assert _same_instant(there["props"]["travel"]["occurrence"], slot)
+    assert _same_instant(back["props"]["travel"]["occurrence"], slot)
     assert there["props"]["travel"]["toPlaceId"] == braude["id"]
     assert _same_instant(there["endAt"], slot)
-    assert back["title"] == "Bus home"
     assert _same_instant(back["startAt"], zoned_iso(page, tomorrow, "12:00"))
-    expect(travel.locator("[data-travel-note]")).to_have_text(f"Travel added: {len(legs)} trips.")
+    expect(travel.locator("[data-travel-note]")).to_have_text("Travel added: 2 trips.")
+    # And no leg of the lecture on any other day of the next 14.
+    today = add_days(tomorrow, -1)
+    response = requests.get(
+        f"{api_base_url}/private/workspaces/{demo_owner[1]['id']}/travel/days",
+        params={"from": today, "to": add_days(today, 13)},
+        headers={"Authorization": f"Bearer {demo_owner[0].id_token}"},
+        timeout=30,
+    )
+    assert response.status_code == 200, response.text[:300]
+    days_with_lecture = [
+        day["date"]
+        for day in response.json()["data"]["days"]
+        if any(leg["props"]["travel"]["anchorItemId"] == lecture["id"] for leg in day["legs"])
+    ]
+    assert days_with_lecture == [tomorrow]

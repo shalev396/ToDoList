@@ -13,8 +13,10 @@ import { EveryOccurrenceDialog } from './EveryOccurrenceDialog';
 import { HomeMissing, TravelPanel } from './TravelPanelForm';
 import { useTravelSetup } from './travelHooks';
 import {
+  everyKeepsOnlyLength,
   markOf,
   markRequestOf,
+  markTargetOf,
   openPanel,
   outcomeOf,
   outcomeText,
@@ -24,13 +26,6 @@ import {
 
 /** The Place for travel select's value for "find it from its location" (unpinned). */
 const AUTO = 'auto';
-
-/** A moved occurrence of a Google series: its own row, naming its series and original slot. */
-function seriesExceptionOf(item: ItemDetail): Date | null {
-  const series = item.props['recurringEventId'];
-  const original = item.props['originalStartAt'];
-  return typeof series === 'string' && typeof original === 'string' ? toDate(original) : null;
-}
 
 /** When the occurrence the sheet is on starts: a moved local occurrence at its new time. */
 function anchorStartOf(item: ItemDetail, occurrence: Date | null): Date | null {
@@ -48,9 +43,11 @@ function anchorStartOf(item: ItemDetail, occurrence: Date | null): Date | null {
  * Travel in the item sheet (travel-time design, "An existing event"): "Add travel" with the same
  * panel as the create forms, on events, to-dos with a start and plain time blocks (never an area,
  * a leg or an all-day item: the caller checks `canTravelTo`). On a repeating item it asks "Every
- * occurrence?": every one is a series rule, this one is the occurrence the sheet is on. A marked
- * item says how it travels, with Change and Remove. "Place for travel" pins where it is, for an
- * event a rule matches whose location names none of the member's places.
+ * occurrence?": every one is a series rule, this one is the occurrence the sheet is on. A moved
+ * occurrence of a Google series (its own row) is marked under its series and original start, as
+ * the server keeps it (`markTargetOf`). A marked item says how it travels, with Change and
+ * Remove. "Place for travel" pins where it is, for an event a rule matches whose location names
+ * none of the member's places.
  */
 export function ItemTravelSection({
   item,
@@ -66,13 +63,13 @@ export function ItemTravelSection({
   const rules = useTravelRules(setup.workspaceId);
   const mark = useMarkItem(setup.workspaceId);
   const unmark = useUnmarkItem(setup.workspaceId);
-  const exception = seriesExceptionOf(item);
-  const repeating = isSeriesRow(item) || exception !== null;
-  // The occurrence a "this one" mark names: the sheet's, or a moved Google occurrence's own slot.
-  const slot = occurrence ?? exception;
+  const repeating = isSeriesRow(item) || item.seriesOccurrence !== undefined;
+  // Where its marks are kept: a moved Google occurrence's under its series, at its original start.
+  const target = markTargetOf(item, occurrence);
+  const slot = target.slot;
   const anchorStart = anchorStartOf(item, occurrence);
   const own = ownPlaceOf(item, setup.places, setup.containerPlaces);
-  const current = markOf(rules.data ?? [], item.id, slot);
+  const current = markOf(rules.data ?? [], target.itemId, slot);
 
   const [draft, setDraft] = useState<TravelPanelState | null>(null);
   const [asking, setAsking] = useState(false);
@@ -84,12 +81,15 @@ export function ItemTravelSection({
   const opener = useRef<HTMLButtonElement | null>(null);
   const saveButton = useRef<HTMLButtonElement>(null);
   const noteRef = useRef<HTMLParagraphElement>(null);
-  const focusNext = useRef<'opener' | 'note' | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+  const focusNext = useRef<'opener' | 'note' | 'error' | null>(null);
   useEffect(() => {
-    const target = focusNext.current === 'note' ? noteRef.current : opener.current;
-    if (focusNext.current !== null && target !== null) {
+    const next = focusNext.current;
+    const element =
+      next === 'note' ? noteRef.current : next === 'error' ? errorRef.current : opener.current;
+    if (next !== null && element !== null) {
       focusNext.current = null;
-      target.focus();
+      element.focus();
     }
   });
 
@@ -141,6 +141,8 @@ export function ItemTravelSection({
         text: errorMessage(t, failure, 'travel.add.failed'),
         homeMissing: apiErrorCode(failure) === 'travel_home_missing',
       });
+      // Save was disabled while it was sent, so focus goes to what went wrong.
+      focusNext.current = 'error';
     }
   };
 
@@ -168,6 +170,7 @@ export function ItemTravelSection({
       focusNext.current = 'note';
     } catch (failure) {
       setError({ text: errorMessage(t, failure, 'travel.add.removeFailed'), homeMissing: false });
+      focusNext.current = 'error';
     }
   };
 
@@ -177,6 +180,9 @@ export function ItemTravelSection({
       : (setup.places.find((place) => place.id === placeId)?.name ??
         t('travel.add.statusOwnPlace'));
   const noHome = setup.ready && setup.home === null;
+  // Every occurrence takes a length only: said in the dialog when he typed times of his own.
+  const lengthOnly =
+    draft === null || anchorStart === null ? null : everyKeepsOnlyLength(draft, anchorStart);
 
   return (
     <section
@@ -253,8 +259,9 @@ export function ItemTravelSection({
             state={draft}
             onChange={update}
             anchorStart={anchorStart}
-            anchorItemId={item.id}
+            anchorItemId={target.itemId}
             own={own}
+            series={repeating}
           />
           <div className="flex flex-wrap items-center gap-2">
             <Button
@@ -295,8 +302,19 @@ export function ItemTravelSection({
           {note}
         </p>
       )}
+      {setup.failed ? (
+        <p role="alert" data-travel-setup-failed="" className="text-[13px] text-destructive">
+          {t('travel.add.setupFailed')}
+        </p>
+      ) : null}
       {error === null ? null : (
-        <div role="alert" data-travel-error="" className="flex flex-col gap-1 text-[13px]">
+        <div
+          ref={errorRef}
+          tabIndex={-1}
+          role="alert"
+          data-travel-error=""
+          className="flex flex-col gap-1 text-[13px] outline-none"
+        >
           <p className="flex items-center gap-1.5 text-destructive">
             <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
             {error.text}
@@ -317,6 +335,11 @@ export function ItemTravelSection({
           setAsking(false);
         }}
         returnFocus={saveButton}
+        note={
+          lengthOnly === null
+            ? null
+            : t('travel.add.every.lengthOnly', { minutes: Math.round(lengthOnly) })
+        }
       />
     </section>
   );

@@ -983,6 +983,19 @@ describe('marks that can make no leg (fix round 1)', () => {
     };
     const masterId = idOf('Weekly lecture');
     const exceptionId = idOf('Weekly lecture (moved)');
+    // Its own row names its series and original start (ids and times only), so a client finds
+    // the marks kept under them; the master names none.
+    interface SeriesView {
+      seriesOccurrence?: { seriesId: string; originalStart: string };
+    }
+    assert.deepEqual(
+      (await ok<SeriesView>('editor', 'GET', `/items/${exceptionId}`)).seriesOccurrence,
+      { seriesId: masterId, originalStart: iso(slot) },
+    );
+    assert.equal(
+      'seriesOccurrence' in (await ok<SeriesView>('editor', 'GET', `/items/${masterId}`)),
+      false,
+    );
 
     // Marked by its own row: the mark is its master's, at its original start.
     const marked = await ok<{ rule: TravelRuleView; legs: Leg[] }>(
@@ -1045,6 +1058,32 @@ describe('marks that can make no leg (fix round 1)', () => {
       { every: true, mode: 'transit', direction: 'both', placeId: braudeId },
     );
     assert.deepEqual(every.rule.scope, { kind: 'series', itemId: masterId });
+    // Every occurrence again, now from the master: that same series rule, changed in place.
+    const seriesRules = async (): Promise<TravelRuleView[]> =>
+      (await ok<TravelRuleView[]>('editor', 'GET', '/travel/rules')).filter(
+        ({ scope }) => scope.kind === 'series' && scope.itemId === masterId,
+      );
+    const everyAgain = await ok<{ rule: TravelRuleView }>(
+      'editor',
+      'POST',
+      `/travel/items/${masterId}`,
+      { every: true, mode: 'drive', direction: 'there', placeId: braudeId },
+    );
+    assert.equal(everyAgain.rule.id, every.rule.id);
+    assert.deepEqual(
+      (await seriesRules()).map((rule) => [rule.id, rule.mode, rule.direction]),
+      [[every.rule.id, 'drive', 'there']],
+    );
+    await ok('editor', 'POST', `/travel/items/${exceptionId}`, {
+      every: true,
+      mode: 'transit',
+      direction: 'both',
+      placeId: braudeId,
+    });
+    assert.deepEqual(
+      (await seriesRules()).map((rule) => [rule.id, rule.mode, rule.direction]),
+      [[every.rule.id, 'transit', 'both']],
+    );
     assert.deepEqual(
       every.legs.map((leg) => [leg.props.travel.anchorItemId, leg.props.travel.occurrence]),
       [

@@ -10,9 +10,11 @@ import {
   defaultFromPlace,
   defaultToPlace,
   editPanelSpan,
+  everyKeepsOnlyLength,
   initialPanelState,
   markOf,
   markRequestOf,
+  markTargetOf,
   outcomeOf,
   ownPlaceOf,
   panelPreview,
@@ -304,6 +306,52 @@ describe('which items take travel, and their mark', () => {
     assert.equal(markOf([series], 'other', null), null);
     const single = rule({ kind: 'item', itemId: 'todo', occurrence: 'single' });
     assert.equal(markOf([single], 'todo', null)?.id, 'item');
+  });
+
+  it("a moved occurrence's mark is found under its series and original start, as the server keeps it", () => {
+    const rule = (scope: TravelRuleView['scope']): TravelRuleView => ({
+      id: scope.kind,
+      scope,
+      mode: 'transit',
+      direction: 'both',
+      placeId: null,
+      createdAt: '2026-11-18T00:00:00.000Z',
+    });
+    // Its own row ("lecture_moved"), moved from 14:00 to 16:00; the series is "lecture".
+    const moved = {
+      id: 'lecture_moved',
+      seriesOccurrence: { seriesId: 'lecture', originalStart: '2026-11-19T12:00:00.000Z' },
+    };
+    const sheetOn = new Date('2026-11-19T12:00:00.000Z');
+    const target = markTargetOf(moved, sheetOn);
+    assert.deepEqual(target, { itemId: 'lecture', slot: AT_TWO });
+    // "This one only" was kept under the series at its original start; "Every occurrence" too.
+    const one = rule({ kind: 'item', itemId: 'lecture', occurrence: AT_TWO.toISOString() });
+    const every = rule({ kind: 'series', itemId: 'lecture' });
+    assert.equal(markOf([every, one], target.itemId, target.slot)?.id, 'item');
+    assert.equal(markOf([every], target.itemId, target.slot)?.id, 'series');
+    // By its own id nothing is found: that is where the server never keeps it.
+    assert.equal(markOf([every, one], moved.id, sheetOn), null);
+    // Any other item: its own id, on the occurrence the sheet is on.
+    assert.deepEqual(markTargetOf({ id: 'todo' }, null), { itemId: 'todo', slot: null });
+    assert.deepEqual(markTargetOf({ id: 'lab' }, AT_TWO), { itemId: 'lab', slot: AT_TWO });
+  });
+
+  it('every occurrence keeping only the length is said when he typed times of his own', () => {
+    // Nothing typed, or a length that arrives as it starts: nothing is lost.
+    assert.equal(everyKeepsOnlyLength(previewFill(panel(), 40), AT_TWO), null);
+    assert.equal(everyKeepsOnlyLength(editPanelSpan(panel(), 'minutes', 35), AT_TWO), null);
+    // An arrival of 13:50 of his own: every occurrence keeps its 35 minutes only.
+    const typed = editPanelSpan(
+      editPanelSpan(panel(), 'minutes', 35),
+      'end',
+      minutesBefore(AT_TWO, 10),
+    );
+    assert.equal(everyKeepsOnlyLength(typed, AT_TWO), 35);
+    assert.deepEqual(
+      markRequestOf(typed, { itemId: 'lecture', occurrence: AT_TWO, start: AT_TWO }, true).there,
+      { minutes: 35, fromPlaceId: 'home' },
+    );
   });
 
   it('an answer with no trips yet is a calm note, not an error', () => {

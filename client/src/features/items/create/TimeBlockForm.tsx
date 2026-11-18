@@ -137,6 +137,8 @@ export function TimeBlockForm({
           layer === 'area' ? 'scheduled.form.saveErrorArea' : 'scheduled.form.saveError',
         ),
       );
+    } finally {
+      setTravelling(false);
     }
   };
 

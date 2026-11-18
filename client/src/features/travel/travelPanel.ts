@@ -32,6 +32,7 @@ import {
   type TravelPreviewResponse,
   type TravelRuleView,
 } from '@api-types/travel.ts';
+import { placeByName } from '@api-types/travelPlaceNames.ts';
 import { dateInZone, instantInZone } from '../items/zonedDate.ts';
 
 export interface TravelPanelState {
@@ -184,6 +185,19 @@ function thereOf(
 }
 
 /**
+ * The minutes every occurrence would keep when he typed a leave or arrive time of his own: every
+ * occurrence takes a length only (each arrives as it starts), so those times would not be kept.
+ * Null when nothing typed would be lost.
+ */
+export function everyKeepsOnlyLength(state: TravelPanelState, anchorStart: Date): number | null {
+  const there = thereOf(state, anchorStart, false);
+  if (there === undefined || (there.startAt === undefined && there.endAt === undefined)) {
+    return null;
+  }
+  return panelSpan(state)?.minutes ?? null;
+}
+
+/**
  * `POST …/travel/items/:itemId`: every occurrence of a series (`every`, no occurrence), one
  * occurrence (its original start), or an item that doesn't repeat (neither). `placeId` null is the
  * item's own place.
@@ -317,34 +331,6 @@ export function defaultFromPlace(
   return before !== null && places.some((place) => place.id === before) ? before : home;
 }
 
-/** The server's matching of a location to a place, for the label only (PlaceMatcher). */
-function normalize(text: string): string {
-  return text
-    .normalize('NFKC')
-    .toLowerCase()
-    .replaceAll('״', '"')
-    .replaceAll('׳', "'")
-    .replace(/[^\p{L}\p{N}\s"']/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function placeNamed(location: string, places: readonly PlaceView[]): PlaceView | null {
-  const text = normalize(location);
-  let best: PlaceView | null = null;
-  let length = 0;
-  for (const place of places) {
-    for (const label of [place.name, ...place.aliases]) {
-      const name = normalize(label);
-      if (name.length > length && text.includes(name)) {
-        best = place;
-        length = name.length;
-      }
-    }
-  }
-  return best;
-}
-
 /** Whether the item has a place of its own (a location, or its calendar's default), and which. */
 export interface OwnPlace {
   offered: boolean;
@@ -359,7 +345,7 @@ export function ownPlaceOf(
 ): OwnPlace {
   const location = item.props['location'];
   const named =
-    typeof location === 'string' && location.trim() !== '' ? placeNamed(location, places) : null;
+    typeof location === 'string' && location.trim() !== '' ? placeByName(location, places) : null;
   const pinned = containerPlaces.find((entry) => entry.containerId === item.containerId);
   const byDefault =
     pinned === undefined ? null : (places.find((place) => place.id === pinned.placeId) ?? null);
@@ -421,6 +407,21 @@ export function canTravelTo(item: {
   );
 }
 
+/**
+ * What the server keeps an item's marks under (TravelRule's mark scope): a moved occurrence of a
+ * repeating event (its own row) under its series and original start (`seriesOccurrence`); any
+ * other item under its own id, on the occurrence the sheet is on (null: the item as a whole).
+ */
+export function markTargetOf(
+  item: { id: string; seriesOccurrence?: { seriesId: string; originalStart: string } | undefined },
+  occurrence: Date | null,
+): { itemId: string; slot: Date | null } {
+  const series = item.seriesOccurrence;
+  return series === undefined
+    ? { itemId: item.id, slot: occurrence }
+    : { itemId: series.seriesId, slot: new Date(series.originalStart) };
+}
+
 /** The item's own mark: this occurrence's (or the item's) first, then its series'. */
 export function markOf(
   rules: readonly TravelRuleView[],
@@ -439,8 +440,7 @@ export function markOf(
 export type TravelOutcome =
   | { kind: 'added'; count: number }
   /** Stored, with no trips yet (its place isn't known yet, or they come with the next sync). */
-  | { kind: 'pending'; ownPlace: boolean }
-  | { kind: 'failed'; message: string; homeMissing: boolean };
+  | { kind: 'pending'; ownPlace: boolean };
 
 /** The text of what a mark came to (a toast, the item sheet's note). */
 export function outcomeText(t: TFunction, outcome: TravelOutcome): string {
@@ -451,8 +451,6 @@ export function outcomeText(t: TFunction, outcome: TravelOutcome): string {
       return outcome.ownPlace
         ? `${t('travel.add.pending')} ${t('travel.add.pendingOwnPlace')}`
         : t('travel.add.pending');
-    case 'failed':
-      return outcome.message;
   }
 }
 

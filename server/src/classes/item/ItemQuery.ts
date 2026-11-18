@@ -43,7 +43,7 @@ import type {
 } from '../../types/items.js';
 // Every item class registers as its module loads: a list made here is Todos, time blocks, areas,
 // travel legs, TaskItems, pull requests and events whoever imported this module first.
-import './CalendarEvent.js';
+import { CalendarEvent } from './CalendarEvent.js';
 import './PullRequest.js';
 import './TaskItem.js';
 import './TimeArea.js';
@@ -234,16 +234,31 @@ export class ItemQuery {
     return this.detail(await Item.find(this.#caller, id), { live: true });
   }
 
-  /** An item's full view for the caller (`live`: with its copies' provider statuses). */
+  /**
+   * An item's full view for the caller (`live`: with its copies' provider statuses). A moved
+   * occurrence of a repeating event also names its series and original start
+   * (`seriesOccurrence`), as travel keys its marks.
+   */
   async detail(item: Item, options: { live?: boolean } = {}): Promise<ItemDetail> {
     const liveStatuses =
       options.live === true && !item.copies.isEmpty
         ? await this.#liveStatuses([item.id])
         : undefined;
-    return item.toView(this.#caller, {
+    const view = item.toView(this.#caller, {
       ...(liveStatuses === undefined ? {} : { liveStatuses }),
       editing: await item.editing(this.#caller),
     });
+    const occurrence =
+      item instanceof CalendarEvent ? await item.seriesOccurrence(this.#caller) : null;
+    return occurrence === null
+      ? view
+      : {
+          ...view,
+          seriesOccurrence: {
+            seriesId: occurrence.seriesId,
+            originalStart: occurrence.originalStart.toISOString(),
+          },
+        };
   }
 
   /**

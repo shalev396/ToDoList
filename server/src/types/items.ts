@@ -181,6 +181,13 @@ export interface ItemDetail extends ItemSummary {
   editing: ItemEditingView;
   /** A mirrored item's values at its provider, before its overrides; null for a to-do. */
   sourceValues: ItemSourceValuesView | null;
+  /**
+   * A moved occurrence of a repeating calendar event (its own row): the series it belongs to (its
+   * master's item id, or its own when the caller doesn't see the master) and the occurrence's
+   * original start (ISO). Travel keeps a mark of that occurrence under them. Ids and times only;
+   * absent on any other item.
+   */
+  seriesOccurrence?: { seriesId: string; originalStart: string };
 }
 
 /**

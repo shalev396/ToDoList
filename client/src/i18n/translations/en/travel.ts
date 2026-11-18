@@ -175,9 +175,10 @@ export const travel = {
     leave: 'Leave',
     arrive: 'Arrive',
     length: 'Length, in minutes',
-    minutesUnit: 'min',
     spanHint: 'Fill any two: the third is worked out.',
-    everyHint: 'Every occurrence keeps this length, at its own times.',
+    spanHintSeries:
+      'Fill any two: the third is worked out. For every occurrence only the length is kept, arriving as each one starts.',
+    everyHint: 'Every occurrence keeps this length, arriving as each one starts.',
     backOnly: 'The trip back is worked out from when it ends.',
     preview: {
       line: 'Leave {{start}} · arrive {{end}} · {{minutes}} min ({{source}})',
@@ -197,6 +198,8 @@ export const travel = {
     needsHome: 'Travel needs a Home: each day’s travel starts and ends there.',
     addHome: 'Add your Home in Settings → Travel',
     needsTime: 'Travel needs a time: add when it starts.',
+    loadingSetup: 'Loading your places…',
+    setupFailed: 'Your places couldn’t be loaded, so travel can’t be added right now.',
     repeatNote: 'A repeating to-do gets its travel from its event, once it’s created.',
     status: '{{mode}} · {{direction}} · to {{place}}',
     statusOwnPlace: 'its own place',
@@ -211,7 +214,6 @@ export const travel = {
     removeFailed: 'Travel couldn’t be removed.',
     createdWithout: 'The to-do was created, but its travel wasn’t added.',
     createdWithoutBlock: 'The time block was created, but its travel wasn’t added.',
-    retry: 'Try again',
     place: {
       label: 'Place for travel',
       hint: 'Where this happens, when its location doesn’t name one of your places.',
@@ -229,6 +231,8 @@ export const travel = {
       every: 'Every occurrence',
       one: 'This one only',
       oneCant: 'To add travel to one occurrence alone, open it from the calendar.',
+      lengthOnly:
+        'Every occurrence keeps only the length you typed ({{minutes}} min), arriving as each one starts. The leave and arrive times you typed are kept if you choose This one only.',
       cancel: 'Cancel',
     },
   },

@@ -24,6 +24,7 @@ export function EveryOccurrenceDialog({
   onChoose,
   onCancel,
   returnFocus,
+  note = null,
 }: {
   open: boolean;
   /** False on the series as a whole: there is no one occurrence to choose. */
@@ -32,6 +33,8 @@ export function EveryOccurrenceDialog({
   onCancel: () => void;
   /** Where focus goes when it closes (the Save that opened it). */
   returnFocus: RefObject<HTMLElement | null>;
+  /** What choosing every occurrence would not keep (the leave and arrive times he typed). */
+  note?: string | null;
 }) {
   const { t } = useTranslation();
   return (
@@ -56,6 +59,11 @@ export function EveryOccurrenceDialog({
         <AlertDialogHeader>
           <AlertDialogTitle>{t('travel.add.every.title')}</AlertDialogTitle>
           <AlertDialogDescription>{t('travel.add.every.body')}</AlertDialogDescription>
+          {note === null ? null : (
+            <p className="text-sm text-foreground" data-every-length-only="">
+              {note}
+            </p>
+          )}
           {oneAvailable ? null : (
             <p className="text-sm text-muted-foreground" data-every-one-cant="">
               {t('travel.add.every.oneCant')}

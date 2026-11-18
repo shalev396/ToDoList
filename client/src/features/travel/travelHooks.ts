@@ -21,6 +21,8 @@ export function useTravelSetup(enabled = true): TravelSetupView & {
   workspaceId: string;
   containerPlaces: { containerId: string; placeId: string }[];
   ready: boolean;
+  /** The places or the settings couldn't be read. */
+  failed: boolean;
 } {
   const { workspace } = useCurrentWorkspace();
   const workspaceId = workspace?.id ?? '';
@@ -34,6 +36,7 @@ export function useTravelSetup(enabled = true): TravelSetupView & {
     containerPlaces: settings.data?.containerPlaces ?? [],
     defaultMode: settings.data?.settings.defaultMode ?? 'transit',
     ready: places.isSuccess && settings.isSuccess,
+    failed: places.isError || settings.isError,
   };
 }
 

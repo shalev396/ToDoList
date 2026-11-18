@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useId, useRef, type Dispatch, type SetStateAction } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router-dom';
 import { Bus, Car, CircleAlert, Footprints, type LucideIcon } from 'lucide-react';
@@ -83,6 +91,7 @@ export function TravelPanel({
   anchorItemId,
   own,
   every = false,
+  series = false,
 }: {
   state: TravelPanelState;
   onChange: (update: (previous: TravelPanelState) => TravelPanelState) => void;
@@ -91,8 +100,10 @@ export function TravelPanel({
   /** The item travelled to (its own legs aren't "the place before it"); null for a new one. */
   anchorItemId: string | null;
   own: OwnPlace;
-  /** Every occurrence of a series: the length is what is kept. */
+  /** Every occurrence of a series: the length is all that is kept, so only the length is asked. */
   every?: boolean;
+  /** A repeating item whose choice (every occurrence or this one) comes after Save. */
+  series?: boolean;
 }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -285,47 +296,52 @@ export function TravelPanel({
           {/* On a phone the two times share a row (a time input needs the width) and the length
               goes under them. */}
           <div className="grid grid-cols-3 items-end gap-2 max-sm:grid-cols-2">
-            <div className="flex min-w-0 flex-col gap-1">
-              <Label htmlFor={`${ids}-leave`} className="text-[13px] font-normal">
-                {t('travel.add.leave')}
-              </Label>
-              <Input
-                id={`${ids}-leave`}
-                type="time"
-                dir="ltr"
-                value={time(shown.span.start)}
-                disabled={anchorStart === null}
-                onChange={(event) => {
-                  if (anchorStart !== null) {
-                    const value = event.target.value;
-                    edit((previous) =>
-                      editPanelTime(previous, 'start', value, anchorStart, timeZone),
-                    );
-                  }
-                }}
-              />
-            </div>
-            <div className="flex min-w-0 flex-col gap-1">
-              <Label htmlFor={`${ids}-arrive`} className="text-[13px] font-normal">
-                {t('travel.add.arrive')}
-              </Label>
-              <Input
-                id={`${ids}-arrive`}
-                type="time"
-                dir="ltr"
-                value={time(shown.span.end)}
-                disabled={anchorStart === null}
-                onChange={(event) => {
-                  if (anchorStart !== null) {
-                    const value = event.target.value;
-                    edit((previous) =>
-                      editPanelTime(previous, 'end', value, anchorStart, timeZone),
-                    );
-                  }
-                }}
-              />
-            </div>
-            <div className="flex min-w-0 flex-col gap-1 max-sm:col-span-2">
+            {/* Every occurrence keeps a length only (each arrives as it starts): no times. */}
+            {every ? null : (
+              <>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <Label htmlFor={`${ids}-leave`} className="text-[13px] font-normal">
+                    {t('travel.add.leave')}
+                  </Label>
+                  <Input
+                    id={`${ids}-leave`}
+                    type="time"
+                    dir="ltr"
+                    value={time(shown.span.start)}
+                    disabled={anchorStart === null}
+                    onChange={(event) => {
+                      if (anchorStart !== null) {
+                        const value = event.target.value;
+                        edit((previous) =>
+                          editPanelTime(previous, 'start', value, anchorStart, timeZone),
+                        );
+                      }
+                    }}
+                  />
+                </div>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <Label htmlFor={`${ids}-arrive`} className="text-[13px] font-normal">
+                    {t('travel.add.arrive')}
+                  </Label>
+                  <Input
+                    id={`${ids}-arrive`}
+                    type="time"
+                    dir="ltr"
+                    value={time(shown.span.end)}
+                    disabled={anchorStart === null}
+                    onChange={(event) => {
+                      if (anchorStart !== null) {
+                        const value = event.target.value;
+                        edit((previous) =>
+                          editPanelTime(previous, 'end', value, anchorStart, timeZone),
+                        );
+                      }
+                    }}
+                  />
+                </div>
+              </>
+            )}
+            <div className={cn('flex min-w-0 flex-col gap-1', every ? null : 'max-sm:col-span-2')}>
               <Label htmlFor={`${ids}-length`} className="text-[13px] font-normal">
                 {t('travel.add.length')}
               </Label>
@@ -353,7 +369,11 @@ export function TravelPanel({
             </div>
           </div>
           <p className="text-[13px] text-muted-foreground">
-            {every ? t('travel.add.everyHint') : t('travel.add.spanHint')}
+            {every
+              ? t('travel.add.everyHint')
+              : series
+                ? t('travel.add.spanHintSeries')
+                : t('travel.add.spanHint')}
           </p>
         </fieldset>
       ) : (
@@ -377,8 +397,10 @@ export function TravelPanel({
 }
 
 /**
- * The create forms' "Add travel time" switch, off by default; on, it opens the panel. A to-do
- * with a due date only is asked for a time (`needsTime`). `blocked` turns it off with its reason.
+ * The create forms' "Add travel time" switch, off by default; on, it opens the panel. The member's
+ * places and settings are read only once it is turned on (and the panel opens when they arrive,
+ * or says they couldn't be read). A to-do with a due date only is asked for a time (`needsTime`).
+ * `blocked` turns it off with its reason.
  */
 export function CreateTravel({
   value,
@@ -397,8 +419,24 @@ export function CreateTravel({
 }) {
   const { t } = useTranslation();
   const ids = useId();
-  const setup = useTravelSetup();
+  // Turned on before the setup was read: the panel opens once it is.
+  const [wanted, setWanted] = useState(false);
+  const setup = useTravelSetup(wanted || value !== null);
   const on = value !== null && blocked === null;
+  const pending = wanted && value === null && blocked === null;
+  const anchorMs = anchorStart?.getTime() ?? null;
+  const { ready, places, home, defaultMode } = setup;
+  useEffect(() => {
+    if (pending && ready) {
+      onChange(
+        openPanel(
+          { places, home, defaultMode },
+          NO_OWN_PLACE,
+          anchorMs === null ? null : new Date(anchorMs),
+        ),
+      );
+    }
+  }, [pending, ready, places, home, defaultMode, anchorMs, onChange]);
   const update = useCallback(
     (change: (previous: TravelPanelState) => TravelPanelState) => {
       onChange((previous) => (previous === null ? previous : change(previous)));
@@ -423,14 +461,26 @@ export function CreateTravel({
           id={`${ids}-switch`}
           data-travel-switch=""
           className="relative z-10"
-          checked={on}
-          disabled={blocked !== null || !setup.ready}
+          checked={on || pending}
+          disabled={blocked !== null}
           aria-describedby={`${ids}-hint`}
           onCheckedChange={(checked) => {
-            onChange(checked ? openPanel(setup, NO_OWN_PLACE, anchorStart) : null);
+            setWanted(checked);
+            onChange(checked && setup.ready ? openPanel(setup, NO_OWN_PLACE, anchorStart) : null);
           }}
         />
       </div>
+      {pending ? (
+        setup.failed ? (
+          <p role="alert" data-travel-setup-failed="" className="text-[13px] text-destructive">
+            {t('travel.add.setupFailed')}
+          </p>
+        ) : (
+          <p role="status" className="text-[13px] text-muted-foreground">
+            {t('travel.add.loadingSetup')}
+          </p>
+        )
+      ) : null}
       {on ? (
         <>
           {needsTime ? (
