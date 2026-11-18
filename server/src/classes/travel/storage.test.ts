@@ -271,6 +271,24 @@ describe('places', () => {
     // Neither an address nor coordinates is no place.
     await assert.rejects(classes.Place.create(ws.a, { name: 'Empty' }), { statusCode: 400 });
   });
+
+  it('a geocoder outage is 503 provider_unreachable, never place_not_found', async () => {
+    const ws = await workspace();
+    const log: HttpRequest[] = [];
+    setTravelTransportForTests({
+      maxRetries: 0,
+      send(request): Promise<HttpResponse> {
+        log.push(request);
+        return Promise.resolve({ status: 503, headers: {}, body: '{}' });
+      },
+    });
+    await assert.rejects(classes.Place.create(ws.a, { name: 'Braude', address: ADDRESS }), {
+      statusCode: 503,
+      code: 'provider_unreachable',
+    });
+    assert.equal(log.length, 1);
+    assert.deepEqual(await classes.Place.listOwn(ws.a), []);
+  });
 });
 
 describe('rules', () => {

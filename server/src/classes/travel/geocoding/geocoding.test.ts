@@ -11,7 +11,7 @@ import {
   type Transport,
 } from '../../../sync/http.js';
 import { travelClient } from '../travelHttp.js';
-import { ChainGeocoder, parseCoordinates } from './Geocoder.js';
+import { ChainGeocoder, GeocodingUnavailableError, parseCoordinates } from './Geocoder.js';
 import { NominatimGeocoder } from './NominatimGeocoder.js';
 import { OrsGeocoder } from './OrsGeocoder.js';
 
@@ -40,6 +40,16 @@ class FakeClock implements Clock {
     this.t += ms;
     return Promise.resolve();
   }
+}
+
+/** A transport that answers every request with `status`, and counts them. */
+function failing(status: number, log: HttpRequest[] = []): Transport {
+  return {
+    send(request): Promise<HttpResponse> {
+      log.push(request);
+      return Promise.resolve({ status, headers: {}, body: '{}' });
+    },
+  };
 }
 
 afterEach(() => {
@@ -107,5 +117,49 @@ describe('geocoding', () => {
     assert.equal(await nominatim.geocode('nowhere'), null);
     assert.equal(await ors.geocode('nowhere'), null);
     assert.equal(await new ChainGeocoder([ors, nominatim]).geocode('nowhere'), null);
+  });
+
+  it('an outage is no answer: a provider that fails throws, a chain only when none answered', async () => {
+    const client = (
+      provider: 'nominatim' | 'openrouteservice',
+      t: Transport,
+    ): ReturnType<typeof createReadOnlyClient> =>
+      createReadOnlyClient({ provider, transport: t, maxRetries: 0 });
+    const nominatimDown = new NominatimGeocoder(client('nominatim', failing(503)));
+    const orsDown = new OrsGeocoder({
+      apiKey: 'k',
+      client: client('openrouteservice', failing(500)),
+    });
+    const nominatimEmpty = new NominatimGeocoder(client('nominatim', transport('[]')));
+    await assert.rejects(nominatimDown.geocode('Braude'));
+    await assert.rejects(orsDown.geocode('Braude'));
+    // An answer it can't read is no answer either.
+    await assert.rejects(
+      new NominatimGeocoder(client('nominatim', transport('{"error":"busy"}'))).geocode('Braude'),
+    );
+    // One looked and found nothing: not found. Every one failed: no answer.
+    assert.equal(await new ChainGeocoder([orsDown, nominatimEmpty]).geocode('Braude'), null);
+    await assert.rejects(
+      new ChainGeocoder([orsDown, nominatimDown]).geocode('Braude'),
+      GeocodingUnavailableError,
+    );
+  });
+
+  it('travel clients retry Nominatim once and OpenRouteService never', async () => {
+    const nominatimLog: HttpRequest[] = [];
+    setTravelTransportForTests(failing(503, nominatimLog));
+    await assert.rejects(
+      new NominatimGeocoder(travelClient('nominatim', new FakeClock())).geocode('x'),
+    );
+    assert.equal(nominatimLog.length, 2);
+    const orsLog: HttpRequest[] = [];
+    setTravelTransportForTests(failing(503, orsLog));
+    await assert.rejects(
+      new OrsGeocoder({
+        apiKey: 'k',
+        client: travelClient('openrouteservice', new FakeClock()),
+      }).geocode('x'),
+    );
+    assert.equal(orsLog.length, 1);
   });
 });

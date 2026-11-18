@@ -7,13 +7,16 @@
  * - Rows: what the member may read, as a calendar reads it (ItemQuery#runDraft, `blockType:
  *   'calendar'`, so a series that began weeks ago is read too): a start, any kind but travel, in
  *   the range, at most ANCHOR_ROWS_MAX. Series are expanded on the workspace's wall clock; all-day
- *   and due-only occurrences never anchor.
+ *   and due-only occurrences never anchor, and neither does a painted area (non-busy time).
  * - Rule (Ruling 11): the item rule of that occurrence, else the series rule of its series, else
  *   the oldest where-rule that matches (each where-rule is its own draft, ANDed with the range).
  * - Place, in order: the member's pin of the item; the rule's place; a place named (or aliased) in
- *   the event's location; the location geocoded (cached per member by the text's hash; at most
- *   NEW_GEOCODES_MAX new lookups per gather) to a place within PLACE_MATCH_RADIUS_M; the default
+ *   the event's location; the location geocoded to a place within PLACE_MATCH_RADIUS_M; the default
  *   place of its calendar or project. Otherwise none, and no travel.
+ * - Geocodes are cached per member by the text's hash. New lookups: at most `lookups` per gather
+ *   (NEW_GEOCODES_MAX; 0 on an item write, which reads the cache only), each within the
+ *   regeneration's time (TimeBox). Only "not found" is cached: a geocoder that failed or ran out of
+ *   time is asked again by a later gather.
  * - An occurrence is anchored by its series (`seriesRowId`, a moved Google occurrence's master) or
  *   its own row, and by its ORIGINAL start (`single` for an item that doesn't repeat).
  *
@@ -36,6 +39,7 @@ import { ItemQuery } from '../item/ItemQuery.js';
 import type { Anchor } from './DayPlanner.js';
 import { nearestWithin, type LatLon } from './geo.js';
 import { parseCoordinates, type Geocoder } from './geocoding/Geocoder.js';
+import type { TimeBox } from './TimeBox.js';
 import type { AnchorFate } from './LegReconciler.js';
 import type { Place } from './Place.js';
 import { PlaceMatcher } from './PlaceMatcher.js';
@@ -54,6 +58,10 @@ export interface GatherInput {
   range: Range;
   now: Date;
   geocoder: Geocoder;
+  /** The regeneration's time: a lookup starts and is waited for only within it. */
+  time: TimeBox;
+  /** New geocoder lookups allowed (default NEW_GEOCODES_MAX); 0: cached geocodes only. */
+  lookups?: number;
 }
 
 export interface Gathered {
@@ -87,6 +95,10 @@ const ANCHOR_RULES: RuleGroup = {
 };
 
 const anchorKey = (itemId: string, occurrence: string): string => `${itemId}|${occurrence}`;
+
+/** Painted time (an area): it reserves nothing, so it is never travelled to. */
+const isArea = (row: ItemQueryRow): boolean =>
+  row.kind === 'block' && row.props['layer'] === 'area';
 
 /** A Google series' key, `calendarId|eventId` (its exceptions name it by `recurringEventId`). */
 function googleSeries(
@@ -166,7 +178,7 @@ export class TravelAnchors {
     const slot =
       occurrence.originalStart === null ? 'single' : occurrence.originalStart.toISOString();
     const key = anchorKey(itemId, slot);
-    const rule = this.#ruleFor(row.id, itemId, slot, matches);
+    const rule = isArea(row) ? null : this.#ruleFor(row.id, itemId, slot, matches);
     if (rule === null) {
       this.#fate(key, 'no_longer_matches');
       return null;
@@ -229,9 +241,9 @@ export class TravelAnchors {
   }
 
   /**
-   * Where a location text is: typed "lat, lon"; else the member's cache; else, while lookups are
-   * left, the geocoder's answer, kept for next time (a failed lookup is not kept: it is tried
-   * again by the next gather).
+   * Where a location text is: typed "lat, lon"; else the member's cache; else, while lookups and
+   * time are left, the geocoder's answer. A point or "not found" is kept for next time; a lookup
+   * that failed or ran out of time is not (the next gather asks again).
    */
   async #geocode(text: string): Promise<LatLon | null> {
     const typed = parseCoordinates(text);
@@ -240,11 +252,17 @@ export class TravelAnchors {
     if (seen !== undefined) return seen;
     const cached = this.#input.profile.cachedGeocode(text);
     if (cached !== undefined) return cached;
-    if (this.#lookups >= NEW_GEOCODES_MAX) return null;
+    const { geocoder, time, lookups = NEW_GEOCODES_MAX } = this.#input;
+    if (this.#lookups >= lookups || !time.open) return null;
     this.#lookups += 1;
     let point: LatLon | null;
     try {
-      point = await this.#input.geocoder.geocode(text);
+      const answer = await time.run(() => geocoder.geocode(text));
+      if (!answer.inTime) {
+        this.#geocoded.set(text, null);
+        return null;
+      }
+      point = answer.value;
     } catch (error) {
       // Never the text: it may be an address.
       logger.warn('travel: a location could not be geocoded', {

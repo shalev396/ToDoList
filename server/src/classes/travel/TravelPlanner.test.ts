@@ -15,13 +15,16 @@ import assert from 'node:assert/strict';
 import { setTravelTransportForTests } from '../../config/testSwitches.js';
 import type * as Models from '../../models/index.js';
 import type * as AppSecrets from '../../services/appSecrets.js';
+import type { SourceRef } from '../../models/definitions/common.js';
 import type { HttpRequest, HttpResponse, Transport } from '../../sync/http.js';
+import { seedIntegration } from '../../testing/integrationFixtures.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { callerOf } from '../../testing/workspaceFixtures.js';
 import { addLocalDays, zonedParts, zonedTime } from '../../types/recurrence/zoned.js';
 import type { TravelDirection } from '../../types/travel.js';
 import type * as Classes from '../index.js';
 import type { Caller } from '../base/Caller.js';
+import { TimeBudget } from '../integration/calendar/TimeBudget.js';
 
 let db: TestDatabase;
 let classes: typeof Classes;
@@ -348,5 +351,111 @@ describe('TravelPlanner.regenerate', () => {
     assert.deepEqual((await legsOf(ws.b)).live, []);
     assert.deepEqual(await classes.Place.listOwn(ws.b.caller), []);
     assert.deepEqual(await classes.TravelRule.listOwn(ws.b.caller), []);
+  });
+
+  it('an overnight anchor keeps its leg home after midnight', async () => {
+    const ws = await workspace();
+    // 23:00 on day 2 to 00:45 on day 3.
+    const party = await block(ws.a, local(2, 23), 1.75);
+    await travelTo(ws.a, { kind: 'item', itemId: party.id, occurrence: 'single' });
+    assert.equal((await classes.TravelPlanner.regenerate(ws.a.caller, local(2, 12))).created, 2);
+    const home = leg((await legsOf(ws.a)).live, 'back');
+    assert.equal(iso(home.startAt), iso(local(3, 0, 45)));
+
+    // The daily pass just after midnight: the anchor began before the horizon, its leg home is
+    // still ahead, and nothing removes it.
+    const after = await classes.TravelPlanner.regenerate(ws.a.caller, local(3, 0, 30));
+    assert.deepEqual(after, { created: 0, updated: 0, removed: 0 });
+    const { live, removed } = await legsOf(ws.a);
+    assert.equal(iso(leg(live, 'back').startAt), iso(local(3, 0, 45)));
+    assert.deepEqual(removed, []);
+  });
+
+  it("a hanging OpenRouteService stops at the regeneration's time", async () => {
+    const ws = await workspace();
+    appSecrets.setAppSecretsForTests({ openrouteservice: { apiKey: 'test-ors-key' } });
+    const hanging: Transport = {
+      maxRetries: 0,
+      send: () => new Promise<HttpResponse>(() => undefined),
+    };
+    setTravelTransportForTests(hanging);
+    const lab = await block(ws.a, local(3, 10), 2);
+    await travelTo(ws.a, { kind: 'item', itemId: lab.id, occurrence: 'single' }, 'drive');
+
+    const started = Date.now();
+    const made = await classes.TravelPlanner.regenerate(ws.a.caller, new Date(), {
+      budget: TimeBudget.start(2_500),
+    });
+    const took = Date.now() - started;
+    assert.ok(took < 6_000, `${String(took)} ms`);
+    assert.equal(made.created, 2);
+    // Both trips fell back to the straight line.
+    assert.deepEqual(
+      (await legsOf(ws.a)).live.map((one) => one.travel?.source),
+      ['estimate', 'estimate'],
+    );
+  });
+
+  it('an item write looks up no new place; a sync does', async () => {
+    const ws = await workspace();
+    const gcal = `int-planner-${String(count)}`;
+    await seedIntegration(ws.id, {
+      id: gcal,
+      ownerUserId: A,
+      provider: 'google_calendar',
+      accountId: `g-${gcal}`,
+    });
+    const start = local(3, 10);
+    const source: SourceRef = {
+      provider: 'google_calendar',
+      accountId: `g-${gcal}`,
+      externalId: 'lecture',
+      key: null,
+      url: 'https://example.invalid/lecture',
+      updatedAtSource: null,
+      etag: null,
+      hash: 'h-lecture',
+    };
+    await (
+      await models.getItemRepository()
+    ).bulkUpsert(ws.id, [
+      {
+        integrationId: gcal,
+        kind: 'event',
+        topicId: null,
+        title: 'Lecture',
+        status: 'open',
+        startAt: start,
+        endAt: new Date(start.getTime() + 2 * 3_600_000),
+        containerId: 'cal-braude',
+        props: { calendarId: 'braude-cal', eventId: 'lecture', location: 'Unknown hall 4' },
+        source,
+      },
+    ]);
+    await classes.TravelRule.create(ws.a.caller, {
+      scope: {
+        kind: 'where',
+        where: {
+          combinator: 'and',
+          rules: [{ field: 'containerId', operator: '=', value: 'cal-braude' }],
+        },
+      },
+      mode: 'transit',
+      direction: 'both',
+    });
+
+    // A to-do written: its regeneration reads the cache only.
+    await classes.Todo.create(ws.a.caller, { title: 'Read' });
+    assert.equal(transport.requests.length, 0);
+
+    // A sync of the calendar: the location is looked up (the geocoder is down here, so nothing is
+    // kept and the next one asks again).
+    await classes.TravelPlanner.afterSync(gcal);
+    const hosts = new Set(transport.requests.map((request) => new URL(request.url).host));
+    assert.deepEqual([...hosts], ['nominatim.openstreetmap.org']);
+    assert.equal(
+      (await classes.TravelProfile.of(ws.a.caller)).cachedGeocode('Unknown hall 4'),
+      undefined,
+    );
   });
 });

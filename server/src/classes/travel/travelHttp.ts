@@ -4,6 +4,10 @@
  * client spaces calls 1.1 s apart: that spacing lives in one client, so the process shares one
  * (`sharedNominatimClient`). Errors carry the provider's name and a status, never a URL.
  *
+ * Travel runs inside a regeneration's few seconds (an item write waits for it), so its clients are
+ * short: TRAVEL_HTTP_TIMEOUT_MS per attempt, no retry at OpenRouteService (the chain falls back
+ * instead), one at Nominatim, and at most TRAVEL_RATE_LIMIT_WAIT_MS for a rate limit's reset.
+ *
  * The OpenRouteService key is optional: read from the stage's app secret when asked, and null
  * when it isn't set (or can't be read), so travel falls back to the providers that need none.
  */
@@ -19,6 +23,15 @@ import {
 import { liveTransport } from '../../sync/transports/live.js';
 
 export const NOMINATIM_MIN_INTERVAL_MS = 1100;
+/** One attempt's longest wait for an answer. */
+export const TRAVEL_HTTP_TIMEOUT_MS = 5_000;
+/** The longest wait for a rate limit's reset: past it, the request fails. */
+export const TRAVEL_RATE_LIMIT_WAIT_MS = 2_000;
+/** Retries after a failed attempt, per provider. */
+const RETRIES: Readonly<Record<'openrouteservice' | 'nominatim', number>> = {
+  openrouteservice: 0,
+  nominatim: 1,
+};
 
 export function travelClient(
   provider: 'openrouteservice' | 'nominatim',
@@ -26,7 +39,9 @@ export function travelClient(
 ): ReadOnlyClient {
   return createReadOnlyClient({
     provider,
-    transport: travelTransportForTests() ?? liveTransport(),
+    transport: travelTransportForTests() ?? liveTransport({ timeoutMs: TRAVEL_HTTP_TIMEOUT_MS }),
+    maxRetries: RETRIES[provider],
+    maxWaitMs: TRAVEL_RATE_LIMIT_WAIT_MS,
     ...(clock === undefined ? {} : { clock }),
     ...(provider === 'nominatim' ? { minIntervalMs: NOMINATIM_MIN_INTERVAL_MS } : {}),
   });

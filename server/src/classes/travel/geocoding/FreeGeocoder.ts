@@ -1,8 +1,9 @@
 /**
  * The free geocoders in turn (plan Ruling 14): coordinates typed as text need no lookup; then
  * OpenRouteService's geocoder when the stage has its key; then Nominatim, through the process's one
- * client (one request a second). Nothing found, or every provider down, is null: the caller
- * decides (a new place answers 400 `place_not_found`; an event's location has no place).
+ * client (one request a second). Nothing found is null: the caller decides (a new place answers
+ * 400 `place_not_found`; an event's location has no place). Every provider failing throws
+ * GeocodingUnavailableError: a new place answers 503, and an event's location is tried again later.
  */
 import { openRouteServiceKey, sharedNominatimClient, travelClient } from '../travelHttp.js';
 import { ChainGeocoder, parseCoordinates, type Geocoder, type LatLon } from './Geocoder.js';

@@ -9,7 +9,8 @@
  * - At most one place is Home, the start and end of every day: making one Home makes the old one a
  *   plain place (and a unique index holds it).
  * - Its coordinates are given, typed as "lat, lon" in the address, or looked up by the free
- *   geocoders (FreeGeocoder); nothing found is 400 `place_not_found`, never a 500.
+ *   geocoders (FreeGeocoder); nothing found is 400 `place_not_found`, never a 500. Geocoders that
+ *   can't be reached are a 503 `provider_unreachable` (nothing was stored; try again later).
  * - A member keeps at most PLAN_LIMITS.placesPerMember places (409 `travel_limit`).
  * - Changes are for editors and owners (Ruling 16).
  */
@@ -25,7 +26,7 @@ import type { Owned, Viewable } from '../base/contracts.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import type { LatLon } from './geo.js';
 import { FreeGeocoder } from './geocoding/FreeGeocoder.js';
-import { parseCoordinates } from './geocoding/Geocoder.js';
+import { GeocodingUnavailableError, parseCoordinates } from './geocoding/Geocoder.js';
 import { TravelData } from './TravelData.js';
 
 /** A new place as callers give it: an address, coordinates, or both. */
@@ -90,9 +91,20 @@ function checkedCoords(coords: LatLon): LatLon {
   return { lat, lon };
 }
 
-/** Where the address is: typed coordinates, else the free geocoders; 400 when nothing is found. */
+/**
+ * Where the address is: typed coordinates, else the free geocoders. 400 when nothing is found; 503
+ * when no geocoder could be reached (never taken for "not found").
+ */
 async function located(address: string): Promise<LatLon> {
-  const point = parseCoordinates(address) ?? (await new FreeGeocoder().geocode(address));
+  let point: LatLon | null;
+  try {
+    point = parseCoordinates(address) ?? (await new FreeGeocoder().geocode(address));
+  } catch (error) {
+    if (!(error instanceof GeocodingUnavailableError)) throw error;
+    throw new AppError(503, 'The address could not be looked up: try again later', {
+      code: 'provider_unreachable',
+    });
+  }
   if (point === null) throw new AppError(400, 'address: not found', { code: 'place_not_found' });
   return point;
 }

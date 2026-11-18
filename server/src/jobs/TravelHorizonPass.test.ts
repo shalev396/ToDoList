@@ -15,6 +15,7 @@ import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js
 import { callerOf } from '../testing/workspaceFixtures.js';
 import { addLocalDays, wallDate, zonedParts, zonedTime } from '../types/recurrence/zoned.js';
 import type * as Classes from '../classes/index.js';
+import type { ActorRef } from '../classes/base/Actor.js';
 import type { Caller } from '../classes/base/Caller.js';
 import { TimeBudget } from '../classes/integration/calendar/TimeBudget.js';
 import type * as Pass from './TravelHorizonPass.js';
@@ -157,5 +158,29 @@ describe('TravelHorizonPass', () => {
       callers.map(() => wallDate(day, ZONE)),
     );
     assert.deepEqual(await new pass.TravelHorizonPass().run(day), { done: 0, left: 0 });
+  });
+
+  it("one member's error never stops the pass", async (t) => {
+    const [failing, fine] = await workspace(['u-error-a', 'u-error-b']);
+    assert.ok(failing && fine);
+    // A day before their labs (day 3), which every member here is due on.
+    const day = local(2, 9);
+    // Entering A's workspace fails (the database blinked): A is retried on the next tick.
+    const enter = classes.Caller.enter.bind(classes.Caller);
+    t.mock.method(classes.Caller, 'enter', (workspaceId: string, actor: ActorRef) =>
+      actor.userId === failing.userId
+        ? Promise.reject(new Error('the database blinked'))
+        : enter(workspaceId, actor),
+    );
+    const { left: due } = await classes.TravelPlanner.runDailyPass(day, budgetFor(0));
+
+    assert.deepEqual(await classes.TravelPlanner.runDailyPass(day, TimeBudget.start(120_000)), {
+      done: due - 1,
+      left: 1,
+    });
+    // A was never passed; B was, that day, and has its legs.
+    assert.deepEqual(await lastPassDays([failing, fine]), [null, wallDate(day, ZONE)]);
+    const { live } = await classes.TravelLeg.listDays(fine, local(0, 0), local(15, 0));
+    assert.equal(live.length, 2);
   });
 });

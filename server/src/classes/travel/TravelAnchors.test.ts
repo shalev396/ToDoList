@@ -20,6 +20,7 @@ import type { RuleGroup } from '../../types/builder.js';
 import { addLocalDays, startOfZonedDay } from '../../types/recurrence/zoned.js';
 import type * as Classes from '../index.js';
 import type { Caller } from '../base/Caller.js';
+import { TimeBudget } from '../integration/calendar/TimeBudget.js';
 import type { Anchor } from './DayPlanner.js';
 import type { Geocoder, LatLon } from './geocoding/Geocoder.js';
 
@@ -180,6 +181,7 @@ class FakeGeocoder implements Geocoder {
 async function gather(
   ws: Ws,
   geocoder: Geocoder = new FakeGeocoder({}),
+  options: { budgetMs?: number; lookups?: number } = {},
 ): Promise<{ anchors: Anchor[]; fates: Map<string, string> }> {
   return classes.TravelAnchors.gather(ws.a, {
     profile: await classes.TravelProfile.of(ws.a),
@@ -188,7 +190,36 @@ async function gather(
     range: RANGE,
     now: NOW,
     geocoder,
+    time: new classes.TimeBox(TimeBudget.start(options.budgetMs ?? 60_000)),
+    ...(options.lookups === undefined ? {} : { lookups: options.lookups }),
   });
+}
+
+/** A geocoder that fails while `down`, then knows some texts; it counts its lookups. */
+class FlakyGeocoder implements Geocoder {
+  down = true;
+  readonly asked: string[] = [];
+  readonly #known: ReadonlyMap<string, LatLon>;
+
+  constructor(known: Record<string, LatLon>) {
+    this.#known = new Map(Object.entries(known));
+  }
+
+  geocode(text: string): Promise<LatLon | null> {
+    this.asked.push(text);
+    if (this.down) return Promise.reject(new classes.GeocodingUnavailableError());
+    return Promise.resolve(this.#known.get(text) ?? null);
+  }
+}
+
+/** A geocoder that never answers. */
+class HangingGeocoder implements Geocoder {
+  asked = 0;
+
+  geocode(): Promise<LatLon | null> {
+    this.asked += 1;
+    return new Promise(() => undefined);
+  }
 }
 
 const summary = (anchor: Anchor): Record<string, unknown> => ({
@@ -423,5 +454,120 @@ describe('TravelAnchors.gather', () => {
     );
     assert.ok(anchors.every((anchor) => anchor.itemId !== moved));
     assert.equal(fates.get(`${lecture}|${TUESDAY_2}`), 'present');
+  });
+
+  it('painted areas never anchor', async () => {
+    const ws = await workspace();
+    const items = await models.getItemRepository();
+    const block = (
+      title: string,
+      start: string,
+      end: string,
+      props = {},
+    ): Promise<{ id: string }> =>
+      items.createLocal(ws.id, {
+        ownerUserId: A,
+        title,
+        topicId: null,
+        kind: 'block',
+        startAt: new Date(start),
+        endAt: new Date(end),
+        props,
+      });
+    const area = await block('Studying', '2026-11-25T07:00:00.000Z', '2026-11-25T15:00:00.000Z', {
+      layer: 'area',
+    });
+    const lab = await block('Lab', '2026-11-26T07:00:00.000Z', '2026-11-26T09:00:00.000Z');
+    for (const itemId of [area.id, lab.id]) {
+      await classes.TravelRule.create(ws.a, {
+        scope: { kind: 'item', itemId, occurrence: 'single' },
+        mode: 'transit',
+        direction: 'both',
+        placeId: ws.places.braude.id,
+      });
+    }
+
+    const { anchors, fates } = await gather(ws);
+    assert.deepEqual(
+      anchors.map((anchor) => anchor.itemId),
+      [lab.id],
+    );
+    // Its legs, had it any, go with a reason: it no longer asks for travel.
+    assert.equal(fates.get(`${area.id}|single`), 'no_longer_matches');
+  });
+
+  it('a geocoder outage is never cached as not found', async () => {
+    const ws = await workspace();
+    const text = 'Herzl St 7, Karmiel';
+    const nearLibrary = { lat: LIBRARY.lat + 0.001, lon: LIBRARY.lon };
+    await event(ws, 'outage', {
+      title: 'Lab',
+      startAt: '2026-11-25T07:00:00.000Z',
+      endAt: '2026-11-25T09:00:00.000Z',
+      containerId: 'cal-y',
+      props: { location: text },
+    });
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'where', where: onCalendar('cal-y') },
+      mode: 'drive',
+      direction: 'both',
+    });
+    await (await classes.TravelProfile.of(ws.a)).setContainerPlace(ws.a, 'cal-y', ws.places.tlv.id);
+    const geocoder = new FlakyGeocoder({ [text]: nearLibrary });
+
+    // Down: the calendar's place for now, and nothing remembered.
+    const first = await gather(ws, geocoder);
+    assert.equal(first.anchors[0]?.placeId, ws.places.tlv.id);
+    assert.equal((await classes.TravelProfile.of(ws.a)).cachedGeocode(text), undefined);
+
+    // Back: the next gather asks again, finds it, and keeps it.
+    geocoder.down = false;
+    const second = await gather(ws, geocoder);
+    assert.equal(second.anchors[0]?.placeId, ws.places.library.id);
+    assert.deepEqual((await classes.TravelProfile.of(ws.a)).cachedGeocode(text), nearLibrary);
+    assert.deepEqual(geocoder.asked, [text, text]);
+  });
+
+  it("a hanging geocoder stops at the regeneration's time; a cached-only gather looks nothing up", async () => {
+    const ws = await workspace();
+    for (const [key, day] of [
+      ['far-1', '2026-11-25'],
+      ['far-2', '2026-11-26'],
+    ] as const) {
+      await event(ws, key, {
+        title: key,
+        startAt: `${day}T07:00:00.000Z`,
+        endAt: `${day}T09:00:00.000Z`,
+        containerId: 'cal-z',
+        props: { location: `Unknown street ${key}` },
+      });
+    }
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'where', where: onCalendar('cal-z') },
+      mode: 'drive',
+      direction: 'both',
+    });
+    await (await classes.TravelProfile.of(ws.a)).setContainerPlace(ws.a, 'cal-z', ws.places.tlv.id);
+
+    const hanging = new HangingGeocoder();
+    const started = Date.now();
+    const { anchors } = await gather(ws, hanging, { budgetMs: 2_500 });
+    const took = Date.now() - started;
+    // One lookup, given up when the time ran out; none started after it.
+    assert.ok(took < 5_000, `${String(took)} ms`);
+    assert.equal(hanging.asked, 1);
+    assert.deepEqual(
+      anchors.map((anchor) => anchor.placeId),
+      [ws.places.tlv.id, ws.places.tlv.id],
+    );
+    assert.equal(
+      (await classes.TravelProfile.of(ws.a)).cachedGeocode('Unknown street far-1'),
+      undefined,
+    );
+
+    // An item write's gather reads the cache only.
+    const counting = new FakeGeocoder({});
+    await gather(ws, counting, { lookups: 0 });
+    assert.deepEqual(counting.asked, []);
   });
 });

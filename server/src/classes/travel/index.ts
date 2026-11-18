@@ -31,7 +31,12 @@ export {
 export { PlaceMatcher } from './PlaceMatcher.js';
 export { TravelLinks, type LinkLeg } from './TravelLinks.js';
 export { distanceMeters, nearestWithin, type LatLon } from './geo.js';
-export { ChainGeocoder, parseCoordinates, type Geocoder } from './geocoding/Geocoder.js';
+export {
+  ChainGeocoder,
+  GeocodingUnavailableError,
+  parseCoordinates,
+  type Geocoder,
+} from './geocoding/Geocoder.js';
 export { FreeGeocoder } from './geocoding/FreeGeocoder.js';
 export { RouteChain, type StandardChainDeps } from './routing/RouteChain.js';
 export type { RoutePlace, RouteProvider, RoutingBudget, Trip } from './routing/RouteProvider.js';
@@ -48,4 +53,11 @@ export {
   type GatherInput,
   type Gathered,
 } from './TravelAnchors.js';
-export { TravelPlanner };
+export { TimeBox, TRAVEL_STEP_MIN_MS, type Boxed } from './TimeBox.js';
+export {
+  AFTER_SYNC_BUDGET_MS,
+  ITEM_CHANGE_BUDGET_MS,
+  REGENERATION_BUDGET_MS,
+  TravelPlanner,
+  type RegenerateOptions,
+} from './TravelPlanner.js';

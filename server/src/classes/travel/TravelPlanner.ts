@@ -20,13 +20,19 @@
  *
  * A member who is no longer one (left, removed, or the workspace deleted) gets nothing: their
  * travel is forgotten instead (TravelData.forgetMember), also when they left while it ran.
+ *
+ * Time: each regeneration calls out (geocodes, routes) only within its TimeBudget (TimeBox), and
+ * goes on without what didn't answer in time (no new place, a fallback length). An item write
+ * waits ITEM_CHANGE_BUDGET_MS at most and reads cached geocodes only; a sync's members share
+ * AFTER_SYNC_BUDGET_MS; the daily pass hands each member what is left of its own budget. New
+ * places are geocoded after syncs and in the daily pass.
  */
 import { logger } from '../../services/logger.js';
 import { TRAVEL_HORIZON_DAYS, TRAVEL_MODES, type TravelMode } from '../../types/travel.js';
 import { addLocalDays, startOfZonedDay, wallDate } from '../../types/recurrence/zoned.js';
 import { Actor } from '../base/Actor.js';
 import { Caller } from '../base/Caller.js';
-import type { TimeBudget } from '../integration/calendar/TimeBudget.js';
+import { TimeBudget } from '../integration/calendar/TimeBudget.js';
 import { Integration } from '../integration/index.js';
 import type { ItemChange } from '../item/ItemChanges.js';
 import { TravelLeg, type AppliedPlan } from '../item/TravelLeg.js';
@@ -42,11 +48,26 @@ import { LegReconciler, type AnchorFate } from './LegReconciler.js';
 import { Place } from './Place.js';
 import { RouteChain } from './routing/RouteChain.js';
 import { RoutingQuota } from './RoutingQuota.js';
-import { TravelAnchors } from './TravelAnchors.js';
+import { NEW_GEOCODES_MAX, TravelAnchors } from './TravelAnchors.js';
 import { TravelData } from './TravelData.js';
 import { openRouteServiceKey, travelClient } from './travelHttp.js';
 import { TravelProfile } from './TravelProfile.js';
 import { TravelRule } from './TravelRule.js';
+import { TimeBox } from './TimeBox.js';
+
+/** A regeneration's time when its caller gives none (a rule's change, a sync's member). */
+export const REGENERATION_BUDGET_MS = 20_000;
+/** An item write's regeneration: the request waits for it. */
+export const ITEM_CHANGE_BUDGET_MS = 8_000;
+/** Every member's regeneration after one sync, together (the rest wait for the daily pass). */
+export const AFTER_SYNC_BUDGET_MS = 60_000;
+
+export interface RegenerateOptions {
+  /** Its time (default REGENERATION_BUDGET_MS from now). */
+  budget?: TimeBudget;
+  /** New geocoder lookups (default NEW_GEOCODES_MAX); 0: cached geocodes only. */
+  lookups?: number;
+}
 
 /** What a regeneration that wrote nothing did. */
 const NOTHING: Readonly<AppliedPlan> = Object.freeze({ created: 0, updated: 0, removed: 0 });
@@ -57,15 +78,23 @@ const isMode = (text: string | undefined): text is TravelMode =>
 export class TravelPlanner {
   readonly #caller: Caller;
   readonly #now: Date;
+  readonly #time: TimeBox;
+  readonly #lookups: number;
 
-  private constructor(caller: Caller, now: Date) {
+  private constructor(caller: Caller, now: Date, options: RegenerateOptions) {
     this.#caller = caller;
     this.#now = now;
+    this.#time = new TimeBox(options.budget ?? TimeBudget.start(REGENERATION_BUDGET_MS));
+    this.#lookups = options.lookups ?? NEW_GEOCODES_MAX;
   }
 
   /** The caller's legs over the horizon from `now`'s day, made again: what was written. */
-  static async regenerate(caller: Caller, now: Date = new Date()): Promise<AppliedPlan> {
-    return new TravelPlanner(caller, now).#regenerate();
+  static async regenerate(
+    caller: Caller,
+    now: Date = new Date(),
+    options: RegenerateOptions = {},
+  ): Promise<AppliedPlan> {
+    return new TravelPlanner(caller, now, options).#regenerate();
   }
 
   /**
@@ -76,21 +105,26 @@ export class TravelPlanner {
     workspaceId: string,
     userId: string,
     now: Date = new Date(),
+    options: RegenerateOptions = {},
   ): Promise<AppliedPlan> {
     const caller = await TravelPlanner.#enter(workspaceId, userId);
-    return caller === null ? { ...NOTHING } : TravelPlanner.regenerate(caller, now);
+    return caller === null ? { ...NOTHING } : TravelPlanner.regenerate(caller, now, options);
   }
 
   /**
    * ItemChanges' listener: the caller wrote an item, so their legs are made again when they have
-   * travel. A member without travel costs one read. A failure is logged and swallowed: it never
-   * fails the write. An arrow: it is handed to ItemChanges as it is.
+   * travel, within ITEM_CHANGE_BUDGET_MS and from cached geocodes only (the request waits). A member
+   * without travel costs one read. A failure is logged and swallowed: it never fails the write. An
+   * arrow: it is handed to ItemChanges as it is.
    */
   static readonly onItemChange = async (caller: Caller, change: ItemChange): Promise<void> => {
     if (change.kind === 'travel') return;
     try {
       if (!(await TravelProfile.hasTravelFor(caller))) return;
-      await TravelPlanner.regenerate(caller);
+      await TravelPlanner.regenerate(caller, new Date(), {
+        budget: TimeBudget.start(ITEM_CHANGE_BUDGET_MS),
+        lookups: 0,
+      });
     } catch (error) {
       logger.error('travel: regeneration after an item change failed', {
         workspaceId: caller.workspaceId,
@@ -102,16 +136,26 @@ export class TravelPlanner {
 
   /**
    * A sync of this integration ran: every member with travel in its workspace gets their legs made
-   * again (its events may have moved, been cancelled or added). One member's failure is logged and
-   * the others still run.
+   * again (its events may have moved, been cancelled or added), all within AFTER_SYNC_BUDGET_MS:
+   * the members it has no time for wait for the daily pass. One member's failure is logged and the
+   * others still run.
    */
   static async afterSync(integrationId: string, now: Date = new Date()): Promise<void> {
+    const budget = TimeBudget.start(AFTER_SYNC_BUDGET_MS);
     const integration = await Integration.forWorker(integrationId);
     if (integration === null) return;
     const { workspaceId } = integration;
-    for (const userId of await TravelProfile.listWithTravelIn(workspaceId)) {
+    const members = await TravelProfile.listWithTravelIn(workspaceId);
+    for (const [index, userId] of members.entries()) {
+      if (!budget.canStart()) {
+        logger.warn('travel: no time left after a sync', {
+          workspaceId,
+          left: members.length - index,
+        });
+        return;
+      }
       try {
-        await TravelPlanner.regenerateFor(workspaceId, userId, now);
+        await TravelPlanner.regenerateFor(workspaceId, userId, now, { budget });
       } catch (error) {
         logger.error('travel: regeneration after a sync failed', { workspaceId, error });
       }
@@ -121,7 +165,8 @@ export class TravelPlanner {
   /**
    * The daily pass: each member with travel whose legs the pass hasn't made again today (in their
    * workspace's zone) gets them made, while `budget` can start one more; the rest (`left`, and any
-   * that failed, logged) wait for the next tick. `done`: those made today by this run.
+   * that failed, logged) wait for the next tick. `done`: those made today by this run. Each
+   * regeneration gets what is left of `budget`; one member's error never stops the pass.
    */
   static async runDailyPass(
     now: Date,
@@ -130,18 +175,18 @@ export class TravelPlanner {
     let done = 0;
     let left = 0;
     for (const member of await TravelProfile.listWithTravel()) {
-      const caller = await TravelPlanner.#enter(member.workspaceId, member.userId);
-      if (caller === null) continue;
-      const today = wallDate(now, caller.settings.timezone);
-      if (member.lastPassDay === today) continue;
-      if (!budget.canStart()) {
-        left += 1;
-        continue;
-      }
       try {
+        const caller = await TravelPlanner.#enter(member.workspaceId, member.userId);
+        if (caller === null) continue;
+        const today = wallDate(now, caller.settings.timezone);
+        if (member.lastPassDay === today) continue;
+        if (!budget.canStart()) {
+          left += 1;
+          continue;
+        }
         // Read first: it is never made again for a member who left meanwhile.
         const profile = await TravelProfile.of(caller);
-        await TravelPlanner.regenerate(caller, now);
+        await TravelPlanner.regenerate(caller, now, { budget });
         await profile.markPassed(today);
         done += 1;
       } catch (error) {
@@ -173,6 +218,8 @@ export class TravelPlanner {
       range: { from, to },
       now,
       geocoder: new FreeGeocoder(),
+      time: this.#time,
+      lookups: this.#lookups,
     });
     const homeId = places.find((place) => place.isHome)?.id ?? null;
     const days = this.#days(from, anchors, {
@@ -185,8 +232,12 @@ export class TravelPlanner {
     });
     const estimates = await this.#estimates(days, profile, places);
     const planned = days.flatMap((day) => DayPlanner.plan(day, estimates));
-    // A leg back after midnight of the last day starts past the horizon: read it too.
-    const stored = await TravelLeg.storedFacts(caller, from, addLocalDays(to, 1, timeZone));
+    // A leg back after midnight of the last day starts past the horizon: read it too. A leg of an
+    // anchor that started before the horizon (a leg home after midnight) is not this plan's: it is
+    // left as it is, never removed for want of its anchor.
+    const stored = (
+      await TravelLeg.storedFacts(caller, from, addLocalDays(to, 1, timeZone))
+    ).filter((facts) => facts.anchorStart >= from);
     const recon = LegReconciler.reconcile(
       stored,
       planned,
@@ -238,6 +289,8 @@ export class TravelPlanner {
       settings: profile.settings,
       remembered: (fromId, toId, mode) =>
         profile.rememberedMinutes(DayPlanner.tripKey(fromId, toId, mode)),
+      // OpenRouteService only within the regeneration's time; past it, the fallbacks.
+      time: this.#time,
     });
     const byId = new Map(places.map((place) => [place.id, place]));
     for (const trip of trips) {

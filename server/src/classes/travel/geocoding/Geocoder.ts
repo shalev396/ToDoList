@@ -1,10 +1,24 @@
-/** Turning a place's text into coordinates, free providers only. */
+/**
+ * Turning a place's text into coordinates, free providers only. Three answers: a point; null, the
+ * provider looked and found nothing (worth remembering); or a throw, the provider couldn't tell
+ * (down, refused, rate-limited, timed out, an answer it couldn't read), which is never remembered
+ * as "not found".
+ */
 import type { LatLon } from '../geo.js';
 
 export type { LatLon };
 
 export interface Geocoder {
+  /** The point; null when nothing was found; throws when no answer could be had. */
   geocode(text: string): Promise<LatLon | null>;
+}
+
+/** A geocoder couldn't tell where a text is: it failed, or (a chain) every one asked failed. */
+export class GeocodingUnavailableError extends Error {
+  constructor() {
+    super('No geocoder could tell where this is');
+    this.name = 'GeocodingUnavailableError';
+  }
 }
 
 const COORDINATES = /^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/;
@@ -19,7 +33,10 @@ export function parseCoordinates(text: string): LatLon | null {
   return { lat, lon };
 }
 
-/** Typed coordinates need no lookup; otherwise each geocoder in turn, the first hit wins. */
+/**
+ * Typed coordinates need no lookup; otherwise each geocoder in turn, the first hit wins. Null when
+ * at least one of them looked and found nothing; GeocodingUnavailableError when every one failed.
+ */
 export class ChainGeocoder implements Geocoder {
   readonly #geocoders: readonly Geocoder[];
 
@@ -31,10 +48,17 @@ export class ChainGeocoder implements Geocoder {
     const typed = parseCoordinates(text);
     if (typed !== null) return typed;
     if (text.trim() === '') return null;
+    let answered = this.#geocoders.length === 0;
     for (const geocoder of this.#geocoders) {
-      const found = await geocoder.geocode(text);
-      if (found !== null) return found;
+      try {
+        const found = await geocoder.geocode(text);
+        if (found !== null) return found;
+        answered = true;
+      } catch {
+        // This one couldn't tell: the next one is asked.
+      }
     }
-    return null;
+    if (answered) return null;
+    throw new GeocodingUnavailableError();
   }
 }
