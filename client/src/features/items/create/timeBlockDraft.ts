@@ -91,7 +91,8 @@ function instantOf(date: string, time: string, timeZone: string): Date | null {
   return dateInZone(instant, timeZone) === date ? instant : null;
 }
 
-function spanOf(state: TimeBlockFormState, timeZone: string): Span | null {
+/** The span the form's two kept fields make; null while they make none. */
+export function spanOf(state: TimeBlockFormState, timeZone: string): Span | null {
   return solveSpan(
     {
       start: instantOf(state.startDate, state.startTime, timeZone),

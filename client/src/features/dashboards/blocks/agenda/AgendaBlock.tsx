@@ -48,7 +48,7 @@ function AgendaRow({
       <button
         type="button"
         onClick={() => {
-          openItem(row.id);
+          openItem(row.id, occurrence.originalStart ?? undefined);
         }}
         className="min-w-0 flex-1 truncate rounded-sm text-start text-sm hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         dir="auto"

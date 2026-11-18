@@ -2,8 +2,8 @@
  * Page variables in the URL (FRONTEND.md §4): each `$page.<name>` variable is the search param
  * `<name>`, so a filtered page can be shared and survives a reload.
  *
- * - `edit`, `item` and `as` belong to the page itself and are never variables, nor is anything
- *   that is not a variable name (`utm_source`).
+ * - `edit`, `item`, `occurrence` and `as` belong to the page itself and are never variables, nor
+ *   is anything that is not a variable name (`utm_source`).
  * - Values are strings. A list is comma-separated (`provider=jira,github`); a date range is a
  *   preset key (`range=this_week`) or `from..to` in ISO (`range=2026-11-01T00:00:00Z..…`).
  * - An empty value (`provider=`) unsets a variable whose dashboard default is set.
@@ -16,10 +16,14 @@ import { VAR_NAME_PATTERN } from './names.ts';
 /** Every page variable by bare name. Null-prototype, so `constructor` is a name like any other. */
 export type PageVars = Readonly<Record<string, VarValue>>;
 
-/** Search params of the page itself: edit mode, the open item sheet, the dashboard copy. */
+/**
+ * Search params of the page itself: edit mode, the open item sheet (and the occurrence of a
+ * repeating item it is on), the dashboard copy.
+ */
 export const RESERVED_PARAMS: ReadonlySet<string> = new Set([
   'edit',
   'item',
+  'occurrence',
   'as',
   'dashboard',
   'view',

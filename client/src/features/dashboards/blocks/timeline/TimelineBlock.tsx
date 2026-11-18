@@ -1,12 +1,16 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { GanttChart } from 'lucide-react';
+import { GanttChart, Plus } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { SourceIcon } from '@/components/items/SourceIcon';
 import { dateLocale, timeOfDay } from '@/components/items/format';
 import { ColourDot } from '@/features/colours/ColourDot';
 import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
 import { useItemParam } from '@/features/items/useItemParam';
+import { instantInZone } from '@/features/items/zonedDate';
+import { useShellUi } from '@/features/shell/shellUi';
+import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
 import { BlockFrame } from '../../BlockFrame';
 import { blockTitle } from '../../chrome';
@@ -34,12 +38,18 @@ interface Day {
 
 /**
  * The timeline (H3): the next days one under another on a rail, each with what happens on it, in
- * the workspace's time zone. Events show their time span, tasks their due time.
+ * the workspace's time zone. Events show their time span, tasks their due time. It has no time
+ * grid to drag on (plan Ruling 18), so an editor gets a "+" per day: the New sheet on a time block
+ * that day, 09:00–10:00. An editor sees every day (a free one is where a block goes); a viewer
+ * sees the days that have something.
  */
 export default function TimelineBlock({ dashboard, block }: BlockComponentProps) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { openItem } = useItemParam();
+  const { openNewItem } = useShellUi();
+  const { role } = useCurrentWorkspace();
+  const canWrite = role === 'editor' || role === 'owner';
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
   const title = blockTitle(block, t);
   const locale = dateLocale(language);
@@ -67,13 +77,14 @@ export default function TimelineBlock({ dashboard, block }: BlockComponentProps)
     return out;
   }, [rows, now, timeZone, count]);
   const busy = days.filter((day) => day.items.length > 0);
+  const listed = canWrite ? days : busy;
   const heading = new Intl.DateTimeFormat(locale, {
     weekday: 'long',
     day: 'numeric',
     month: 'short',
     timeZone,
   });
-  const status = loadState !== 'ready' ? loadState : busy.length === 0 ? 'empty' : 'ready';
+  const status = loadState !== 'ready' ? loadState : listed.length === 0 ? 'empty' : 'ready';
   const renderRow = (occurrence: Occurrence) => {
     const { row } = occurrence;
     const label = truncateText(row.title, 160) || t('dataBlocks.noTitle');
@@ -91,7 +102,7 @@ export default function TimelineBlock({ dashboard, block }: BlockComponentProps)
         <button
           type="button"
           onClick={() => {
-            openItem(row.id);
+            openItem(row.id, occurrence.originalStart ?? undefined);
           }}
           className="min-w-0 flex-1 truncate rounded-sm text-start text-sm hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           dir="auto"
@@ -117,34 +128,60 @@ export default function TimelineBlock({ dashboard, block }: BlockComponentProps)
       emptyMessage={t('timeBlocks.timeline.empty', { count })}
     >
       <ol data-timeline className="m-0 flex list-none flex-col gap-4 p-0">
-        {busy.map((day) => {
+        {listed.map((day) => {
           const { areas, items } = splitAreas(day.items, colourOf);
+          const dayName = heading.format(day.start);
           return (
             <li key={day.date} data-timeline-day={day.date} className="flex flex-col gap-1">
-              <h3 className="text-sm font-semibold">{heading.format(day.start)}</h3>
-              <ul className="m-0 list-none border-s-2 ps-3 p-0">
-                {nestInAreas(items, areas).map((group) => {
-                  const { area } = group;
-                  if (area === null) {
-                    return group.items.map(renderRow);
-                  }
-                  return (
-                    <TimelineAreaBand
-                      key={area.key}
-                      title={truncateText(area.row.title, 160) || t('dataBlocks.noTitle')}
-                      start={area.start}
-                      end={area.end ?? area.start}
-                      colour={colourOf(area.row.id)}
-                      timeZone={timeZone}
-                      locale={locale}
-                    >
-                      {group.items.length > 0 ? (
-                        <ul className="m-0 list-none p-0">{group.items.map(renderRow)}</ul>
-                      ) : null}
-                    </TimelineAreaBand>
-                  );
-                })}
-              </ul>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">{dayName}</h3>
+                {canWrite ? (
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={t('scheduled.timeline.addOn', { day: dayName })}
+                    title={t('scheduled.timeline.addOn', { day: dayName })}
+                    data-timeline-add={day.date}
+                    onClick={() => {
+                      openNewItem({
+                        kind: 'block',
+                        start: new Date(instantInZone(day.date, '09:00', timeZone)),
+                        end: new Date(instantInZone(day.date, '10:00', timeZone)),
+                      });
+                    }}
+                  >
+                    <Plus aria-hidden="true" />
+                  </Button>
+                ) : null}
+              </div>
+              {day.items.length === 0 ? null : (
+                <ul className="m-0 list-none border-s-2 ps-3 p-0">
+                  {nestInAreas(items, areas).map((group) => {
+                    const { area } = group;
+                    if (area === null) {
+                      return group.items.map(renderRow);
+                    }
+                    return (
+                      <TimelineAreaBand
+                        key={area.key}
+                        title={truncateText(area.row.title, 160) || t('dataBlocks.noTitle')}
+                        start={area.start}
+                        end={area.end ?? area.start}
+                        colour={colourOf(area.row.id)}
+                        timeZone={timeZone}
+                        locale={locale}
+                        onOpen={() => {
+                          openItem(area.row.id, area.originalStart ?? undefined);
+                        }}
+                      >
+                        {group.items.length > 0 ? (
+                          <ul className="m-0 list-none p-0">{group.items.map(renderRow)}</ul>
+                        ) : null}
+                      </TimelineAreaBand>
+                    );
+                  })}
+                </ul>
+              )}
             </li>
           );
         })}

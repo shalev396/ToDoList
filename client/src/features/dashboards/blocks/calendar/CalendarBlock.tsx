@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
+import interactionPlugin from '@fullcalendar/interaction';
 import listPlugin from '@fullcalendar/list';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import heLocale from '@fullcalendar/core/locales/he';
-import type { EventContentArg, EventMountArg } from '@fullcalendar/core';
-import { CalendarClock, ChevronLeft, ChevronRight } from 'lucide-react';
+import type {
+  DateSelectArg,
+  DateSpanApi,
+  EventContentArg,
+  EventMountArg,
+} from '@fullcalendar/core';
+import { CalendarClock, ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 import { useBlockData } from '@/api/queries/blocks';
 import { Button } from '@/components/ui/button';
 import { SelectField } from '@/components/ui/select';
@@ -18,6 +23,9 @@ import { sourceNameKey } from '@/components/items/sources';
 import { colourVar, hatchBackground, paintOf } from '@/features/colours/palette';
 import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
+import { presetFromSelection } from '@/features/items/scheduled/dragPreset';
+import { useItemParam } from '@/features/items/useItemParam';
+import { useShellUi } from '@/features/shell/shellUi';
 import { cn } from '@/lib/utils';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
@@ -52,12 +60,24 @@ import { useSaveCalendarViz } from './useSaveCalendarViz';
 
 type View = 'week' | 'month';
 
-const PLUGINS = [dayGridPlugin, timeGridPlugin, listPlugin];
+// The interaction plugin makes the week grid selectable (a drag across free time); events stay
+// put (`editable` is off).
+const PLUGINS = [dayGridPlugin, timeGridPlugin, listPlugin, interactionPlugin];
 const START_HOURS = Array.from({ length: 24 }, (_, hour) => {
   const label = `${String(hour).padStart(2, '0')}:00`;
   return { value: String(hour), label: <span dir="ltr">{label}</span> };
 });
 const EVENT_TIME = { hour: '2-digit', minute: '2-digit', hour12: false } as const;
+/** The longest span a drag makes a block of: a block lasts at most a day. */
+const LONGEST_DRAG_MS = 24 * 3600_000;
+
+/** FullCalendar's `UTC` dates hold the workspace's wall clock: `2026-11-22T13:00:00`. */
+const wallOf = (date: Date): string => date.toISOString().slice(0, 19);
+
+/** A drag on the week grid's hours (not the all-day row), a day at most, makes a block. */
+function blockSpanAllowed(span: DateSpanApi): boolean {
+  return !span.allDay && span.end.getTime() - span.start.getTime() <= LONGEST_DRAG_MS;
+}
 
 /** FullCalendar's view for the choice: lists on a phone (a grid is too narrow to read). */
 function fcView(view: View, phone: boolean, asList: boolean): string {
@@ -98,19 +118,26 @@ function readView(viz: Record<string, unknown>): { view: View; list: boolean; mo
  * saved in the block's viz options for editors. Events are placed in the workspace's time zone
  * and coloured by subject or topic and role (features/colours), with their source as a small
  * icon; travel is hatched, its label on a plate of its fill. Areas are bands in their tint behind
- * everything, labelled at the top. A click opens the item Sheet (`?item=`). The series'
- * cancelled occurrences are excluded, never listed (occurrences.ts).
+ * everything, labelled at the top. A click opens the item Sheet (`?item=`), on the occurrence
+ * clicked (`?occurrence=`). The series' cancelled occurrences are excluded, never listed
+ * (occurrences.ts).
+ *
+ * Editors drag across free time on the week grid (not on a phone, where it is a list) to open
+ * the New sheet on a time block at that time; inside an area it starts on the area's page
+ * (dragPreset.ts). "New time block" in the toolbar does the same from the keyboard, or on a phone.
  */
 export default function CalendarBlock({ dashboard, block, editing }: BlockComponentProps) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const locale = dateLocale(language);
-  const { settings } = useCurrentWorkspace();
+  const { settings, role } = useCurrentWorkspace();
+  const canWrite = role === 'editor' || role === 'owner';
+  const { openItem } = useItemParam();
+  const { openNewItem } = useShellUi();
   const timeZone = settings?.timezone ?? 'UTC';
   const weekStart: WeekStart = settings?.weekStart ?? 'sun';
   const now = useNow();
   const phone = useGridBreakpoint() === 'sm';
-  const [, setSearchParams] = useSearchParams();
   const { vars } = usePageVars();
 
   const options = readView(block.viz);
@@ -160,7 +187,17 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   const calendar = useRef<FullCalendar>(null);
   const viewName = fcView(view, phone, options.list);
   useEffect(() => {
-    calendar.current?.getApi().changeView(viewName, wallDate(anchor, timeZone));
+    // After the commit: a click's effects run inside it, and FullCalendar renders a new date
+    // with flushSync, which React refuses there ("flushSync was called from inside a lifecycle").
+    let live = true;
+    queueMicrotask(() => {
+      if (live) {
+        calendar.current?.getApi().changeView(viewName, wallDate(anchor, timeZone));
+      }
+    });
+    return () => {
+      live = false;
+    };
   }, [viewName, anchor, timeZone]);
 
   // Scrolls the week grid so the start hour's row sits under the day header; measured from the
@@ -195,13 +232,21 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     setView(next);
     save({ view: next });
   };
-  // A new history entry, so the back button closes the Sheet.
-  const openItem = (id: string) => {
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      next.set('item', id);
-      return next;
-    });
+  // Everything the grid shows, areas included: a drag inside an area takes its page.
+  const shown = useMemo(
+    () => [...areas, ...displayed.map((item) => item.occurrence)],
+    [areas, displayed],
+  );
+  const selectable = canWrite && !editing && viewName === 'timeGridWeek';
+  const createFromSelection = (arg: DateSelectArg) => {
+    arg.view.calendar.unselect();
+    openNewItem(
+      presetFromSelection(
+        { startWall: wallOf(arg.start), endWall: wallOf(arg.end) },
+        shown,
+        timeZone,
+      ),
+    );
   };
 
   const title = useMemo(() => {
@@ -217,6 +262,17 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   const wallTime = (date: Date | null) => (date === null ? '' : timeOfDay(date, locale, 'UTC'));
 
   const renderEvent = (arg: EventContentArg) => {
+    // The span being dragged across (`selectMirror`): its times, nothing else yet.
+    if (arg.isMirror) {
+      return (
+        <div
+          className="px-1 text-[11px] leading-4 font-medium text-primary-foreground tabular-nums"
+          data-select-mirror=""
+        >
+          {wallTime(arg.event.start)}–{wallTime(arg.event.end)}
+        </div>
+      );
+    }
     const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
     if ('area' in props) {
       const when = arg.event.allDay
@@ -273,6 +329,9 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   };
 
   const describe = (arg: EventMountArg) => {
+    if (arg.isMirror) {
+      return;
+    }
     const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
     arg.el.setAttribute('data-item-id', props.rowId);
     arg.el.setAttribute('data-family', props.family);
@@ -328,6 +387,20 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
                 }}
                 triggerClassName="h-7 min-h-7 w-auto gap-1 pointer-coarse:h-11 pointer-coarse:min-h-11"
               />
+            ) : null}
+            {canWrite ? (
+              <Button
+                variant="outline"
+                size="icon-sm"
+                aria-label={t('scheduled.calendar.newBlock')}
+                title={t('scheduled.calendar.newBlock')}
+                data-calendar-new-block=""
+                onClick={() => {
+                  openNewItem({ kind: 'block' });
+                }}
+              >
+                <Plus aria-hidden="true" />
+              </Button>
             ) : null}
             {options.month ? (
               <ToggleGroup
@@ -425,6 +498,10 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             eventDisplay="block"
             eventInteractive
             displayEventEnd={false}
+            selectable={selectable}
+            selectMirror
+            selectAllow={blockSpanAllowed}
+            select={createFromSelection}
             events={events}
             eventContent={renderEvent}
             eventDidMount={describe}
@@ -433,7 +510,10 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
               const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
               // An area is the time behind the events, not one of them.
               if (!('area' in props)) {
-                openItem(props.rowId);
+                openItem(
+                  props.rowId,
+                  props.originalStart === null ? undefined : new Date(props.originalStart),
+                );
               }
             }}
             noEventsContent={() => null}

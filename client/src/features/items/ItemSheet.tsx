@@ -22,10 +22,12 @@ import { AttributeFields } from './AttributeFields';
 import { apiErrorStatus, apiOpenIn, errorMessage } from '@/api/errors';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
+import { SUBJECT_ATTRIBUTE_KEY } from '@api-types/attributes';
 import { ITEM_STATUSES, type ItemStatus } from '@api-types/domain';
+import { layerOf } from '@api-types/scheduled';
 import type { ItemDetail } from '@api-types/api-contracts';
 import { isKnownProvider } from './providers';
-import { isMarkable } from './kinds';
+import { isMarkable, isScheduledKind } from './kinds';
 import { AlsoCreateIn } from './create/AlsoCreateIn';
 import { CopyChips } from './CopyChips';
 import { SourcePreview } from './SourcePreview';
@@ -40,6 +42,7 @@ import {
   type FieldAction,
 } from './plannedAt';
 import { MirroredEditor } from './editing/MirroredEditor';
+import { TimeBlockSection } from './scheduled/TimeBlockSection';
 import { dateInZone, noonInZone } from './zonedDate';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
@@ -52,7 +55,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
  */
 export function ItemSheet() {
   const { t } = useTranslation();
-  const { id, closeItem } = useItemParam();
+  const { id, occurrence, showOccurrence, closeItem } = useItemParam();
   const { workspace } = useCurrentWorkspace();
   const item = useItem(workspace?.id ?? null, id);
   const open = id !== null;
@@ -74,7 +77,13 @@ export function ItemSheet() {
       >
         {item.data !== undefined ? (
           <ScrollArea className="min-h-0 flex-1">
-            <ItemBody key={item.data.id} item={item.data} />
+            <ItemBody
+              key={item.data.id}
+              item={item.data}
+              occurrence={occurrence}
+              onOccurrence={showOccurrence}
+              onDeleted={closeItem}
+            />
           </ScrollArea>
         ) : (
           <>
@@ -118,7 +127,18 @@ export function ItemSheet() {
   );
 }
 
-function ItemBody({ item }: { item: ItemDetail }) {
+function ItemBody({
+  item,
+  occurrence,
+  onOccurrence,
+  onDeleted,
+}: {
+  item: ItemDetail;
+  /** The occurrence of a repeating item the sheet is on (`?occurrence=`). */
+  occurrence: Date | null;
+  onOccurrence: (at: Date | null) => void;
+  onDeleted: () => void;
+}) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { workspace, role } = useCurrentWorkspace();
@@ -128,6 +148,8 @@ function ItemBody({ item }: { item: ItemDetail }) {
   // A to-do: its status and due date are edited here, and it can be created in a provider too. A
   // time block, an area or a travel leg is local but has no status (never completed or copied).
   const markable = isMarkable(item);
+  // A time block or an area: its own section (time, repeat, subject, page; edit, skip, delete).
+  const layer = layerOf(item);
   const me = useMe();
   const mine = markable && canWrite && item.ownerUserId === me.data?.id;
   const [focus, setFocus] = useState<{ integrationId: string; anyway: boolean } | null>(null);
@@ -139,7 +161,7 @@ function ItemBody({ item }: { item: ItemDetail }) {
     <>
       <SheetHeader className="gap-1 pe-14">
         <p className="flex flex-wrap items-center gap-2 text-[13px] text-muted-foreground">
-          {t(`items.kinds.${item.kind}`)}
+          {layer === 'area' ? t('scheduled.sheet.kindArea') : t(`items.kinds.${item.kind}`)}
           {item.editing.mode === 'read' ? (
             <span
               data-read-only-marker=""
@@ -163,7 +185,17 @@ function ItemBody({ item }: { item: ItemDetail }) {
         </SheetTitle>
       </SheetHeader>
       <div className="flex flex-col gap-6 p-4 pt-1">
-        <SourcePreview item={item} timeZone={timeZone} />
+        {layer === null ? (
+          <SourcePreview item={item} timeZone={timeZone} />
+        ) : (
+          <TimeBlockSection
+            item={item}
+            occurrence={occurrence}
+            canWrite={canWrite}
+            onOccurrence={onOccurrence}
+            onDeleted={onDeleted}
+          />
+        )}
         {isLocal ? <AddedBy ownerUserId={item.ownerUserId} /> : null}
 
         {item.copies.length > 0 ? (
@@ -256,20 +288,23 @@ function ItemBody({ item }: { item: ItemDetail }) {
           </div>
         )}
 
-        <section aria-labelledby="item-details" className="flex flex-col gap-2">
-          <h3 id="item-details" className="text-sm font-semibold">
-            {t('items.sheet.details')}
-          </h3>
-          {fields.length === 0 ? (
-            <p className="text-[13px] text-muted-foreground">{t('items.sheet.noDetails')}</p>
-          ) : (
-            <dl className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-              {fields.map((field) => (
-                <FieldRow key={field.key} field={field} language={language} timeZone={timeZone} />
-              ))}
-            </dl>
-          )}
-        </section>
+        {/* A block's props are its rule and its exceptions: its section shows them. */}
+        {layer === null ? (
+          <section aria-labelledby="item-details" className="flex flex-col gap-2">
+            <h3 id="item-details" className="text-sm font-semibold">
+              {t('items.sheet.details')}
+            </h3>
+            {fields.length === 0 ? (
+              <p className="text-[13px] text-muted-foreground">{t('items.sheet.noDetails')}</p>
+            ) : (
+              <dl className="grid grid-cols-[minmax(0,8rem)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+                {fields.map((field) => (
+                  <FieldRow key={field.key} field={field} language={language} timeZone={timeZone} />
+                ))}
+              </dl>
+            )}
+          </section>
+        ) : null}
 
         {canWrite ? (
           <OverlayControls
@@ -551,6 +586,9 @@ function OverlayControls({
     time: useId(),
   };
   const planned = parsePlannedAt(item.overlay.plannedAt);
+  // Reserved time (a block, an area, a leg) already has its time; a block's page and subject are
+  // edited in its own section, and a leg has neither.
+  const reserved = isScheduledKind(item.kind);
   // The date and time are drafts: a whole real value picked from the picker is saved at once,
   // anything typed waits for blur or Enter, and a partial value is never sent. Escape drops what
   // was never saved (createCommitPolicy: Chromium can't tell typing from picking by the event).
@@ -610,10 +648,15 @@ function OverlayControls({
         <p className="text-[13px] text-muted-foreground">
           {isLocal
             ? // A private to-do is seen by its owner alone; anything else by everyone who sees it.
+              // Reserved time (a block, an area, a leg) is no to-do: its own words.
               t(
-                item.visibility === 'private'
-                  ? 'items.sheet.yoursHintPrivate'
-                  : 'items.sheet.yoursHintLocal',
+                reserved
+                  ? item.visibility === 'private'
+                    ? 'scheduled.sheet.yoursHintPrivate'
+                    : 'scheduled.sheet.yoursHint'
+                  : item.visibility === 'private'
+                    ? 'items.sheet.yoursHintPrivate'
+                    : 'items.sheet.yoursHintLocal',
               )
             : t('items.sheet.yoursHint', { source: sourceName })}
         </p>
@@ -640,114 +683,118 @@ function OverlayControls({
           }}
         />
       </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={ids.topic}>{t('items.sheet.topic')}</Label>
-        <SelectField
-          id={ids.topic}
-          value={item.overlay.topicOverride ?? ''}
-          disabled={overlay.isPending}
-          onValueChange={(value) => {
-            save({ topicOverride: value === '' ? null : value });
-          }}
-          options={[
-            {
-              value: '',
-              label: isLocal
-                ? t('items.sheet.topicDefaultLocal')
-                : t('items.sheet.topicDefault', { source: sourceName }),
-            },
-            ...topics.map((topic) => ({ value: topic.id, label: topic.name })),
-          ]}
-        />
-      </div>
-      <div data-planned-at className="flex flex-col gap-1.5">
-        <Label htmlFor={ids.date}>{t('items.sheet.plannedAt')}</Label>
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            id={ids.date}
-            type="date"
-            data-planned-date
-            className="w-auto"
-            min="1970-01-01"
-            max="2999-12-31"
-            value={plannedDraft.date}
-            onPointerDown={() => {
-              datePolicy.handle({ type: 'pointerdown' });
+      {reserved ? null : (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={ids.topic}>{t('items.sheet.topic')}</Label>
+          <SelectField
+            id={ids.topic}
+            value={item.overlay.topicOverride ?? ''}
+            disabled={overlay.isPending}
+            onValueChange={(value) => {
+              save({ topicOverride: value === '' ? null : value });
             }}
-            onChange={(event) => {
-              const draft = { date: event.target.value, time: plannedDraft.time };
-              setPlannedDraft(draft);
-              const focus = focused(event.target);
-              act(datePolicy.handle({ type: 'change', focused: focus }), draft, true);
-            }}
-            onBlur={() => {
-              act(datePolicy.handle({ type: 'blur' }), plannedDraft);
-            }}
-            onKeyDown={(event) => {
-              act(datePolicy.handle({ type: 'keydown', key: event.key }), plannedDraft);
-            }}
+            options={[
+              {
+                value: '',
+                label: isLocal
+                  ? t('items.sheet.topicDefaultLocal')
+                  : t('items.sheet.topicDefault', { source: sourceName }),
+              },
+              ...topics.map((topic) => ({ value: topic.id, label: topic.name })),
+            ]}
           />
-          <Input
-            id={ids.time}
-            type="time"
-            data-planned-time
-            aria-label={t('items.sheet.plannedTime')}
-            className="w-auto"
-            value={plannedDraft.time}
-            disabled={planned.date === ''}
-            onPointerDown={() => {
-              timePolicy.handle({ type: 'pointerdown' });
-            }}
-            onChange={(event) => {
-              const draft = { date: planned.date, time: event.target.value };
-              setPlannedDraft(draft);
-              const action = timePolicy.handle({
-                type: 'change',
-                focused: focused(event.target),
-              });
-              // A cleared time picked away is not a pick of a time: it waits for blur.
-              if (event.target.value !== '') {
-                act(action, draft, true);
-              }
-            }}
-            onBlur={() => {
-              act(timePolicy.handle({ type: 'blur' }), {
-                date: planned.date,
-                time: plannedDraft.time,
-              });
-            }}
-            onKeyDown={(event) => {
-              act(timePolicy.handle({ type: 'keydown', key: event.key }), {
-                date: planned.date,
-                time: plannedDraft.time,
-              });
-            }}
-          />
-          {planned.date === '' ? null : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              data-planned-clear
-              className="max-md:h-11"
-              disabled={overlay.isPending}
-              onClick={() => {
-                plannedQueue.push(null);
+        </div>
+      )}
+      {reserved ? null : (
+        <div data-planned-at className="flex flex-col gap-1.5">
+          <Label htmlFor={ids.date}>{t('items.sheet.plannedAt')}</Label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              id={ids.date}
+              type="date"
+              data-planned-date
+              className="w-auto"
+              min="1970-01-01"
+              max="2999-12-31"
+              value={plannedDraft.date}
+              onPointerDown={() => {
+                datePolicy.handle({ type: 'pointerdown' });
               }}
-            >
-              {t('items.sheet.plannedClear')}
-            </Button>
+              onChange={(event) => {
+                const draft = { date: event.target.value, time: plannedDraft.time };
+                setPlannedDraft(draft);
+                const focus = focused(event.target);
+                act(datePolicy.handle({ type: 'change', focused: focus }), draft, true);
+              }}
+              onBlur={() => {
+                act(datePolicy.handle({ type: 'blur' }), plannedDraft);
+              }}
+              onKeyDown={(event) => {
+                act(datePolicy.handle({ type: 'keydown', key: event.key }), plannedDraft);
+              }}
+            />
+            <Input
+              id={ids.time}
+              type="time"
+              data-planned-time
+              aria-label={t('items.sheet.plannedTime')}
+              className="w-auto"
+              value={plannedDraft.time}
+              disabled={planned.date === ''}
+              onPointerDown={() => {
+                timePolicy.handle({ type: 'pointerdown' });
+              }}
+              onChange={(event) => {
+                const draft = { date: planned.date, time: event.target.value };
+                setPlannedDraft(draft);
+                const action = timePolicy.handle({
+                  type: 'change',
+                  focused: focused(event.target),
+                });
+                // A cleared time picked away is not a pick of a time: it waits for blur.
+                if (event.target.value !== '') {
+                  act(action, draft, true);
+                }
+              }}
+              onBlur={() => {
+                act(timePolicy.handle({ type: 'blur' }), {
+                  date: planned.date,
+                  time: plannedDraft.time,
+                });
+              }}
+              onKeyDown={(event) => {
+                act(timePolicy.handle({ type: 'keydown', key: event.key }), {
+                  date: planned.date,
+                  time: plannedDraft.time,
+                });
+              }}
+            />
+            {planned.date === '' ? null : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                data-planned-clear
+                className="max-md:h-11"
+                disabled={overlay.isPending}
+                onClick={() => {
+                  plannedQueue.push(null);
+                }}
+              >
+                {t('items.sheet.plannedClear')}
+              </Button>
+            )}
+          </div>
+          {item.source.provider === 'google_calendar' ||
+          item.overlay.calendarSync === false ||
+          !primary.isSuccess ||
+          primary.data.state === 'unset' ? null : (
+            <p className="text-[13px] text-muted-foreground" data-planned-hint>
+              {t('items.sheet.plannedHint')}
+            </p>
           )}
         </div>
-        {item.source.provider === 'google_calendar' ||
-        item.overlay.calendarSync === false ||
-        !primary.isSuccess ||
-        primary.data.state === 'unset' ? null : (
-          <p className="text-[13px] text-muted-foreground" data-planned-hint>
-            {t('items.sheet.plannedHint')}
-          </p>
-        )}
-      </div>
+      )}
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={ids.note}>{t('items.sheet.note')}</Label>
         <textarea
@@ -770,7 +817,11 @@ function OverlayControls({
         />
       </div>
       <AttributeFields
-        defs={attributes.data ?? []}
+        defs={
+          reserved
+            ? (attributes.data ?? []).filter((def) => def.key !== SUBJECT_ATTRIBUTE_KEY)
+            : (attributes.data ?? [])
+        }
         attrs={item.overlay.attrs}
         disabled={overlay.isPending}
         hint={

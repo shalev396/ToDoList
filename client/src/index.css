@@ -662,6 +662,11 @@
   --fc-now-indicator-color: var(--foreground);
   --fc-list-event-hover-bg-color: var(--sunken);
   --fc-event-text-color: var(--foreground);
+  /* Only a drag across free time (the span of a new block, `selectMirror`) has no colour of its
+     own: it takes the primary one. */
+  --fc-event-bg-color: var(--primary);
+  --fc-event-border-color: var(--primary);
+  --fc-highlight-color: rgba(var(--primary-rgb), 0.12);
   --fc-small-font-size: 0.75rem;
   font-size: 0.8125rem;
   color: var(--foreground);

@@ -11,6 +11,7 @@ import {
   decodeVarValue,
   encodeVarValue,
   isReservedParam,
+  isUrlVarName,
   readUrlVars,
   sameVarValue,
   withUrlVar,
@@ -115,9 +116,19 @@ describe('readUrlVars', () => {
 });
 
 describe('reserved params', () => {
-  it('are edit, item, as and dashboard', () => {
-    assert.deepEqual([...RESERVED_PARAMS].sort(), ['as', 'dashboard', 'edit', 'item', 'view']);
+  it('are edit, item, occurrence, as, dashboard and view', () => {
+    assert.deepEqual([...RESERVED_PARAMS].sort(), [
+      'as',
+      'dashboard',
+      'edit',
+      'item',
+      'occurrence',
+      'view',
+    ]);
     assert.equal(isReservedParam('edit'), true);
+    // The occurrence of a repeating item the sheet opens on (`?occurrence=<epoch ms>`).
+    assert.equal(isReservedParam('occurrence'), true);
+    assert.equal(isUrlVarName('occurrence'), false);
     assert.equal(isReservedParam('range'), false);
   });
 });

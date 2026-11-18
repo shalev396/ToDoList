@@ -4,6 +4,7 @@ import { queryKeys } from '@/api/queries/keys';
 import { QUERY_STALE_TIME_PRIVATE_MS } from '@/api/queries/queryOptions';
 import { sameWorkspace } from '@/api/queries/sameWorkspace';
 import {
+  deleteItem,
   getFacets,
   getItem,
   listSyncRuns,
@@ -88,6 +89,25 @@ export function useUpdateOverlay(workspaceId: string, itemId: string) {
   return useItemWrite(workspaceId, itemId, async (body: UpdateOverlayRequestBody) => {
     const response = await updateOverlay(workspaceId, itemId, body, { suppressErrorToast: true });
     return response.data;
+  });
+}
+
+/**
+ * Deletes an item (a to-do, a time block or an area) by id; the blocks' data refetch. The caller
+ * closes its sheet (its detail, read again, would be gone). Skipped when the workspace changed in
+ * flight.
+ */
+export function useDeleteItem(workspaceId: string) {
+  const queryClient = useQueryClient();
+  const store = useStore<RootState>();
+  return useMutation({
+    mutationFn: (itemId: string) => deleteItem(workspaceId, itemId, { suppressErrorToast: true }),
+    ...sameWorkspace(
+      () => store.getState().workspace.generation,
+      () => {
+        void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[2] === 'block' });
+      },
+    ),
   });
 }
 

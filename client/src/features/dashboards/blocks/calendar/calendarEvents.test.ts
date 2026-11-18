@@ -110,6 +110,29 @@ describe('toEventInput', () => {
       assert.ok(!(input.classNames?.toString() ?? '').includes('fc-src-'));
     }
   });
+
+  it('carries the kind, the layer and the slot an occurrence fills (the sheet opens on it)', () => {
+    const plain = toEventInput({ occurrence: occ({}), badges: [] }, TZ, colour());
+    assert.deepEqual(pick(plain, 'kind', 'layer', 'originalStart'), ['event', null, null]);
+    const slot = at(2026, 11, 22, 13);
+    const block = toEventInput(
+      {
+        occurrence: occ({
+          row: { ...row('b'), kind: 'block', props: { layer: 'block' } },
+          originalStart: slot,
+          seriesRowId: 'b',
+        }),
+        badges: [],
+      },
+      TZ,
+      colour('work'),
+    );
+    assert.deepEqual(pick(block, 'kind', 'layer', 'originalStart'), [
+      'block',
+      'block',
+      '2026-11-22T11:00:00.000Z',
+    ]);
+  });
 });
 
 describe('toAreaEventInput', () => {

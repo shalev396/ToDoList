@@ -603,12 +603,16 @@ describe('who may change one', () => {
   it('viewer → 403, and another member’s private block → 404', async () => {
     const ws = await workspace();
     const block = await make(ws, { title: 'Study', recurrence: WEEKLY });
-    for (const write of [
-      block.editSeries(ws.viewer, { title: 'x' }),
-      block.editOccurrence(ws.viewer, week(1), { startAt: week(1), endAt: plus(week(1), 1) }),
-      block.skipOccurrence(ws.viewer, week(1)),
-    ]) {
-      await assert.rejects(write, { statusCode: 403 });
+    // Each write starts only when it is awaited: started together, a later one could reject
+    // before anything handles it (an unhandled rejection under a busy full run).
+    const writes = [
+      (): Promise<unknown> => block.editSeries(ws.viewer, { title: 'x' }),
+      (): Promise<unknown> =>
+        block.editOccurrence(ws.viewer, week(1), { startAt: week(1), endAt: plus(week(1), 1) }),
+      (): Promise<unknown> => block.skipOccurrence(ws.viewer, week(1)),
+    ];
+    for (const write of writes) {
+      await assert.rejects(write(), { statusCode: 403 });
     }
     const repository = await models.getItemRepository();
     const theirs = await repository.createLocal(ws.id, {

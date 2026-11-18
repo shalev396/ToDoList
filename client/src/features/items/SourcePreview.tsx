@@ -6,12 +6,15 @@ import { useLanguage } from '@/hooks/useLanguage';
 import { cn } from '@/lib/utils';
 import type { ItemDetail } from '@api-types/api-contracts';
 import { SourceLink } from './SourceLink';
+import { isScheduledKind } from './kinds';
 import { isKnownProvider } from './providers';
 import { assigneeNames } from './itemFields';
 import { StatusLabel } from './itemStatus';
 
 export interface SourcePreviewProps {
   item: Pick<ItemDetail, 'title' | 'status' | 'dueAt' | 'assignees' | 'props' | 'source'> & {
+    /** Reserved time (a time block, an area, a travel leg) has no status and no due date. */
+    kind?: string;
     overlay?: Pick<ItemDetail['overlay'], 'overrides'>;
   };
   /** The workspace's time zone (IANA). */
@@ -32,6 +35,7 @@ function OnlyHere() {
 /**
  * What the source says about an item, from data: its provider, status, due date and assignee,
  * and the link back; a value kept in TodoList instead says so. It never shows an edit control.
+ * Reserved time is never ticked off and is never due, so it shows neither a status nor a due date.
  */
 export function SourcePreview({ item, timeZone, className }: SourcePreviewProps) {
   const { t } = useTranslation();
@@ -41,6 +45,7 @@ export function SourcePreview({ item, timeZone, className }: SourcePreviewProps)
   const overrides = item.source.provider === 'local' ? undefined : item.overlay?.overrides;
   const statusHere = (overrides?.status ?? null) !== null;
   const dueHere = (overrides?.dueAt ?? null) !== null;
+  const reserved = item.kind !== undefined && isScheduledKind(item.kind);
   return (
     <section
       aria-label={t('items.sheet.source', { source: t(`sources.${item.source.provider}`) })}
@@ -54,23 +59,27 @@ export function SourcePreview({ item, timeZone, className }: SourcePreviewProps)
         />
       ) : null}
       <dl className="flex flex-col gap-2">
-        <div className="flex items-center gap-2">
-          <dt className="sr-only">{t('items.sheet.status')}</dt>
-          <dd className="flex flex-wrap items-center gap-1.5">
-            <StatusLabel status={item.status} />
-            {statusHere ? <OnlyHere /> : null}
-          </dd>
-        </div>
-        <div className="flex items-center gap-2">
-          <dt className="sr-only">{t('items.sheet.due')}</dt>
-          <dd className="flex items-center gap-1.5">
-            <CalendarClock aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-            {due === null
-              ? t('items.sheet.noDue')
-              : dueText(due, new Date(), dateLocale(language), timeZone)}
-            {dueHere ? <OnlyHere /> : null}
-          </dd>
-        </div>
+        {reserved ? null : (
+          <div className="flex items-center gap-2">
+            <dt className="sr-only">{t('items.sheet.status')}</dt>
+            <dd className="flex flex-wrap items-center gap-1.5">
+              <StatusLabel status={item.status} />
+              {statusHere ? <OnlyHere /> : null}
+            </dd>
+          </div>
+        )}
+        {reserved ? null : (
+          <div className="flex items-center gap-2">
+            <dt className="sr-only">{t('items.sheet.due')}</dt>
+            <dd className="flex items-center gap-1.5">
+              <CalendarClock aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+              {due === null
+                ? t('items.sheet.noDue')
+                : dueText(due, new Date(), dateLocale(language), timeZone)}
+              {dueHere ? <OnlyHere /> : null}
+            </dd>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <dt className="sr-only">{t('items.sheet.assignee')}</dt>
           <dd className="flex min-w-0 items-center gap-1.5">

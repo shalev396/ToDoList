@@ -7,6 +7,7 @@
  */
 import type { EventInput } from '@fullcalendar/core';
 import type { ColourFamily, ColourRole, ItemColour } from '@api-types/colours.ts';
+import { layerOf, type BlockLayer } from '@api-types/scheduled.ts';
 import { colourVar, paintOf } from '../../../colours/palette.ts';
 import { wallDate, wallString, type Occurrence } from '../time/occurrences.ts';
 import type { Tone } from '../../rules/applyDisplayRules.ts';
@@ -22,6 +23,15 @@ export interface DisplayedOccurrence {
 
 export interface CalendarEventProps {
   rowId: string;
+  /** The item's kind (`block` and `travel` are reserved time). */
+  kind: string;
+  /** A time block's layer (`area` never reaches here: it is a band); null for any other kind. */
+  layer: BlockLayer | null;
+  /**
+   * The slot this occurrence fills in its series (ISO), which opens the item sheet on it
+   * (`?occurrence=`); null for an item that doesn't repeat.
+   */
+  originalStart: string | null;
   provider: string;
   dueOnly: boolean;
   tone: Tone | undefined;
@@ -75,6 +85,9 @@ export function toEventInput(
   const paint = paintOf(colour);
   const extendedProps: CalendarEventProps = {
     rowId: o.row.id,
+    kind: o.row.kind,
+    layer: layerOf(o.row),
+    originalStart: o.originalStart === null ? null : o.originalStart.toISOString(),
     provider: o.row.source.provider,
     dueOnly: o.dueOnly,
     tone: item.tone,

@@ -37,7 +37,7 @@ Today the `DashboardPage` placeholder only renders `userId` and `message`. It ge
 /:lng/profile, /profile/edit    Existing
 ```
 
-- Item detail opens in a right-side **Sheet** (`?item=<id>` in the URL), not as a separate page. That way the link can be shared and the back button closes it.
+- Item detail opens in a right-side **Sheet** (`?item=<id>` in the URL), not as a separate page. That way the link can be shared and the back button closes it. One occurrence of a repeating item adds `?occurrence=<epoch ms>` (its original start), so a time block's sheet opens on the week clicked (edit this one, skip it).
 - The sidebar lists topics dynamically: workspace `settings.areas` (DATA.md) plus any user-created topic dashboards from `GET /workspaces/:wid/dashboards`. Nothing is hardcoded except the app name.
 - Filter options (providers, projects, courses, areas) always come from `GET /workspaces/:wid/facets`. There are no hardcoded lists.
 - `:group` = a `Containers` id (a project for Work/Personal, a course for College).
