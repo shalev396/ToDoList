@@ -27,6 +27,7 @@ import { editor } from './editor.js';
 import { logic } from './logic.js';
 import { pageVars, views } from './views.js';
 import { colours } from './colours.js';
+import { scheduled } from './scheduled.js';
 
 export const en = {
   ...common,
@@ -62,4 +63,5 @@ export const en = {
   views,
   pageVars,
   colours,
+  scheduled,
 };

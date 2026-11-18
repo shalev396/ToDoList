@@ -44,6 +44,15 @@ export function draftOf(def: AttributeDef | undefined): SubjectDraft[] {
   return draft;
 }
 
+/**
+ * The subject names to offer (the time block form's Subject), in this section's order: the options
+ * of the workspace's `subject` select; none while it doesn't exist (the first block adds it).
+ */
+export function subjectOptions(attributes: readonly AttributeDef[] | undefined): string[] {
+  const def = attributes?.find((attribute) => attribute.key === SUBJECT_ATTRIBUTE_KEY);
+  return def?.type === 'select' ? [...(def.options ?? [])] : [];
+}
+
 /** One pattern per line or per comma, trimmed, empty ones dropped. */
 export function parsePatterns(text: string): string[] {
   return text

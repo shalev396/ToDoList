@@ -14,10 +14,13 @@ import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { dateInZone, instantInZone } from '@/features/items/zonedDate';
 import { CopyTargets, type Funnels } from './CopyTargets';
 import { isReady } from './funnel';
+import { KindChoice } from './KindChoice';
 import { ResultRow } from './ResultRow';
 import { RepeatControl } from './RepeatControl';
 import { RepeatTarget } from './RepeatTarget';
 import { NO_REPEAT, buildRecurrence, isRepeating, repeatBlockOf, type Repeat } from './recurrence';
+import { TimeBlockForm } from './TimeBlockForm';
+import type { NewItemKind, NewItemPreset } from './timeBlockDraft';
 import { newRequestId, useCopyRunner } from './useCopyRunner';
 
 /** The note reaches a provider cut at this length. */
@@ -26,7 +29,12 @@ export const NOTE_MAX = 500;
 /** How a repeating to-do's create went: made (with its event's link), or made but not shown yet. */
 type RecurringResult = { kind: 'created'; url: string } | { kind: 'notStored' };
 
+const TODO: NewItemPreset = { kind: 'todo' };
+
 /**
+ * The New sheet. Its first choice is the kind: a to-do, a time block or an area (time-blocks
+ * design); a block or an area is the time block form (TimeBlockForm), with its own create.
+ *
  * "New to-do" (H5): title, note, due date, Repeat and page, then "Also create in" with a chip per
  * own integration. Save creates the local to-do, then each target in parallel; the results stream
  * in under the form ("Created in Jira · ABC-123" with its link, a plain failure with Retry, or
@@ -37,12 +45,12 @@ type RecurringResult = { kind: 'created'; url: string } | { kind: 'notStored' };
 export function NewTodoSheet({
   open,
   onOpenChange,
-  presetTopicId = '',
+  preset = TODO,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The page the to-do starts on (a List view's page); the member may still change it. */
-  presetTopicId?: string;
+  /** The kind, page and times it opens on (a List view's page, a calendar's slot). */
+  preset?: NewItemPreset;
 }) {
   const { t } = useTranslation();
   const { workspace, role, topics, settings } = useCurrentWorkspace();
@@ -57,8 +65,10 @@ export function NewTodoSheet({
   const [note, setNote] = useState('');
   const [day, setDay] = useState('');
   const [time, setTime] = useState('');
+  const [chosenKind, setKind] = useState<NewItemKind | null>(null);
+  const kind = chosenKind ?? preset.kind;
   const [chosenTopic, setTopicId] = useState<string | null>(null);
-  const topicId = chosenTopic ?? presetTopicId;
+  const topicId = chosenTopic ?? preset.topicId ?? '';
   const [funnels, setFunnels] = useState<Funnels>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -72,6 +82,7 @@ export function NewTodoSheet({
   const primary = usePrimaryCalendar(workspace?.id ?? '');
 
   const reset = () => {
+    setKind(null);
     setTitle('');
     setNote('');
     setDay('');
@@ -194,6 +205,17 @@ export function NewTodoSheet({
     { value: '', label: t('items.newTodo.noTopic') },
     ...topics.map((topic) => ({ value: topic.id, label: topic.name })),
   ];
+  const close = () => {
+    onOpenChange(false);
+    reset();
+  };
+  const choosing = recurring === null && runner.results === null;
+  const sheetTitle =
+    kind === 'block'
+      ? t('scheduled.form.titleBlock')
+      : kind === 'area'
+        ? t('scheduled.form.titleArea')
+        : t('items.newTodo.title');
 
   return (
     <Sheet
@@ -212,10 +234,17 @@ export function NewTodoSheet({
         data-new-todo=""
       >
         <SheetHeader>
-          <SheetTitle>{t('items.newTodo.title')}</SheetTitle>
+          <SheetTitle>{sheetTitle}</SheetTitle>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-          {recurring !== null ? (
+          {choosing ? (
+            <div className="mb-4">
+              <KindChoice value={kind} onChange={setKind} />
+            </div>
+          ) : null}
+          {kind !== 'todo' ? (
+            <TimeBlockForm layer={kind} preset={preset} onClose={close} />
+          ) : recurring !== null ? (
             <div
               className="flex flex-col gap-3"
               data-new-todo-results=""
@@ -296,7 +325,8 @@ export function NewTodoSheet({
                   <Input
                     id={`${ids}-title`}
                     value={title}
-                    autoFocus
+                    // Only as the sheet opens: coming back from another kind keeps the focus there.
+                    autoFocus={chosenKind === null}
                     maxLength={255}
                     placeholder={t('items.newTodo.namePlaceholder')}
                     aria-invalid={error !== null && title.trim() === ''}

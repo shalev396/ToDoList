@@ -9,6 +9,7 @@ import {
   moveSubject,
   parsePatterns,
   requestOf,
+  subjectOptions,
   type SubjectDraft,
 } from './subjectsDraft.ts';
 
@@ -174,5 +175,14 @@ describe('countsByName', () => {
       reordered.map((subject) => counts[subject.name]),
       [1, 2],
     );
+  });
+});
+
+describe('subjectOptions', () => {
+  it('the Subject select’s options, in order; none without it', () => {
+    const other = { key: 'importance', name: 'Importance', type: 'number' } as AttributeDef;
+    assert.deepEqual(subjectOptions([other, saved]), ['Calculus', 'History']);
+    assert.deepEqual(subjectOptions([other]), []);
+    assert.deepEqual(subjectOptions(undefined), []);
   });
 });
