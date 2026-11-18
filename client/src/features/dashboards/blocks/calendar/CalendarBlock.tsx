@@ -25,6 +25,8 @@ import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
 import { presetFromSelection } from '@/features/items/scheduled/dragPreset';
 import { useItemParam } from '@/features/items/useItemParam';
+import { ConflictMark, LegModeIcon } from '@/features/travel/LegMark';
+import { legMarksOf } from '@/features/travel/legView';
 import { useShellUi } from '@/features/shell/shellUi';
 import { cn } from '@/lib/utils';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
@@ -171,10 +173,15 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       areas: split.areas,
       displayed: split.items.map((occurrence): DisplayedOccurrence => {
         const entry = byRow.get(occurrence.row.id);
-        return { occurrence, tone: entry?.tone, badges: entry?.badges ?? [] };
+        return {
+          occurrence,
+          tone: entry?.tone,
+          badges: entry?.badges ?? [],
+          leg: legMarksOf(t, occurrence, now) ?? undefined,
+        };
       }),
     };
-  }, [visible, visibleRows, range, timeZone, colourOf]);
+  }, [visible, visibleRows, range, timeZone, colourOf, t, now]);
   const viewName = fcView(view, phone, options.list);
   // FullCalendar draws no background events in the month grid or a list: there an area is a
   // plain event, in the area's style, that opens its sheet.
@@ -329,13 +336,18 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         {arg.timeText === '' || arg.event.allDay ? null : (
           <span className="shrink-0 font-medium tabular-nums">{arg.timeText}</span>
         )}
-        <SourceIcon
-          source={ringProvider(props.provider)}
-          className={cn('shrink-0', !list && '[&>svg]:text-current')}
-        />
+        {props.legMode === null ? (
+          <SourceIcon
+            source={ringProvider(props.provider)}
+            className={cn('shrink-0', !list && '[&>svg]:text-current')}
+          />
+        ) : (
+          <LegModeIcon mode={props.legMode} />
+        )}
         <span dir="auto" className="min-w-0 truncate">
           {arg.event.title}
         </span>
+        {props.conflict ? <ConflictMark wordsClassName="tc-leg-words" /> : null}
         {/* A badge has its own surface: the page ink, not the event's fill ink, reads on it. */}
         {props.badges.map((badge) => (
           <span
@@ -369,13 +381,20 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     }
     const when = arg.event.allDay ? t('timeBlocks.calendar.allDay') : wallTime(arg.event.start);
     const source = t(sourceNameKey(props.provider as never));
+    const label = t(
+      props.dueOnly ? 'timeBlocks.calendar.dueLabel' : 'timeBlocks.calendar.eventLabel',
+      { title: arg.event.title, when, source },
+    );
+    if (props.legMode !== null) {
+      // A leg says what is wrong with it, for anyone who can't see the red edge.
+      arg.el.setAttribute('data-leg-mode', props.legMode);
+      arg.el.setAttribute('data-conflict', String(props.conflict));
+      arg.el.setAttribute('data-past', String(props.past));
+      arg.el.setAttribute('data-anchor-moved', String(props.anchorMoved));
+    }
     arg.el.setAttribute(
       'aria-label',
-      t(props.dueOnly ? 'timeBlocks.calendar.dueLabel' : 'timeBlocks.calendar.eventLabel', {
-        title: arg.event.title,
-        when,
-        source,
-      }),
+      props.conflict ? `${label}. ${t('travel.leg.conflict')}` : label,
     );
   };
 

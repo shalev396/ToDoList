@@ -8,6 +8,9 @@ import { ColourDot } from '@/features/colours/ColourDot';
 import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
 import { useItemParam } from '@/features/items/useItemParam';
+import { ConflictMark, LegModeIcon } from '@/features/travel/LegMark';
+import { CONFLICT_EDGE, legMarksOf } from '@/features/travel/legView';
+import { cn } from '@/lib/utils';
 import { instantInZone } from '@/features/items/zonedDate';
 import { useShellUi } from '@/features/shell/shellUi';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
@@ -87,33 +90,56 @@ export default function TimelineBlock({ dashboard, block }: BlockComponentProps)
   const status = loadState !== 'ready' ? loadState : listed.length === 0 ? 'empty' : 'ready';
   const renderRow = (occurrence: Occurrence) => {
     const { row } = occurrence;
-    const label = truncateText(row.title, 160) || t('dataBlocks.noTitle');
+    // A travel leg is drawn from its props in the UI language, with its mode and flags.
+    const leg = legMarksOf(t, occurrence, now);
+    const label = truncateText(leg?.title ?? row.title, 160) || t('dataBlocks.noTitle');
     const time = occurrence.allDay
       ? t('timeBlocks.timeline.allDay')
       : occurrence.end === null
         ? timeOfDay(occurrence.start, locale, timeZone)
         : `${timeOfDay(occurrence.start, locale, timeZone)}–${timeOfDay(occurrence.end, locale, timeZone)}`;
     return (
-      <li key={occurrence.key} className="flex min-h-11 items-center gap-2 py-1">
+      <li
+        key={occurrence.key}
+        data-timeline-leg={leg === null ? undefined : leg.mode}
+        data-conflict={leg === null ? undefined : String(leg.conflict)}
+        data-past={leg === null ? undefined : String(leg.past)}
+        className={cn(
+          'flex min-h-11 items-center gap-2 py-1',
+          // A leg that can't be made in time has a red edge; one that is over is dimmed.
+          leg?.conflict === true && CONFLICT_EDGE,
+          leg?.past === true && 'opacity-60',
+        )}
+      >
         <span className="w-24 shrink-0 text-[13px] text-muted-foreground tabular-nums" dir="ltr">
           {time}
         </span>
         <ColourDot colour={colourOf(row.id)} />
-        <button
-          type="button"
-          onClick={() => {
-            openItem(row.id, occurrence.originalStart ?? undefined);
-          }}
-          className="min-w-0 flex-1 truncate rounded-sm text-start text-sm hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-          dir="auto"
-        >
-          {label}
-        </button>
+        {leg === null ? null : <LegModeIcon mode={leg.mode} className="text-muted-foreground" />}
+        <div className="flex min-w-0 flex-1 flex-col">
+          <button
+            type="button"
+            onClick={() => {
+              openItem(row.id, occurrence.originalStart ?? undefined);
+            }}
+            className="flex min-h-11 min-w-0 items-center rounded-sm text-start text-sm hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+            dir="auto"
+          >
+            <span className="min-w-0 truncate">{label}</span>
+          </button>
+          {leg?.conflict === true ? (
+            <ConflictMark className="-mt-2 mb-1 text-xs text-destructive" />
+          ) : null}
+        </div>
         {occurrence.dueOnly ? (
           <span className="text-xs text-muted-foreground">{t('timeBlocks.timeline.due')}</span>
         ) : null}
-        <SourceIcon source={displayProvider(row.source.provider)} />
-        <SourceLink source={row.source} title={label} />
+        {leg === null ? (
+          <>
+            <SourceIcon source={displayProvider(row.source.provider)} />
+            <SourceLink source={row.source} title={label} />
+          </>
+        ) : null}
       </li>
     );
   };

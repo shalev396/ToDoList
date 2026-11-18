@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CalendarCheck } from 'lucide-react';
+import { Link, useLocation } from 'react-router-dom';
+import { CalendarCheck, Route } from 'lucide-react';
+import { useTravelDays } from '@/api/queries/travel';
 import { SourceIcon } from '@/components/items/SourceIcon';
 import { dateLocale, timeOfDay } from '@/components/items/format';
 import { ColourDot } from '@/features/colours/ColourDot';
@@ -9,7 +11,12 @@ import { useRowColours } from '@/features/colours/useColours';
 import type { ItemColour } from '@api-types/colours';
 import { SourceLink } from '@/features/items/SourceLink';
 import { useItemParam } from '@/features/items/useItemParam';
+import { dateInZone } from '@/features/items/zonedDate';
+import { ConflictMark, LegModeIcon } from '@/features/travel/LegMark';
+import { CONFLICT_EDGE, legMarksOf } from '@/features/travel/legView';
 import { useLanguage } from '@/hooks/useLanguage';
+import { cn } from '@/lib/utils';
+import { dayLink, horizonOf } from '@/pages/settings/travel/travelForms';
 import { BlockFrame } from '../../BlockFrame';
 import { blockTitle } from '../../chrome';
 import type { BlockComponentProps } from '../../registry/types';
@@ -26,37 +33,61 @@ function AgendaRow({
   timeZone,
   locale,
   colour,
+  now,
 }: {
   occurrence: Occurrence;
   timeZone: string;
   locale: string;
   colour: ItemColour;
+  now: Date;
 }) {
   const { t } = useTranslation();
   const { openItem } = useItemParam();
   const { row } = occurrence;
-  const title = truncateText(row.title, 160) || t('dataBlocks.noTitle');
+  // A travel leg is drawn from its props in the UI language, with its mode and flags.
+  const leg = legMarksOf(t, occurrence, now);
+  const title = truncateText(leg?.title ?? row.title, 160) || t('dataBlocks.noTitle');
   const time = occurrence.allDay
     ? t('timeBlocks.agenda.allDay')
     : timeOfDay(occurrence.start, locale, timeZone);
   return (
-    <li className="flex min-h-11 items-center gap-2 border-b py-1 last:border-b-0">
+    <li
+      data-agenda-leg={leg === null ? undefined : leg.mode}
+      data-conflict={leg === null ? undefined : String(leg.conflict)}
+      data-past={leg === null ? undefined : String(leg.past)}
+      className={cn(
+        'flex min-h-11 items-center gap-2 border-b py-1 last:border-b-0',
+        // A leg that can't be made in time has a red edge; one that is over is dimmed.
+        leg?.conflict === true && CONFLICT_EDGE,
+        leg?.past === true && 'opacity-60',
+      )}
+    >
       <span className="w-16 shrink-0 text-[13px] text-muted-foreground tabular-nums" dir="ltr">
         {time}
       </span>
       <ColourDot colour={colour} />
-      <button
-        type="button"
-        onClick={() => {
-          openItem(row.id, occurrence.originalStart ?? undefined);
-        }}
-        className="min-w-0 flex-1 truncate rounded-sm text-start text-sm hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-        dir="auto"
-      >
-        {title}
-      </button>
-      <SourceIcon source={displayProvider(row.source.provider)} />
-      <SourceLink source={row.source} title={title} />
+      {leg === null ? null : <LegModeIcon mode={leg.mode} className="text-muted-foreground" />}
+      <div className="flex min-w-0 flex-1 flex-col">
+        <button
+          type="button"
+          onClick={() => {
+            openItem(row.id, occurrence.originalStart ?? undefined);
+          }}
+          className="flex min-h-11 min-w-0 items-center rounded-sm text-start text-sm hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          dir="auto"
+        >
+          <span className="min-w-0 truncate">{title}</span>
+        </button>
+        {leg?.conflict === true ? (
+          <ConflictMark className="-mt-2 mb-1 text-xs text-destructive" />
+        ) : null}
+      </div>
+      {leg === null ? (
+        <>
+          <SourceIcon source={displayProvider(row.source.provider)} />
+          <SourceLink source={row.source} title={title} />
+        </>
+      ) : null}
     </li>
   );
 }
@@ -68,12 +99,14 @@ function AgendaRow({
 export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
   const { t } = useTranslation();
   const { openItem } = useItemParam();
+  const location = useLocation();
   const { language } = useLanguage();
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
   const title = blockTitle(block, t);
   const locale = dateLocale(language);
   const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
   const colourOf = useRowColours(itemRows);
+  const changed = useChangedTravelDays(now, timeZone);
   // Areas are split off before the agenda is built; items nest under them by time.
   const groups = useMemo(() => {
     const { areas, items } = splitAreas(
@@ -105,6 +138,24 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
       emptyMessage={t('timeBlocks.agenda.empty')}
     >
       <div data-agenda className="flex flex-col gap-3">
+        {changed.length === 0 ? null : (
+          <ul data-agenda-travel-changed="" className="m-0 flex list-none flex-wrap gap-2 p-0">
+            {changed.map((day) => (
+              <li key={day.date}>
+                <Link
+                  to={{ pathname: location.pathname, search: dayLink(location.search, day.date) }}
+                  data-travel-changed={day.date}
+                  aria-label={t('travel.day.changedOn', { day: day.label })}
+                  className="inline-flex min-h-11 items-center gap-1.5 rounded-full border bg-sunken px-3 text-[13px] font-medium hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-fine:min-h-8"
+                >
+                  <Route aria-hidden="true" className="size-3.5 shrink-0" />
+                  {t('travel.day.changed')}
+                  <span className="font-normal text-muted-foreground">{day.label}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
         {AGENDA_PARTS.filter((part) => groups[part].length > 0).map((part) => {
           const row = (occurrence: Occurrence) => (
             <AgendaRow
@@ -113,6 +164,7 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
               timeZone={timeZone}
               locale={locale}
               colour={colourOf(occurrence.row.id)}
+              now={now}
             />
           );
           return (
@@ -154,5 +206,26 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
         })}
       </div>
     </BlockFrame>
+  );
+}
+
+/**
+ * Today and tomorrow when some of my travel there was removed (a cancelled lecture, a skipped trip):
+ * each opens that day's travel. Only editors and owners have travel, so a viewer has none. It
+ * reads the same 14 days as Settings → Travel (one cached read).
+ */
+function useChangedTravelDays(now: Date, timeZone: string): { date: string; label: string }[] {
+  const { t } = useTranslation();
+  const { from, to } = horizonOf(dateInZone(now, timeZone));
+  const days = useTravelDays(from, to);
+  return (days.data?.days ?? []).slice(0, 2).flatMap((day, index) =>
+    day.removed.length === 0
+      ? []
+      : [
+          {
+            date: day.date,
+            label: index === 0 ? t('travel.days.today') : t('travel.day.tomorrow'),
+          },
+        ],
   );
 }

@@ -42,3 +42,42 @@ def list_items(api_base_url: str, user, workspace_id: str, provider: Optional[st
         timeout=15,
     )
     return _data(response, "Listing items")["items"]
+
+
+def create_timed_todo(
+    api_base_url: str,
+    user,
+    workspace_id: str,
+    title: str,
+    start_at: str,
+    end_at: str,
+    topic: str = "work",
+) -> dict:
+    """POST …/items: a local to-do that happens from `start_at` to `end_at` (ISO instants), the
+    shape travel can get him to. Returns the item."""
+    from tests.helpers.workspaces import topic_id
+
+    response = requests.post(
+        f"{api_base_url}/private/workspaces/{workspace_id}/items",
+        json={
+            "title": title,
+            "topicId": topic_id(api_base_url, user, workspace_id, topic),
+            "startAt": start_at,
+            "endAt": end_at,
+            "allDay": False,
+        },
+        headers=_headers(user),
+        timeout=15,
+    )
+    return _data(response, "Creating a timed to-do")
+
+
+def delete_item(api_base_url: str, user, workspace_id: str, item_id: str) -> None:
+    """DELETE …/items/:id (a local to-do)."""
+    response = requests.delete(
+        f"{api_base_url}/private/workspaces/{workspace_id}/items/{item_id}",
+        headers=_headers(user),
+        timeout=15,
+    )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Deleting an item failed: {response.status_code} {response.text[:200]}")

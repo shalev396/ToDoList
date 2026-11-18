@@ -213,6 +213,7 @@ export function ClockRing({
           {placed.map(({ event, startAngle, endAngle, lane }) => {
             const laneOuter = outer - lane * (laneWidth + GAP);
             const paint = event.colour === undefined ? null : paintOf(event.colour);
+            const leg = event.leg ?? null;
             const d = arcPath({
               innerRadius: laneOuter - laneWidth,
               outerRadius: laneOuter,
@@ -228,12 +229,23 @@ export function ClockRing({
                   event.id === emphasize ? `${event.id}-${String(event.start.getTime())}` : event.id
                 }
                 className={event.id === emphasize ? 'clock-arc-fresh' : undefined}
+                // A leg that is over is dimmed.
+                style={leg?.past === true ? { opacity: 0.5 } : undefined}
               >
                 <path
                   className={paint === null ? SOURCE_STYLES[event.source].fill : undefined}
-                  style={paint === null ? undefined : { fill: paint.fill }}
+                  // A leg that can't be made in time has a red edge.
+                  style={{
+                    ...(paint === null ? {} : { fill: paint.fill }),
+                    ...(leg?.conflict === true
+                      ? { stroke: 'var(--destructive)', strokeWidth: 2 }
+                      : {}),
+                  }}
                   data-family={event.colour?.family}
                   data-role={event.colour?.role}
+                  data-leg-mode={leg?.mode}
+                  data-conflict={leg === null ? undefined : String(leg.conflict)}
+                  data-past={leg === null ? undefined : String(leg.past)}
                   d={d}
                 >
                   <title>{labels.describeEvent(event)}</title>

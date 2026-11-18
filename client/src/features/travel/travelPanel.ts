@@ -19,14 +19,17 @@ import {
   type Span,
   type SpanField,
 } from '@api-types/timeSpan.ts';
+import { toDate } from '@api-types/recurrence/occurrences.ts';
 import {
   travelPropsOf,
+  type LegEditRequest,
   type LegSource,
   type MarkItemRequest,
   type MarkItemResponse,
   type PlaceView,
   type RuleDirection,
   type SpanInput,
+  type TravelLegProps,
   type TravelMode,
   type TravelPreviewRequest,
   type TravelPreviewResponse,
@@ -459,4 +462,45 @@ export function outcomeOf(answer: MarkItemResponse, ownPlace: boolean): TravelOu
   return answer.legs.length > 0
     ? { kind: 'added', count: answer.legs.length }
     : { kind: 'pending', ownPlace };
+}
+
+// ─── A leg's own times ──────────────────────────────────────────────────────
+
+/**
+ * A leg's times as its form opens: its own start, end and length, none of them typed yet. What he
+ * types stands (the two most recent), and the third follows.
+ */
+export function legPanelState(
+  item: { startAt: Date | string | null; endAt: Date | string | null },
+  travel: TravelLegProps,
+): TravelPanelState {
+  const end = toDate(item.endAt);
+  return {
+    ...initialPanelState({
+      mode: travel.mode,
+      fromPlaceId: travel.fromPlaceId,
+      toPlaceId: travel.toPlaceId,
+      anchorStart: end,
+    }),
+    span: { start: toDate(item.startAt), end, minutes: travel.minutes },
+    edited: [],
+  };
+}
+
+/**
+ * `PATCH …/travel/legs/:id`: the two fields that stand (the last two he typed, then the arrival and
+ * the length), exactly as the form shows them, so the server's answer is what he saw. Null while he
+ * has typed nothing, or what he typed makes no trip.
+ */
+export function legEditOf(state: TravelPanelState): LegEditRequest | null {
+  const span = panelSpan(state);
+  if (state.edited.length === 0 || span === null) {
+    return null;
+  }
+  const given = keptFields(state.edited);
+  return {
+    ...(given.includes('start') ? { startAt: span.start.toISOString() } : {}),
+    ...(given.includes('end') ? { endAt: span.end.toISOString() } : {}),
+    ...(given.includes('minutes') ? { minutes: Math.round(span.minutes) } : {}),
+  };
 }

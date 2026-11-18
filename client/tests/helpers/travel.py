@@ -130,3 +130,24 @@ def mark_item(
         timeout=30,
     )
     return _data(response, "Marking an item for travel")
+
+
+def get_days(api_base_url: str, user, workspace_id: str, first: str, last: str) -> list:
+    """GET …/travel/days?from=&to= (`YYYY-MM-DD`, at most 14 days): [{date, legs, removed}]."""
+    response = requests.get(
+        _url(api_base_url, workspace_id, "days"),
+        params={"from": first, "to": last},
+        headers=_headers(user),
+        timeout=30,
+    )
+    return _data(response, "Reading the travel days")["days"]
+
+
+def get_leg(api_base_url: str, user, workspace_id: str, leg_id: str) -> dict:
+    """GET …/items/:id: a leg as the item API shows it (`props.travel` has what makes it one)."""
+    response = requests.get(
+        f"{api_base_url}/private/workspaces/{workspace_id}/items/{leg_id}",
+        headers=_headers(user),
+        timeout=30,
+    )
+    return _data(response, "Reading a leg")

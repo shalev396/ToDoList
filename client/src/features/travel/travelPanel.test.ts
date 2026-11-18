@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { TFunction } from 'i18next';
 import type { ItemSummary } from '@api-types/items.ts';
-import type { PlaceView, TravelRuleView } from '@api-types/travel.ts';
+import type { PlaceView, TravelLegProps, TravelRuleView } from '@api-types/travel.ts';
 import { en } from '../../i18n/translations/en/index.ts';
 import {
   anchorPanel,
@@ -12,6 +12,8 @@ import {
   editPanelSpan,
   everyKeepsOnlyLength,
   initialPanelState,
+  legEditOf,
+  legPanelState,
   markOf,
   markRequestOf,
   markTargetOf,
@@ -362,5 +364,49 @@ describe('which items take travel, and their mark', () => {
     });
     const legs = [{}, {}] as unknown as Parameters<typeof outcomeOf>[0]['legs'];
     assert.deepEqual(outcomeOf({ rule: view, legs }, true), { kind: 'added', count: 2 });
+  });
+});
+
+describe('a leg’s own times', () => {
+  const LEG = {
+    minutes: 40,
+    mode: 'transit',
+    fromPlaceId: 'home',
+    toPlaceId: 'braude',
+  } as TravelLegProps;
+  const start = minutesBefore(AT_TWO, 40);
+  const open = () => legPanelState({ startAt: start, endAt: AT_TWO }, LEG);
+
+  it('opens on the leg’s own times and sends nothing until he types', () => {
+    const state = open();
+    assert.deepEqual(state.span, { start, end: AT_TWO, minutes: 40 });
+    assert.equal(legEditOf(state), null);
+  });
+
+  it('sends the two fields that stand, as the form shows them', () => {
+    // A new leave time: it and the arrival stand, the length follows.
+    const later = minutesBefore(AT_TWO, 30);
+    assert.deepEqual(legEditOf(editPanelSpan(open(), 'start', later)), {
+      startAt: later.toISOString(),
+      endAt: AT_TWO.toISOString(),
+    });
+    // A new length: it and the arrival stand, the leave time follows.
+    assert.deepEqual(legEditOf(editPanelSpan(open(), 'minutes', 25)), {
+      endAt: AT_TWO.toISOString(),
+      minutes: 25,
+    });
+    // A new arrival after a new length: those two stand.
+    const arrive = new Date(AT_TWO.getTime() + 10 * 60_000);
+    assert.deepEqual(
+      legEditOf(editPanelSpan(editPanelSpan(open(), 'minutes', 25), 'end', arrive)),
+      {
+        endAt: arrive.toISOString(),
+        minutes: 25,
+      },
+    );
+  });
+
+  it('sends nothing for a length that makes no trip', () => {
+    assert.equal(legEditOf(editPanelSpan(open(), 'minutes', null)), null);
   });
 });

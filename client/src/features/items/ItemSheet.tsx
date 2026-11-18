@@ -44,6 +44,8 @@ import {
 import { MirroredEditor } from './editing/MirroredEditor';
 import { TimeBlockSection } from './scheduled/TimeBlockSection';
 import { ItemTravelSection } from '@/features/travel/ItemTravelSection';
+import { TravelLegSection } from '@/features/travel/TravelLegSection';
+import { rowTitle } from '@/features/travel/legView';
 import { canTravelTo } from '@/features/travel/travelPanel';
 import { dateInZone, noonInZone } from './zonedDate';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -153,6 +155,8 @@ function ItemBody({
   const markable = isMarkable(item);
   // A time block or an area: its own section (time, repeat, subject, page; edit, skip, delete).
   const layer = layerOf(item);
+  // A travel leg is TodoList's own trip for its member: its own section, no status, nothing to tick.
+  const isLeg = item.kind === 'travel';
   const me = useMe();
   const mine = markable && canWrite && item.ownerUserId === me.data?.id;
   const [focus, setFocus] = useState<{ integrationId: string; anyway: boolean } | null>(null);
@@ -184,11 +188,13 @@ function ItemBody({
           className="text-lg leading-snug [overflow-wrap:anywhere]"
           data-item-title=""
         >
-          {item.title}
+          {rowTitle(t, item)}
         </SheetTitle>
       </SheetHeader>
       <div className="flex flex-col gap-6 p-4 pt-1">
-        {layer === null ? (
+        {isLeg ? (
+          <TravelLegSection item={item} canWrite={canWrite} />
+        ) : layer === null ? (
           <SourcePreview item={item} timeZone={timeZone} />
         ) : (
           <TimeBlockSection
@@ -199,7 +205,7 @@ function ItemBody({
             onDeleted={onDeleted}
           />
         )}
-        {isLocal ? <AddedBy ownerUserId={item.ownerUserId} /> : null}
+        {isLocal && !isLeg ? <AddedBy ownerUserId={item.ownerUserId} /> : null}
 
         {item.copies.length > 0 ? (
           <section className="flex flex-col gap-2" data-item-copies="">
@@ -296,7 +302,7 @@ function ItemBody({
         )}
 
         {/* A block's props are its rule and its exceptions: its section shows them. */}
-        {layer === null ? (
+        {layer === null && !isLeg ? (
           <section aria-labelledby="item-details" className="flex flex-col gap-2">
             <h3 id="item-details" className="text-sm font-semibold">
               {t('items.sheet.details')}
@@ -313,7 +319,7 @@ function ItemBody({
           </section>
         ) : null}
 
-        {canWrite ? (
+        {canWrite && !isLeg ? (
           <OverlayControls
             item={item}
             sourceName={sourceName}

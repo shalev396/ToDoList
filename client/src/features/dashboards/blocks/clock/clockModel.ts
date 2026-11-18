@@ -5,6 +5,7 @@
  */
 import type { ItemColour } from '@api-types/colours.ts';
 import { endOfZonedDay, startOfZonedDay } from './ClockRing.math.ts';
+import { legFlagsOf, type LegFlags } from '../../../travel/legView.ts';
 import { splitAreas } from '../time/areas.ts';
 import { expandOccurrences, type Occurrence, type TimeRow } from '../time/occurrences.ts';
 
@@ -32,6 +33,8 @@ export interface ClockEvent {
   source: Provider;
   /** Its colour (topic or subject, and role); without one it draws in its source colour (the landing demos). */
   colour?: ItemColour;
+  /** A travel leg's marks (mode, conflict, past, "the event moved"); null for any other item. */
+  leg?: LegFlags | null;
 }
 
 /** Painted time for a part of life: a band just outside the ring, behind the arcs. */
@@ -67,12 +70,17 @@ export interface ClockModel {
 
 const endOf = (o: Occurrence): Date => o.end ?? new Date(o.start.getTime() + DEFAULT_LENGTH_MS);
 
-/** Without `colourOf` there are no areas and every arc keeps its source colour. */
+/**
+ * Without `colourOf` there are no areas and every arc keeps its source colour. `titleOf` gives a
+ * row's title in the UI language (a travel leg's is drawn from its props); it defaults to the
+ * stored one.
+ */
 export function buildClockModel(
   rows: readonly TimeRow[],
   now: Date,
   timeZone: string,
   colourOf?: (rowId: string) => ItemColour,
+  titleOf: (row: TimeRow) => string = (row) => row.title,
 ): ClockModel {
   const day = { from: startOfZonedDay(now, timeZone), to: endOfZonedDay(now, timeZone) };
   let all = expandOccurrences(rows, day, timeZone);
@@ -93,10 +101,11 @@ export function buildClockModel(
   const timedOccurrences = all.filter((o) => !o.allDay && !o.dueOnly);
   const timed: ClockEvent[] = timedOccurrences.map((o) => ({
     id: o.key,
-    title: o.row.title,
+    title: titleOf(o.row),
     start: o.start,
     end: endOf(o),
     source: ringProvider(o.row.source.provider),
+    leg: legFlagsOf({ row: o.row, start: o.start, end: endOf(o) }, now),
     ...(colourOf === undefined ? {} : { colour: colourOf(o.row.id) }),
   }));
   const nowMs = now.getTime();

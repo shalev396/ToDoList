@@ -8,7 +8,9 @@
 import type { EventInput } from '@fullcalendar/core';
 import type { ColourFamily, ColourRole, ItemColour } from '@api-types/colours.ts';
 import { layerOf, type BlockLayer } from '@api-types/scheduled.ts';
+import type { TravelMode } from '@api-types/travel.ts';
 import { colourVar, paintOf } from '../../../colours/palette.ts';
+import type { LegMarks } from '../../../travel/legView.ts';
 import { wallDate, wallString, type Occurrence } from '../time/occurrences.ts';
 import type { Tone } from '../../rules/applyDisplayRules.ts';
 
@@ -19,6 +21,8 @@ export interface DisplayedOccurrence {
   occurrence: Occurrence;
   tone?: Tone | undefined;
   badges: readonly string[];
+  /** A travel leg's marks and its title in the UI language (the title replaces the stored one). */
+  leg?: LegMarks | undefined;
 }
 
 export interface CalendarEventProps {
@@ -39,6 +43,14 @@ export interface CalendarEventProps {
   url: string;
   family: ColourFamily;
   role: ColourRole;
+  /** A travel leg that can't be made in time (red edge, "You can't make it"). */
+  conflict: boolean;
+  /** A travel leg that is over (dimmed). */
+  past: boolean;
+  /** A travel leg's mode (its icon); null for any other item. */
+  legMode: TravelMode | null;
+  /** A travel leg whose event moved since he edited it ("check this trip"). */
+  anchorMoved: boolean;
 }
 
 /**
@@ -99,12 +111,34 @@ export function toEventInput(
     url: o.row.source.url,
     family: colour.family,
     role: colour.role,
+    conflict: item.leg?.conflict ?? false,
+    past: item.leg?.past ?? false,
+    legMode: item.leg?.mode ?? null,
+    anchorMoved: item.leg?.moved ?? false,
   };
+  // FullCalendar sets an event's attributes once, when its element is made (`eventDidMount`). A leg's
+  // marks change under it (a conflict clears, the day moves on, he edits its times), so they are
+  // part of its id: a leg that reads differently is drawn again.
+  const legId =
+    item.leg === undefined
+      ? o.key
+      : [
+          o.key,
+          o.start.getTime(),
+          o.end?.getTime(),
+          item.leg.conflict,
+          item.leg.past,
+          item.leg.moved,
+        ]
+          .map(String)
+          .join('|');
   return {
-    id: o.key,
-    title: o.row.title,
+    id: legId,
+    title: item.leg?.title ?? o.row.title,
     classNames: [
       ...(colour.role === 'travel' ? ['tc-travel'] : []),
+      ...(item.leg?.conflict === true ? ['tc-conflict'] : []),
+      ...(item.leg?.past === true ? ['tc-past'] : []),
       ...(o.dueOnly ? ['fc-due'] : []),
     ],
     backgroundColor: paint.fill,

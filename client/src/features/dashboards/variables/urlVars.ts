@@ -18,7 +18,8 @@ export type PageVars = Readonly<Record<string, VarValue>>;
 
 /**
  * Search params of the page itself: edit mode, the open item sheet (and the occurrence of a
- * repeating item it is on), the dashboard copy.
+ * repeating item it is on), the day whose travel is open (`travelDay=YYYY-MM-DD`), the dashboard
+ * copy.
  */
 export const RESERVED_PARAMS: ReadonlySet<string> = new Set([
   'edit',
@@ -27,6 +28,7 @@ export const RESERVED_PARAMS: ReadonlySet<string> = new Set([
   'as',
   'dashboard',
   'view',
+  'travelDay',
 ]);
 
 const LIST_SEPARATOR = ',';

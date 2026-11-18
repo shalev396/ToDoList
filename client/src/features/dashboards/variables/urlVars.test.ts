@@ -116,19 +116,23 @@ describe('readUrlVars', () => {
 });
 
 describe('reserved params', () => {
-  it('are edit, item, occurrence, as, dashboard and view', () => {
+  it('are edit, item, occurrence, as, dashboard, view and travelDay', () => {
     assert.deepEqual([...RESERVED_PARAMS].sort(), [
       'as',
       'dashboard',
       'edit',
       'item',
       'occurrence',
+      'travelDay',
       'view',
     ]);
     assert.equal(isReservedParam('edit'), true);
     // The occurrence of a repeating item the sheet opens on (`?occurrence=<epoch ms>`).
     assert.equal(isReservedParam('occurrence'), true);
     assert.equal(isUrlVarName('occurrence'), false);
+    // The day whose travel the day panel shows (`?travelDay=2026-11-19`).
+    assert.equal(isReservedParam('travelDay'), true);
+    assert.equal(isUrlVarName('travelDay'), false);
     assert.equal(isReservedParam('range'), false);
   });
 });

@@ -719,6 +719,25 @@
   padding: 3px;
   background-image: var(--tc-hatch);
 }
+/* A leg that can't be made in time: a red edge along its start and a hairline round it (and the
+   words "You can't make it", which the red alone never replaces). A leg that is over is dimmed. */
+.todolist-calendar .fc .tc-conflict {
+  box-shadow:
+    inset 4px 0 0 var(--destructive),
+    inset 0 0 0 1px var(--destructive);
+}
+.todolist-calendar[dir='rtl'] .fc .tc-conflict {
+  box-shadow:
+    inset -4px 0 0 var(--destructive),
+    inset 0 0 0 1px var(--destructive);
+}
+.todolist-calendar .fc .tc-past {
+  opacity: 0.55;
+}
+/* A short event has no room for the words: the warning in its label and the edge still say it. */
+.todolist-calendar .fc .fc-timegrid-event-short .tc-leg-words {
+  display: none;
+}
 .todolist-calendar .fc .tc-area {
   opacity: 1;
   box-shadow: inset 0 0 0 1px var(--tc-edge, var(--border));

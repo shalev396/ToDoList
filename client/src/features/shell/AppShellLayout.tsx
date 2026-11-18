@@ -23,6 +23,7 @@ import { AddPageDialog } from '@/features/shell/TopicControls';
 import { NewTodoSheet } from '@/features/items/create/NewTodoSheet';
 import type { NewItemPreset } from '@/features/items/create/timeBlockDraft';
 import { useConsentReturn } from '@/features/items/create/useConsentReturn';
+import { TravelDaySheet } from '@/features/travel/TravelDaySheet';
 
 const SIDEBAR_STORAGE_KEY = 'todolist-sidebar-collapsed';
 
@@ -166,6 +167,7 @@ export default function AppShellLayout() {
           <JoinInviteDialog open={joinOpen} onOpenChange={setJoinOpen} />
           <AddPageDialog open={addPageOpen} onOpenChange={setAddPageOpen} />
           <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+          <TravelDaySheet key={generation} />
           <NewTodoSheet
             key={generation}
             open={newItemOpen}

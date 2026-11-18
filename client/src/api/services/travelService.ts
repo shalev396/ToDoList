@@ -1,14 +1,16 @@
 import { api } from '@/api/instance';
 import type { ApiRequestConfig } from '@/types';
-import type { ApiSuccessResponse } from '@api-types/api-contracts';
+import type { ApiSuccessResponse, ItemDetail } from '@api-types/api-contracts';
 import type {
   CreatePlaceRequest,
   CreateTravelRuleRequest,
+  LegEditRequest,
   MarkItemRequest,
   MarkItemResponse,
   PlacePinRequest,
   PlaceView,
   TravelDaysResponse,
+  TravelLinksResponse,
   TravelPreviewRequest,
   TravelPreviewResponse,
   TravelRuleView,
@@ -225,6 +227,47 @@ export async function getTravelDays(
   const params = new URLSearchParams({ from, to });
   const response = await api.get<ApiSuccessResponse<TravelDaysResponse>>(
     `${travelPath(workspaceId, 'days')}?${params.toString()}`,
+    config,
+  );
+  return response.data;
+}
+
+// ─── Legs ───────────────────────────────────────────────────────────────────
+
+/** New times for a leg: one or two of start, end and length (his until he resets it). */
+export async function editLeg(
+  workspaceId: string,
+  legId: string,
+  body: LegEditRequest,
+  config?: ApiRequestConfig,
+) {
+  const response = await api.patch<ApiSuccessResponse<ItemDetail>>(
+    travelPath(workspaceId, 'legs', legId),
+    body,
+    config,
+  );
+  return response.data;
+}
+
+/** Skipped for its day: a tombstone with reason `skipped`, until Reset. */
+export async function skipLeg(workspaceId: string, legId: string, config?: ApiRequestConfig) {
+  await api.post(travelPath(workspaceId, 'legs', legId, 'skip'), {}, config);
+}
+
+/** Computed again: a skip undone, his times and the "moved" flag cleared. */
+export async function resetLeg(workspaceId: string, legId: string, config?: ApiRequestConfig) {
+  const response = await api.post<ApiSuccessResponse<ItemDetail>>(
+    travelPath(workspaceId, 'legs', legId, 'reset'),
+    {},
+    config,
+  );
+  return response.data;
+}
+
+/** The apps that open the trip (its member's only: the links carry coordinates). */
+export async function getLegLinks(workspaceId: string, legId: string, config?: ApiRequestConfig) {
+  const response = await api.get<ApiSuccessResponse<TravelLinksResponse>>(
+    travelPath(workspaceId, 'legs', legId, 'links'),
     config,
   );
   return response.data;

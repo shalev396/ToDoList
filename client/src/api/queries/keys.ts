@@ -72,6 +72,9 @@ export const queryKeys = {
   travelSettings: (workspaceId: string) => workspaceKey(workspaceId, 'travel', 'settings'),
   travelDays: (workspaceId: string, from: string, to: string) =>
     workspaceKey(workspaceId, 'travel', 'days', from, to),
+  /** A leg's app links (under travel: a change to the leg reads them again). */
+  travelLegLinks: (workspaceId: string, legId: string) =>
+    workspaceKey(workspaceId, 'travel', 'leg-links', legId),
   /**
    * A trip's preview, by its request (mode and places). Outside `travel`: a travel change doesn't
    * ask every open preview again, since each may spend a call of the shared routing quota.

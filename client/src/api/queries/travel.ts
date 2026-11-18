@@ -15,6 +15,8 @@ import {
 import {
   createPlace,
   createTravelRule,
+  editLeg,
+  getLegLinks,
   getTravelDays,
   getTravelSettings,
   listPlaces,
@@ -24,7 +26,9 @@ import {
   previewTravel,
   removePlace,
   removeTravelRule,
+  resetLeg,
   setContainerPlace,
+  skipLeg,
   unmarkItem,
   updatePlace,
   updateTravelRule,
@@ -33,9 +37,11 @@ import {
 import { useDebounced } from '@/features/editor/useDebounced';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { RootState } from '@/store';
+import type { ItemDetail } from '@api-types/api-contracts';
 import type {
   CreatePlaceRequest,
   CreateTravelRuleRequest,
+  LegEditRequest,
   MarkItemRequest,
   TravelPreviewRequest,
   TravelSettingsResponse,
@@ -311,6 +317,61 @@ export function useTravelDays(from: string, to: string) {
         suppressErrorToast: true,
       });
       return response.data;
+    },
+  });
+}
+
+// ─── One leg ────────────────────────────────────────────────────────────────
+
+/** The answer is the leg as it is now: it replaces the cached item at once. */
+function storeLeg(queryClient: QueryClient, workspaceId: string, leg: ItemDetail): void {
+  queryClient.setQueryData(queryKeys.item(workspaceId, leg.id), leg);
+}
+
+/** New times for a leg: one or two of start, end and length. Hand edits stay until Reset. */
+export function useEditLeg(workspaceId: string) {
+  return useTravelChange(
+    workspaceId,
+    async ({ legId, body }: { legId: string; body: LegEditRequest }) => {
+      const response = await editLeg(workspaceId, legId, body, { suppressErrorToast: true });
+      return response.data;
+    },
+    (queryClient, leg) => {
+      storeLeg(queryClient, workspaceId, leg);
+    },
+  );
+}
+
+/** Computed again: his times and the "moved" flag are cleared, and a skipped trip is back. */
+export function useResetLeg(workspaceId: string) {
+  return useTravelChange(
+    workspaceId,
+    async (legId: string) => {
+      const response = await resetLeg(workspaceId, legId, { suppressErrorToast: true });
+      return response.data;
+    },
+    (queryClient, leg) => {
+      storeLeg(queryClient, workspaceId, leg);
+    },
+  );
+}
+
+/** Skipped for its day (a tombstone until Reset): the days and the blocks are read again. */
+export function useSkipLeg(workspaceId: string) {
+  return useTravelChange(workspaceId, (legId: string) =>
+    skipLeg(workspaceId, legId, { suppressErrorToast: true }),
+  );
+}
+
+/** The apps that open the trip. Read when the sheet opens; never cached long (they carry places). */
+export function useLegLinks(workspaceId: string, legId: string, enabled = true) {
+  return useQuery({
+    queryKey: queryKeys.travelLegLinks(workspaceId, legId),
+    enabled: enabled && workspaceId !== '' && legId !== '',
+    staleTime: QUERY_STALE_TIME_PRIVATE_MS,
+    queryFn: async ({ signal }) => {
+      const response = await getLegLinks(workspaceId, legId, { signal, suppressErrorToast: true });
+      return response.data.links;
     },
   });
 }
