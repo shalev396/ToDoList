@@ -1,10 +1,12 @@
 """
-Settings -> Travel (docs/superpowers/specs/2026-11-17-travel-time-design.md): places by
-coordinates with the Home badge, a rule built with the sentence filter, the factors and buffers
-with the spec's defaults, and the tab in Hebrew on a phone. Places and rules are set up through
-the API (tests/helpers/travel.py) where a test isn't about adding them; the page is driven through
-the UI.
+Settings -> Travel (docs/superpowers/specs/2026-11-17-travel-time-design.md, as the owner's
+decision of 2026-11-18 amends it): places as a name and an optional address (never looked up, no
+coordinates) with the Home badge, a rule built with the sentence filter, the options (going home,
+the default mode; no factors or buffers: trip lengths are set on the trips), and the tab in Hebrew
+on a phone. Places and rules are set up through the API (tests/helpers/travel.py) where a test
+isn't about adding them; the page is driven through the UI.
 """
+import re
 from datetime import date, timedelta
 
 import pytest
@@ -20,10 +22,7 @@ from tests.helpers.tap_targets import assert_touch_screen, small_targets
 from tests.helpers.travel import create_place, create_rule, get_settings, list_rules
 from tests.helpers.workspaces import open_as
 
-HOME = (32.7940, 34.9896)
-BRAUDE = (32.9141, 35.2922)
 IPHONE = {"width": 393, "height": 852}
-NO_ORS = "No OpenRouteService key: walking and driving use your last trip or an estimate"
 
 
 def _travel_call(method: str, path: str):
@@ -44,10 +43,11 @@ def _open(page: Page, base_url: str, user, language: str = "en") -> None:
     expect(page.locator("[data-places]")).to_be_visible(timeout=NORMAL_TIMEOUT)
 
 
-def _add_place(page: Page, name: str, address: str, aliases: str = "", home: bool = False):
+def _add_place(page: Page, name: str, address: str = "", aliases: str = "", home: bool = False):
     form = page.locator("[data-place-form=add]")
     form.get_by_label("Name", exact=True).fill(name)
-    form.get_by_label("Address or coordinates").fill(address)
+    if address:
+        form.get_by_label("Address (optional)").fill(address)
     if aliases:
         form.get_by_label("Other names").fill(aliases)
     if home:
@@ -64,28 +64,38 @@ def _tomorrow_in_jerusalem(page: Page) -> str:
     return (date.fromisoformat(today) + timedelta(days=1)).isoformat()
 
 
-def test_add_home_and_place_by_coordinates(page: Page, base_url: str, api_base_url: str, fresh_owner):
+def test_add_home_and_a_place_by_name_and_address(
+    page: Page, base_url: str, api_base_url: str, fresh_owner
+):
     user, workspace = fresh_owner
     _open(page, base_url, user)
     expect(page.get_by_role("link", name="Travel", exact=True)).to_have_attribute("aria-current", "page")
     expect(page.locator("[data-places]")).to_contain_text("No places yet. Start with Home.")
+    # No outside service: no notice about a routing key, no factors or buffers.
+    expect(page.locator("[data-ors-missing]")).to_have_count(0)
+    expect(page.get_by_text("OpenRouteService")).to_have_count(0)
+    expect(page.locator("[data-places]")).to_contain_text(
+        "Only used to open Waze or Google Maps on your device. Nothing is looked up."
+    )
 
-    created = _add_place(page, "Home", "32.7940, 34.9896", home=True)
+    # A name alone is a place.
+    created = _add_place(page, "Home", home=True)
     assert created.status == 201, created.text()
-    body = created.request.post_data_json
-    # Typed coordinates go as coordinates: nothing is looked up.
-    assert body["coords"] == {"lat": 32.794, "lon": 34.9896}
-    assert body["home"] is True
+    assert created.request.post_data_json == {"name": "Home", "aliases": [], "home": True}
     home = page.locator('[data-place="Home"]')
     expect(home.locator("[data-home-badge]")).to_have_text("Home")
-    # The address is shown to its owner (it is in no one else's answers: Task 13's privacy tests).
-    expect(home.locator("[data-place-address]")).to_have_text("32.7940, 34.9896")
-    expect(home.locator("[data-place-address]")).to_have_attribute("dir", "ltr")
+    expect(home.locator("[data-place-address]")).to_have_count(0)
 
-    created = _add_place(page, "Braude", " 32.9141 , 35.2922 ", aliases="ORT Braude, בראודה")
+    # An address goes as typed (trimmed): text only, never coordinates.
+    created = _add_place(page, "Braude", " Snunit St 51, Karmiel ", aliases="ORT Braude, בראודה")
     assert created.status == 201, created.text()
-    assert created.request.post_data_json["coords"] == {"lat": 32.9141, "lon": 35.2922}
+    body = created.request.post_data_json
+    assert body["address"] == "Snunit St 51, Karmiel"
+    assert "coords" not in body
+    assert "lat" not in created.text()
     braude = page.locator('[data-place="Braude"]')
+    # The address is shown to its owner (it is in no one else's answers: the privacy tests).
+    expect(braude.locator("[data-place-address]")).to_have_text("Snunit St 51, Karmiel")
     expect(braude).to_contain_text("Also called ORT Braude, בראודה")
     expect(braude.locator("[data-home-badge]")).to_have_count(0)
     # The add form is empty again, ready for the next place.
@@ -137,8 +147,8 @@ def test_add_home_and_place_by_coordinates(page: Page, base_url: str, api_base_u
 def test_rule_with_sentence_filter_saves(page: Page, base_url: str, api_base_url: str, fresh_owner):
     user, workspace = fresh_owner
     wid = workspace["id"]
-    create_place(api_base_url, user, wid, "Home", coords=HOME, home=True)
-    braude = create_place(api_base_url, user, wid, "Braude", coords=BRAUDE)
+    create_place(api_base_url, user, wid, "Home", home=True)
+    braude = create_place(api_base_url, user, wid, "Braude")
     _open(page, base_url, user)
     tomorrow = _tomorrow_in_jerusalem(page)
 
@@ -228,8 +238,8 @@ def test_next_14_days_counts_stored_legs_and_removals(
 ):
     user, workspace = fresh_owner
     wid = workspace["id"]
-    create_place(api_base_url, user, wid, "Home", coords=HOME, home=True)
-    braude = create_place(api_base_url, user, wid, "Braude", coords=BRAUDE)
+    create_place(api_base_url, user, wid, "Home", home=True)
+    braude = create_place(api_base_url, user, wid, "Braude")
     _open(page, base_url, user)
     tomorrow = _tomorrow_in_jerusalem(page)
     # A lecture tomorrow 10:00-12:00 (Jerusalem, UTC+2 in November), and a rule that drives there
@@ -277,39 +287,28 @@ def test_next_14_days_counts_stored_legs_and_removals(
 def test_settings_defaults_shown_and_saved(page: Page, base_url: str, api_base_url: str, fresh_owner):
     user, workspace = fresh_owner
     _open(page, base_url, user)
-    ors_available = get_settings(api_base_url, user, workspace["id"])["orsAvailable"]
-    notice = page.locator("[data-ors-missing]")
-    if ors_available:
-        expect(notice).to_have_count(0)
-    else:
-        expect(notice).to_have_text(NO_ORS)
-
-    # The spec's defaults: walking ×1 +0, driving ×1.15 +10 (parking), transit ×1 +5 (the stop).
-    expected = {"walk": ("1", "0"), "drive": ("1.15", "10"), "transit": ("1", "5")}
-    names = {"walk": "Walking", "drive": "Driving", "transit": "Public transport"}
-    for mode, (factor, buffer) in expected.items():
-        row = page.locator(f"[data-travel-mode={mode}]")
-        expect(row.get_by_role("textbox", name=f"{names[mode]} factor")).to_have_value(factor)
-        expect(row.get_by_role("textbox", name=f"{names[mode]} buffer, in minutes")).to_have_value(buffer)
-        expect(row).to_contain_text("×")
-        expect(row).to_contain_text("+")
-    driving = page.locator("[data-travel-mode=drive]")
-    expect(driving).to_contain_text("Driving")
+    assert get_settings(api_base_url, user, workspace["id"]) == {
+        "settings": {
+            "goHome": {"enabled": False, "minWindowMinutes": 180, "minAtHomeMinutes": 60},
+            "defaultMode": "transit",
+        },
+        "containerPlaces": [],
+    }
+    options = page.locator("[data-travel-settings]")
+    expect(page.get_by_role("heading", name="Options", exact=True)).to_be_visible()
+    # Trip lengths are no setting: the page says where they are set.
+    expect(page.get_by_text("How long a trip takes is set on the trip itself, once")).to_be_visible()
+    expect(page.locator("[data-travel-mode]")).to_have_count(0)
+    expect(options.get_by_role("textbox", name=re.compile("factor|buffer"))).to_have_count(0)
     go_home = page.get_by_role("switch", name="Go home in a long window")
     expect(go_home).to_have_attribute("aria-checked", "false")
     expect(page.get_by_label("Window of at least")).to_have_value("180")
     expect(page.get_by_label("Window of at least")).to_be_disabled()
     expect(page.get_by_label("Time at home of at least")).to_have_value("60")
     expect(page.get_by_role("radio", name="Public transport")).to_be_checked()
-    save = page.get_by_role("button", name="Save times")
+    save = page.get_by_role("button", name="Save options")
     expect(save).to_be_disabled()
 
-    # A factor is clamped to 0.5–3 when it loses focus.
-    factor = driving.get_by_role("textbox", name="Driving factor")
-    factor.fill("5")
-    factor.blur()
-    expect(factor).to_have_value("3")
-    page.get_by_role("textbox", name="Walking buffer, in minutes").fill("7")
     go_home.click()
     expect(go_home).to_have_attribute("aria-checked", "true")
     window = page.get_by_label("Window of at least")
@@ -326,17 +325,15 @@ def test_settings_defaults_shown_and_saved(page: Page, base_url: str, api_base_u
         page.locator("[data-new-travel-rule]").get_by_role("combobox", name="How you travel")
     ).to_contain_text("Driving", timeout=NORMAL_TIMEOUT)
     settings = saved.value.json()["data"]["settings"]
-    assert settings["factors"] == {"walk": 1, "drive": 3, "transit": 1}
-    assert settings["buffers"] == {"walk": 7, "drive": 10, "transit": 5}
+    assert saved.value.request.post_data_json.keys() == {"goHome", "defaultMode"}
+    assert sorted(settings) == ["defaultMode", "goHome"]
     assert settings["goHome"] == {"enabled": True, "minWindowMinutes": 240, "minAtHomeMinutes": 60}
     assert settings["defaultMode"] == "drive"
     expect(save).to_be_disabled(timeout=NORMAL_TIMEOUT)
 
     page.reload()
-    expect(page.get_by_role("textbox", name="Driving factor")).to_have_value("3", timeout=NORMAL_TIMEOUT)
-    expect(page.get_by_role("textbox", name="Walking buffer, in minutes")).to_have_value("7")
     expect(page.get_by_role("switch", name="Go home in a long window")).to_have_attribute(
-        "aria-checked", "true"
+        "aria-checked", "true", timeout=NORMAL_TIMEOUT
     )
     expect(page.get_by_label("Window of at least")).to_have_value("240")
     expect(page.get_by_role("radio", name="Driving")).to_be_checked()
@@ -361,10 +358,9 @@ def test_travel_tab_in_hebrew(phone: Page, base_url: str, api_base_url: str, fre
     page = phone
     user, workspace = fresh_owner
     wid = workspace["id"]
-    create_place(api_base_url, user, wid, "בית", coords=HOME, home=True)
-    # Typed as text, so the place keeps it as its address (the server needs no lookup).
+    create_place(api_base_url, user, wid, "בית", home=True)
     braude = create_place(
-        api_base_url, user, wid, "Braude", address="32.9141, 35.2922", aliases=["בראודה"]
+        api_base_url, user, wid, "Braude", address="סנונית 51, כרמיאל", aliases=["בראודה"]
     )
     create_rule(
         api_base_url,
@@ -378,18 +374,17 @@ def test_travel_tab_in_hebrew(phone: Page, base_url: str, api_base_url: str, fre
     assert_touch_screen(page)
 
     expect(page.get_by_role("link", name="נסיעות", exact=True)).to_have_attribute("aria-current", "page")
-    for heading in ("מקומות", "כללים", "זמנים", "מקומות ברירת מחדל", "14 הימים הקרובים"):
+    for heading in ("מקומות", "כללים", "אפשרויות", "מקומות ברירת מחדל", "14 הימים הקרובים"):
         expect(page.get_by_role("heading", name=heading, exact=True)).to_be_visible()
     expect(page.locator('[data-place="בית"] [data-home-badge]')).to_have_text("בית")
     expect(page.locator('[data-place="Braude"]')).to_contain_text("נקרא גם בראודה")
-    # Coordinates read left to right inside the Hebrew page.
-    expect(page.locator('[data-place="Braude"] [data-place-address]')).to_have_attribute("dir", "ltr")
+    expect(page.locator('[data-place="Braude"] [data-place-address]')).to_have_text("סנונית 51, כרמיאל")
     rule = page.locator("[data-travel-rule]")
     expect(rule).to_contain_text("עבור")
     expect(rule.get_by_role("combobox", name="איך נוסעים")).to_contain_text("תחבורה ציבורית")
     expect(rule.get_by_role("combobox", name="אילו נסיעות")).to_contain_text("הלוך וחזור")
-    expect(page.get_by_role("textbox", name="מקדם נהיגה")).to_have_value("1.15")
-    expect(page.get_by_role("textbox", name="תוספת נהיגה, בדקות")).to_have_value("10")
+    expect(page.get_by_text("כמה זמן לוקחת נסיעה קובעים בנסיעה עצמה")).to_be_visible()
+    expect(page.get_by_text("OpenRouteService")).to_have_count(0)
 
     days = page.locator("[data-travel-day]")
     expect(days).to_have_count(14, timeout=NORMAL_TIMEOUT)

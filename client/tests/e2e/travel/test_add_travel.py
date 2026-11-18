@@ -1,10 +1,12 @@
 """
 "Add travel time" (docs/superpowers/specs/2026-11-17-travel-time-design.md, "Where travel comes
-from"): the New to-do form's switch and panel, a to-do with a due date only asked for a time, and
+from", as the owner's decision of 2026-11-18 amends it): the New to-do form's switch and panel
+(how long the trip takes, every time, and this trip's own leave and arrive; a trip with no length
+yet shows the placeholder and "Set how long"), a to-do with a due date only asked for a time, and
 "Add travel" in the item sheet of a repeating event, which asks "Every occurrence?".
 
-Home and Braude are seeded by coordinates through the API (tests/helpers/travel.py), so no test
-waits on a geocoder. The forms and the sheet are driven through the UI.
+Home and Braude are seeded by name through the API (tests/helpers/travel.py): nothing is looked up.
+The forms and the sheet are driven through the UI.
 
 DEFERRED until the branch is merged to dev: the dev database's Items validator predates kind
 `travel`, so the legs a mark makes are refused there (the server catches and logs it; the mark still
@@ -31,8 +33,6 @@ from tests.helpers.users import pooled_user
 from tests.helpers.workspaces import open_as
 from tests.viewports import DESKTOP_VIEWPORT
 
-HOME = (32.7940, 34.9896)
-BRAUDE = (32.9141, 35.2922)
 DEFERRED = (
     "DEFERRED until merge to dev: the dev Items validator rejects kind travel, so no leg is stored"
 )
@@ -64,8 +64,8 @@ def _tomorrow(page: Page) -> str:
 
 
 def _seed_places(api_base_url: str, user, workspace_id: str) -> tuple[dict, dict]:
-    home = create_place(api_base_url, user, workspace_id, "Home", coords=HOME, home=True)
-    braude = create_place(api_base_url, user, workspace_id, "Braude", coords=BRAUDE)
+    home = create_place(api_base_url, user, workspace_id, "Home", home=True)
+    braude = create_place(api_base_url, user, workspace_id, "Braude")
     return home, braude
 
 
@@ -122,25 +122,33 @@ def _todo_with_travel(page: Page, base_url: str, api_base_url: str, fresh_owner)
     expect(panel.get_by_role("combobox", name="To")).to_contain_text("Braude")
     expect(panel.get_by_role("checkbox", name="There")).to_be_checked()
     expect(panel.get_by_role("checkbox", name="Back")).to_be_checked()
-    # Arriving by 14:00; the length is worked out (no stored leg needed for a preview).
+    # Arriving by 14:00. No length is set for the trip yet: it shows the 30-minute placeholder
+    # and asks for one (no stored leg needed for a preview).
     expect(panel.get_by_label("Arrive", exact=True)).to_have_value("14:00")
     line = panel.locator("[data-travel-preview]")
     with page.expect_request(_is_preview("drive"), timeout=APP_REQUEST_TIMEOUT):
         panel.get_by_text("Drive", exact=True).click()
     expect(panel.get_by_role("radio", name="Drive")).to_be_checked()
     expect(line).to_have_text(
-        re.compile(
-            rf"^Leave {LTR}\d\d:\d\d{END} · arrive {LTR}14:00{END} · \d+ min "
-            r"\((OpenRouteService|estimate)\)$"
-        ),
+        f"Leave {LTR}13:30{END} · arrive {LTR}14:00{END} · 30 min (not set yet)",
         timeout=NORMAL_TIMEOUT,
     )
+    length = panel.get_by_label("How long this trip takes (every time), in minutes")
+    expect(length).to_have_value("")
+    expect(length).to_have_attribute("placeholder", "Set how long")
+    expect(panel.locator("[data-travel-length-hint]")).to_have_text(
+        "Not set yet: it’s shown as 30 min until you set it."
+    )
+    expect(panel.locator("[data-travel-times]")).to_contain_text("This trip only")
     asked = len(previews)
 
-    # The trip there takes 40 minutes: leave at 13:20, his own times.
-    panel.get_by_label("Length, in minutes").fill("40")
+    # The trip there takes 40 minutes, every time: leave at 13:20.
+    length.fill("40")
     expect(panel.get_by_label("Leave", exact=True)).to_have_value("13:20")
-    expect(line).to_have_text(f"Leave {LTR}13:20{END} · arrive {LTR}14:00{END} · 40 min (your times)")
+    expect(line).to_have_text(f"Leave {LTR}13:20{END} · arrive {LTR}14:00{END} · 40 min (set by you)")
+    expect(panel.locator("[data-travel-length-hint]")).to_have_text(
+        "Set once: every repeat of this trip uses it."
+    )
     page.wait_for_timeout(1000)
     # Typing the times asks for no preview: only a new trip (mode or places) does.
     assert len(previews) == asked, previews
@@ -185,11 +193,11 @@ def test_new_todo_with_travel_starts_at_its_time_and_is_marked(
     assert [(r["id"], r["scope"]) for r in list_rules(api_base_url, user, workspace["id"])] == [
         (rule["id"], rule["scope"])
     ]
-    # Previews were asked per trip only (public transport, then driving), each Home → Braude.
-    assert [(p["mode"], p["toPlaceId"]) for p in previews] == [
-        ("transit", braude["id"]),
-        ("drive", braude["id"]),
-    ]
+    # Previews were asked per trip only (public transport, then driving), each Home → Braude; the
+    # mark (a travel change) reads the open trip's length again, never another trip's.
+    trips = [(p["mode"], p["toPlaceId"]) for p in previews]
+    assert trips[:2] == [("transit", braude["id"]), ("drive", braude["id"])], trips
+    assert set(trips[2:]) <= {("drive", braude["id"])}, trips
 
 
 @pytest.mark.xfail(strict=True, reason=DEFERRED)
@@ -214,7 +222,13 @@ def test_new_todo_leg_shows_before_it_in_calendar(
         braude["id"],
         True,
     )
-    assert (trip["minutes"], trip["source"]) == (40, "manual")
+    # The trip's own length, every time: not a hand edit of the leg.
+    assert (trip["minutes"], trip["source"], trip["lengthUnset"], trip["edited"]) == (
+        40,
+        "set",
+        False,
+        False,
+    )
     assert back["title"] == "Drive home"
     assert _same_instant(back["startAt"], zoned_iso(page, tomorrow, "14:00"))
     assert back["props"]["travel"]["toHome"] is True
@@ -311,7 +325,7 @@ def test_due_only_todo_asks_for_a_time(page: Page, base_url: str, api_base_url: 
     expect(save).to_be_disabled()
     for field in ("Leave", "Arrive"):
         expect(panel.get_by_label(field, exact=True)).to_be_disabled()
-    expect(panel.get_by_label("Length, in minutes")).to_be_disabled()
+    expect(panel.get_by_label("How long this trip takes (every time), in minutes")).to_be_disabled()
 
     # With a time it can: the trip arrives by it.
     time.fill("09:30")
@@ -454,11 +468,11 @@ def test_series_every_occurrence_creates_rule(
 
     # A series: the hint says up front that every occurrence keeps a length only.
     expect(panel.locator("[data-travel-span]")).to_contain_text(
-        "For every occurrence only the length is kept, arriving as each one starts."
+        "Every occurrence keeps only the length, arriving as each one starts."
     )
     # He types a 30-minute bus arriving at 09:50: choosing every occurrence is told it keeps the
     # 30 minutes only (each occurrence arrives as it starts), never dropped without a word.
-    panel.get_by_label("Length, in minutes").fill("30")
+    panel.get_by_label("How long this trip takes (every time), in minutes").fill("30")
     panel.get_by_label("Arrive", exact=True).fill("09:50")
     expect(panel.get_by_label("Leave", exact=True)).to_have_value("09:20")
     travel.locator("[data-travel-save]").click()

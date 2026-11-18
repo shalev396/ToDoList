@@ -6,7 +6,6 @@ import type { TravelLink } from '@api-types/travel.ts';
 const LINK_NAMES = {
   google_maps: 'travel.leg.sheet.linkGoogle',
   waze: 'travel.leg.sheet.linkWaze',
-  moovit: 'travel.leg.sheet.linkMoovit',
 } as const;
 
 const LINK_CLASS = cn(
@@ -15,13 +14,9 @@ const LINK_CLASS = cn(
 );
 
 /**
- * The apps that open the trip: Google Maps, Waze for driving, Moovit for transit. The links carry
- * the trip's coordinates, so they are read for its member only and never shown as text.
- *
- * An app that may be missing (Moovit's own scheme) gets two plain links: the app, and its web page
- * (`fallbackUrl`) in a new tab. No timer decides between them: iOS WebKit drops the tap's
- * permission to open a tab after about a second, and an app opened from the Home Screen app must
- * never be navigated away from itself, so each link is one tap that does one thing.
+ * The apps that open the trip: Waze for driving, Google Maps for every trip. The links carry the
+ * places' addresses as he typed them (a name when a place has none), so they are read for its
+ * member only and never shown as text. Each link is one tap that opens one app (or its web page).
  */
 export function AppLinks({
   links,
@@ -47,7 +42,7 @@ export function AppLinks({
     <div className="flex flex-col gap-1.5" data-leg-links="">
       <p className="text-sm font-medium">{t('travel.leg.sheet.links')}</p>
       <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
-        {links.flatMap((link) => [
+        {links.map((link) => (
           <li key={link.app}>
             <a
               href={link.url}
@@ -59,24 +54,8 @@ export function AppLinks({
               {t(LINK_NAMES[link.app])}
               <ExternalLink aria-hidden="true" className="size-3.5" />
             </a>
-          </li>,
-          ...(link.fallbackUrl === undefined
-            ? []
-            : [
-                <li key={`${link.app}-web`}>
-                  <a
-                    href={link.fallbackUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    data-leg-link={`${link.app}-web`}
-                    className={LINK_CLASS}
-                  >
-                    {t('travel.leg.sheet.linkWeb', { app: t(LINK_NAMES[link.app]) })}
-                    <ExternalLink aria-hidden="true" className="size-3.5" />
-                  </a>
-                </li>,
-              ]),
-        ])}
+          </li>
+        ))}
       </ul>
     </div>
   );

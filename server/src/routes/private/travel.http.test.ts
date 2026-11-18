@@ -1,23 +1,20 @@
 /**
  * The travel routes over HTTP (docs/superpowers/specs/2026-11-17-travel-time-design.md; plan Task
  * 13): places, rules, settings, default places and pins, marking an item ("this one" or every
- * occurrence), the preview, a leg's edit, skip, reset and links, and the day panel. The role
- * matrix (editors only), strict bodies, an address nobody finds (400 `place_not_found`, never a
- * 500), no Home (409 `travel_home_missing`), changes that regenerate the member's legs before they
- * answer, and a to-do created with a start and an end. No `/travel/*` answer but a leg's own links
- * carries a coordinate.
+ * occurrence), the preview, a leg's length (the trip's, every time) and times (that leg's), skip,
+ * reset and links, and the day panel. The role matrix (editors only), strict bodies, no Home (409
+ * `travel_home_missing`), changes that regenerate the member's legs before they answer, and a
+ * to-do created with a start and an end. No answer carries a coordinate (there are none), and a
+ * place's address is in its member's place views and a leg's own links only.
  *
  * Anchors are dated from today on Jerusalem's wall clock (a regeneration plans from the real now).
  */
-import { after, afterEach, before, describe, it, mock } from 'node:test';
+import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { setTravelTransportForTests } from '../../config/testSwitches.js';
 import { startApiHarness, type ApiHarness, type ApiResponse } from '../../testing/apiHarness.js';
 import { findSecrets } from '../../services/secretPatterns.js';
-import type * as AppSecrets from '../../services/appSecrets.js';
 import type { SourceRef } from '../../models/definitions/common.js';
-import type { HttpRequest, HttpResponse, Transport } from '../../sync/http.js';
 import { addLocalDays, wallDate, zonedParts, zonedTime } from '../../types/recurrence/zoned.js';
 import {
   DEFAULT_TRAVEL_SETTINGS,
@@ -31,7 +28,6 @@ import {
 } from '../../types/travel.js';
 
 let api: ApiHarness;
-let appSecrets: typeof AppSecrets;
 const token = { owner: '', editor: '', editor2: '', viewer: '', stranger: '' };
 let wid = '';
 let homeId = '';
@@ -41,13 +37,8 @@ let editorId = '';
 type Who = keyof typeof token;
 
 const ZONE = 'Asia/Jerusalem';
-const HOME = { lat: 32.794, lon: 34.9896 };
-const BRAUDE = { lat: 32.9141, lon: 35.2922 };
-const GYM = { lat: 32.8012, lon: 35.0123 };
-/** Every coordinate of the tests' places, as an answer would print it. */
-const COORDINATES = [HOME, BRAUDE, GYM].flatMap(({ lat, lon }) => [String(lat), String(lon)]);
-/** What the fake Nominatim finds. */
-const KNOWN_ADDRESS = 'Hagefen St 4, Haifa';
+/** Braude's address: in its member's place views and a leg's links only. */
+const ADDRESS = 'Snunit St 51, Karmiel';
 
 interface Leg {
   id: string;
@@ -60,36 +51,17 @@ interface Leg {
   props: { travel: TravelLegProps; travelKey: string };
 }
 
-/** Nominatim as the tests need it: KNOWN_ADDRESS is at GYM, anything else is nowhere; else 503. */
-class FakeGeocoder implements Transport {
-  readonly maxRetries = 0;
-  readonly requests: HttpRequest[] = [];
-
-  send(request: HttpRequest): Promise<HttpResponse> {
-    this.requests.push(request);
-    const url = new URL(request.url);
-    if (url.host !== 'nominatim.openstreetmap.org') {
-      return Promise.resolve({ status: 503, headers: {}, body: '{}' });
-    }
-    const found =
-      url.searchParams.get('q') === KNOWN_ADDRESS
-        ? [{ lat: String(GYM.lat), lon: String(GYM.lon) }]
-        : [];
-    return Promise.resolve({ status: 200, headers: {}, body: JSON.stringify(found) });
-  }
-}
-
 async function call(who: Who, method: string, path: string, body?: unknown): Promise<ApiResponse> {
   const res = await api.call(method, `/api/private/workspaces/${wid}${path}`, {
     token: token[who],
     ...(body === undefined ? {} : { body }),
   });
   assert.deepEqual(findSecrets(res.body), [], res.text);
-  // Ruling 1: no travel answer carries a coordinate, but a leg's links (its member's, by design).
-  if (path.startsWith('/travel/') && !path.endsWith('/links')) {
-    for (const number of COORDINATES) {
-      assert.ok(!res.text.includes(number), `${method} ${path} carries ${number}: ${res.text}`);
-    }
+  // No answer carries a coordinate: a place has none.
+  assert.doesNotMatch(res.text, /"(?:lat|lon|coords)"\s*:/, `${method} ${path}`);
+  // An address is its member's place views' and a leg's links' only: never on a leg or a rule.
+  if (!path.startsWith('/travel/places') && !path.endsWith('/links')) {
+    assert.ok(!res.text.includes(ADDRESS), `${method} ${path} carries the address: ${res.text}`);
   }
   return res;
 }
@@ -150,9 +122,6 @@ const minutesOf = (leg: { startAt: string; endAt: string }): number =>
 
 before(async () => {
   api = await startApiHarness('todolist_travel_http');
-  appSecrets = await import('../../services/appSecrets.js');
-  appSecrets.setAppSecretsForTests({});
-  setTravelTransportForTests(new FakeGeocoder());
   for (const who of Object.keys(token) as Who[]) {
     token[who] = (await api.login(`travel-http-${who}@example.test`)).token;
   }
@@ -175,38 +144,27 @@ before(async () => {
     if (who === 'editor') editorId = user.id;
   }
   homeId = (
-    await ok<PlaceView>(
-      'editor',
-      'POST',
-      '/travel/places',
-      { name: 'Home', coords: HOME, home: true },
-      201,
-    )
+    await ok<PlaceView>('editor', 'POST', '/travel/places', { name: 'Home', home: true }, 201)
   ).id;
   braudeId = (
     await ok<PlaceView>(
       'editor',
       'POST',
       '/travel/places',
-      { name: 'Braude', coords: BRAUDE, aliases: ['ORT Braude'] },
+      { name: 'Braude', address: ADDRESS, aliases: ['ORT Braude'] },
       201,
     )
   ).id;
 });
 
-afterEach(() => {
-  appSecrets.setAppSecretsForTests({});
-});
-
 after(async () => {
-  setTravelTransportForTests(null);
   await api.stop();
 });
 
 /** Every travel route, with a body that would pass where one is needed. */
 const ROUTES: readonly [string, string, unknown?][] = [
   ['GET', '/travel/places'],
-  ['POST', '/travel/places', { name: 'X', coords: HOME }],
+  ['POST', '/travel/places', { name: 'X' }],
   ['PATCH', '/travel/places/p-1', { name: 'Y' }],
   ['DELETE', '/travel/places/p-1'],
   ['GET', '/travel/rules'],
@@ -258,9 +216,10 @@ describe('access', () => {
   it('strict bodies → 400', async () => {
     const at = iso(local(5, 10));
     for (const [method, path, body] of [
-      ['POST', '/travel/places', { name: 'X', coords: HOME, colour: 'red' }],
-      ['POST', '/travel/places', { name: 'X', coords: { ...HOME, alt: 3 } }],
-      ['POST', '/travel/places', { coords: HOME }],
+      ['POST', '/travel/places', { name: 'X', colour: 'red' }],
+      ['POST', '/travel/places', { name: 'X', coords: { lat: 32.9, lon: 35.3 } }],
+      ['POST', '/travel/places', { name: 'X', lat: 32.9, lon: 35.3 }],
+      ['POST', '/travel/places', { address: ADDRESS }],
       ['PATCH', `/travel/places/${homeId}`, { colour: 'red' }],
       ['PATCH', `/travel/places/${homeId}`, {}],
       [
@@ -277,7 +236,8 @@ describe('access', () => {
       ['PATCH', '/travel/rules/r-1', { mode: 'walk', note: 'x' }],
       ['PATCH', '/travel/rules/r-1', {}],
       ['PATCH', '/travel/settings', { theme: 'dark' }],
-      ['PATCH', '/travel/settings', { factors: { bike: 2 } }],
+      ['PATCH', '/travel/settings', { factors: { drive: 1.3 } }],
+      ['PATCH', '/travel/settings', { buffers: { drive: 10 } }],
       ['PATCH', '/travel/settings', {}],
       ['PUT', '/travel/container-places/c-1', { placeId: braudeId, x: 1 }],
       ['PUT', '/travel/container-places/c-1', {}],
@@ -307,19 +267,12 @@ describe('access', () => {
 });
 
 describe('places', () => {
-  it('unknown address is 400 place_not_found', async () => {
-    const missing = await call('editor', 'POST', '/travel/places', {
-      name: 'Nowhere',
-      address: 'No such street 1',
-    });
-    assert.equal(missing.status, 400, missing.text);
-    assert.equal(missing.body?.['code'], 'place_not_found');
-    // An address the geocoder finds: the view has it, never its coordinates.
+  it('a name, and an address as typed (never looked up); empty clears it', async () => {
     const gym = await ok<PlaceView>(
       'editor',
       'POST',
       '/travel/places',
-      { name: 'Gym', address: KNOWN_ADDRESS },
+      { name: 'Gym', address: 'No such street 1' },
       201,
     );
     assert.deepEqual(gym, {
@@ -327,17 +280,21 @@ describe('places', () => {
       name: 'Gym',
       aliases: [],
       home: false,
-      address: KNOWN_ADDRESS,
+      address: 'No such street 1',
     });
     const renamed = await ok<PlaceView>('editor', 'PATCH', `/travel/places/${gym.id}`, {
       name: 'Gym East',
       aliases: ['The gym'],
     });
     assert.deepEqual([renamed.name, renamed.aliases], ['Gym East', ['The gym']]);
-    const moved = await call('editor', 'PATCH', `/travel/places/${gym.id}`, {
-      address: 'Nowhere at all',
+    const typed = await ok<PlaceView>('editor', 'PATCH', `/travel/places/${gym.id}`, {
+      address: '32.80, 35.01',
     });
-    assert.equal(moved.body?.['code'], 'place_not_found', moved.text);
+    assert.equal(typed.address, '32.80, 35.01');
+    const cleared = await ok<PlaceView>('editor', 'PATCH', `/travel/places/${gym.id}`, {
+      address: '',
+    });
+    assert.equal(cleared.address, null);
     assert.equal((await call('editor', 'DELETE', `/travel/places/${gym.id}`)).status, 204);
     assert.equal((await call('editor', 'DELETE', `/travel/places/${gym.id}`)).status, 404);
     // Another member's place is not found.
@@ -495,7 +452,7 @@ describe('marking an item', () => {
     assert.equal(there.startAt, iso(local(11, 14, 30)));
     assert.deepEqual(
       [there.props.travel.source, there.props.travel.edited, there.props.travel.occurrence],
-      ['manual', true, occurrence],
+      ['set', true, occurrence],
     );
     const bad = await call('editor', 'POST', `/travel/items/${lab.id}`, {
       occurrence,
@@ -510,10 +467,15 @@ describe('marking an item', () => {
     );
   });
 
-  it('leg PATCH any two', async () => {
+  it('leg PATCH: a length is the trip’s, every time; times move this leg', async () => {
     const legs = await mark(await todo('editor', 'Dentist', 3, 15));
     const there = legOf(legs, 'there');
-    // Start and end: the length follows.
+    // Not set yet: the placeholder, flagged.
+    assert.deepEqual(
+      [there.props.travel.minutes, there.props.travel.source, there.props.travel.lengthUnset],
+      [30, 'unset', true],
+    );
+    // Leave and arrive: this leg only (the length follows); the trip still has none.
     const spanned = await ok<Leg>('editor', 'PATCH', `/travel/legs/${there.id}`, {
       startAt: iso(local(3, 13)),
       endAt: iso(local(3, 14, 30)),
@@ -522,8 +484,15 @@ describe('marking an item', () => {
       [spanned.startAt, spanned.endAt, spanned.props.travel.minutes],
       [iso(local(3, 13)), iso(local(3, 14, 30)), 90],
     );
-    assert.deepEqual([spanned.props.travel.source, spanned.props.travel.edited], ['manual', true]);
-    // Start and length: the end follows.
+    assert.deepEqual(
+      [spanned.props.travel.source, spanned.props.travel.lengthUnset, spanned.props.travel.edited],
+      ['set', false, true],
+    );
+    assert.equal(
+      legOf(await mark(await todo('editor', 'Dentist 2', 4, 15)), 'there').props.travel.source,
+      'unset',
+    );
+    // Start and length: the trip's length, and the end follows.
     const started = await ok<Leg>('editor', 'PATCH', `/travel/legs/${there.id}`, {
       startAt: iso(local(3, 13, 30)),
       minutes: 60,
@@ -540,19 +509,40 @@ describe('marking an item', () => {
     assert.deepEqual([ended.startAt, ended.endAt], [iso(local(3, 14, 15)), iso(local(3, 15))]);
     for (const body of [
       {},
-      { startAt: iso(local(3, 13)), endAt: iso(local(3, 14)), minutes: 60 },
       { startAt: iso(local(3, 14)), endAt: iso(local(3, 13)) },
       { minutes: 0 },
     ]) {
       const res = await call('editor', 'PATCH', `/travel/legs/${there.id}`, body);
       assert.equal(res.status, 400, `${JSON.stringify(body)}: ${res.text}`);
     }
-    // Reset: computed again (the regeneration ran before the answer).
+    // Reset: computed again (the regeneration ran before the answer), with the trip's length.
     const reset = await ok<Leg>('editor', 'POST', `/travel/legs/${there.id}/reset`);
     assert.equal(reset.props.travel.edited, false);
     assert.equal(reset.endAt, iso(local(3, 15)));
-    assert.equal(reset.props.travel.source, 'remembered');
+    assert.equal(reset.props.travel.source, 'set');
     assert.equal(minutesOf(reset), 45);
+    // The other Dentist's leg (the same trip) took the length too.
+    const { days: next } = await ok<TravelDaysResponse>(
+      'editor',
+      'GET',
+      `/travel/days?from=${dayOf(4)}&to=${dayOf(4)}`,
+    );
+    const other = next[0]?.legs.find((leg) => leg.title === 'Bus to Braude');
+    assert.ok(other);
+    assert.equal(minutesOf({ startAt: String(other.startAt), endAt: String(other.endAt) }), 45);
+    // A length alone: the leg is not his by hand; it follows the trip.
+    const length = await ok<Leg>('editor', 'PATCH', `/travel/legs/${there.id}`, { minutes: 50 });
+    assert.deepEqual(
+      [length.startAt, length.endAt, length.props.travel.edited],
+      [iso(local(3, 14, 10)), iso(local(3, 15)), false],
+    );
+    // Length and both times: the trip's length, and this leg's span.
+    const both = await ok<Leg>('editor', 'PATCH', `/travel/legs/${there.id}`, {
+      startAt: iso(local(3, 14)),
+      endAt: iso(local(3, 14, 40)),
+      minutes: 35,
+    });
+    assert.deepEqual([minutesOf(both), both.props.travel.edited], [40, true]);
     assert.equal(
       (await call('editor', 'PATCH', '/travel/legs/no-such-leg', { minutes: 5 })).status,
       404,
@@ -608,28 +598,39 @@ describe('marking an item', () => {
     assert.equal(reset.props.travel.removedReason, null);
   });
 
-  it('links for a transit leg include moovit', async () => {
-    const legs = await mark(await todo('editor', 'Library', 6, 12));
-    const there = legOf(legs, 'there');
+  it('links: from the places’ text, Waze and Google Maps only (no Moovit)', async () => {
+    const transit = legOf(await mark(await todo('editor', 'Library', 6, 12)), 'there');
     const { links } = await ok<TravelLinksResponse>(
       'editor',
       'GET',
-      `/travel/legs/${there.id}/links`,
+      `/travel/legs/${transit.id}/links`,
+    );
+    // Home has no address: its name. Braude's address, as typed.
+    assert.deepEqual(links, [
+      {
+        app: 'google_maps',
+        url: `https://www.google.com/maps/dir/?api=1&origin=Home&destination=${encodeURIComponent(ADDRESS)}&travelmode=transit`,
+      },
+    ]);
+    const drive = legOf(
+      await mark(await todo('editor', 'Library 2', 9, 15), { mode: 'drive' }),
+      'there',
+    );
+    const driving = await ok<TravelLinksResponse>(
+      'editor',
+      'GET',
+      `/travel/legs/${drive.id}/links`,
     );
     assert.deepEqual(
-      links.map((link) => link.app),
-      ['moovit', 'google_maps'],
+      driving.links.map((link) => link.app),
+      ['waze', 'google_maps'],
     );
-    const [moovit, google] = links;
-    assert.match(moovit?.url ?? '', /^moovit:\/\/directions\?/);
-    assert.match(
-      moovit?.url ?? '',
-      /orig_lat=32\.794&orig_lon=34\.9896&dest_lat=32\.9141&dest_lon=35\.2922/,
+    assert.equal(
+      driving.links[0]?.url,
+      `https://waze.com/ul?q=${encodeURIComponent(ADDRESS)}&navigate=yes`,
     );
-    assert.equal(moovit?.fallbackUrl, 'https://moovitapp.com/');
-    assert.match(google?.url ?? '', /travelmode=transit$/);
     // Another member's leg has no links for them.
-    assert.equal((await call('editor2', 'GET', `/travel/legs/${there.id}/links`)).status, 404);
+    assert.equal((await call('editor2', 'GET', `/travel/legs/${transit.id}/links`)).status, 404);
   });
 });
 
@@ -638,9 +639,9 @@ describe('painted areas carry travel (the owner’s ruling of 2026-11-18)', () =
     // The owner's own places and marks: nobody else's share his day.
     const place = async (body: Record<string, unknown>): Promise<string> =>
       (await ok<PlaceView>('owner', 'POST', '/travel/places', body, 201)).id;
-    await place({ name: 'Home', coords: HOME, home: true });
-    const braude = await place({ name: 'Braude', coords: BRAUDE });
-    const gymPlace = await place({ name: 'Gym', coords: GYM });
+    await place({ name: 'Home', home: true });
+    const braude = await place({ name: 'Braude' });
+    const gymPlace = await place({ name: 'Gym' });
     interface Marked {
       rule: TravelRuleView;
       legs: Leg[];
@@ -732,19 +733,14 @@ describe('painted areas carry travel (the owner’s ruling of 2026-11-18)', () =
 });
 
 describe('changes regenerate before answering', () => {
-  it('a rule, a place, the settings and a pin', async () => {
+  it('a rule, a place, a trip’s length and a pin', async () => {
     const swim = await todo('editor', 'Swim', 7, 10);
-    const pool = await ok<PlaceView>(
-      'editor',
-      'POST',
-      '/travel/places',
-      { name: 'Pool', coords: GYM },
-      201,
-    );
+    const pool = await ok<PlaceView>('editor', 'POST', '/travel/places', { name: 'Pool' }, 201);
     const day = `/travel/days?from=${dayOf(7)}&to=${dayOf(7)}`;
-    const live = async (): Promise<{ title: string; minutes: number }[]> => {
+    const live = async (): Promise<{ id: string; title: string; minutes: number }[]> => {
       const { days } = await ok<TravelDaysResponse>('editor', 'GET', day);
       return (days[0]?.legs ?? []).map((leg) => ({
+        id: leg.id,
         title: leg.title,
         minutes: (Date.parse(String(leg.endAt)) - Date.parse(String(leg.startAt))) / 60_000,
       }));
@@ -767,12 +763,10 @@ describe('changes regenerate before answering', () => {
     );
     await ok<TravelRuleView>('editor', 'PATCH', `/travel/rules/${rule.id}`, { mode: 'drive' });
     const [driven] = await live();
-    assert.equal(driven?.title, 'Drive to Pool');
-    await ok<TravelSettingsResponse>('editor', 'PATCH', '/travel/settings', {
-      buffers: { drive: 30 },
-    });
-    const [buffered] = await live();
-    assert.equal(buffered?.minutes, driven.minutes + 20);
+    assert.deepEqual([driven?.title, driven?.minutes], ['Drive to Pool', 30]);
+    await ok<Leg>('editor', 'PATCH', `/travel/legs/${String(driven?.id)}`, { minutes: 50 });
+    const [lengthened] = await live();
+    assert.equal(lengthened?.minutes, 50);
     await ok<PlaceView>('editor', 'PATCH', `/travel/places/${pool.id}`, { name: 'Pool East' });
     assert.deepEqual(
       (await live()).map((leg) => leg.title),
@@ -797,37 +791,24 @@ describe('changes regenerate before answering', () => {
     assert.deepEqual(await live(), []);
     assert.equal((await call('editor', 'DELETE', `/travel/rules/${rule.id}`)).status, 204);
     assert.equal((await call('editor', 'DELETE', `/travel/rules/${rule.id}`)).status, 404);
-    await ok<TravelSettingsResponse>('editor', 'PATCH', '/travel/settings', {
-      buffers: { drive: 10 },
-    });
   });
 });
 
 describe('settings, default places and the preview', () => {
-  it('settings: the defaults, a partial change, default places and orsAvailable', async () => {
+  it('settings: the defaults, a partial change and default places', async () => {
     const fresh = await ok<TravelSettingsResponse>('editor2', 'GET', '/travel/settings');
-    assert.deepEqual(fresh, {
-      settings: DEFAULT_TRAVEL_SETTINGS,
-      containerPlaces: [],
-      orsAvailable: false,
-    });
-    appSecrets.setAppSecretsForTests({ openrouteservice: { apiKey: 'FAKE-ors-key' } });
-    assert.equal(
-      (await ok<TravelSettingsResponse>('editor2', 'GET', '/travel/settings')).orsAvailable,
-      true,
-    );
-    appSecrets.setAppSecretsForTests({});
+    assert.deepEqual(fresh, { settings: DEFAULT_TRAVEL_SETTINGS, containerPlaces: [] });
     const changed = await ok<TravelSettingsResponse>('editor2', 'PATCH', '/travel/settings', {
-      factors: { drive: 1.3 },
       goHome: { enabled: true },
     });
     assert.deepEqual(changed.settings, {
       ...DEFAULT_TRAVEL_SETTINGS,
-      factors: { ...DEFAULT_TRAVEL_SETTINGS.factors, drive: 1.3 },
       goHome: { ...DEFAULT_TRAVEL_SETTINGS.goHome, enabled: true },
     });
-    const tooMuch = await call('editor2', 'PATCH', '/travel/settings', { factors: { drive: 9 } });
-    assert.equal(tooMuch.status, 400, tooMuch.text);
+    const tooShort = await call('editor2', 'PATCH', '/travel/settings', {
+      goHome: { minWindowMinutes: 9 },
+    });
+    assert.equal(tooShort.status, 400, tooShort.text);
     // A calendar's default place: one of the member's places only.
     const notMine = await call('editor2', 'PUT', '/travel/container-places/cal-braude', {
       placeId: braudeId,
@@ -853,30 +834,30 @@ describe('settings, default places and the preview', () => {
     );
   });
 
-  it('preview: a length, its source and the times; none without a place to go to', async () => {
+  it('preview: the trip’s length (or the placeholder, flagged) and the times', async () => {
     const arriveBy = local(8, 10);
-    const estimate = await ok<TravelPreviewResponse>('editor', 'POST', '/travel/preview', {
+    const unset = await ok<TravelPreviewResponse>('editor', 'POST', '/travel/preview', {
       mode: 'walk',
       fromPlaceId: homeId,
       toPlaceId: braudeId,
       arriveBy: iso(arriveBy),
     });
-    assert.equal(estimate.source, 'estimate');
-    assert.ok((estimate.minutes ?? 0) > 0);
-    assert.equal(estimate.endAt, iso(arriveBy));
-    assert.equal(
-      estimate.startAt,
-      iso(new Date(arriveBy.getTime() - (estimate.minutes ?? 0) * 60_000)),
-    );
+    assert.deepEqual(unset, {
+      minutes: 30,
+      source: 'unset',
+      lengthUnset: true,
+      startAt: iso(new Date(arriveBy.getTime() - 30 * 60_000)),
+      endAt: iso(arriveBy),
+    });
     // From defaults to Home.
     const fromHome = await ok<TravelPreviewResponse>('editor', 'POST', '/travel/preview', {
       mode: 'walk',
       toPlaceId: braudeId,
       departAt: iso(arriveBy),
     });
-    assert.equal(fromHome.minutes, estimate.minutes);
+    assert.equal(fromHome.minutes, 30);
     assert.equal(fromHome.startAt, iso(arriveBy));
-    // A length he typed for the trip is remembered: the next preview of it says so.
+    // A length he set for the trip: the next preview of it is that.
     const legs = await mark(await todo('editor', 'Run', 10, 9), { mode: 'walk' });
     await ok<Leg>('editor', 'PATCH', `/travel/legs/${legOf(legs, 'there').id}`, { minutes: 25 });
     assert.deepEqual(
@@ -884,11 +865,11 @@ describe('settings, default places and the preview', () => {
         mode: 'walk',
         toPlaceId: braudeId,
       }),
-      { minutes: 25, source: 'remembered', startAt: null, endAt: null },
+      { minutes: 25, source: 'set', lengthUnset: false, startAt: null, endAt: null },
     );
     assert.deepEqual(
       await ok<TravelPreviewResponse>('editor', 'POST', '/travel/preview', { mode: 'drive' }),
-      { minutes: null, source: null, startAt: null, endAt: null },
+      { minutes: null, source: null, lengthUnset: false, startAt: null, endAt: null },
     );
     const unknown = await call('editor', 'POST', '/travel/preview', {
       mode: 'walk',

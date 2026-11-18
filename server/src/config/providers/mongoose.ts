@@ -53,7 +53,6 @@ async function registerModels(): Promise<void> {
   await import('../../models/mongoose/Place.js');
   await import('../../models/mongoose/TravelRule.js');
   await import('../../models/mongoose/TravelProfile.js');
-  await import('../../models/mongoose/RoutingQuota.js');
 }
 
 /** A driver error's code name (e.g. "DuplicateKey"): never its message, which can quote values. */

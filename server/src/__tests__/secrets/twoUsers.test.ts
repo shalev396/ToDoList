@@ -256,25 +256,18 @@ before(async () => {
     props: { layer: 'block', recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'], exceptions: [] },
   });
 
-  // A's travel: places whose names and coordinates are A's alone, every occurrence of the private
+  // A's travel: places whose names and addresses are A's alone, every occurrence of the private
   // block marked (its legs), and a where-rule. B is aimed at each of them.
-  const travelPlace = async (
-    name: string,
-    coords: { lat: number; lon: number },
-    home = false,
-  ): Promise<string> =>
+  const travelPlace = async (name: string, address: string, home = false): Promise<string> =>
     dataOf(
       await asA('POST', `${base}/travel/places`, {
         name: mark('travel place name', `${name} ${MARK}`),
-        coords,
+        address: mark('travel address', `${address} ${MARK}`),
         home,
       }),
     )['id'] as string;
-  const homeCoords = { lat: 32.91417, lon: 35.29223 };
-  mark('travel coordinate', String(homeCoords.lat));
-  mark('travel coordinate', String(homeCoords.lon));
-  await travelPlace('A home', homeCoords, true);
-  const travelPlaceId = await travelPlace('A campus', { lat: 32.77671, lon: 35.02314 });
+  await travelPlace('A home', 'Herzl 7, Karmiel', true);
+  const travelPlaceId = await travelPlace('A campus', 'Technion City, Haifa');
   const marked = dataOf(
     await asA('POST', `${base}/travel/items/${privateBlock.id}`, {
       every: true,
@@ -420,7 +413,7 @@ function toolFixtures(expectedVersion: number): Record<string, Record<string, un
       { id: ctx.timeBlockId, scope: 'this', originalStart: '2026-11-29T11:00:00.000Z', skip: true },
     ],
     travel_list_places: [{}],
-    travel_set_place: [{ name: 'B place', lat: 32.1, lon: 34.8 }],
+    travel_set_place: [{ name: 'B place', address: 'Rothschild 1, Tel Aviv' }],
     travel_remove_place: [{ id: ctx.itemId, confirm: true }],
     travel_list_rules: [{}],
     travel_set_rule: [{ itemId: ctx.itemId, mode: 'walk', direction: 'there' }],

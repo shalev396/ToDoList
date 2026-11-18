@@ -3,15 +3,13 @@
  * safety"; plan Ruling 8, Review Focus 3): members A and B, editors of one workspace, both travel
  * to the same shared lecture. Each gets their own legs, and B never reads A's: not through
  * `/travel/places`, `/items`, a calendar draft on `/query`, `/items/:legId`, a leg's links or the
- * day panel. A's address and coordinates are in no audit row, no log line (a geocoder that fails
- * included) and no answer of anyone else's; leg titles use place names only.
+ * day panel. A's address is in no audit row, no log line and no answer of anyone else's, and is
+ * never sent anywhere (nothing is looked up); leg titles use place names only.
  */
 import { after, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { setTravelTransportForTests } from '../../config/testSwitches.js';
 import { startApiHarness, type ApiHarness, type ApiResponse } from '../../testing/apiHarness.js';
-import type { HttpRequest, HttpResponse, Transport } from '../../sync/http.js';
 import { addLocalDays, wallDate, zonedParts, zonedTime } from '../../types/recurrence/zoned.js';
 import type {
   PlaceView,
@@ -28,14 +26,11 @@ let wid = '';
 type Who = keyof typeof token;
 
 const ZONE = 'Asia/Jerusalem';
-/** A's Home: an address the geocoder puts at A_HOME. */
+/** A's Home: the address A typed for it. */
 const A_ADDRESS = 'Snunit St 51, Karmiel';
-const A_HOME = { lat: 32.9141, lon: 35.2922 };
-const B_HOME = { lat: 32.794, lon: 34.9896 };
-const TECHNION = { lat: 32.7767, lon: 35.0231 };
-/** A's Home as any text would print it. */
-const A_SECRETS = [A_ADDRESS, String(A_HOME.lat), String(A_HOME.lon)];
-/** Where A's gym class is, and the address A gives a new place, while the geocoder is down. */
+/** A's Home as any text would print it (as typed, or as a link would carry it). */
+const A_SECRETS = [A_ADDRESS, encodeURIComponent(A_ADDRESS)];
+/** Where A's gym class is, and the address A gives a new place. */
 const GYM_LOCATION = 'Derech HaAtsmaut 77, Karmiel';
 const NEW_ADDRESS = 'Moriah Blvd 120, Haifa';
 
@@ -47,39 +42,13 @@ interface Leg {
   props: { travel: TravelLegProps };
 }
 
-/** Nominatim: A_ADDRESS is at A_HOME, the rest nowhere; everything fails while `down`. */
-class FakeGeocoder implements Transport {
-  readonly maxRetries = 0;
-  readonly requests: HttpRequest[] = [];
-  down = false;
-
-  send(request: HttpRequest): Promise<HttpResponse> {
-    this.requests.push(request);
-    const url = new URL(request.url);
-    if (this.down || url.host !== 'nominatim.openstreetmap.org') {
-      return Promise.resolve({ status: 503, headers: {}, body: '{}' });
-    }
-    const found =
-      url.searchParams.get('q') === A_ADDRESS
-        ? [{ lat: String(A_HOME.lat), lon: String(A_HOME.lon) }]
-        : [];
-    return Promise.resolve({ status: 200, headers: {}, body: JSON.stringify(found) });
-  }
-}
-
-const geocoder = new FakeGeocoder();
-
 async function call(who: Who, method: string, path: string, body?: unknown): Promise<ApiResponse> {
   const res = await api.call(method, `/api/private/workspaces/${wid}${path}`, {
     token: token[who],
     ...(body === undefined ? {} : { body }),
   });
-  // Ruling 1: a travel answer never carries a coordinate (a leg's links are its member's own).
-  if (path.startsWith('/travel/') && !path.endsWith('/links')) {
-    for (const number of [String(A_HOME.lat), String(A_HOME.lon)]) {
-      assert.ok(!res.text.includes(number), `${method} ${path} carries ${number}: ${res.text}`);
-    }
-  }
+  // No answer carries a coordinate: a place has none.
+  assert.doesNotMatch(res.text, /"(?:lat|lon|coords)"\s*:/, `${method} ${path}`);
   // Nothing B is answered says where A lives.
   if (who !== 'a') {
     for (const secret of A_SECRETS) {
@@ -114,21 +83,18 @@ let lectureId = '';
 const legs: { a: Leg[]; b: Leg[] } = { a: [], b: [] };
 const places: { a: PlaceView[]; b: PlaceView[] } = { a: [], b: [] };
 
-/** The member's Home (A's by address, B's by coordinates) and the Technion. */
+/** The member's Home (A's with an address, B's by name only) and the Technion. */
 async function placesOf(who: 'a' | 'b'): Promise<PlaceView[]> {
   const home =
-    who === 'a'
-      ? { name: 'Home', address: A_ADDRESS, home: true }
-      : { name: 'Home', coords: B_HOME, home: true };
+    who === 'a' ? { name: 'Home', address: A_ADDRESS, home: true } : { name: 'Home', home: true };
   return [
     await ok<PlaceView>(who, 'POST', '/travel/places', home, 201),
-    await ok<PlaceView>(who, 'POST', '/travel/places', { name: 'Technion', coords: TECHNION }, 201),
+    await ok<PlaceView>(who, 'POST', '/travel/places', { name: 'Technion' }, 201),
   ];
 }
 
 before(async () => {
   api = await startApiHarness('todolist_travel_privacy_http');
-  setTravelTransportForTests(geocoder);
   for (const who of Object.keys(token) as Who[]) {
     token[who] = (await api.login(`travel-privacy-${who}@example.test`)).token;
   }
@@ -176,7 +142,6 @@ before(async () => {
 });
 
 after(async () => {
-  setTravelTransportForTests(null);
   await api.stop();
 });
 
@@ -277,7 +242,7 @@ describe('travel privacy', () => {
     assert.equal(links.status, 200, links.text);
   });
 
-  it("audit rows contain neither A's address nor coordinates", async () => {
+  it("audit rows never contain A's address", async () => {
     const models = await import('../../models/index.js');
     const rows = await (await models.getAuditLogRepository()).list(wid, {}, 1000);
     const travel = rows.filter((row) => row.action.startsWith('travel_rule.'));
@@ -287,9 +252,8 @@ describe('travel privacy', () => {
       assert.deepEqual(row.meta, { mode: 'transit', direction: 'both', scopeKind: 'item' });
     }
     for (const row of rows) {
-      // Timestamps out: a millisecond field could read "35.2".
-      const text = JSON.stringify(row).replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z/g, '');
-      for (const secret of [A_ADDRESS, '32.9', '35.2']) {
+      const text = JSON.stringify(row);
+      for (const secret of [...A_SECRETS, 'Karmiel']) {
         assert.ok(!text.includes(secret), `${row.action} carries ${secret}: ${text}`);
       }
     }
@@ -317,7 +281,8 @@ describe('travel privacy', () => {
     }
   });
 
-  it('a geocoder failure logs no address', async () => {
+  it('an address is never looked up, sent anywhere or logged', async (t) => {
+    const fetches = t.mock.method(globalThis, 'fetch');
     const { logger } = await import('../../services/logger.js');
     const lines: unknown[][] = [];
     const capture = (...args: unknown[]): void => {
@@ -331,17 +296,18 @@ describe('travel privacy', () => {
         mock.method(console, level, capture),
       ),
     ];
-    const sent = geocoder.requests.length;
-    geocoder.down = true;
     try {
-      // A new place whose address can't be looked up: 503, nothing stored.
-      const place = await call('a', 'POST', '/travel/places', {
-        name: 'Gym',
-        address: NEW_ADDRESS,
-      });
-      assert.equal(place.status, 503, place.text);
-      assert.equal(place.body?.['code'], 'provider_unreachable');
-      // An event at an address, matched by a where-rule: its location is looked up and fails.
+      // A new place with an address: stored as typed, nothing looked up.
+      const place = await ok<PlaceView>(
+        'a',
+        'POST',
+        '/travel/places',
+        { name: 'Gym', address: NEW_ADDRESS },
+        201,
+      );
+      assert.equal(place.address, NEW_ADDRESS);
+      // An event at an address, matched by a where-rule: its location names none of A's places,
+      // so it has no place (and no legs); nothing is looked up.
       const models = await import('../../models/index.js');
       await (
         await models.getItemRepository()
@@ -370,32 +336,27 @@ describe('travel privacy', () => {
         },
         201,
       );
-      // The rule's own regeneration (the request waits) looks up no new location; a sync of the
-      // calendar, or the daily pass, does: here it fails.
-      const lookedUp = (): boolean =>
-        geocoder.requests
-          .slice(sent)
-          .some((request) => new URL(request.url).searchParams.get('q') === GYM_LOCATION);
-      assert.equal(lookedUp(), false);
       const { TravelPlanner } = await import('../../classes/travel/index.js');
       await TravelPlanner.regenerateFor(wid, ids.a);
-      assert.equal(lookedUp(), true);
+      const { days } = await ok<TravelDaysResponse>(
+        'a',
+        'GET',
+        `/travel/days?from=${dayOf(DAY + 1)}&to=${dayOf(DAY + 1)}`,
+      );
+      assert.deepEqual(days[0]?.legs, []);
     } finally {
-      geocoder.down = false;
       for (const each of mocks) each.mock.restore();
     }
-    // Both addresses went to the geocoder (and only there).
-    const asked = geocoder.requests.slice(sent).map((request) => request.url);
-    for (const address of [NEW_ADDRESS, GYM_LOCATION]) {
-      assert.ok(
-        asked.some((url) => new URL(url).searchParams.get('q') === address),
-        `${address} was never looked up`,
-      );
-    }
-    // Not vacuous: both failures were logged.
+    // The harness's own calls are to this machine; nothing went anywhere else.
+    const away = fetches.mock.calls
+      .map((each) => {
+        const [input] = each.arguments as unknown[];
+        return new URL(input instanceof Request ? input.url : String(input)).hostname;
+      })
+      .filter((host) => !['127.0.0.1', 'localhost', '::1'].includes(host));
+    assert.deepEqual(away, []);
+    assert.ok(fetches.mock.callCount() > 0, 'the harness calls through fetch: not vacuous');
     const text = JSON.stringify(lines);
-    assert.match(text, /travel\/places failed/);
-    assert.match(text, /travel: a location could not be geocoded/);
     for (const address of [NEW_ADDRESS, GYM_LOCATION, A_ADDRESS]) {
       for (const form of [address, encodeURIComponent(address), address.replaceAll(' ', '+')]) {
         assert.ok(!text.includes(form), `a log line carries ${form}: ${text}`);

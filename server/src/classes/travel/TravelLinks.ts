@@ -1,12 +1,16 @@
-/** App links for a leg: Waze for driving, Moovit for transit, Google Maps as the common one. */
+/**
+ * App links for a leg, from the places' text (the owner's decision of 2026-11-18: nothing is looked
+ * up, and no coordinate is kept): each end is its place's address as he typed it, or its name when
+ * it has none. Waze for driving, and Google Maps directions in the leg's mode for every trip.
+ */
 import type { TravelLink, TravelMode } from '../../types/travel.js';
-import type { LatLon } from './geo.js';
 
 export interface LinkLeg {
   mode: TravelMode;
-  from: LatLon | null;
-  to: LatLon | null;
-  arriveBy: Date;
+  /** Where the trip starts, as text (an address, else a name); null: unknown (it went). */
+  from: string | null;
+  /** Where it goes, as text; null: unknown (no link then). */
+  to: string | null;
 }
 
 const GOOGLE_MODE: Record<TravelMode, string> = {
@@ -15,9 +19,7 @@ const GOOGLE_MODE: Record<TravelMode, string> = {
   transit: 'transit',
 };
 
-const MOOVIT_FALLBACK = 'https://moovitapp.com/';
-
-const pair = (point: LatLon): string => `${String(point.lat)},${String(point.lon)}`;
+const text = (value: string): string => encodeURIComponent(value);
 
 export class TravelLinks {
   readonly #leg: LinkLeg;
@@ -32,32 +34,21 @@ export class TravelLinks {
 
   #links(): TravelLink[] {
     const { mode, to } = this.#leg;
-    if (to === null) return [];
-    if (mode === 'walk') return [this.#google(to)];
-    if (mode === 'drive')
-      return [
-        { app: 'waze', url: `https://waze.com/ul?ll=${pair(to)}&navigate=yes` },
-        this.#google(to),
-      ];
-    return [this.#moovit(to), this.#google(to)];
+    if (to === null || to.trim() === '') return [];
+    const google = this.#google(to);
+    return mode === 'drive' ? [this.#waze(to), google] : [google];
   }
 
-  #google(to: LatLon): TravelLink {
+  #waze(to: string): TravelLink {
+    return { app: 'waze', url: `https://waze.com/ul?q=${text(to)}&navigate=yes` };
+  }
+
+  #google(to: string): TravelLink {
     const { from, mode } = this.#leg;
-    const origin = from === null ? '' : `&origin=${pair(from)}`;
+    const origin = from === null || from.trim() === '' ? '' : `&origin=${text(from)}`;
     return {
       app: 'google_maps',
-      url: `https://www.google.com/maps/dir/?api=1${origin}&destination=${pair(to)}&travelmode=${GOOGLE_MODE[mode]}`,
-    };
-  }
-
-  #moovit(to: LatLon): TravelLink {
-    const { from, arriveBy } = this.#leg;
-    const orig = from === null ? '' : `orig_lat=${String(from.lat)}&orig_lon=${String(from.lon)}&`;
-    return {
-      app: 'moovit',
-      url: `moovit://directions?${orig}dest_lat=${String(to.lat)}&dest_lon=${String(to.lon)}&date=${arriveBy.toISOString()}&auto_run=true`,
-      fallbackUrl: MOOVIT_FALLBACK,
+      url: `https://www.google.com/maps/dir/?api=1${origin}&destination=${text(to)}&travelmode=${GOOGLE_MODE[mode]}`,
     };
   }
 }

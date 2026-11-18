@@ -1,21 +1,23 @@
 /**
  * Travel storage (docs/superpowers/specs/2026-11-17-travel-time-design.md, "Concepts", "Privacy
- * and safety"; plan Rulings 14, 15, 23 and 25): a member's places (one Home, at most 30, located
- * by typed coordinates or the free geocoders), their rules (a where-group checked like a dashboard
- * query, audited without a place, an address or a coordinate), their profile (the spec's default
- * settings), a workspace's daily routing quota, and what a member's leaving removes.
+ * and safety"; plan Rulings 14, 15, 23 and 25; the owner's decision of 2026-11-18): a member's
+ * places (one Home, at most 30, a name and an address as typed, never looked up), their rules (a
+ * where-group checked like a dashboard query, audited without a place or an address), their
+ * profile (the spec's default settings, and the length of each trip as he set it), and what a
+ * member's leaving removes.
  */
-import { after, afterEach, before, describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { setTravelTransportForTests } from '../../config/testSwitches.js';
 import type * as Models from '../../models/index.js';
-import type * as AppSecrets from '../../services/appSecrets.js';
-import type { HttpRequest, HttpResponse, Transport } from '../../sync/http.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { callerOf } from '../../testing/workspaceFixtures.js';
 import { PLAN_LIMITS } from '../../types/limits.js';
-import { DEFAULT_TRAVEL_SETTINGS, type TravelRuleScope } from '../../types/travel.js';
+import {
+  DEFAULT_TRAVEL_SETTINGS,
+  UNSET_TRIP_MINUTES,
+  type TravelRuleScope,
+} from '../../types/travel.js';
 import type * as Classes from '../index.js';
 import type { Caller } from '../base/Caller.js';
 import type { PlannedLeg } from './DayPlanner.js';
@@ -23,14 +25,11 @@ import type { PlannedLeg } from './DayPlanner.js';
 let db: TestDatabase;
 let classes: typeof Classes;
 let models: typeof Models;
-let appSecrets: typeof AppSecrets;
 
 const A = 'u-travel-a';
 const B = 'u-travel-b';
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
-const HOME = { lat: 32.794, lon: 34.9896 };
-const BRAUDE = { lat: 32.9141, lon: 35.2922 };
 const ADDRESS = 'Snunit St 51, Karmiel';
 let count = 0;
 
@@ -45,12 +44,6 @@ before(async () => {
   db = await startTestDatabase('todolist_travel_storage_test');
   classes = await import('../index.js');
   models = await import('../../models/index.js');
-  appSecrets = await import('../../services/appSecrets.js');
-});
-
-afterEach(() => {
-  setTravelTransportForTests(null);
-  appSecrets.setAppSecretsForTests({});
 });
 
 after(async () => {
@@ -75,22 +68,11 @@ async function workspace(): Promise<Ws> {
   };
 }
 
-/** A transport that answers every request with `body`, and logs them. */
-function transport(body: string, log: HttpRequest[]): Transport {
-  return {
-    maxRetries: 0,
-    send(request): Promise<HttpResponse> {
-      log.push(request);
-      return Promise.resolve({ status: 200, headers: {}, body });
-    },
-  };
-}
-
 /** The member's Home and Braude. */
 async function placesOf(caller: Caller): Promise<{ home: Classes.Place; braude: Classes.Place }> {
   return {
-    home: await classes.Place.create(caller, { name: 'Home', coords: HOME, home: true }),
-    braude: await classes.Place.create(caller, { name: 'Braude', coords: BRAUDE }),
+    home: await classes.Place.create(caller, { name: 'Home', home: true }),
+    braude: await classes.Place.create(caller, { name: 'Braude', address: ADDRESS }),
   };
 }
 
@@ -111,7 +93,7 @@ async function legOf(caller: Caller, homeId: string, braudeId: string): Promise<
     startAt: new Date(anchorStart.getTime() - 40 * 60_000),
     endAt: anchorStart,
     minutes: 40,
-    source: 'estimate',
+    source: 'set',
     conflict: false,
     past: false,
     topicId: null,
@@ -134,9 +116,9 @@ const SERIES: TravelRuleScope = { kind: 'series', itemId: 'lecture-series' };
 describe('places', () => {
   it('one Home per member', async () => {
     const ws = await workspace();
-    const home = await classes.Place.create(ws.a, { name: 'Home', coords: HOME, home: true });
-    const flat = await classes.Place.create(ws.a, { name: 'Flat', coords: BRAUDE, home: true });
-    const homeB = await classes.Place.create(ws.b, { name: 'Home', coords: HOME, home: true });
+    const home = await classes.Place.create(ws.a, { name: 'Home', home: true });
+    const flat = await classes.Place.create(ws.a, { name: 'Flat', home: true });
+    const homeB = await classes.Place.create(ws.b, { name: 'Home', home: true });
     assert.equal((await classes.Place.homeOf(ws.a))?.id, flat.id);
     assert.deepEqual(
       (await classes.Place.listOwn(ws.a)).map((place) => [place.name, place.isHome]),
@@ -161,8 +143,6 @@ describe('places', () => {
         name: 'Second',
         aliases: [],
         address: null,
-        lat: 1,
-        lon: 1,
         home: true,
       }),
       { code: 11000 },
@@ -172,14 +152,13 @@ describe('places', () => {
     await assert.rejects(again.update(ws.b, { name: 'Mine' }), { statusCode: 404 });
     await assert.rejects(again.remove(ws.b), { statusCode: 404 });
     await assert.rejects(again.update(ws.viewerA, { name: 'Mine' }), { statusCode: 403 });
-    await assert.rejects(classes.Place.create(ws.viewerA, { name: 'X', coords: HOME }), {
+    await assert.rejects(classes.Place.create(ws.viewerA, { name: 'X' }), {
       statusCode: 403,
     });
-    // Views: the owner's carries the address, an agent's names only, neither a coordinate.
+    // Views: the owner's carries the address, an agent's names only.
     const named = await classes.Place.create(ws.a, {
       name: 'Braude',
       address: ADDRESS,
-      coords: BRAUDE,
       aliases: ['ORT Braude', 'בראודה', 'braude', ' ORT braude '],
     });
     assert.deepEqual(named.toView(), {
@@ -201,93 +180,52 @@ describe('places', () => {
     const ws = await workspace();
     assert.equal(PLAN_LIMITS.placesPerMember, 30);
     for (let index = 0; index < 30; index += 1) {
-      await classes.Place.create(ws.a, {
-        name: `Place ${String(index)}`,
-        coords: { lat: 32 + index / 100, lon: 35 },
-      });
+      await classes.Place.create(ws.a, { name: `Place ${String(index)}` });
     }
-    await assert.rejects(classes.Place.create(ws.a, { name: 'One more', coords: HOME }), {
+    await assert.rejects(classes.Place.create(ws.a, { name: 'One more' }), {
       statusCode: 409,
       code: 'travel_limit',
     });
     // Another member's cap is their own.
-    await classes.Place.create(ws.b, { name: 'Home', coords: HOME });
+    await classes.Place.create(ws.b, { name: 'Home' });
     // A removed place frees its slot.
     const [first] = await classes.Place.listOwn(ws.a);
     assert.ok(first);
     await first.remove(ws.a);
-    await classes.Place.create(ws.a, { name: 'One more', coords: HOME });
+    await classes.Place.create(ws.a, { name: 'One more' });
   });
 
-  it('coords typed as text skip the geocoder', async () => {
+  it('a place is a name and an address as typed: no lookup, no coordinates', async () => {
     const ws = await workspace();
-    const log: HttpRequest[] = [];
-    setTravelTransportForTests(transport('[]', log));
-    const typed = await classes.Place.create(ws.a, { name: 'Braude', address: '32.9141, 35.2922' });
-    assert.deepEqual(typed.coords, BRAUDE);
+    // A name alone is a place.
+    const home = await classes.Place.create(ws.a, { name: 'Home', home: true });
+    assert.equal(home.address, null);
+    // An address is kept as typed (trimmed); a typed "lat, lon" is text like any other.
+    const braude = await classes.Place.create(ws.a, { name: 'Braude', address: `  ${ADDRESS} ` });
+    assert.equal(braude.address, ADDRESS);
+    const typed = await classes.Place.create(ws.a, { name: 'Gym', address: '32.9141, 35.2922' });
     assert.equal(typed.address, '32.9141, 35.2922');
-    assert.equal(log.length, 0);
-    // An address is looked up (Nominatim: this server has no OpenRouteService key).
-    setTravelTransportForTests(transport('[{"lat":"32.0853","lon":"34.7818"}]', log));
-    const work = await classes.Place.create(ws.a, { name: 'TLVTech', address: 'Rothschild 1' });
-    assert.deepEqual(work.coords, { lat: 32.0853, lon: 34.7818 });
-    assert.equal(log.length, 1);
-    assert.match(log[0]?.url ?? '', /^https:\/\/nominatim\.openstreetmap\.org\/search\?q=/);
-    // Coordinates typed when the address changes need no lookup either.
-    const moved = await work.update(ws.a, { address: '32.08, 34.78' });
-    assert.deepEqual(moved.coords, { lat: 32.08, lon: 34.78 });
-    assert.equal(log.length, 1);
-  });
-
-  it('unknown address → 400 place_not_found', async () => {
-    const ws = await workspace();
-    const log: HttpRequest[] = [];
-    // The fake geocoder finds nothing.
-    setTravelTransportForTests(transport('[]', log));
-    await assert.rejects(classes.Place.create(ws.a, { name: 'Nowhere', address: 'No such st' }), {
+    // Changed, and cleared with an empty one.
+    const moved = await braude.update(ws.a, { address: 'Rothschild 1, Tel Aviv' });
+    assert.equal(moved.address, 'Rothschild 1, Tel Aviv');
+    assert.equal((await moved.update(ws.a, { address: '' })).address, null);
+    await assert.rejects(classes.Place.create(ws.a, { name: 'Long', address: 'x'.repeat(301) }), {
       statusCode: 400,
-      code: 'place_not_found',
-      message: 'address: not found',
     });
-    assert.equal(log.length, 1);
-    assert.deepEqual(await classes.Place.listOwn(ws.a), []);
-    // With an OpenRouteService key, its geocoder is asked first, then Nominatim: neither finds it.
-    appSecrets.setAppSecretsForTests({ openrouteservice: { apiKey: 'FAKE-ors-key' } });
-    setTravelTransportForTests(transport('{"features":[]}', log));
-    await assert.rejects(classes.Place.create(ws.a, { name: 'Nowhere', address: 'No such st' }), {
-      statusCode: 400,
-      code: 'place_not_found',
-    });
-    assert.deepEqual(
-      log.slice(1).map(({ url }) => new URL(url).host),
-      ['api.openrouteservice.org', 'nominatim.openstreetmap.org'],
-    );
-    // A place moved to an address nobody finds stays where it was.
-    const home = await classes.Place.create(ws.a, { name: 'Home', coords: HOME });
-    await assert.rejects(home.update(ws.a, { address: 'No such st' }), {
-      code: 'place_not_found',
-    });
-    assert.deepEqual((await classes.Place.findOwn(ws.a, home.id)).coords, HOME);
-    // Neither an address nor coordinates is no place.
-    await assert.rejects(classes.Place.create(ws.a, { name: 'Empty' }), { statusCode: 400 });
-  });
-
-  it('a geocoder outage is 503 provider_unreachable, never place_not_found', async () => {
-    const ws = await workspace();
-    const log: HttpRequest[] = [];
-    setTravelTransportForTests({
-      maxRetries: 0,
-      send(request): Promise<HttpResponse> {
-        log.push(request);
-        return Promise.resolve({ status: 503, headers: {}, body: '{}' });
-      },
-    });
-    await assert.rejects(classes.Place.create(ws.a, { name: 'Braude', address: ADDRESS }), {
-      statusCode: 503,
-      code: 'provider_unreachable',
-    });
-    assert.equal(log.length, 1);
-    assert.deepEqual(await classes.Place.listOwn(ws.a), []);
+    // What is stored: no coordinate, ever.
+    const [row] = await (await models.getPlaceRepository()).listOwn(ws.id, A);
+    assert.ok(row);
+    assert.deepEqual(Object.keys(row).sort(), [
+      'address',
+      'aliases',
+      'createdAt',
+      'home',
+      'id',
+      'name',
+      'ownerUserId',
+      'updatedAt',
+      'workspaceId',
+    ]);
   });
 });
 
@@ -360,11 +298,7 @@ describe('rules', () => {
 
   it('rule audit meta has no place, address or coordinates', async () => {
     const ws = await workspace();
-    const braude = await classes.Place.create(ws.a, {
-      name: 'Braude',
-      address: ADDRESS,
-      coords: BRAUDE,
-    });
+    const braude = await classes.Place.create(ws.a, { name: 'Braude', address: ADDRESS });
     const rule = await classes.TravelRule.create(ws.a, {
       scope: SERIES,
       mode: 'transit',
@@ -392,7 +326,7 @@ describe('rules', () => {
       ['travel_rule.update', 'travel_rule', rule.id, drive],
     ]);
     const json = JSON.stringify(rows.map((row) => row.toJSON()));
-    for (const secret of [ADDRESS, 'Karmiel', '32.91', '35.29', braude.id, 'Braude']) {
+    for (const secret of [ADDRESS, 'Karmiel', braude.id, 'Braude']) {
       assert.ok(!json.includes(secret), `an audit row carries ${secret}`);
     }
     // Places themselves are never audited.
@@ -441,31 +375,6 @@ describe('rules', () => {
   });
 });
 
-describe('routing quota', () => {
-  it('quota reserves 100 then refuses', async () => {
-    const quota = classes.RoutingQuota.for('w-quota', '2026-11-18');
-    for (let call = 0; call < 100; call += 1) assert.equal(await quota.reserve(), true);
-    assert.equal(await quota.reserve(), false);
-    assert.equal(await quota.reserve(), false);
-    // Another day, or another workspace, has its own budget.
-    assert.equal(await classes.RoutingQuota.for('w-quota', '2026-11-19').reserve(), true);
-    assert.equal(await classes.RoutingQuota.for('w-other', '2026-11-18').reserve(), true);
-    // Parallel calls never pass it together.
-    const fresh = classes.RoutingQuota.for('w-parallel', '2026-11-18');
-    const answers = await Promise.all(Array.from({ length: 130 }, () => fresh.reserve()));
-    assert.equal(answers.filter(Boolean).length, 100);
-    // The day's lengths are kept by trip, for that day only.
-    assert.equal(await quota.cachedSeconds('home|braude|drive'), null);
-    await quota.rememberSeconds('home|braude|drive', 1260);
-    assert.equal(await quota.cachedSeconds('home|braude|drive'), 1260);
-    assert.equal(
-      await classes.RoutingQuota.for('w-quota', '2026-11-20').cachedSeconds('home|braude|drive'),
-      null,
-    );
-    assert.throws(() => classes.RoutingQuota.for('w-quota', '18/11/2026'));
-  });
-});
-
 describe('profile', () => {
   it('profile defaults equal DEFAULT_TRAVEL_SETTINGS', async () => {
     const ws = await workspace();
@@ -476,44 +385,56 @@ describe('profile', () => {
     assert.equal(profile.lastPassDay, null);
     // The settings handed out are a copy: changing one changes nothing.
     const copy = profile.settings;
-    copy.factors.drive = 2;
-    assert.equal(profile.settings.factors.drive, 1.15);
+    copy.goHome.minWindowMinutes = 240;
+    assert.equal(profile.settings.goHome.minWindowMinutes, 180);
     // A change is merged into the stored settings and checked whole.
     const changed = await profile.updateSettings(ws.a, {
-      factors: { drive: 1.3 },
-      goHome: { enabled: true },
+      goHome: { enabled: true, minAtHomeMinutes: 90 },
     });
     assert.deepEqual(changed.settings, {
       ...DEFAULT_TRAVEL_SETTINGS,
-      factors: { ...DEFAULT_TRAVEL_SETTINGS.factors, drive: 1.3 },
-      goHome: { ...DEFAULT_TRAVEL_SETTINGS.goHome, enabled: true },
+      goHome: { ...DEFAULT_TRAVEL_SETTINGS.goHome, enabled: true, minAtHomeMinutes: 90 },
     });
-    assert.equal(DEFAULT_TRAVEL_SETTINGS.factors.drive, 1.15);
-    await assert.rejects(changed.updateSettings(ws.a, { factors: { walk: 9 } }), {
+    assert.equal(DEFAULT_TRAVEL_SETTINGS.goHome.minAtHomeMinutes, 60);
+    await assert.rejects(changed.updateSettings(ws.a, { goHome: { minWindowMinutes: 9 } }), {
       statusCode: 400,
-      message: /^settings\.factors\.walk: /,
+      message: /^settings\.goHome\.minWindowMinutes: /,
     });
     await assert.rejects(changed.updateSettings(ws.viewerA, { defaultMode: 'walk' }), {
       statusCode: 403,
     });
+    // The view is the settings and the default places only.
+    assert.deepEqual(Object.keys(changed.toSettingsView()).sort(), ['containerPlaces', 'settings']);
     // One profile per member, made on first read.
-    assert.equal((await classes.TravelProfile.of(ws.a)).settings.factors.drive, 1.3);
+    assert.equal((await classes.TravelProfile.of(ws.a)).settings.goHome.minAtHomeMinutes, 90);
     assert.deepEqual((await classes.TravelProfile.of(ws.b)).settings, DEFAULT_TRAVEL_SETTINGS);
     await assert.rejects(changed.updateSettings(ws.b, { defaultMode: 'walk' }), {
       statusCode: 404,
     });
   });
 
-  it('remembers trips, pins and geocodes (by hash, at most 500, the oldest dropped)', async () => {
+  it('keeps each trip’s length and pins; a trip not set yet is the placeholder', async () => {
     const ws = await workspace();
     const { home, braude } = await placesOf(ws.a);
     const trip = classes.DayPlanner.tripKey(home.id, braude.id, 'transit');
+    const back = classes.DayPlanner.tripKey(braude.id, home.id, 'transit');
     let profile = await classes.TravelProfile.of(ws.a);
-    assert.equal(profile.rememberedMinutes(trip), null);
-    profile = await profile.remember(ws.a, trip, 52);
-    assert.equal(profile.rememberedMinutes(trip), 52);
-    await assert.rejects(profile.remember(ws.a, trip, 0), { statusCode: 400 });
-    await assert.rejects(profile.remember(ws.a, 'home.braude', 10), { statusCode: 400 });
+    assert.equal(profile.tripMinutes(trip), null);
+    assert.deepEqual(profile.tripLength(trip), { minutes: UNSET_TRIP_MINUTES, source: 'unset' });
+    profile = await profile.setTripLength(ws.a, trip, 52);
+    assert.equal(profile.tripMinutes(trip), 52);
+    assert.deepEqual(profile.tripLength(trip), { minutes: 52, source: 'set' });
+    // Each direction is its own trip, and so is each mode.
+    assert.deepEqual(profile.tripLength(back), { minutes: UNSET_TRIP_MINUTES, source: 'unset' });
+    assert.equal(
+      profile.tripMinutes(classes.DayPlanner.tripKey(home.id, braude.id, 'drive')),
+      null,
+    );
+    await assert.rejects(profile.setTripLength(ws.a, trip, 0), { statusCode: 400 });
+    await assert.rejects(profile.setTripLength(ws.a, trip, 24 * 60 + 1), { statusCode: 400 });
+    await assert.rejects(profile.setTripLength(ws.a, 'home.braude', 10), { statusCode: 400 });
+    await assert.rejects(profile.setTripLength(ws.viewerA, trip, 10), { statusCode: 403 });
+    await assert.rejects(profile.setTripLength(ws.b, trip, 10), { statusCode: 404 });
     profile = await profile.pinItemPlace(ws.a, 'lecture-1', braude.id);
     profile = await profile.setContainerPlace(ws.a, 'calendar-braude', braude.id);
     assert.deepEqual([...profile.itemPlaces], [['lecture-1', braude.id]]);
@@ -524,27 +445,11 @@ describe('profile', () => {
     // Removing a place removes what points at it.
     await braude.remove(ws.a);
     profile = await classes.TravelProfile.of(ws.a);
-    assert.equal(profile.rememberedMinutes(trip), null);
+    assert.equal(profile.tripMinutes(trip), null);
     assert.deepEqual([...profile.itemPlaces, ...profile.containerPlaces], []);
-    // Geocodes: by the text's hash, normalized; null is "nowhere".
-    assert.equal(profile.cachedGeocode('Braude, Karmiel'), undefined);
-    await profile.storeGeocode('Braude,   karmiel', BRAUDE);
-    await profile.storeGeocode('Nowhere', null);
-    assert.deepEqual(profile.cachedGeocode('braude, KARMIEL'), BRAUDE);
-    const reread = await classes.TravelProfile.of(ws.a);
-    assert.deepEqual(reread.cachedGeocode('Braude, Karmiel'), BRAUDE);
-    assert.equal(reread.cachedGeocode('Nowhere'), null);
-    const stored = JSON.stringify(reread.toJSON());
-    assert.ok(!stored.includes('Karmiel') && !stored.includes('karmiel'));
-    for (let index = 0; index < 500; index += 1) {
-      await reread.storeGeocode(`Street ${String(index)}`, { lat: 32, lon: 35 });
-    }
-    const full = await classes.TravelProfile.of(ws.a);
-    assert.equal(Object.keys(full.toJSON().geocodes).length, 500);
-    assert.equal(full.cachedGeocode('Braude, Karmiel'), undefined);
-    assert.equal(full.cachedGeocode('Nowhere'), undefined);
-    assert.deepEqual(full.cachedGeocode('Street 499'), { lat: 32, lon: 35 });
-    await full.markPassed('2026-11-18');
+    // No address is ever in the profile.
+    assert.ok(!JSON.stringify(profile.toJSON()).includes('Karmiel'));
+    await profile.markPassed('2026-11-18');
     assert.equal((await classes.TravelProfile.of(ws.a)).lastPassDay, '2026-11-18');
   });
 });
@@ -606,24 +511,13 @@ describe('leaving', () => {
       await placesOf(caller);
       await classes.TravelRule.create(caller, { scope: SERIES, mode: 'drive', direction: 'there' });
       await classes.TravelProfile.of(caller);
-      await classes.RoutingQuota.for(caller.workspaceId, '2026-11-18').rememberSeconds(
-        'a|b|drive',
-        60,
-      );
     }
     await classes.TravelData.forgetWorkspace(ws.id);
     assert.deepEqual(await classes.Place.listOwn(ws.a), []);
     assert.deepEqual(await classes.TravelRule.listOwn(ws.a), []);
     assert.equal(await (await models.getTravelProfileRepository()).delete(ws.id, A), false);
-    assert.equal(
-      await classes.RoutingQuota.for(ws.id, '2026-11-18').cachedSeconds('a|b|drive'),
-      null,
-    );
     assert.equal((await classes.Place.listOwn(other.a)).length, 2);
     assert.equal((await classes.TravelRule.listOwn(other.a)).length, 1);
-    assert.equal(
-      await classes.RoutingQuota.for(other.id, '2026-11-18').cachedSeconds('a|b|drive'),
-      60,
-    );
+    assert.equal((await classes.TravelProfile.of(other.a)).id, `${other.id}|${A}`);
   });
 });

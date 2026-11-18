@@ -1651,51 +1651,51 @@ classDiagram
 
 ### Travel time (`classes/travel`, `classes/item/TravelLeg.ts`)
 
-Spec: `docs/superpowers/specs/2026-11-17-travel-time-design.md`; plan:
-`docs/superpowers/plans/2026-11-17-time-blocks-areas-travel.md` (Tasks 9 to 14). The legs are items
-(`TravelLeg`, above); everything else is a pure core behind thin storage classes, and only the
+Spec: `docs/superpowers/specs/2026-11-17-travel-time-design.md` (with its amendment of 2026-11-18);
+plan: `docs/superpowers/plans/2026-11-17-time-blocks-areas-travel.md` (Tasks 9 to 14). The legs are
+items (`TravelLeg`, above); everything else is a pure core behind thin storage classes, and only the
 storage classes touch the database (`class-boundary.mjs`). `readOnly.test.ts` pins that nothing here
-writes to a provider or edits an anchor item: travel writes only a member's own `travel` items, their
-geocode cache and the routing quota.
+writes to a provider or edits an anchor item: travel writes only a member's own `travel` items. It
+never calls out (the owner's decision of 2026-11-18: no routing service, no geocoder):
+`noOutbound.test.ts` fails if any module of `classes/travel` (or `TravelLeg.ts`) imports an HTTP
+client, a socket, the sync transports or the app secrets, or calls `fetch`.
 
 - **Pure core** (no I/O):
   - `DayPlanner`: one member's anchors for one day, their Home and settings in, the legs out
     (stays at one place are one stay; "go home in a window"; a leg home after midnight belongs to
-    the day before). Lengths come from estimates worked out beforehand for exactly its `trips()`.
+    the day before; areas nest the items inside them). Lengths come from the trip lengths read
+    beforehand for exactly its `trips()`: the member's own, or `UNSET_TRIP_MINUTES` (source
+    `unset`) for a trip he hasn't set, which plans (and conflicts) alike.
   - `LegReconciler`: the stored legs and the plan in, the creates, updates and removals out, matched
     by `LegKey` (`ownerUserId|anchorItemId|occurrence|direction`). A leg that has started is left
     alone; one whose anchor moved into the past goes as `moved`; a skip is never restored; a hand
     edit keeps its times and is flagged `anchorMoved`.
   - `PlaceMatcher` over `types/travelPlaceNames.ts` (shared with the client): a location text to a
-    saved place by name or alias. `TravelLinks`: Waze, Moovit and Google Maps links, computed on read.
-  - Lengths, `RouteProvider` implementations tried in turn by `RouteChain`:
-    `OpenRouteService` (walk and drive only, under the workspace's daily quota), `RememberedLength`
-    (what the member last entered for that trip), `StraightLine` (the estimate, `STRAIGHT_LINE`);
-    `TimeBoxedRoute` gives each a regeneration's time and no more.
-  - Geocoding: `Geocoder` (a point, `null` when not found, a throw when no answer could be had),
-    `OrsGeocoder`, `NominatimGeocoder`, `ChainGeocoder` and `FreeGeocoder` (coordinates typed as text,
-    then OpenRouteService when the stage has its key, then Nominatim at one request a second).
+    saved place by name or alias, the only way a location finds a place. `TravelLinks`: Waze
+    (driving) and Google Maps directions, from the places' addresses (else names) as text,
+    computed on read; no Moovit.
 - **Storage** (each a `WorkspaceEntity` or a keyed class over one collection, owned by its member):
-  `Place` (`implements Owned, Viewable`; one Home; 30 at most; `toView()` for the member:
-  name, aliases, Home and address, never coordinates; `toAgentView()` names only), `TravelRule` (`Owned, Auditable, Viewable`; 50 at most; scope
-  `where`, `series` or `item`), `TravelProfile` (settings, remembered lengths, the geocode cache by
-  hash, pins), `RoutingQuota` (`implements RoutingBudget`: `reserve` before a call, atomically).
-  `TravelData` is what a leaving member or a deleted workspace removes. DATA.md §3.22 to §3.25.
+  `Place` (`implements Owned, Viewable`; one Home; 30 at most; a name, aliases and an optional
+  free-text address that only opens a map app, no coordinates; `toView()` for the member with the
+  address; `toAgentView()` names only), `TravelRule` (`Owned, Auditable, Viewable`; 50 at most;
+  scope `where`, `series` or `item`), `TravelProfile` (settings: going home and the default mode;
+  the length of each trip as he set it, `tripLength(key)` and `setTripLength`; pins). `TravelData`
+  is what a leaving member or a deleted workspace removes. DATA.md §3.22 to §3.24.
   An entity is never serialized as is: only `toView()` / `toAgentView()` leave the class.
 - **Generation:**
   - `TravelAnchors`: a member's timed occurrences with their rule, place and fate (an area
-    anchors like a block, flagged `area`; `DayPlanner` nests the items inside it); `TravelPlanner`: gather, plan, estimate, reconcile and write one member's whole 14-day
-    horizon, within a `TimeBox` budget.
-  - Its triggers: an item write (`ItemChanges`, subscribed when `classes/travel/index.ts` loads;
-    cached geocodes only, about 8 s at most, a travel failure never fails the item write), a sync of
-    an integration in the workspace, the daily pass (`jobs/TravelHorizonPass`, an `AfterDispatchPass`
-    of the hourly tick, 120 s a tick, run even if the dispatch threw), and the member's own changes
-    through `TravelSetup`, which regenerates before it answers.
+    anchors like a block, flagged `area`; `DayPlanner` nests the items inside it); `TravelPlanner`:
+    gather, plan, read each trip's length, reconcile and write one member's whole 14-day horizon.
+  - Its triggers: an item write (`ItemChanges`, subscribed when `classes/travel/index.ts` loads; a
+    travel failure never fails the item write), a sync of an integration in the workspace (the
+    members share `AFTER_SYNC_BUDGET_MS`), the daily pass (`jobs/TravelHorizonPass`, an
+    `AfterDispatchPass` of the hourly tick, 120 s a tick, run even if the dispatch threw), and the
+    member's own changes through `TravelSetup`, which regenerates before it answers.
+  - A leg's change (`TravelSetup#editLeg` over `TravelLeg#editTimes`): `minutes` is the trip's length,
+    every time (`TravelProfile#setTripLength`, then a regeneration: every leg of the trip follows but
+    the hand-timed ones); `startAt`/`endAt` move that one leg (`edited`, kept until Reset).
   - `TravelLeg.applyPlan` writes by key, each write conditional on the leg as it was read, so a skip,
     a hand edit or a trip under way is never overwritten.
-- **HTTP:** `travelHttp.ts` builds the clients (`createReadOnlyClient`, GET only) for OpenRouteService
-  and Nominatim and reads `OPENROUTESERVICE_API_KEY` through `APP_SECRETS`; its logs carry a reason,
-  never a URL, an address or a coordinate.
 - **Surface:** REST `…/travel/*` (`routes/private/travel.ts`) and the MCP `travel_*` tools
   (`mcp/tools/items/travel*.ts`; MCP.md §7.2), both thin: parse, one class call, `toView()`.
 

@@ -309,14 +309,10 @@ async function seed(): Promise<void> {
   );
   // Travel: the owner's Home and Braude, every occurrence of the block marked (its legs), and a
   // where-rule the manifest changes and removes.
-  await created(
-    '/travel/places',
-    { name: 'Home', coords: { lat: 32.794, lon: 34.9896 }, home: true },
-    'travel home',
-  );
+  await created('/travel/places', { name: 'Home', home: true }, 'travel home');
   const braude = await created(
     '/travel/places',
-    { name: 'Braude', coords: { lat: 32.9141, lon: 35.2922 } },
+    { name: 'Braude', address: 'Snunit St 51, Karmiel' },
     'travel place',
   );
   const braudeId = dataOf(braude)['id'] as string;

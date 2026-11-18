@@ -6,17 +6,16 @@
  * - A membership ends: the member's legs are soft-deleted at once, as skipped so that no
  *   regeneration racing the leave writes one back (no one sees them again; the purge removes
  *   them), and their places, rules and profile are hard-deleted.
- * - A workspace is deleted: every place, rule, profile and routing-quota day of it goes (its legs
- *   are items: the workspace's cascade soft-deletes them with the rest).
+ * - A workspace is deleted: every place, rule and profile of it goes (its legs are items: the
+ *   workspace's cascade soft-deletes them with the rest).
  * - A place is removed: the member's rules naming it name none, and their pins to it and the
- *   lengths remembered for trips through it go.
+ *   lengths set for trips from or to it go.
  *
  * Every step is idempotent, so an interrupted run completes on the next one.
  */
 import {
   getItemRepository,
   getPlaceRepository,
-  getRoutingQuotaRepository,
   getTravelProfileRepository,
   getTravelRuleRepository,
 } from '../../models/index.js';
@@ -56,7 +55,6 @@ export class TravelData {
     await (await getPlaceRepository()).deleteForWorkspace(workspaceId);
     await (await getTravelRuleRepository()).deleteForWorkspace(workspaceId);
     await (await getTravelProfileRepository()).deleteForWorkspace(workspaceId);
-    await (await getRoutingQuotaRepository()).deleteForWorkspace(workspaceId);
   }
 
   async #forgetPlace(userId: string, placeId: string): Promise<void> {

@@ -6,6 +6,7 @@ import { useMarkItem, usePlaces, useTravelSettings } from '@/api/queries/travel'
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import {
   homeOf,
+  anchorPanel,
   markRequestOf,
   outcomeOf,
   outcomeText,
@@ -60,9 +61,10 @@ export function useAddTravel() {
     try {
       const answer = await mark.mutateAsync({
         itemId: input.itemId,
+        // The new item's start, as created: the trip there arrives by it.
         body: markRequestOf(
-          input.state,
-          { itemId: input.itemId, occurrence: null, start: input.start },
+          anchorPanel(input.state, input.start),
+          { occurrence: null },
           input.every,
         ),
       });

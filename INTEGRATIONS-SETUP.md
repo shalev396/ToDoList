@@ -65,15 +65,14 @@ With any method, the app never edits, closes or comments on anything at the prov
 - **Callback URL** (from the server code: `server/src/services/oauth/service.ts` `providerCallbackPath`, `googleCalendarOAuth.ts` `OAUTH_CALLBACK_PATH`, `routes/public/oauth.ts`): `https://<stage domain>/api/public/oauth/<provider>/callback`, where `<provider>` is `google-calendar`, `github`, `jira`, `clickup`, `linear`. The host is the stage's own `DOMAIN_NAME`. Local development uses the **dev** apps and the dev callback.
 - **Secret:** ONE Secrets Manager secret per stage, `todolist-<stage>-app-secrets` (same pattern as auto-content-creation), holding a flat JSON object. `npm run deploy:backend -- <stage>` creates it as `{}` when it is missing and never writes it after (`server/scripts/app-secret.ts`); the stack does not own it, so destroying a stack keeps the keys. The keys the code reads (`APP_SECRETS` in `server/src/services/appSecrets.ts`):
 
-  | Provider         | Keys                                                                   |
-  | ---------------- | ---------------------------------------------------------------------- |
-  | Google Calendar  | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`           |
-  | GitHub           | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, optional `GITHUB_APP_SLUG` |
-  | Jira             | `JIRA_CLIENT_ID`, `JIRA_CLIENT_SECRET`                                 |
-  | ClickUp          | `CLICKUP_CLIENT_ID`, `CLICKUP_CLIENT_SECRET`                           |
-  | Linear           | `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`                             |
-  | OpenRouter       | `OPENROUTER_API_KEY`                                                   |
-  | OpenRouteService | `OPENROUTESERVICE_API_KEY` (optional, section 10)                      |
+  | Provider        | Keys                                                                   |
+  | --------------- | ---------------------------------------------------------------------- |
+  | Google Calendar | `GOOGLE_CALENDAR_CLIENT_ID`, `GOOGLE_CALENDAR_CLIENT_SECRET`           |
+  | GitHub          | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, optional `GITHUB_APP_SLUG` |
+  | Jira            | `JIRA_CLIENT_ID`, `JIRA_CLIENT_SECRET`                                 |
+  | ClickUp         | `CLICKUP_CLIENT_ID`, `CLICKUP_CLIENT_SECRET`                           |
+  | Linear          | `LINEAR_CLIENT_ID`, `LINEAR_CLIENT_SECRET`                             |
+  | OpenRouter      | `OPENROUTER_API_KEY`                                                   |
 
   A provider with none of its keys shows as not configured. Its keys must all be non-empty strings, or that provider (only) shows as not configured. Other keys are ignored. `GITHUB_APP_SLUG` is letters/digits/hyphen.
 
@@ -375,14 +374,3 @@ Nothing blocks three apps per provider. What you handle yourself:
 4. **GitHub write.** The Issues write permission is set at the app level. Changing it later makes GitHub ask each installation to accept the new permission.
 5. **Moodle** is listed as a provider in the plan but has no OAuth code or secret name. Correct: nothing to add.
 6. **Drive** is no longer documented here. The `google-drive*` secret names, if any exist in AWS from the earlier runbook, are unused and can be deleted.
-
-## 10. OpenRouteService (travel time, optional)
-
-Travel time computes walking and driving lengths with OpenRouteService (HeiGIT), a free routing service. It is the only thing in this file that is not an OAuth app: one API key, shared by every member of every workspace on the stage.
-
-1. **Create the account yourself** at the OpenRouteService dashboard (openrouteservice.org, "Sign up"). The free plan needs no card. Create one token per stage if you want the stages' usage kept apart.
-2. **Confirm the free plan's limits** in the HeiGIT dashboard before relying on it: the daily and per-minute request limits of the directions and geocoding services, and whether the terms allow your use (TodoList is for you and your friends, but read the commercial-use terms). This file does not state them because HeiGIT changes them. The app keeps its own cap too: `ROUTING_CALLS_PER_DAY` = 100 calls a day per workspace (`server/src/types/travel.ts`, kept in the `RoutingQuotas` collection), and every length it fetched that day is reused.
-3. **Store the key** in the stage's one secret, `todolist-<stage>-app-secrets`, under `OPENROUTESERVICE_API_KEY`: merge it into the JSON as the Conventions section shows, never overwrite the secret. The deploy never writes it. It is read through `APP_SECRETS` (`server/src/services/appSecrets.ts`) and cached up to an hour per Lambda container, like the OAuth keys.
-4. **Without the key** nothing breaks: walking and driving use the length the member last entered for that trip, else the straight-line estimate, and addresses are looked up with OpenStreetMap Nominatim (at most one request a second, with an identifying `User-Agent`) instead of OpenRouteService's geocoder. Public transport never uses the service: it is the remembered length or the estimate (a rough speed, corrected by hand).
-
-Check: with the key stored, add a place in Settings, Travel, mark an event for travel and open a leg: its length shows the source "OpenRouteService". The Settings page and `travel_get_settings` (`orsAvailable`) tell whether the stage has a key.

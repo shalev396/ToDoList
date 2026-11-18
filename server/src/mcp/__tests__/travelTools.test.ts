@@ -14,9 +14,6 @@ let h: McpHarness;
 let team: Team;
 let key: string;
 
-const HOME = { lat: 32.9141, lon: 35.2922 };
-const TECHNION = { lat: 32.7767, lon: 35.0231 };
-
 /** `days` days from now at the given UTC hour. */
 function at(days: number, hour: number): Date {
   const day = new Date(Date.now() + days * 86_400_000);
@@ -37,7 +34,9 @@ interface Entry {
   busy?: boolean;
   startAt: string | null;
   endAt: string | null;
-  props: { travel?: { minutes: number; source: string; edited: boolean } };
+  props: {
+    travel?: { minutes: number; source: string; lengthUnset: boolean; edited: boolean };
+  };
 }
 
 before(async () => {
@@ -57,7 +56,7 @@ after(async () => {
 });
 
 describe('the travel tools', () => {
-  it('set Home by coordinates, a rule on a calendar, mark a series → legs listed by get_calendar as busy', async () => {
+  it('set Home with an address, a rule on a calendar, mark a series → legs listed by get_calendar as busy', async () => {
     const client = await h.connect(key);
     const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
       const result = await client.callTool({ name, arguments: args });
@@ -65,12 +64,21 @@ describe('the travel tools', () => {
       return structured(result);
     };
 
-    const home = (await call('travel_set_place', { name: 'Home', ...HOME, home: true })) as {
-      place: PlaceOut;
-    };
+    const home = (await call('travel_set_place', {
+      name: 'Home',
+      address: 'Herzl 1, Haifa',
+      home: true,
+    })) as { place: PlaceOut };
     assert.equal(home.place.home, true);
     assert.deepEqual(Object.keys(home.place).sort(), ['aliases', 'home', 'id', 'name']);
-    await call('travel_set_place', { name: 'Technion', aliases: ['הטכניון'], ...TECHNION });
+    await call('travel_set_place', { name: 'Technion', aliases: ['הטכניון'] });
+    // Coordinates are no input any more: a place is a name and an address.
+    const client2 = await h.connect(key);
+    const withCoords = await client2.callTool({
+      name: 'travel_set_place',
+      arguments: { name: 'Gym', lat: 32.8, lon: 35.0 },
+    });
+    assert.equal(withCoords.isError, true);
     const listed = (await call('travel_list_places', {})) as { places: PlaceOut[] };
     assert.deepEqual(listed.places.map((place) => place.name).sort(), ['Home', 'Technion']);
 
@@ -113,6 +121,15 @@ describe('the travel tools', () => {
     })) as { rule: { id: string }; legs: Entry[] };
     assert.ok(marked.legs.length >= 2, 'a leg there and a leg back');
     assert.ok(marked.legs.every((leg) => leg.kind === 'travel'));
+    // No length set yet: every leg is drawn with the placeholder and says so.
+    assert.ok(
+      marked.legs.every(
+        (leg) =>
+          leg.props.travel?.lengthUnset === true &&
+          leg.props.travel.source === 'unset' &&
+          leg.props.travel.minutes === 30,
+      ),
+    );
 
     const calendar = (await call('get_calendar', {
       range: 'custom',
@@ -124,7 +141,7 @@ describe('the travel tools', () => {
     assert.ok(calendar.items.every((entry) => entry.kind === 'travel' && entry.busy === true));
   });
 
-  it('rough minutes give a remembered length', async () => {
+  it('minutes set the trip’s length once; travel_edit_leg minutes set it for every leg', async () => {
     const client = await h.connect(key);
     const todo = await client.callTool({
       name: 'create_todo',
@@ -152,14 +169,26 @@ describe('the travel tools', () => {
     assert.equal(legs.length, 1);
     const [leg] = legs;
     assert.ok(leg);
+    // The trip's length, every time: not a hand edit.
     assert.deepEqual(
       { ...leg.props.travel },
-      { ...leg.props.travel, minutes: 25, source: 'manual', edited: true },
+      { ...leg.props.travel, minutes: 25, source: 'set', lengthUnset: false, edited: false },
     );
 
     const legId = leg.id;
+    const edited = await client.callTool({
+      name: 'travel_edit_leg',
+      arguments: { legId, minutes: 30 },
+    });
+    assert.notEqual(edited.isError, true, errorText(edited));
+    const { leg: after } = structured(edited) as { leg: Entry };
+    assert.deepEqual(
+      { ...after.props.travel },
+      { ...after.props.travel, minutes: 30, source: 'set', edited: false },
+    );
+    assert.equal(after.endAt, at(5, 15).toISOString());
     for (const [name, args] of [
-      ['travel_edit_leg', { legId, minutes: 30 }],
+      ['travel_edit_leg', { legId, startAt: at(5, 13).toISOString() }],
       ['travel_reset_leg', { legId }],
       ['travel_skip_leg', { legId }],
     ] as const) {

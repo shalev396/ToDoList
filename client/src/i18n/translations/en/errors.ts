@@ -79,10 +79,6 @@ export const errors = {
     notCompletable: 'A time block or travel has no status to complete.',
     notDeletable: 'Travel can’t be deleted. Skip it instead.',
     notAnOccurrence: 'That time isn’t one of this block’s repeats. Refresh and try again.',
-    geocoderUnreachable:
-      'Couldn’t look up that address right now. Try again, or type the coordinates as “lat, lon”.',
-    placeNotFound:
-      'That address couldn’t be found. Check it, or type its coordinates as “lat, lon”.',
     travelHomeMissing: 'Set your Home place first: your day’s travel starts and ends there.',
     travelLimit: 'You have the most places or travel rules allowed. Remove one first.',
   },

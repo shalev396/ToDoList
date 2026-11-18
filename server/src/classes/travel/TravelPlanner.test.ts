@@ -3,33 +3,30 @@
  * lifecycle"; plan Rulings 12, 13 and 17; Review Focus 4 and 5): one member's 14-day horizon,
  * regenerated whole. Running it twice changes nothing; a cancelled occurrence's legs go with that
  * reason; an "all" edit of an anchor series replaces its legs without a crash; a leg the member
- * edited keeps his times and is flagged when its anchor moves; without an OpenRouteService key the
- * legs are estimates; a to-do's edit moves its legs through ItemChanges; and a member who leaves
- * while a regeneration runs gets nothing back.
+ * edited keeps his times and is flagged when its anchor moves; a trip's length is the member's own,
+ * set once and taken by every leg of the trip (every occurrence, every day, but hand-timed legs),
+ * and a trip without one is drawn with the placeholder, flagged; nothing calls out; a to-do's edit
+ * moves its legs through ItemChanges; and a member who leaves while a regeneration runs gets
+ * nothing back.
  *
  * The anchors are dated from today (ItemChanges regenerates with the real clock).
  */
-import { after, afterEach, before, describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { setTravelTransportForTests } from '../../config/testSwitches.js';
 import type * as Models from '../../models/index.js';
-import type * as AppSecrets from '../../services/appSecrets.js';
 import type { SourceRef } from '../../models/definitions/common.js';
-import type { HttpRequest, HttpResponse, Transport } from '../../sync/http.js';
 import { seedIntegration } from '../../testing/integrationFixtures.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { callerOf } from '../../testing/workspaceFixtures.js';
 import { addLocalDays, zonedParts, zonedTime } from '../../types/recurrence/zoned.js';
-import type { TravelDirection } from '../../types/travel.js';
+import { UNSET_TRIP_MINUTES, type TravelDirection } from '../../types/travel.js';
 import type * as Classes from '../index.js';
 import type { Caller } from '../base/Caller.js';
-import { TimeBudget } from '../integration/calendar/TimeBudget.js';
 
 let db: TestDatabase;
 let classes: typeof Classes;
 let models: typeof Models;
-let appSecrets: typeof AppSecrets;
 
 const A = 'u-planner-a';
 const B = 'u-planner-b';
@@ -48,29 +45,10 @@ interface Ws {
   b: Member;
 }
 
-/** Records every request and answers none (nothing here may call out). */
-class RefusingTransport implements Transport {
-  readonly maxRetries = 0;
-  readonly requests: HttpRequest[] = [];
-
-  send(request: HttpRequest): Promise<HttpResponse> {
-    this.requests.push(request);
-    return Promise.resolve({ status: 503, headers: {}, body: '{}' });
-  }
-}
-
-let transport: RefusingTransport;
-
 before(async () => {
   db = await startTestDatabase('todolist_travel_planner_test');
   classes = await import('../index.js');
   models = await import('../../models/index.js');
-  appSecrets = await import('../../services/appSecrets.js');
-});
-
-afterEach(() => {
-  setTravelTransportForTests(null);
-  appSecrets.setAppSecretsForTests({});
 });
 
 after(async () => {
@@ -84,23 +62,13 @@ function local(days: number, hour: number, minute = 0): Date {
 }
 
 async function member(caller: Caller): Promise<Member> {
-  const home = await classes.Place.create(caller, {
-    name: 'Home',
-    coords: { lat: 32.794, lon: 34.9896 },
-    home: true,
-  });
-  const braude = await classes.Place.create(caller, {
-    name: 'Braude',
-    coords: { lat: 32.9141, lon: 35.2922 },
-  });
+  const home = await classes.Place.create(caller, { name: 'Home', home: true });
+  const braude = await classes.Place.create(caller, { name: 'Braude' });
   return { caller, homeId: home.id, braudeId: braude.id };
 }
 
-/** A workspace where A (owner) and B (editor) each have a Home and Braude; no ORS key. */
+/** A workspace where A (owner) and B (editor) each have a Home and Braude. */
 async function workspace(): Promise<Ws> {
-  appSecrets.setAppSecretsForTests({});
-  transport = new RefusingTransport();
-  setTravelTransportForTests(transport);
   count += 1;
   const created = await (
     await models.getWorkspaceRepository()
@@ -162,6 +130,16 @@ function leg(legs: readonly Classes.TravelLeg[], direction: TravelDirection): Cl
 
 const iso = (date: Date | null | undefined): string | null => date?.toISOString() ?? null;
 
+/** A leg as `[direction, start, end, minutes, source, edited]`, by start. */
+const shape = (one: Classes.TravelLeg): unknown[] => [
+  one.travel?.direction,
+  iso(one.startAt),
+  iso(one.endAt),
+  one.travel?.minutes,
+  one.travel?.source,
+  one.travel?.edited,
+];
+
 describe('TravelPlanner.regenerate', () => {
   it('regenerate twice changes nothing', async () => {
     const ws = await workspace();
@@ -182,10 +160,10 @@ describe('TravelPlanner.regenerate', () => {
         one.travel?.source,
       ]),
       [
-        ['Bus to Braude', iso(local(3, 10)), 'estimate'],
-        ['Bus home', iso(local(3, 12)), 'estimate'],
-        ['Bus to Braude', iso(local(10, 10)), 'estimate'],
-        ['Bus home', iso(local(10, 12)), 'estimate'],
+        ['Bus to Braude', iso(local(3, 10)), 'unset'],
+        ['Bus home', iso(local(3, 12)), 'unset'],
+        ['Bus to Braude', iso(local(10, 10)), 'unset'],
+        ['Bus home', iso(local(10, 12)), 'unset'],
       ],
     );
     // B has no travel: nothing of theirs was made.
@@ -289,21 +267,148 @@ describe('TravelPlanner.regenerate', () => {
     assert.equal(iso(leg(live, 'back').startAt), iso(local(3, 12, 30)));
   });
 
-  it('no ORS key still makes legs labelled estimate', async () => {
+  it('a trip with no length yet is made with the placeholder, flagged, and calls nobody', async (t) => {
+    const fetches = t.mock.method(globalThis, 'fetch');
     const ws = await workspace();
     const lab = await block(ws.a, local(2, 9), 1);
     await travelTo(ws.a, { kind: 'item', itemId: lab.id, occurrence: 'single' }, 'drive');
     const made = await classes.TravelPlanner.regenerate(ws.a.caller);
     assert.equal(made.created, 2);
     const { live } = await legsOf(ws.a);
+    assert.equal(UNSET_TRIP_MINUTES, 30);
     assert.deepEqual(
-      live.map((one) => [one.title, one.travel?.source]),
+      live.map((one) => [one.title, ...shape(one), one.travel?.lengthUnset]),
       [
-        ['Drive to Braude', 'estimate'],
-        ['Drive home', 'estimate'],
+        [
+          'Drive to Braude',
+          'there',
+          iso(local(2, 8, 30)),
+          iso(local(2, 9)),
+          30,
+          'unset',
+          false,
+          true,
+        ],
+        ['Drive home', 'back', iso(local(2, 10)), iso(local(2, 10, 30)), 30, 'unset', false, true],
       ],
     );
-    assert.equal(transport.requests.length, 0);
+    assert.equal(fetches.mock.callCount(), 0);
+  });
+
+  it('the length set once is every occurrence’s, every day; the way back is its own trip', async () => {
+    const ws = await workspace();
+    const lab = await block(ws.a, local(3, 10), 2, 'RRULE:FREQ=WEEKLY');
+    await travelTo(ws.a, { kind: 'series', itemId: lab.id });
+    await classes.TravelPlanner.regenerate(ws.a.caller);
+    const [first] = (await legsOf(ws.a)).live;
+    assert.ok(first);
+
+    // He sets how long the bus to Braude takes on the first leg: every leg there takes it.
+    const set = await classes.TravelSetup.of(ws.a.caller).editLeg(first.id, { minutes: 25 });
+    assert.deepEqual(shape(set), [
+      'there',
+      iso(local(3, 9, 35)),
+      iso(local(3, 10)),
+      25,
+      'set',
+      false,
+    ]);
+    assert.deepEqual((await legsOf(ws.a)).live.map(shape), [
+      ['there', iso(local(3, 9, 35)), iso(local(3, 10)), 25, 'set', false],
+      ['back', iso(local(3, 12)), iso(local(3, 12, 30)), 30, 'unset', false],
+      ['there', iso(local(10, 9, 35)), iso(local(10, 10)), 25, 'set', false],
+      ['back', iso(local(10, 12)), iso(local(10, 12, 30)), 30, 'unset', false],
+    ]);
+    // A day coming into range (the daily pass, a week on) takes it too.
+    const weekOn = await classes.TravelPlanner.regenerate(ws.a.caller, local(7, 0));
+    assert.equal(weekOn.created, 2);
+    const { live: later } = await classes.TravelLeg.listDays(
+      ws.a.caller,
+      local(17, 0),
+      local(18, 0),
+    );
+    assert.deepEqual(later.map(shape), [
+      ['there', iso(local(17, 9, 35)), iso(local(17, 10)), 25, 'set', false],
+      ['back', iso(local(17, 12)), iso(local(17, 12, 30)), 30, 'unset', false],
+    ]);
+  });
+
+  it('a length edit moves every leg of its trip but hand-timed ones; times move one leg', async () => {
+    const ws = await workspace();
+    const lab = await block(ws.a, local(3, 10), 2, 'RRULE:FREQ=DAILY;COUNT=3');
+    await classes.TravelRule.create(ws.a.caller, {
+      scope: { kind: 'series', itemId: lab.id },
+      mode: 'transit',
+      direction: 'there',
+      placeId: ws.a.braudeId,
+    });
+    await classes.TravelPlanner.regenerate(ws.a.caller);
+    const [one, two, three] = (await legsOf(ws.a)).live;
+    assert.ok(one && two && three);
+    const setup = classes.TravelSetup.of(ws.a.caller);
+    const trip = classes.DayPlanner.tripKey(ws.a.homeId, ws.a.braudeId, 'transit');
+    const tripMinutes = async (): Promise<number | null> =>
+      (await classes.TravelProfile.of(ws.a.caller)).tripMinutes(trip);
+
+    // Leave and arrive on the second day's leg: that leg only, and no length for the trip.
+    await setup.editLeg(two.id, { startAt: local(4, 9), endAt: local(4, 9, 50) });
+    assert.equal(await tripMinutes(), null);
+    assert.deepEqual((await legsOf(ws.a)).live.map(shape), [
+      ['there', iso(local(3, 9, 30)), iso(local(3, 10)), 30, 'unset', false],
+      ['there', iso(local(4, 9)), iso(local(4, 9, 50)), 50, 'set', true],
+      ['there', iso(local(5, 9, 30)), iso(local(5, 10)), 30, 'unset', false],
+    ]);
+
+    // A length on the third day's leg: the trip's, every leg follows but the hand-timed one.
+    await setup.editLeg(three.id, { minutes: 40 });
+    assert.equal(await tripMinutes(), 40);
+    assert.deepEqual((await legsOf(ws.a)).live.map(shape), [
+      ['there', iso(local(3, 9, 20)), iso(local(3, 10)), 40, 'set', false],
+      ['there', iso(local(4, 9)), iso(local(4, 9, 50)), 50, 'set', true],
+      ['there', iso(local(5, 9, 20)), iso(local(5, 10)), 40, 'set', false],
+    ]);
+
+    // Reset gives the hand-timed leg back to the trip's length.
+    await setup.resetLeg(two.id);
+    assert.deepEqual(shape(await classes.TravelLeg.findOwn(ws.a.caller, two.id)), [
+      'there',
+      iso(local(4, 9, 20)),
+      iso(local(4, 10)),
+      40,
+      'set',
+      false,
+    ]);
+  });
+
+  it('marking every occurrence with a length sets its trip once; the legs all take it', async () => {
+    const ws = await workspace();
+    const lab = await block(ws.a, local(3, 10), 2, 'RRULE:FREQ=WEEKLY');
+    const { legs } = await classes.TravelRule.markItem(ws.a.caller, {
+      itemId: lab.id,
+      every: true,
+      mode: 'drive',
+      direction: 'both',
+      placeId: ws.a.braudeId,
+      there: { minutes: 35 },
+    });
+    assert.deepEqual(
+      legs.map((one) => [one.travel?.direction, one.travel?.minutes, one.travel?.source]),
+      [
+        ['there', 35, 'set'],
+        ['back', 30, 'unset'],
+        ['there', 35, 'set'],
+        ['back', 30, 'unset'],
+      ],
+    );
+    const profile = await classes.TravelProfile.of(ws.a.caller);
+    assert.equal(
+      profile.tripMinutes(classes.DayPlanner.tripKey(ws.a.homeId, ws.a.braudeId, 'drive')),
+      35,
+    );
+    assert.equal(
+      profile.tripMinutes(classes.DayPlanner.tripKey(ws.a.braudeId, ws.a.homeId, 'drive')),
+      null,
+    );
   });
 
   it('a to-do with travel edited → its legs move (ItemChanges)', async () => {
@@ -357,29 +462,6 @@ describe('TravelPlanner.regenerate', () => {
     const { todo: untimed } = await classes.Todo.create(ws.a.caller, { title: 'Milk' });
     await untimed.delete(ws.a.caller);
     assert.equal(runs.mock.callCount(), 2);
-  });
-
-  it('an OpenRouteService outage is waited for once, not on every write', async () => {
-    const ws = await workspace();
-    appSecrets.setAppSecretsForTests({ openrouteservice: { apiKey: 'test-ors-key' } });
-    const lab = await block(ws.a, local(3, 10), 2);
-    await travelTo(ws.a, { kind: 'item', itemId: lab.id, occurrence: 'single' }, 'drive');
-    const orsCalls = (): number =>
-      transport.requests.filter(
-        (request) => new URL(request.url).host === 'api.openrouteservice.org',
-      ).length;
-
-    // The first regeneration asks and finds it down (503): the legs fall back to the line.
-    assert.equal((await classes.TravelPlanner.regenerate(ws.a.caller)).created, 2);
-    assert.equal(orsCalls(), 1);
-    // The writes after it don't ask again while it is down, and no quota is spent on them.
-    await classes.TravelPlanner.regenerate(ws.a.caller);
-    await lab.editSeries(ws.a.caller, { startAt: local(3, 11), endAt: local(3, 13) });
-    assert.equal(orsCalls(), 1);
-    assert.deepEqual(
-      (await legsOf(ws.a)).live.map((one) => one.travel?.source),
-      ['estimate', 'estimate'],
-    );
   });
 
   it('after a sync, travel takes at most what the function has left, less a margin', () => {
@@ -498,32 +580,8 @@ describe('TravelPlanner.regenerate', () => {
     assert.deepEqual(removed, []);
   });
 
-  it("a hanging OpenRouteService stops at the regeneration's time", async () => {
-    const ws = await workspace();
-    appSecrets.setAppSecretsForTests({ openrouteservice: { apiKey: 'test-ors-key' } });
-    const hanging: Transport = {
-      maxRetries: 0,
-      send: () => new Promise<HttpResponse>(() => undefined),
-    };
-    setTravelTransportForTests(hanging);
-    const lab = await block(ws.a, local(3, 10), 2);
-    await travelTo(ws.a, { kind: 'item', itemId: lab.id, occurrence: 'single' }, 'drive');
-
-    const started = Date.now();
-    const made = await classes.TravelPlanner.regenerate(ws.a.caller, new Date(), {
-      budget: TimeBudget.start(2_500),
-    });
-    const took = Date.now() - started;
-    assert.ok(took < 6_000, `${String(took)} ms`);
-    assert.equal(made.created, 2);
-    // Both trips fell back to the straight line.
-    assert.deepEqual(
-      (await legsOf(ws.a)).live.map((one) => one.travel?.source),
-      ['estimate', 'estimate'],
-    );
-  });
-
-  it('an item write looks up no new place; a sync does', async () => {
+  it('a location is matched by name only: nothing is looked up, on a write or a sync', async (t) => {
+    const fetches = t.mock.method(globalThis, 'fetch');
     const ws = await workspace();
     const gcal = `int-planner-${String(count)}`;
     await seedIntegration(ws.id, {
@@ -571,18 +629,33 @@ describe('TravelPlanner.regenerate', () => {
       direction: 'both',
     });
 
-    // A to-do written: its regeneration reads the cache only.
+    // A to-do written, then a sync of the calendar: the location names none of his places, so the
+    // lecture has no place (and no legs), and nothing was asked of anyone.
     await classes.Todo.create(ws.a.caller, { title: 'Read' });
-    assert.equal(transport.requests.length, 0);
-
-    // A sync of the calendar: the location is looked up (the geocoder is down here, so nothing is
-    // kept and the next one asks again).
     await classes.TravelPlanner.afterSync(gcal);
-    const hosts = new Set(transport.requests.map((request) => new URL(request.url).host));
-    assert.deepEqual([...hosts], ['nominatim.openstreetmap.org']);
-    assert.equal(
-      (await classes.TravelProfile.of(ws.a.caller)).cachedGeocode('Unknown hall 4'),
-      undefined,
+    assert.deepEqual((await legsOf(ws.a)).live, []);
+    // Its location names Braude now: the next sync makes its legs.
+    await (
+      await models.getItemRepository()
+    ).bulkUpsert(ws.id, [
+      {
+        integrationId: gcal,
+        kind: 'event',
+        topicId: null,
+        title: 'Lecture',
+        status: 'open',
+        startAt: start,
+        endAt: new Date(start.getTime() + 2 * 3_600_000),
+        containerId: 'cal-braude',
+        props: { calendarId: 'braude-cal', eventId: 'lecture', location: 'Braude, hall 4' },
+        source: { ...source, hash: 'h-lecture-2' },
+      },
+    ]);
+    await classes.TravelPlanner.afterSync(gcal);
+    assert.deepEqual(
+      (await legsOf(ws.a)).live.map((one) => one.title),
+      ['Bus to Braude', 'Bus home'],
     );
+    assert.equal(fetches.mock.callCount(), 0);
   });
 });

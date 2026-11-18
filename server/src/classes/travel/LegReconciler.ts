@@ -12,9 +12,9 @@
  *     removed while it is planned, even when the plan's own times are past (he left later);
  *   - an unedited leg whose plan is past because its anchor moved (earlier, into now or the past)
  *     is removed as `moved`, since nobody can take it any more;
- *   - an unedited leg whose plan is past while its anchor stayed (the trip got longer: a factor or
- *     buffer change, a fallback length) is updated to the plan and flagged a conflict: it can't be
- *     made in time from now, and nothing about its event moved;
+ *   - an unedited leg whose plan is past while its anchor stayed (the trip got longer: he set a
+ *     longer length for it) is updated to the plan and flagged a conflict: it can't be made in
+ *     time from now, and nothing about its event moved;
  *   - else it is updated.
  * - A planned leg stored as a tombstone is restored, unless it is past or the member skipped it
  *   (only Reset brings a skip back).

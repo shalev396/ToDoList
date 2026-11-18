@@ -46,17 +46,23 @@ def _travel_section_text(page: Page, app_url: str, lang: str) -> str:
     return section.inner_text()
 
 
-def test_privacy_names_openrouteservice(page: Page, app_url: str):
-    """Asserts the travel section names the two routing and geocoding services and says places stay private, in English and Hebrew."""
+def test_privacy_travel_names_no_outside_service(page: Page, app_url: str):
+    """Asserts the travel section names no routing or geocoding service (nothing is sent to one: the
+    owner's decision of 2026-11-18) and says places and addresses stay private, are never logged or
+    given to agents, and that an address only opens a map app, in English and Hebrew."""
     en = _travel_section_text(page, app_url, "en")
-    assert "OpenRouteService" in en
-    assert "OpenStreetMap Nominatim" in en
-    assert "never shared" in en and "never logged" in en
-    assert "place names only" in en
+    for service in ("OpenRouteService", "Nominatim", "OpenStreetMap", "Moovit"):
+        assert service not in en, service
+    assert "Your places and addresses are private to you" in en
+    assert "never shared with other members of a workspace, never logged, and never given to AI agents" in en
+    assert "An address is used only to open a map app on your device" in en
+    assert "doesn’t look addresses up" in en
     he = _travel_section_text(page, app_url, "he")
-    assert "OpenRouteService" in he
-    assert "Nominatim" in he
-    assert re.search(r"[א-ת]", he)
+    for service in ("OpenRouteService", "Nominatim", "OpenStreetMap", "Moovit"):
+        assert service not in he, service
+    assert "המקומות והכתובות שלכם פרטיים" in he
+    assert "לא נרשמים ביומני השרת ולא נמסרים לסוכני בינה מלאכותית" in he
+    assert "כתובת משמשת רק לפתיחת אפליקציית מפות במכשיר שלכם" in he
 
 
 def _processors_section_text(page: Page, app_url: str, lang: str) -> str:
@@ -69,12 +75,11 @@ def _processors_section_text(page: Page, app_url: str, lang: str) -> str:
     return section.inner_text()
 
 
-def test_privacy_processor_list_has_the_travel_services(page: Page, app_url: str):
-    """Asserts the processors list names OpenRouteService and OpenStreetMap Nominatim, in English and Hebrew, and the Hebrew travel text says places are private and not logged on the server."""
+def test_privacy_processor_list_has_no_travel_services(page: Page, app_url: str):
+    """Asserts the processors list names no travel service (OpenRouteService, Nominatim), in
+    English and Hebrew: travel sends nothing anywhere."""
     for lang in ("en", "he"):
         text = _processors_section_text(page, app_url, lang)
-        assert "OpenRouteService" in text, lang
-        assert "Nominatim" in text, lang
-    he = _travel_section_text(page, app_url, "he")
-    assert "פרטיים" in he
-    assert "ביומני השרת" in he
+        for service in ("OpenRouteService", "Nominatim", "OpenStreetMap"):
+            assert service not in text, (lang, service)
+        assert "MongoDB Atlas" in text, lang

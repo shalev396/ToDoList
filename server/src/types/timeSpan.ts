@@ -1,7 +1,7 @@
 /**
  * "Fill any two of start, end and length, and the third is computed" (time-blocks design,
  * "Creating and filling the week"), shared through `@api-types/timeSpan` by every form that sets a
- * span: the time block form, and the travel forms later. Pure.
+ * span: the time block form (travel's forms keep a trip's length and its times apart instead). Pure.
  *
  * The two kept are the two most recently edited fields; the third, the oldest edit, is worked out
  * from them. The length is in real minutes, so a span on a daylight-saving day keeps its true

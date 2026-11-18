@@ -1,8 +1,11 @@
 """
 Travel legs on screen (docs/superpowers/specs/2026-11-17-travel-time-design.md, "Conflicts",
-"Editing a leg", "Removal is visible"): the leg's sheet (times, source, flags, any-two times, Skip,
-Reset, app links; never a status or a tick), the day's travel panel with why a trip was removed,
-and the conflict and past marks in the week calendar, the clock, the agenda and the timeline.
+"Editing a leg", "Removal is visible", as the owner's decision of 2026-11-18 amends them): the leg's
+sheet (times, length and source, flags, how long the trip takes every time and this trip's own
+leave and arrive, "Set how long" for a trip with no length yet, Skip, Reset, Waze and Google Maps
+links; never a status or a tick), the day's travel panel with why a trip was removed, and the
+conflict, past and not-set-yet (dashed) marks in the week calendar, the clock, the agenda and the
+timeline.
 
 DEFERRED until the branch is merged to dev: the dev database's Items validator predates kind
 `travel`, so no leg can be stored there (a mark answers `legs: []`; the server logs the refusal).
@@ -40,9 +43,6 @@ from tests.helpers.travel_legs import (
 from tests.helpers.workspaces import open_as
 from tests.viewports import DESKTOP_VIEWPORT
 
-HOME = (32.7940, 34.9896)
-BRAUDE = (32.9141, 35.2922)
-TLVTECH = (32.0853, 34.7818)
 DEFERRED = (
     "DEFERRED until merge to dev: the dev Items validator rejects kind travel until sync-db runs"
 )
@@ -67,12 +67,12 @@ def _same_instant(a: str, b: str) -> bool:
 
 
 def _seed(api_base_url: str, fresh_owner, page: Page, base_url: str) -> tuple:
-    """Home, Braude and TLVTech by coordinates (no geocoder to wait for), the default dashboard,
-    the page open on it. Returns (user, workspace, home, braude, tlvtech, tomorrow)."""
+    """Home, Braude and TLVTech by name (nothing is looked up), the default dashboard, the page
+    open on it. Returns (user, workspace, home, braude, tlvtech, tomorrow)."""
     user, workspace = fresh_owner
-    home = create_place(api_base_url, user, workspace["id"], "Home", coords=HOME, home=True)
-    braude = create_place(api_base_url, user, workspace["id"], "Braude", coords=BRAUDE)
-    tlvtech = create_place(api_base_url, user, workspace["id"], "TLVTech", coords=TLVTECH)
+    home = create_place(api_base_url, user, workspace["id"], "Home", home=True)
+    braude = create_place(api_base_url, user, workspace["id"], "Braude")
+    tlvtech = create_place(api_base_url, user, workspace["id"], "TLVTech")
     create_dashboard(api_base_url, user, workspace["id"])
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, "/en/dashboard")
@@ -109,7 +109,8 @@ def test_leg_sheet_edit_skip_reset(page: Page, base_url: str, api_base_url: str,
         there={"minutes": 40},
     )
 
-    # The first stored-leg step: exactly one leg, the drive there, 13:20-14:00, his 40 minutes.
+    # The first stored-leg step: exactly one leg, the drive there, 13:20-14:00: the 40 minutes
+    # are the trip's (every time), so the leg follows the trip (not his by hand).
     legs = marked["legs"]
     assert [(leg["title"], leg["props"]["travel"]["direction"]) for leg in legs] == [
         ("Drive to Braude", "there")
@@ -120,8 +121,8 @@ def test_leg_sheet_edit_skip_reset(page: Page, base_url: str, api_base_url: str,
     trip = leg["props"]["travel"]
     assert (trip["minutes"], trip["source"], trip["edited"], trip["fromName"], trip["toName"]) == (
         40,
-        "manual",
-        True,
+        "set",
+        False,
         "Home",
         "Braude",
     )
@@ -143,9 +144,10 @@ def test_leg_sheet_edit_skip_reset(page: Page, base_url: str, api_base_url: str,
     expect(section.locator("[data-leg-link='waze']")).to_have_count(1)
     expect(section.locator("[data-leg-link='google_maps']")).to_have_count(1)
 
-    # Leave at 13:30: leave and arrival stand, the length follows (30 min).
+    # This trip only: leave at 13:30 and arrive at 14:00 (30 min); the trip's length stays 40.
     section.get_by_label("Leave", exact=True).fill("13:30")
-    expect(section.get_by_label("Length, in minutes")).to_have_value("30")
+    section.get_by_label("Arrive", exact=True).fill("14:00")
+    expect(section.get_by_label("How long this trip takes (every time)")).to_have_value("40")
     with page.expect_response(
         lambda r: r.request.method == "PATCH" and f"/travel/legs/{leg['id']}" in r.url,
         timeout=APP_REQUEST_TIMEOUT,
@@ -156,10 +158,10 @@ def test_leg_sheet_edit_skip_reset(page: Page, base_url: str, api_base_url: str,
         "endAt": zoned_iso(page, tomorrow, "14:00"),
     }
     after = edited.value.json()["data"]["props"]["travel"]
-    assert (after["minutes"], after["source"], after["edited"]) == (30, "manual", True)
+    assert (after["minutes"], after["source"], after["edited"]) == (30, "set", True)
     expect(section.locator("[data-leg-length]")).to_have_text("30 min · set by you")
 
-    # Reset: computed again, his times gone (nothing left to reset).
+    # Reset: back to the trip's length (40), his times gone (nothing left to reset).
     with page.expect_response(
         lambda r: r.url.endswith(f"/travel/legs/{leg['id']}/reset") and r.request.method == "POST",
         timeout=APP_REQUEST_TIMEOUT,
@@ -168,7 +170,7 @@ def test_leg_sheet_edit_skip_reset(page: Page, base_url: str, api_base_url: str,
     assert reset.value.request.post_data_json == {}
     assert get_leg(api_base_url, user, wid, leg["id"])["props"]["travel"]["edited"] is False
     expect(section.locator("[data-leg-reset]")).to_be_disabled()
-    expect(section.locator("[data-leg-length]")).not_to_contain_text("set by you")
+    expect(section.locator("[data-leg-length]")).to_have_text("40 min · set by you")
 
     # Skip: the trip is a tombstone with its reason, and the sheet closes.
     with page.expect_response(
@@ -324,8 +326,14 @@ TEXT = {
         "skipped": "Bus to Braude removed: you skipped it",
         "changed": "Travel changed",
         "mode_bus": "Public transport",
-        "length_ors": "40 min · OpenRouteService",
-        "length_manual": "40 min · set by you",
+        "length_set": "40 min · set by you",
+        "length_35": "35 min · set by you",
+        "length_unset": "Set how long · 30 min for now",
+        "length_field": "How long this trip takes (every time)",
+        "length_placeholder": "Set how long",
+        "length_unset_hint": "Not set yet: it’s shown as 30 min until you set it.",
+        "length_saved": "Every Bus home now takes 35 min.",
+        "set_length": "Set how long",
         "kind": "Travel",
         "to": "to",
     },
@@ -345,8 +353,14 @@ TEXT = {
         "skipped": "נסיעה באוטובוס לבראודה הוסרה: דילגתם עליה",
         "changed": "הנסיעות השתנו",
         "mode_bus": "תחבורה ציבורית",
-        "length_ors": "40 דק׳ · OpenRouteService",
-        "length_manual": "40 דק׳ · נקבע על ידכם",
+        "length_set": "40 דק׳ · נקבע על ידכם",
+        "length_35": "35 דק׳ · נקבע על ידכם",
+        "length_unset": "קבעו כמה זמן · 30 דק׳ בינתיים",
+        "length_field": "כמה זמן הנסיעה הזו לוקחת (בכל פעם)",
+        "length_placeholder": "קבעו כמה זמן",
+        "length_unset_hint": "עדיין לא נקבע: מוצג כ-30 דק׳ עד שתקבעו.",
+        "length_saved": "כל נסיעה באוטובוס הביתה לוקחת עכשיו 35 דק׳.",
+        "set_length": "קבעו כמה זמן",
         "kind": "נסיעה",
         "to": "אל",
     },
@@ -354,9 +368,10 @@ TEXT = {
 
 
 def fixture_legs(language: str) -> StubbedLegs:
-    """The page's day: one leg each of walking (past), driving (in conflict, on now), the bus (next)
-    and the bus home (its event moved, edited by hand), and tomorrow's walk; a cancelled trip today.
-    Built as the server stores them (tests/helpers/travel_legs.py)."""
+    """The page's day: one leg each of walking (past), driving (in conflict, on now), the bus (next,
+    its trip's length not set yet: the 30-minute placeholder) and the bus home (its event moved,
+    edited by hand), and tomorrow's walk; a cancelled trip today. Built as the server stores them
+    (tests/helpers/travel_legs.py)."""
     text = TEXT[language]
     home, braude, tlv = text["home"], text["braude"], text["tlv"]
     walk_past = Leg(
@@ -364,7 +379,7 @@ def fixture_legs(language: str) -> StubbedLegs:
         at(TODAY, "08:10"),
         at(TODAY, "08:40"),
         travel_props(
-            "lecture-1", "there", "walk", home, braude, at(TODAY, "08:40"), 30, "estimate",
+            "lecture-1", "there", "walk", home, braude, at(TODAY, "08:40"), 30, "set",
             from_home=True,
         ),
     )
@@ -373,23 +388,23 @@ def fixture_legs(language: str) -> StubbedLegs:
         at(TODAY, "11:40"),
         at(TODAY, "12:20"),
         travel_props(
-            "meeting-1", "between", "drive", braude, tlv, at(TODAY, "12:20"), 40, "ors",
+            "meeting-1", "between", "drive", braude, tlv, at(TODAY, "12:20"), 40, "set",
             conflict=True,
         ),
     )
     bus_next = Leg(
         "leg-bus-next",
-        at(TODAY, "13:00"),
+        at(TODAY, "13:10"),
         at(TODAY, "13:40"),
         travel_props(
-            "class-1", "there", "transit", home, braude, at(TODAY, "13:40"), 40, "ors", from_home=True
+            "class-1", "there", "transit", home, braude, at(TODAY, "13:40"), 30, "unset", from_home=True
         ),
     )
     computed = {
         "start": at(TODAY, "18:00"),
         "end": at(TODAY, "18:40"),
         "travel": travel_props(
-            "dinner-1", "back", "transit", braude, home, at(TODAY, "18:00"), 40, "ors", to_home=True
+            "dinner-1", "back", "transit", braude, home, at(TODAY, "18:00"), 40, "set", to_home=True
         ),
     }
     bus_moved = Leg(
@@ -397,7 +412,7 @@ def fixture_legs(language: str) -> StubbedLegs:
         at(TODAY, "17:00"),
         at(TODAY, "17:40"),
         travel_props(
-            "dinner-1", "back", "transit", braude, home, at(TODAY, "17:00"), 40, "manual",
+            "dinner-1", "back", "transit", braude, home, at(TODAY, "17:00"), 40, "set",
             to_home=True, edited=True, anchor_moved=True, anchor_start_now=at(TODAY, "18:00"),
         ),
         computed,
@@ -407,7 +422,7 @@ def fixture_legs(language: str) -> StubbedLegs:
         at(TOMORROW, "09:00"),
         at(TOMORROW, "09:15"),
         travel_props(
-            "lecture-2", "there", "walk", home, braude, at(TOMORROW, "09:15"), 15, "estimate",
+            "lecture-2", "there", "walk", home, braude, at(TOMORROW, "09:15"), 15, "set",
             from_home=True,
         ),
     )
@@ -504,6 +519,10 @@ def _check_calendar(page: Page, text: dict) -> None:
     expect(event("leg-walk-past")).to_have_class(re.compile(r"\btc-past\b"))
     expect(calendar.locator(".tc-past")).to_have_count(1)
     expect(event("leg-bus-moved")).to_have_attribute("data-anchor-moved", "true")
+    # Its trip's length not set yet: drawn dashed (the class), and said in its attribute.
+    expect(event("leg-bus-next")).to_have_class(re.compile(r"\btc-unset\b"))
+    expect(event("leg-bus-next")).to_have_attribute("data-length-unset", "true")
+    expect(calendar.locator(".tc-unset")).to_have_count(1)
 
 
 def _check_clock(page: Page, text: dict) -> None:
@@ -517,7 +536,13 @@ def _check_clock(page: Page, text: dict) -> None:
     expect(ring.locator("path[data-conflict='true']")).to_have_attribute(
         "style", re.compile(r"stroke: var\(--destructive\)")
     )
-    expect(ring.locator("path[data-conflict='false'][style*='stroke']")).to_have_count(0)
+    expect(
+        ring.locator("path[data-conflict='false'][data-length-unset='false'][style*='stroke']")
+    ).to_have_count(0)
+    # The bus whose trip has no length yet: a dashed edge.
+    unset = ring.locator("path[data-length-unset='true']")
+    expect(unset).to_have_count(1)
+    expect(unset).to_have_attribute("style", re.compile(r"stroke-dasharray"))
     expect(ring.locator("path[data-past='true']")).to_have_count(1)
     expect(ring.locator("path[data-past='true']")).to_have_attribute("data-leg-mode", "walk")
     # The ring's own words name the trip in the UI language.
@@ -532,7 +557,7 @@ def _check_clock(page: Page, text: dict) -> None:
     next_line = summary.locator("[data-clock-line][data-conflict='false']")
     expect(next_line).to_have_count(1)
     expect(next_line).to_contain_text(text["bus_braude"])
-    expect(next_line).to_contain_text("13:00")
+    expect(next_line).to_contain_text("13:10")
     expect(next_line.locator("svg[data-leg-mode='transit']")).to_have_count(1)
 
 
@@ -555,6 +580,10 @@ def _check_agenda(page: Page, text: dict) -> None:
     expect(agenda.locator("li[data-agenda-leg][data-conflict='true']")).to_have_count(1)
     expect(agenda.locator("li[data-agenda-leg='transit']")).to_have_count(2)
     expect(agenda.locator("li[data-agenda-leg='walk']")).to_have_count(1)
+    # The bus whose trip has no length yet: a dashed outline, said in its attribute.
+    unset = agenda.locator("li[data-agenda-leg][data-length-unset='true']")
+    expect(unset).to_have_count(1)
+    expect(unset).to_have_class(re.compile(r"outline-dashed"))
     expect(
         agenda.locator("section[data-agenda-part='tomorrow'] li[data-agenda-leg='walk']")
     ).to_contain_text(text["walk_braude"])
@@ -585,6 +614,9 @@ def _check_timeline(page: Page, text: dict) -> None:
     expect(
         timeline.locator("[data-timeline-day='" + TOMORROW + "'] li[data-timeline-leg='walk']")
     ).to_have_count(1)
+    unset = timeline.locator("li[data-timeline-leg][data-length-unset='true']")
+    expect(unset).to_have_count(1)
+    expect(unset).to_have_class(re.compile(r"outline-dashed"))
 
 
 def _open_leg(page: Page, leg_id: str):
@@ -604,7 +636,7 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
     expect(sheet.locator("[data-travel-leg]")).to_have_attribute("data-conflict", "true")
     expect(sheet.locator("[data-leg-link='waze']")).to_have_count(1)
     expect(sheet.locator("[data-leg-link='google_maps']")).to_have_count(1)
-    expect(sheet.locator("[data-leg-link='moovit']")).to_have_count(0)
+    expect(sheet.locator("[data-leg-link]")).to_have_count(2)
     page.keyboard.press("Escape")
     expect(sheet).to_be_hidden()
 
@@ -618,7 +650,7 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
     expect(section.locator("[data-leg-route]")).to_have_text(
         re.compile(rf"^{text['braude']}\s*{text['to']}\s*{text['home']}$")
     )
-    expect(section.locator("[data-leg-length]")).to_have_text(text["length_manual"])
+    expect(section.locator("[data-leg-length]")).to_have_text(text["length_set"])
     expect(section.locator("[data-leg-flag='moved']")).to_contain_text(text["moved"])
     expect(section.locator("[data-leg-flag='moved']")).to_contain_text(text["moved_now"])
     expect(section.locator("[data-leg-flag='conflict']")).to_have_count(0)
@@ -628,54 +660,75 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
     expect(sheet.get_by_text(re.compile(r"Status|סטטוס"))).to_have_count(0)
     expect(sheet.locator("[data-item-local-edit]")).to_have_count(0)
     expect(sheet.locator("[data-item-details], #item-details")).to_have_count(0)
-    # App links: Moovit and Google Maps for the bus (never shown as text, so no place or address).
-    expect(section.locator("[data-leg-link='moovit']")).to_have_count(1)
-    # The app's web page is its own plain link: no timer decides between them.
-    expect(section.locator("[data-leg-link='moovit-web']")).to_have_attribute(
-        "href", "https://moovitapp.com/"
-    )
+    # App links: Google Maps for the bus, from the places' text (never shown as text: no address
+    # on the page). No Moovit.
     expect(section.locator("[data-leg-link='google_maps']")).to_have_count(1)
-    expect(section.locator("[data-leg-link='waze']")).to_have_count(0)
-    expect(sheet.locator("[data-leg-links]")).not_to_contain_text("32.")
+    expect(section.locator("[data-leg-link]")).to_have_count(1)
+    expect(section.locator("[data-leg-link='google_maps']")).to_have_attribute(
+        "href", re.compile(r"destination=Snunit%20St%2051%2C%20Karmiel&travelmode=transit$")
+    )
+    expect(sheet.locator("[data-leg-links]")).not_to_contain_text("Snunit")
 
-    # A trip back keeps its length when he leaves earlier (16:50): the arrival follows (17:30), and
-    # it sends the two fields that stand.
-    section.locator("[data-leg-times] input[type='time']").first.fill("16:50")
-    expect(section.locator("[data-leg-times] input[type='number']")).to_have_value("40")
-    expect(section.locator("[data-leg-times] input[type='time']").nth(1)).to_have_value("17:30")
+    # Two changes, each said for what it is. How long the trip takes, every time: 40 (the trip's,
+    # read for a leg he timed by hand).
+    length = section.get_by_label(text["length_field"])
+    expect(length).to_have_value("40", timeout=NORMAL_TIMEOUT)
+    this_trip = section.locator("[data-leg-this-trip]")
+    # This trip only: he leaves earlier (16:50); it keeps its own length, the arrival follows
+    # (17:30), and only the time he typed is sent.
+    this_trip.locator("input[type='time']").first.fill("16:50")
+    expect(this_trip.locator("input[type='time']").nth(1)).to_have_value("17:30")
+    expect(length).to_have_value("40")
     expect(section.locator("[data-leg-save]")).to_be_enabled()
     with page.expect_response(
         lambda r: r.request.method == "PATCH" and r.url.endswith("/travel/legs/leg-bus-moved"),
         timeout=APP_REQUEST_TIMEOUT,
     ):
         section.locator("[data-leg-save]").click()
-    assert stub.calls[-1] == (
-        "edit",
-        "leg-bus-moved",
-        {"startAt": iso(at(TODAY, "16:50")), "minutes": 40},
-    )
-    # His times, acknowledged: the "moved" flag is gone and the length is his.
-    expect(section.locator("[data-leg-length]")).to_have_text(text["length_manual"])
+    assert stub.calls[-1] == ("edit", "leg-bus-moved", {"startAt": iso(at(TODAY, "16:50"))})
+    # His times, acknowledged: the "moved" flag is gone.
+    expect(section.locator("[data-leg-length]")).to_have_text(text["length_set"])
     expect(section.locator("[data-leg-flag='moved']")).to_have_count(0)
     expect(page.locator("[data-calendar-view] .fc-event[data-item-id='leg-bus-moved']")).to_have_attribute(
         "data-anchor-moved", "false"
     )
+    # How long the trip takes, every time: 35. A trip back keeps its departure (16:50); only the
+    # length is sent, and it says every such trip takes it now.
+    length = section.get_by_label(text["length_field"])
+    length.fill("35")
+    expect(section.locator("[data-leg-this-trip] input[type='time']").nth(1)).to_have_value("17:25")
+    with page.expect_response(
+        lambda r: r.request.method == "PATCH" and r.url.endswith("/travel/legs/leg-bus-moved"),
+        timeout=APP_REQUEST_TIMEOUT,
+    ):
+        section.locator("[data-leg-save]").click()
+    assert stub.calls[-1] == ("edit", "leg-bus-moved", {"minutes": 35})
+    expect(page.locator("[data-sonner-toast]", has_text=text["length_saved"])).to_be_visible()
+    expect(section.locator("[data-leg-length]")).to_have_text(text["length_35"])
 
-    # Reset: computed again (18:00-18:40), nothing left to reset.
+    # Reset: computed again with the trip's length (18:00-18:35), nothing left to reset.
     with page.expect_response(
         lambda r: r.request.method == "POST" and r.url.endswith("/travel/legs/leg-bus-moved/reset"),
         timeout=APP_REQUEST_TIMEOUT,
     ):
         section.locator("[data-leg-reset]").click()
     assert stub.calls[-1] == ("reset", "leg-bus-moved", {})
-    expect(section.locator("[data-leg-when]")).to_contain_text(re.compile(r"18:00\W+18:40"))
-    expect(section.locator("[data-leg-length]")).to_have_text(text["length_ors"])
+    expect(section.locator("[data-leg-when]")).to_contain_text(re.compile(r"18:00\W+18:35"))
+    expect(section.locator("[data-leg-length]")).to_have_text(text["length_35"])
     expect(section.locator("[data-leg-reset]")).to_be_disabled()
     page.keyboard.press("Escape")
     expect(sheet).to_be_hidden()
 
-    # Skip a trip that was in the way: the sheet closes, and the calendar loses it.
+    # A trip whose length isn't set yet: it says so, and asks for it (the field is empty).
     sheet = _open_leg(page, "leg-bus-next")
+    section = sheet.locator("[data-travel-leg]")
+    expect(section).to_have_attribute("data-length-unset", "true")
+    expect(section.locator("[data-leg-length]")).to_have_text(text["length_unset"])
+    length = section.get_by_label(text["length_field"])
+    expect(length).to_have_value("")
+    expect(length).to_have_attribute("placeholder", text["length_placeholder"])
+    expect(section.locator("[data-leg-length-hint]")).to_have_text(text["length_unset_hint"])
+    # Skip a trip that was in the way: the sheet closes, and the calendar loses it.
     with page.expect_response(
         lambda r: r.request.method == "POST" and r.url.endswith("/travel/legs/leg-bus-next/skip"),
         timeout=APP_REQUEST_TIMEOUT,
@@ -719,6 +772,11 @@ def _check_day_panel(page: Page, stub: StubbedLegs, text: dict) -> None:
     assert stub.calls[-1] == ("reset", "leg-bus-next", {})
     expect(trips).to_have_count(4, timeout=NORMAL_TIMEOUT)
     expect(skipped).to_have_count(0)
+    # The trip back has no length yet: the day says "Set how long" on it.
+    unset = panel.locator("[data-travel-day-leg='leg-bus-next']")
+    expect(unset).to_have_attribute("data-length-unset", "true")
+    expect(unset.locator("[data-leg-set-length]")).to_have_text(text["set_length"])
+    expect(panel.locator("[data-leg-set-length]")).to_have_count(1)
     # A trip opens its own sheet, in place of the day's.
     panel.locator("[data-travel-day-leg='leg-bus-next'] button").click()
     expect(page.locator("[data-item-sheet] [data-travel-leg]")).to_be_visible(timeout=NORMAL_TIMEOUT)

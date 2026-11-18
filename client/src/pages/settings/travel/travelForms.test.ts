@@ -4,16 +4,13 @@ import type { Query } from '@api-types/builder.ts';
 import { DEFAULT_TRAVEL_SETTINGS } from '@api-types/travel.ts';
 import {
   addDays,
-  bufferFromInput,
   dayLink,
-  factorFromInput,
   goHomeFromInput,
   horizonOf,
   neighbourAfterRemoval,
   newRuleRequestOf,
   NEW_RULE,
   parseAliases,
-  parseCoordinates,
   placeDraftOf,
   placePatchOf,
   placeRequestOf,
@@ -24,49 +21,45 @@ import {
 } from './travelForms.ts';
 
 describe('places', () => {
-  it('coordinates text passes as coords', () => {
-    assert.deepEqual(parseCoordinates(' 32.794, 34.9896 '), { lat: 32.794, lon: 34.9896 });
-    assert.deepEqual(parseCoordinates('-33.9,18.42'), { lat: -33.9, lon: 18.42 });
-    assert.equal(parseCoordinates('Snunit 51, Karmiel'), null);
-    assert.equal(parseCoordinates('91, 10'), null);
-    assert.equal(parseCoordinates('10, 181'), null);
-
+  it('a place is a name, and an address as typed (never coordinates)', () => {
     const typed = placeRequestOf({
       name: ' Braude ',
       address: '32.9141, 35.2922',
       aliases: 'ORT Braude, בראודה',
       home: false,
     });
+    // A typed "lat, lon" is text like any other address: no coordinates go anywhere.
     assert.deepEqual(typed, {
       ok: true,
       request: {
         name: 'Braude',
         address: '32.9141, 35.2922',
-        coords: { lat: 32.9141, lon: 35.2922 },
         aliases: ['ORT Braude', 'בראודה'],
         home: false,
       },
     });
-
-    const looked = placeRequestOf({ name: 'Home', address: 'Snunit 51', aliases: '', home: true });
-    assert.deepEqual(looked, {
+    const home = placeRequestOf({ name: 'Home', address: ' Snunit 51 ', aliases: '', home: true });
+    assert.deepEqual(home, {
       ok: true,
       request: { name: 'Home', address: 'Snunit 51', aliases: [], home: true },
     });
   });
 
-  it('a place needs a name and an address or coordinates', () => {
-    assert.deepEqual(placeRequestOf({ name: ' ', address: '1, 2', aliases: '', home: false }), {
-      ok: false,
-      problem: 'name',
-    });
+  it('a place needs a name only: the address is optional', () => {
+    assert.deepEqual(
+      placeRequestOf({ name: ' ', address: 'Snunit 51', aliases: '', home: false }),
+      {
+        ok: false,
+        problem: 'name',
+      },
+    );
     assert.deepEqual(placeRequestOf({ name: 'Gym', address: '  ', aliases: '', home: false }), {
-      ok: false,
-      problem: 'address',
+      ok: true,
+      request: { name: 'Gym', aliases: [], home: false },
     });
   });
 
-  it('an edit sends only what changed, so a kept address is not looked up again', () => {
+  it('an edit sends only what changed', () => {
     const saved = {
       id: 'p1',
       name: 'Braude',
@@ -78,24 +71,16 @@ describe('places', () => {
     assert.ok(same.ok);
     assert.equal(placePatchOf(saved, same.request), null);
 
-    const moved = placeRequestOf({
-      ...placeDraftOf(saved),
-      address: '32.9141, 35.2922',
-      home: true,
-    });
+    const moved = placeRequestOf({ ...placeDraftOf(saved), address: 'Herzl 7', home: true });
     assert.ok(moved.ok);
-    assert.deepEqual(placePatchOf(saved, moved.request), {
-      address: '32.9141, 35.2922',
-      coords: { lat: 32.9141, lon: 35.2922 },
-      home: true,
-    });
+    assert.deepEqual(placePatchOf(saved, moved.request), { address: 'Herzl 7', home: true });
 
     const renamed = placeRequestOf({ ...placeDraftOf(saved), name: 'ORT', aliases: '' });
     assert.ok(renamed.ok);
     assert.deepEqual(placePatchOf(saved, renamed.request), { name: 'ORT', aliases: [] });
 
-    // Editing may clear the address (the coordinates stay); a new place may not.
-    const cleared = placeRequestOf({ ...placeDraftOf(saved), address: ' ' }, true);
+    // Its address may be cleared.
+    const cleared = placeRequestOf({ ...placeDraftOf(saved), address: ' ' });
     assert.ok(cleared.ok);
     assert.deepEqual(placePatchOf(saved, cleared.request), { address: '' });
   });
@@ -106,24 +91,6 @@ describe('places', () => {
 });
 
 describe('settings', () => {
-  it('factor input clamps to 0.5–3', () => {
-    assert.equal(factorFromInput('5', 1), 3);
-    assert.equal(factorFromInput('0.1', 1), 0.5);
-    assert.equal(factorFromInput('1.15', 1), 1.15);
-    assert.equal(factorFromInput('1.234', 1), 1.23);
-    assert.equal(factorFromInput('1,5', 1), 1.5);
-    assert.equal(factorFromInput('', 1.15), 1.15);
-    assert.equal(factorFromInput('abc', 2), 2);
-  });
-
-  it('buffers are whole minutes, 0–120', () => {
-    assert.equal(bufferFromInput('10', 0), 10);
-    assert.equal(bufferFromInput('-3', 5), 0);
-    assert.equal(bufferFromInput('500', 5), 120);
-    assert.equal(bufferFromInput('7.6', 5), 8);
-    assert.equal(bufferFromInput('', 5), 5);
-  });
-
   it('go-home minutes keep their floors', () => {
     assert.equal(goHomeFromInput('60', 'minWindowMinutes', 200), 180);
     assert.equal(goHomeFromInput('240', 'minWindowMinutes', 180), 240);
@@ -131,13 +98,12 @@ describe('settings', () => {
     assert.equal(goHomeFromInput('x', 'minAtHomeMinutes', 75), 75);
   });
 
-  it('a draft is a copy, compared by value', () => {
+  it('a draft is a copy, compared by value; there are no factors or buffers', () => {
     const draft = settingsDraftOf(DEFAULT_TRAVEL_SETTINGS);
-    assert.equal(draft.factors.drive, 1.15);
-    assert.equal(draft.buffers.drive, 10);
+    assert.deepEqual(Object.keys(draft).sort(), ['defaultMode', 'goHome']);
     assert.ok(sameSettings(draft, DEFAULT_TRAVEL_SETTINGS));
-    draft.factors.drive = 1.2;
-    assert.equal(DEFAULT_TRAVEL_SETTINGS.factors.drive, 1.15);
+    draft.goHome.minWindowMinutes = 240;
+    assert.equal(DEFAULT_TRAVEL_SETTINGS.goHome.minWindowMinutes, 180);
     assert.ok(!sameSettings(draft, DEFAULT_TRAVEL_SETTINGS));
   });
 });

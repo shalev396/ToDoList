@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } fr
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { House, Info, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
-import { errorMessage, geocodeErrorMessage } from '@/api/errors';
+import { errorMessage } from '@/api/errors';
 import { useRemovePlace, useSavePlace } from '@/api/queries/travel';
 import { FormError } from '@/components/auth/auth-ui';
 import {
@@ -23,7 +23,6 @@ import { SettingsSection } from '@/pages/settings/SettingsLayout';
 import type { PlaceView } from '@api-types/travel.ts';
 import {
   EMPTY_PLACE,
-  parseCoordinates,
   placeDraftOf,
   placePatchOf,
   placeRequestOf,
@@ -100,7 +99,7 @@ function PlaceForm({
   const [draft, setDraft] = useState<PlaceDraft>(
     place === undefined ? EMPTY_PLACE : placeDraftOf(place),
   );
-  const [problem, setProblem] = useState<'name' | 'address' | null>(null);
+  const [problem, setProblem] = useState<'name' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const editing = place !== undefined;
   // Opening a place for editing puts the keyboard on its name.
@@ -115,7 +114,7 @@ function PlaceForm({
   };
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    const form = placeRequestOf(draft, editing);
+    const form = placeRequestOf(draft);
     if (!form.ok) {
       setProblem(form.problem);
       return;
@@ -131,7 +130,7 @@ function PlaceForm({
       }
     };
     const fail = (failure: unknown) => {
-      setError(geocodeErrorMessage(t, failure, 'travel.places.saveFailed'));
+      setError(errorMessage(t, failure, 'travel.places.saveFailed'));
     };
     if (place === undefined) {
       save.mutate({ body: form.request }, { onSuccess: done, onError: fail });
@@ -144,7 +143,6 @@ function PlaceForm({
     }
     save.mutate({ id: place.id, body: patch }, { onSuccess: done, onError: fail });
   };
-  const coords = parseCoordinates(draft.address) !== null;
   return (
     <form
       noValidate
@@ -182,10 +180,9 @@ function PlaceForm({
             id={`${id}-address`}
             value={draft.address}
             maxLength={300}
-            dir={coords ? 'ltr' : 'auto'}
+            dir="auto"
             autoComplete="off"
-            aria-invalid={problem === 'address'}
-            aria-describedby={`${id}-address-hint${problem === 'address' ? ` ${id}-problem` : ''}`}
+            aria-describedby={`${id}-address-hint`}
             onChange={(event) => {
               change({ address: event.target.value });
             }}
@@ -221,7 +218,7 @@ function PlaceForm({
       </label>
       {problem === null ? null : (
         <p id={`${id}-problem`} role="alert" className="text-[13px] text-destructive">
-          {t(problem === 'name' ? 'travel.places.errName' : 'travel.places.errAddress')}
+          {t('travel.places.errName')}
         </p>
       )}
       {error === null ? null : <FormError>{error}</FormError>}
@@ -280,7 +277,6 @@ function PlaceRow({
       </li>
     );
   }
-  const coords = place.address !== null && parseCoordinates(place.address) !== null;
   return (
     <li
       data-place={place.name}
@@ -306,8 +302,7 @@ function PlaceRow({
         </p>
         {place.address === null ? null : (
           <p className="text-[13px] break-words text-muted-foreground">
-            {/* Coordinates read left to right, at the start of the line in either language. */}
-            <bdi data-place-address dir={coords ? 'ltr' : 'auto'}>
+            <bdi data-place-address dir="auto">
               {place.address}
             </bdi>
           </p>

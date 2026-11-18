@@ -21,16 +21,24 @@ import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
 import { cn } from '@/lib/utils';
 import { ROUTES } from '@/router/routes';
-import { TRAVEL_MODES, type PlaceView, type TravelMode } from '@api-types/travel.ts';
+import {
+  TRAVEL_MODES,
+  TRIP_MINUTES_MAX,
+  UNSET_TRIP_MINUTES,
+  type PlaceView,
+  type TravelMode,
+} from '@api-types/travel.ts';
 import { dateInZone, timeInZone } from '../items/zonedDate';
 import { useTravelSetup } from './travelHooks';
 import {
   NO_OWN_PLACE,
   defaultFromPlace,
-  editPanelSpan,
+  editPanelLength,
   editPanelTime,
+  lengthFromInput,
   openPanel,
   panelPreview,
+  panelSpan,
   previewFill,
   previewLine,
   previewRequestOf,
@@ -48,9 +56,6 @@ const MODE_ICONS: Record<TravelMode, LucideIcon> = {
 const OWN_PLACE = 'own';
 /** The From select's value for "nowhere in particular" (the preview then starts at Home). */
 const NO_PLACE = '';
-
-/** The longest leg the server takes: a day, in minutes. */
-const DAY_MINUTES = 24 * 60;
 
 /** "Travel needs a Home", with the way to Settings → Travel. */
 export function HomeMissing() {
@@ -79,10 +84,11 @@ export function HomeMissing() {
 /**
  * "Add travel time" (travel-time design, "Where travel comes from"): tabs Walk / Drive / Public
  * transport; From (where the day plan has him before, else Home) and To (its own place, or one of
- * his places); There and Back; and the trip there: leave, arrive and length, any two set the third.
- * It arrives by the item's start until he types otherwise. A live preview line says when to leave
- * and where the length comes from; the length is asked once the trip stops changing
- * (useTravelPreview), never per key press.
+ * his places); There and Back; and the trip there, in two parts said for what they are: how long
+ * the trip takes, every time (the trip's own length, filled from what he set before; "Set how
+ * long" while it has none), and this trip only (leave and arrive). It arrives by the item's start
+ * until he types otherwise. A live preview line says when to leave; the trip's length is read once
+ * the trip stops changing (useTravelPreview), never per key press.
  */
 export function TravelPanel({
   state,
@@ -133,10 +139,13 @@ export function TravelPanel({
   const request = home === null ? null : previewRequestOf(state, own.guess?.id ?? null);
   const preview = useTravelPreview(setup.workspaceId, request);
   const answer = request === null ? undefined : preview.data;
-  // The computed length stands in for the one he hasn't typed; an edit is made on what he sees.
-  const fill = (previous: TravelPanelState) => previewFill(previous, answer?.minutes ?? null);
+  // The trip's own length stands in for the one he hasn't typed; an edit is made on what he sees.
+  const fill = (previous: TravelPanelState) => previewFill(previous, answer);
   const shown = fill(state);
   const trip = panelPreview(shown, answer);
+  const span = panelSpan(shown);
+  // The trip has no length yet (and he typed none): the field asks for it.
+  const unset = !shown.lengthTyped && answer?.lengthUnset === true;
   const edit = (update: (previous: TravelPanelState) => TravelPanelState) => {
     onChange((previous) => update(fill(previous)));
   };
@@ -167,8 +176,9 @@ export function TravelPanel({
       : []),
     ...places.map((place: PlaceView) => ({ value: place.id, label: place.name })),
   ];
-  const time = (date: Date | null) => (date === null ? '' : timeInZone(date, timeZone));
-  const length = shown.span.minutes === null ? '' : String(Math.round(shown.span.minutes));
+  const time = (date: Date | null | undefined) =>
+    date === null || date === undefined ? '' : timeInZone(date, timeZone);
+  const length = shown.minutes === null ? '' : String(Math.round(shown.minutes));
 
   let line: { kind: string; text: string };
   if (trip !== null) {
@@ -291,14 +301,46 @@ export function TravelPanel({
       </fieldset>
 
       {state.there ? (
-        <fieldset className="m-0 flex min-w-0 flex-col gap-2 border-0 p-0" data-travel-span="">
+        <fieldset className="m-0 flex min-w-0 flex-col gap-3 border-0 p-0" data-travel-span="">
           <legend className="mb-1 text-sm font-medium">{t('travel.add.tripThere')}</legend>
-          {/* On a phone the two times share a row (a time input needs the width) and the length
-              goes under them. */}
-          <div className="grid grid-cols-3 items-end gap-2 max-sm:grid-cols-2">
-            {/* Every occurrence keeps a length only (each arrives as it starts): no times. */}
-            {every ? null : (
-              <>
+          <div className="flex min-w-0 flex-col gap-1" data-travel-length="">
+            <Label htmlFor={`${ids}-length`} className="text-[13px] font-normal">
+              {t('travel.add.length')}
+            </Label>
+            <Input
+              id={`${ids}-length`}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={TRIP_MINUTES_MAX}
+              className={cn('w-36 tabular-nums', unset && 'border-dashed border-primary/60')}
+              placeholder={t('travel.add.lengthPlaceholder')}
+              aria-describedby={`${ids}-length-hint`}
+              value={length}
+              disabled={anchorStart === null}
+              onChange={(event) => {
+                const minutes = lengthFromInput(event.target.value);
+                edit((previous) => editPanelLength(previous, minutes));
+              }}
+            />
+            <p
+              id={`${ids}-length-hint`}
+              data-travel-length-hint={unset ? 'unset' : 'set'}
+              className={cn('text-[13px]', unset ? 'text-primary' : 'text-muted-foreground')}
+            >
+              {unset
+                ? t('travel.add.lengthUnsetHint', { minutes: UNSET_TRIP_MINUTES })
+                : t('travel.add.lengthHint')}
+            </p>
+            {every ? (
+              <p className="text-[13px] text-muted-foreground">{t('travel.add.everyHint')}</p>
+            ) : null}
+          </div>
+          {/* Every occurrence keeps a length only (each arrives as it starts): no times. */}
+          {every ? null : (
+            <div className="flex min-w-0 flex-col gap-1" data-travel-times="">
+              <p className="text-[13px] font-medium">{t('travel.add.thisTrip')}</p>
+              <div className="grid grid-cols-2 items-end gap-2">
                 <div className="flex min-w-0 flex-col gap-1">
                   <Label htmlFor={`${ids}-leave`} className="text-[13px] font-normal">
                     {t('travel.add.leave')}
@@ -307,15 +349,11 @@ export function TravelPanel({
                     id={`${ids}-leave`}
                     type="time"
                     dir="ltr"
-                    value={time(shown.span.start)}
+                    value={time(shown.start ?? span?.start)}
                     disabled={anchorStart === null}
                     onChange={(event) => {
-                      if (anchorStart !== null) {
-                        const value = event.target.value;
-                        edit((previous) =>
-                          editPanelTime(previous, 'start', value, anchorStart, timeZone),
-                        );
-                      }
+                      const value = event.target.value;
+                      edit((previous) => editPanelTime(previous, 'start', value, timeZone));
                     }}
                   />
                 </div>
@@ -327,54 +365,20 @@ export function TravelPanel({
                     id={`${ids}-arrive`}
                     type="time"
                     dir="ltr"
-                    value={time(shown.span.end)}
+                    value={time(shown.end ?? span?.end)}
                     disabled={anchorStart === null}
                     onChange={(event) => {
-                      if (anchorStart !== null) {
-                        const value = event.target.value;
-                        edit((previous) =>
-                          editPanelTime(previous, 'end', value, anchorStart, timeZone),
-                        );
-                      }
+                      const value = event.target.value;
+                      edit((previous) => editPanelTime(previous, 'end', value, timeZone));
                     }}
                   />
                 </div>
-              </>
-            )}
-            <div className={cn('flex min-w-0 flex-col gap-1', every ? null : 'max-sm:col-span-2')}>
-              <Label htmlFor={`${ids}-length`} className="text-[13px] font-normal">
-                {t('travel.add.length')}
-              </Label>
-              <Input
-                id={`${ids}-length`}
-                type="number"
-                inputMode="numeric"
-                min={1}
-                max={DAY_MINUTES}
-                className="tabular-nums"
-                value={length}
-                disabled={anchorStart === null}
-                onChange={(event) => {
-                  const typed = event.target.value;
-                  const minutes = /^\d{1,4}$/.test(typed) ? Number(typed) : null;
-                  edit((previous) =>
-                    editPanelSpan(
-                      previous,
-                      'minutes',
-                      minutes !== null && minutes > 0 && minutes <= DAY_MINUTES ? minutes : null,
-                    ),
-                  );
-                }}
-              />
+              </div>
+              <p className="text-[13px] text-muted-foreground">
+                {series ? t('travel.add.spanHintSeries') : t('travel.add.spanHint')}
+              </p>
             </div>
-          </div>
-          <p className="text-[13px] text-muted-foreground">
-            {every
-              ? t('travel.add.everyHint')
-              : series
-                ? t('travel.add.spanHintSeries')
-                : t('travel.add.spanHint')}
-          </p>
+          )}
         </fieldset>
       ) : (
         <p className="text-[13px] text-muted-foreground">{t('travel.add.backOnly')}</p>

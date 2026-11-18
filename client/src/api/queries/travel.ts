@@ -231,10 +231,10 @@ export function usePinItemPlace(workspaceId: string) {
 
 // ─── Marking an item, and the preview ───────────────────────────────────────
 
-/** A preview is asked once the trip stops changing for this long (each may spend quota). */
+/** A preview is asked once the trip stops changing for this long. */
 export const TRAVEL_PREVIEW_DEBOUNCE_MS = 400;
 
-/** How long a trip's preview is kept: the same trip isn't asked again in that time. */
+/** How long a trip's preview is kept: a travel change reads it again sooner. */
 const TRAVEL_PREVIEW_STALE_MS = 10 * 60_000;
 
 /**
@@ -328,7 +328,10 @@ function storeLeg(queryClient: QueryClient, workspaceId: string, leg: ItemDetail
   queryClient.setQueryData(queryKeys.item(workspaceId, leg.id), leg);
 }
 
-/** New times for a leg: one or two of start, end and length. Hand edits stay until Reset. */
+/**
+ * A leg's change: how long its trip takes, every time (every leg of the trip follows), or this
+ * leg's own times (kept until Reset).
+ */
 export function useEditLeg(workspaceId: string) {
   return useTravelChange(
     workspaceId,
@@ -342,7 +345,7 @@ export function useEditLeg(workspaceId: string) {
   );
 }
 
-/** Computed again: his times and the "moved" flag are cleared, and a skipped trip is back. */
+/** Back to its trip's length: his times and the "moved" flag are cleared, a skipped trip is back. */
 export function useResetLeg(workspaceId: string) {
   return useTravelChange(
     workspaceId,

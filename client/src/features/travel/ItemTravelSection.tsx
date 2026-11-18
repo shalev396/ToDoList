@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CircleAlert, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
-import { apiErrorCode, errorMessage, geocodeErrorMessage } from '@/api/errors';
+import { apiErrorCode, errorMessage } from '@/api/errors';
 import { useMarkItem, usePinItemPlace, useTravelRules, useUnmarkItem } from '@/api/queries/travel';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -13,7 +13,7 @@ import { EveryOccurrenceDialog } from './EveryOccurrenceDialog';
 import { HomeMissing, TravelPanel } from './TravelPanelForm';
 import { useTravelSetup } from './travelHooks';
 import {
-  everyKeepsOnlyLength,
+  everyDropsTimes,
   markOf,
   markRequestOf,
   markTargetOf,
@@ -135,11 +135,7 @@ export function ItemTravelSection({
     try {
       const answer = await mark.mutateAsync({
         itemId: item.id,
-        body: markRequestOf(
-          draft,
-          { itemId: item.id, occurrence: slot, start: anchorStart },
-          every,
-        ),
+        body: markRequestOf(draft, { occurrence: slot }, every),
       });
       setNote(outcomeText(t, outcomeOf(answer, draft.toPlaceId === null)));
       setDraft(null);
@@ -189,8 +185,7 @@ export function ItemTravelSection({
         t('travel.add.statusOwnPlace'));
   const noHome = setup.ready && setup.home === null;
   // Every occurrence takes a length only: said in the dialog when he typed times of his own.
-  const lengthOnly =
-    draft === null || anchorStart === null ? null : everyKeepsOnlyLength(draft, anchorStart);
+  const dropped = draft === null ? undefined : everyDropsTimes(draft);
 
   return (
     <section
@@ -347,9 +342,11 @@ export function ItemTravelSection({
         }}
         returnFocus={saveButton}
         note={
-          lengthOnly === null
+          dropped === undefined
             ? null
-            : t('travel.add.every.lengthOnly', { minutes: Math.round(lengthOnly) })
+            : dropped.minutes === null
+              ? t('travel.add.every.timesOnly')
+              : t('travel.add.every.lengthOnly', { minutes: dropped.minutes })
         }
       />
     </section>
@@ -384,7 +381,7 @@ function PlaceForTravel({ itemId }: { itemId: string }) {
         failed: false,
       });
     } catch (failure) {
-      setResult({ text: geocodeErrorMessage(t, failure, 'travel.add.place.failed'), failed: true });
+      setResult({ text: errorMessage(t, failure, 'travel.add.place.failed'), failed: true });
     }
   };
   return (

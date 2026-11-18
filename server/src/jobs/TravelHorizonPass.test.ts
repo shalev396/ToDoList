@@ -4,13 +4,10 @@
  * member with travel once per day of their workspace's zone, while the tick's budget lasts; the
  * members it doesn't reach run on the next tick.
  */
-import { after, afterEach, before, describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { setTravelTransportForTests } from '../config/testSwitches.js';
 import type * as Models from '../models/index.js';
-import type * as AppSecrets from '../services/appSecrets.js';
-import type { Transport } from '../sync/http.js';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import { callerOf } from '../testing/workspaceFixtures.js';
 import { addLocalDays, wallDate, zonedParts, zonedTime } from '../types/recurrence/zoned.js';
@@ -23,34 +20,19 @@ import type * as Pass from './TravelHorizonPass.js';
 let db: TestDatabase;
 let classes: typeof Classes;
 let models: typeof Models;
-let appSecrets: typeof AppSecrets;
 let pass: typeof Pass;
 
 const ZONE = 'Asia/Jerusalem';
 let count = 0;
 
-const refusing: Transport = {
-  maxRetries: 0,
-  send: () => Promise.resolve({ status: 503, headers: {}, body: '{}' }),
-};
-
 before(async () => {
   db = await startTestDatabase('todolist_travel_horizon_pass_test');
   classes = await import('../classes/index.js');
   models = await import('../models/index.js');
-  appSecrets = await import('../services/appSecrets.js');
   pass = await import('./TravelHorizonPass.js');
-  appSecrets.setAppSecretsForTests({});
-  setTravelTransportForTests(refusing);
-});
-
-afterEach(() => {
-  appSecrets.setAppSecretsForTests({});
-  setTravelTransportForTests(refusing);
 });
 
 after(async () => {
-  setTravelTransportForTests(null);
   await db.stop();
 });
 
@@ -73,15 +55,8 @@ async function workspace(userIds: readonly string[]): Promise<Caller[]> {
     const role = userId === owner ? 'owner' : 'editor';
     await memberships.create(created.id, { userId, role });
     const caller = callerOf({ id: created.id, settings: created.settings, role }, userId);
-    await classes.Place.create(caller, {
-      name: 'Home',
-      coords: { lat: 32.794, lon: 34.9896 },
-      home: true,
-    });
-    const braude = await classes.Place.create(caller, {
-      name: 'Braude',
-      coords: { lat: 32.9141, lon: 35.2922 },
-    });
+    await classes.Place.create(caller, { name: 'Home', home: true });
+    const braude = await classes.Place.create(caller, { name: 'Braude' });
     const { block } = await classes.TimeBlock.create(caller, {
       layer: 'block',
       title: 'Lab',

@@ -1,8 +1,8 @@
 /**
  * The day plan (docs/superpowers/specs/2026-11-17-travel-time-design.md, "The day plan"): one
  * member's anchors for one day, their Home and their settings in; the day's travel legs out. Pure,
- * with no I/O. Every length comes from the estimates the caller worked out beforehand for exactly
- * the trips `trips()` lists.
+ * with no I/O. Every length comes from the lengths the caller read beforehand for exactly the trips
+ * `trips()` lists (the member's own, or the placeholder of a trip he hasn't set: it plans alike).
  *
  * - Anchors are the day's timed items with travel and a place. A day is the workspace time zone's
  *   calendar day, 23 or 25 hours long on a daylight-saving change. An anchor belongs to the day it
@@ -30,7 +30,7 @@
  * Titles are English templates (plan Ruling 19) with place names only, never an address.
  */
 import { zonedTime } from '../../types/recurrence/zoned.js';
-import type { TravelDirection, TravelMode, TravelSettings } from '../../types/travel.js';
+import type { LegSource, TravelDirection, TravelMode, TravelSettings } from '../../types/travel.js';
 import { LegKey } from './LegKey.js';
 
 /** A timed item occurrence the member travels to, as the plan reads it. */
@@ -72,9 +72,10 @@ export interface DayPlanInput {
 /** One trip a leg can take: `from|to|mode`, by place id. */
 export type TripKey = string;
 
+/** A trip's length: the one its member set, or UNSET_TRIP_MINUTES while he hasn't (`unset`). */
 export interface Estimate {
   minutes: number;
-  source: 'ors' | 'remembered' | 'estimate';
+  source: LegSource;
 }
 
 export interface PlannedLeg {

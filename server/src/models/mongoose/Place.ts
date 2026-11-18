@@ -18,8 +18,6 @@ const placeSchema = new mongoose.Schema<PlaceFields>(
     name: { type: String, required: true },
     aliases: { type: [String], default: [] },
     address: { type: String, default: null },
-    lat: { type: Number, required: true, min: -90, max: 90 },
-    lon: { type: Number, required: true, min: -180, max: 180 },
     home: { type: Boolean, default: false },
   },
   { timestamps: true, collection: PLACE_TABLE_NAME },
@@ -34,14 +32,7 @@ placeSchema.index(
 
 export const PlaceMongoModel = mongoose.model<PlaceFields>('Place', placeSchema);
 
-const PATCH_KEYS: readonly (keyof PlacePatch)[] = [
-  'name',
-  'aliases',
-  'address',
-  'lat',
-  'lon',
-  'home',
-];
+const PATCH_KEYS: readonly (keyof PlacePatch)[] = ['name', 'aliases', 'address', 'home'];
 
 function toPlaceData(doc: PlaceFields): PlaceData {
   return {
@@ -51,8 +42,6 @@ function toPlaceData(doc: PlaceFields): PlaceData {
     name: doc.name,
     aliases: [...doc.aliases],
     address: doc.address ?? null,
-    lat: doc.lat,
-    lon: doc.lon,
     home: doc.home,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
@@ -67,8 +56,6 @@ export const PlaceRepository: IPlaceRepository = {
       name: input.name,
       aliases: input.aliases,
       address: input.address,
-      lat: input.lat,
-      lon: input.lon,
       home: input.home,
     });
     return toPlaceData(doc);

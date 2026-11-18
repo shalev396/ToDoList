@@ -1,24 +1,21 @@
 /**
  * Request shapes of the travel routes (zod 4; types/travel.ts holds the request and response
  * types). Strict: an unknown key is a 400. These check the shape only; what a value means (a name
- * of 1–80 characters, an address that is somewhere, a where-group the dashboards' compiler takes,
- * a factor of 0.5–3, a place of the caller's, a span of more than 0 and at most a day) is the
- * travel classes' to check, so REST and MCP refuse the same things.
+ * of 1–80 characters, an address of at most 300, a where-group the dashboards' compiler takes, a
+ * place of the caller's, a span of more than 0 and at most a day) is the travel classes' to check,
+ * so REST and MCP refuse the same things.
  */
 import { z } from 'zod';
 
 import { RuleGroupSchema } from '../types/builder.js';
-import { RULE_DIRECTIONS, TRAVEL_MODES } from '../types/travel.js';
+import { RULE_DIRECTIONS, TRAVEL_MODES, TRIP_MINUTES_MAX } from '../types/travel.js';
 
 const Iso = z.iso.datetime({ offset: true });
 const Id = z.string().min(1).max(200);
 const Mode = z.enum(TRAVEL_MODES);
 const Direction = z.enum(RULE_DIRECTIONS);
 /** A trip's length in minutes: more than none, at most a day. */
-const Minutes = z
-  .number()
-  .positive()
-  .max(24 * 60);
+const Minutes = z.number().positive().max(TRIP_MINUTES_MAX);
 /** `YYYY-MM-DD` (a real date: the class checks). */
 const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a date, YYYY-MM-DD');
 
@@ -29,9 +26,8 @@ const AT_LEAST_ONE = 'At least one change is required';
 
 const PlaceFields = z.strictObject({
   name: z.string().max(200),
-  /** Looked up when no coordinates come with it; `lat, lon` typed here needs no lookup. */
+  /** Free text for map links, never looked up. */
   address: z.string().max(1000).optional(),
-  coords: z.strictObject({ lat: z.number(), lon: z.number() }).optional(),
   aliases: z.array(z.string().max(200)).max(20).optional(),
   home: z.boolean().optional(),
 });
@@ -66,14 +62,8 @@ export const UpdateRuleBody = RuleFields.partial().refine(atLeastOne, AT_LEAST_O
 
 // ─── Settings, default places and pins ──────────────────────────────────────
 
-const PerMode = z
-  .strictObject({ walk: z.number(), drive: z.number(), transit: z.number() })
-  .partial();
-
 export const UpdateSettingsBody = z
   .strictObject({
-    factors: PerMode.optional(),
-    buffers: PerMode.optional(),
     goHome: z
       .strictObject({
         enabled: z.boolean(),
@@ -91,7 +81,10 @@ export const PlacePinBody = z.strictObject({ placeId: Id.nullable() });
 
 // ─── Marking an item ────────────────────────────────────────────────────────
 
-/** A leg's times as typed: any of start, end and length, and where he starts from. */
+/**
+ * A leg as typed: its trip's length (`minutes`, every time), times that move this leg, and where he
+ * starts from.
+ */
 const Span = z.strictObject({
   startAt: Iso.optional(),
   endAt: Iso.optional(),
@@ -132,7 +125,7 @@ export const PreviewBody = z
     message: 'give arriveBy or departAt, not both',
   });
 
-/** One or two of start, end and length (TravelLeg checks how many). */
+/** The trip's length (`minutes`, every time), this leg's times, or both (TravelLeg checks). */
 export const LegEditBody = z.strictObject({
   startAt: Iso.optional(),
   endAt: Iso.optional(),

@@ -392,6 +392,7 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       arg.el.setAttribute('data-conflict', String(props.conflict));
       arg.el.setAttribute('data-past', String(props.past));
       arg.el.setAttribute('data-anchor-moved', String(props.anchorMoved));
+      arg.el.setAttribute('data-length-unset', String(props.lengthUnset));
     }
     arg.el.setAttribute(
       'aria-label',

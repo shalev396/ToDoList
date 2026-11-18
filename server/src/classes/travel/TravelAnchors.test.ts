@@ -3,16 +3,16 @@
  * "The day plan", 1; "Concepts", 2; plan Rulings 9 and 11): the timed items the member reads, each
  * series expanded on the workspace's wall clock; which of their occurrences have travel (an item
  * rule beats a series rule beats the oldest where-rule that matches); where each one is (a pin, the
- * rule's place, a place's name or alias, a geocode within 300 m, the calendar's default place).
+ * rule's place, a place's name or alias in its location, the calendar's default place; nothing is
+ * looked up).
  * All-day and due-only items never anchor, and a moved Google occurrence anchors on its master
  * with its original start. A painted area anchors like a block, flagged as an area.
  */
-import { after, afterEach, before, describe, it } from 'node:test';
+import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type * as Models from '../../models/index.js';
 import type { SourceRef } from '../../models/definitions/common.js';
-import type * as AppSecrets from '../../services/appSecrets.js';
 import { seedIntegration } from '../../testing/integrationFixtures.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { callerOf } from '../../testing/workspaceFixtures.js';
@@ -21,14 +21,11 @@ import { expandOccurrences } from '../../types/recurrence/occurrences.js';
 import { addLocalDays, startOfZonedDay } from '../../types/recurrence/zoned.js';
 import type * as Classes from '../index.js';
 import type { Caller } from '../base/Caller.js';
-import { TimeBudget } from '../integration/calendar/TimeBudget.js';
 import type { Anchor } from './DayPlanner.js';
-import type { Geocoder, LatLon } from './geocoding/Geocoder.js';
 
 let db: TestDatabase;
 let classes: typeof Classes;
 let models: typeof Models;
-let appSecrets: typeof AppSecrets;
 
 const A = 'u-anchors-a';
 const ZONE = 'Asia/Jerusalem';
@@ -41,11 +38,6 @@ const RANGE = {
 /** The two Tuesdays of the horizon, 10:00 in Jerusalem. */
 const TUESDAY_1 = '2026-11-24T08:00:00.000Z';
 const TUESDAY_2 = '2026-12-01T08:00:00.000Z';
-const HOME = { lat: 32.794, lon: 34.9896 };
-const BRAUDE = { lat: 32.9141, lon: 35.2922 };
-const TLV = { lat: 32.0853, lon: 34.7818 };
-const GYM = { lat: 32.8, lon: 35.0 };
-const LIBRARY = { lat: 32.7, lon: 35.1 };
 let count = 0;
 
 interface Ws {
@@ -59,12 +51,6 @@ before(async () => {
   db = await startTestDatabase('todolist_travel_anchors_test');
   classes = await import('../index.js');
   models = await import('../../models/index.js');
-  appSecrets = await import('../../services/appSecrets.js');
-  appSecrets.setAppSecretsForTests({});
-});
-
-afterEach(() => {
-  appSecrets.setAppSecretsForTests({});
 });
 
 after(async () => {
@@ -86,18 +72,18 @@ async function workspace(): Promise<Ws> {
     accountId: `g-${gcal}`,
   });
   const a = callerOf({ id: created.id, settings: created.settings, role: 'owner' }, A);
-  const place = (name: string, coords: LatLon, extra: object = {}): Promise<Classes.Place> =>
-    classes.Place.create(a, { name, coords, ...extra });
+  const place = (name: string, extra: object = {}): Promise<Classes.Place> =>
+    classes.Place.create(a, { name, ...extra });
   return {
     id: created.id,
     gcal,
     a,
     places: {
-      home: await place('Home', HOME, { home: true }),
-      braude: await place('Braude', BRAUDE, { aliases: ['ORT Braude'] }),
-      tlv: await place('TLVTech', TLV),
-      gym: await place('Gym', GYM),
-      library: await place('Library', LIBRARY),
+      home: await place('Home', { home: true }),
+      braude: await place('Braude', { aliases: ['ORT Braude'], address: 'Snunit St 51, Karmiel' }),
+      tlv: await place('TLVTech'),
+      gym: await place('Gym'),
+      library: await place('Library', { address: 'Herzl St 5, Karmiel' }),
     },
   };
 }
@@ -164,63 +150,14 @@ const onCalendar = (containerId: string): RuleGroup => ({
   rules: [{ field: 'containerId', operator: '=', value: containerId }],
 });
 
-/** A geocoder that knows some texts, and counts its lookups. */
-class FakeGeocoder implements Geocoder {
-  readonly asked: string[] = [];
-  readonly #known: ReadonlyMap<string, LatLon>;
-
-  constructor(known: Record<string, LatLon>) {
-    this.#known = new Map(Object.entries(known));
-  }
-
-  geocode(text: string): Promise<LatLon | null> {
-    this.asked.push(text);
-    return Promise.resolve(this.#known.get(text) ?? null);
-  }
-}
-
-async function gather(
-  ws: Ws,
-  geocoder: Geocoder = new FakeGeocoder({}),
-  options: { budgetMs?: number; lookups?: number } = {},
-): Promise<{ anchors: Anchor[]; fates: Map<string, string> }> {
+async function gather(ws: Ws): Promise<{ anchors: Anchor[]; fates: Map<string, string> }> {
   return classes.TravelAnchors.gather(ws.a, {
     profile: await classes.TravelProfile.of(ws.a),
     rules: await classes.TravelRule.listOwn(ws.a),
     places: await classes.Place.listOwn(ws.a),
     range: RANGE,
     now: NOW,
-    geocoder,
-    time: new classes.TimeBox(TimeBudget.start(options.budgetMs ?? 60_000)),
-    ...(options.lookups === undefined ? {} : { lookups: options.lookups }),
   });
-}
-
-/** A geocoder that fails while `down`, then knows some texts; it counts its lookups. */
-class FlakyGeocoder implements Geocoder {
-  down = true;
-  readonly asked: string[] = [];
-  readonly #known: ReadonlyMap<string, LatLon>;
-
-  constructor(known: Record<string, LatLon>) {
-    this.#known = new Map(Object.entries(known));
-  }
-
-  geocode(text: string): Promise<LatLon | null> {
-    this.asked.push(text);
-    if (this.down) return Promise.reject(new classes.GeocodingUnavailableError());
-    return Promise.resolve(this.#known.get(text) ?? null);
-  }
-}
-
-/** A geocoder that never answers. */
-class HangingGeocoder implements Geocoder {
-  asked = 0;
-
-  geocode(): Promise<LatLon | null> {
-    this.asked += 1;
-    return new Promise(() => undefined);
-  }
 }
 
 const summary = (anchor: Anchor): Record<string, unknown> => ({
@@ -318,16 +255,9 @@ describe('TravelAnchors.gather', () => {
     assert.deepEqual(how(`${seminar}|single`), ['transit', true, true]);
   });
 
-  it('pin > rule place > alias > geocode within 300 m > container place', async () => {
+  it('pin > rule place > a name or alias in its location > container place', async () => {
     const ws = await workspace();
     const { gym, library, braude, tlv } = ws.places;
-    // ~110 m north of the Library; ~5 km from any place.
-    const nearLibrary = { lat: LIBRARY.lat + 0.001, lon: LIBRARY.lon };
-    const nowhere = { lat: 33.2, lon: 35.6 };
-    const geocoder = new FakeGeocoder({
-      'Herzl St 5, Karmiel': nearLibrary,
-      'Far street 9': nowhere,
-    });
     const day = (n: number, hour: number): string =>
       new Date(Date.UTC(2026, 10, 23 + n, hour)).toISOString();
     const at = (key: string, n: number, location?: string): Promise<string> =>
@@ -338,17 +268,14 @@ describe('TravelAnchors.gather', () => {
         containerId: 'cal-x',
         ...(location === undefined ? {} : { props: { location } }),
       });
-    // The geocoded ones come first: they get the lookups before the cap.
-    const geocoded = await at('geocoded', 1, 'Herzl St 5, Karmiel');
+    // A place's own address in the location names no place: only a name or an alias does.
+    const address = await at('address', 1, 'Herzl St 5, Karmiel');
     const unfound = await at('unfound', 2, 'Far street 9');
     const pinned = await at('pinned', 3, 'ORT Braude');
     const ruled = await at('ruled', 4, 'ORT Braude');
     const alias = await at('alias', 5, 'Lecture at ORT Braude, hall 2');
     const bare = await at('bare', 6);
-    // Twelve more texts nobody knows: at most ten new lookups in one gather.
-    for (let index = 0; index < 12; index += 1) {
-      await at(`unknown-${String(index)}`, 7 + (index % 6), `Nowhere ${String(index)}`);
-    }
+    const named = await at('named', 7, 'Library, floor 2');
     await classes.TravelRule.create(ws.a, {
       scope: { kind: 'where', where: onCalendar('cal-x') },
       mode: 'drive',
@@ -364,23 +291,38 @@ describe('TravelAnchors.gather', () => {
     await profile.pinItemPlace(ws.a, pinned, library.id);
     await profile.setContainerPlace(ws.a, 'cal-x', tlv.id);
 
-    const { anchors } = await gather(ws, geocoder);
+    const { anchors } = await gather(ws);
     const placeOf = (id: string): string | null | undefined =>
       anchors.find((anchor) => anchor.itemId === id)?.placeId;
     assert.equal(placeOf(pinned), library.id);
     assert.equal(placeOf(ruled), gym.id);
     assert.equal(placeOf(alias), braude.id);
-    assert.equal(placeOf(geocoded), library.id);
+    assert.equal(placeOf(named), library.id);
+    assert.equal(placeOf(address), tlv.id);
     assert.equal(placeOf(unfound), tlv.id);
     assert.equal(placeOf(bare), tlv.id);
-    assert.equal(geocoder.asked.length, 10);
-    assert.deepEqual(geocoder.asked.slice(0, 2), ['Herzl St 5, Karmiel', 'Far street 9']);
+  });
 
-    // Both answers are kept (by the text's hash), so the next gather looks nothing up again.
-    const again = new FakeGeocoder({});
-    await gather(ws, again);
-    assert.ok(!again.asked.includes('Herzl St 5, Karmiel'));
-    assert.ok(!again.asked.includes('Far street 9'));
+  it('a location that names none of his places, with no default place, has no place', async () => {
+    const ws = await workspace();
+    const lab = await event(ws, 'lab', {
+      title: 'Lab',
+      startAt: '2026-11-25T07:00:00.000Z',
+      endAt: '2026-11-25T09:00:00.000Z',
+      containerId: 'cal-y',
+      props: { location: 'Herzl St 7, Karmiel' },
+    });
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'where', where: onCalendar('cal-y') },
+      mode: 'drive',
+      direction: 'both',
+    });
+    const { anchors, fates } = await gather(ws);
+    assert.deepEqual(
+      anchors.map((anchor) => [anchor.itemId, anchor.placeId]),
+      [[lab, null]],
+    );
+    assert.equal(fates.get(`${lab}|single`), 'no_place');
   });
 
   it('all-day and due-only never anchor', async () => {
@@ -603,80 +545,5 @@ describe('TravelAnchors.gather', () => {
       wednesdays.map((start) => [studying.id, start, true, ws.places.braude.id]),
     );
     for (const start of wednesdays) assert.equal(fates.get(`${studying.id}|${start}`), 'present');
-  });
-
-  it('a geocoder outage is never cached as not found', async () => {
-    const ws = await workspace();
-    const text = 'Herzl St 7, Karmiel';
-    const nearLibrary = { lat: LIBRARY.lat + 0.001, lon: LIBRARY.lon };
-    await event(ws, 'outage', {
-      title: 'Lab',
-      startAt: '2026-11-25T07:00:00.000Z',
-      endAt: '2026-11-25T09:00:00.000Z',
-      containerId: 'cal-y',
-      props: { location: text },
-    });
-    await classes.TravelRule.create(ws.a, {
-      scope: { kind: 'where', where: onCalendar('cal-y') },
-      mode: 'drive',
-      direction: 'both',
-    });
-    await (await classes.TravelProfile.of(ws.a)).setContainerPlace(ws.a, 'cal-y', ws.places.tlv.id);
-    const geocoder = new FlakyGeocoder({ [text]: nearLibrary });
-
-    // Down: the calendar's place for now, and nothing remembered.
-    const first = await gather(ws, geocoder);
-    assert.equal(first.anchors[0]?.placeId, ws.places.tlv.id);
-    assert.equal((await classes.TravelProfile.of(ws.a)).cachedGeocode(text), undefined);
-
-    // Back: the next gather asks again, finds it, and keeps it.
-    geocoder.down = false;
-    const second = await gather(ws, geocoder);
-    assert.equal(second.anchors[0]?.placeId, ws.places.library.id);
-    assert.deepEqual((await classes.TravelProfile.of(ws.a)).cachedGeocode(text), nearLibrary);
-    assert.deepEqual(geocoder.asked, [text, text]);
-  });
-
-  it("a hanging geocoder stops at the regeneration's time; a cached-only gather looks nothing up", async () => {
-    const ws = await workspace();
-    for (const [key, day] of [
-      ['far-1', '2026-11-25'],
-      ['far-2', '2026-11-26'],
-    ] as const) {
-      await event(ws, key, {
-        title: key,
-        startAt: `${day}T07:00:00.000Z`,
-        endAt: `${day}T09:00:00.000Z`,
-        containerId: 'cal-z',
-        props: { location: `Unknown street ${key}` },
-      });
-    }
-    await classes.TravelRule.create(ws.a, {
-      scope: { kind: 'where', where: onCalendar('cal-z') },
-      mode: 'drive',
-      direction: 'both',
-    });
-    await (await classes.TravelProfile.of(ws.a)).setContainerPlace(ws.a, 'cal-z', ws.places.tlv.id);
-
-    const hanging = new HangingGeocoder();
-    const started = Date.now();
-    const { anchors } = await gather(ws, hanging, { budgetMs: 2_500 });
-    const took = Date.now() - started;
-    // One lookup, given up when the time ran out; none started after it.
-    assert.ok(took < 5_000, `${String(took)} ms`);
-    assert.equal(hanging.asked, 1);
-    assert.deepEqual(
-      anchors.map((anchor) => anchor.placeId),
-      [ws.places.tlv.id, ws.places.tlv.id],
-    );
-    assert.equal(
-      (await classes.TravelProfile.of(ws.a)).cachedGeocode('Unknown street far-1'),
-      undefined,
-    );
-
-    // An item write's gather reads the cache only.
-    const counting = new FakeGeocoder({});
-    await gather(ws, counting, { lookups: 0 });
-    assert.deepEqual(counting.asked, []);
   });
 });

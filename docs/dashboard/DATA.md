@@ -190,7 +190,7 @@ To-dos, issues, tasks, events, assignments, deadlines, files and messages all sh
 |---|---|
 | google_calendar / event | `calendarId, location, meetLink, recurringEventId, attendeesCount, transparency`; a series master also `recurrence` and `recurrenceEnd` (ISO end of its last occurrence; null: never ends) |
 | local / block (a time block; an area with `layer: "area"`) | `layer` (`block` \| `area`); a series also `recurrence` (one RRULE line) and `recurrenceEnd` (ISO end of its last occurrence; null: never ends); `exceptions` (`[{originalStart, startAt?, endAt?, skipped?}]`, ISO strings, at most 366); `idempotencyKey` when created with one. Its subject is `overlay.attrs.subject` |
-| local / travel (a leg; `visibility: "private"`, `ownerUserId` = its member, read by that member only) | `travelKey` (`ownerUserId\|anchorItemId\|occurrence\|direction`, unique per workspace) and `travel`: `anchorItemId` (a series' master for an occurrence), `occurrence` (the anchor occurrence's original start, or `single`), `anchorStart`, `direction` (`there` \| `back` \| `between`), `mode` (`walk` \| `drive` \| `transit`), `fromPlaceId`, `fromName`, `toPlaceId`, `toName`, `fromHome`, `toHome`, `minutes`, `source` (`ors` \| `remembered` \| `manual` \| `estimate`), `computedAt`, `conflict`, `edited`, `anchorMoved`, `anchorStartNow`, `removedReason` (`cancelled` \| `moved` \| `no_longer_matches` \| `no_place` \| `replaced` \| `skipped`; set on a tombstone). Places by id and name only: never an address or a coordinate |
+| local / travel (a leg; `visibility: "private"`, `ownerUserId` = its member, read by that member only) | `travelKey` (`ownerUserId\|anchorItemId\|occurrence\|direction`, unique per workspace) and `travel`: `anchorItemId` (a series' master for an occurrence), `occurrence` (the anchor occurrence's original start, or `single`), `anchorStart`, `direction` (`there` \| `back` \| `between`), `mode` (`walk` \| `drive` \| `transit`), `fromPlaceId`, `fromName`, `toPlaceId`, `toName`, `fromHome`, `toHome`, `minutes`, `source` (`set` \| `unset`: the trip's length he set, or his times; or the placeholder of a trip with no length yet), `lengthUnset` (`source` is `unset`: drawn with `UNSET_TRIP_MINUTES` = 30, dashed, "Set how long"), `computedAt`, `conflict`, `edited`, `anchorMoved`, `anchorStartNow`, `removedReason` (`cancelled` \| `moved` \| `no_longer_matches` \| `no_place` \| `replaced` \| `skipped`; set on a tombstone). Places by id and name only: never an address |
 | jira / issue | `issueType, projectKey, sprint, storyPoints, epicKey` |
 | clickup / task | `listId, folderId, spaceId, timeEstimateMs, customFields{}` |
 | linear / issue | `teamKey, cycle, estimate, projectId, stateType` |
@@ -321,22 +321,20 @@ A **sign-in grant** (`kind: "oauth"`) is the same row made by an MCP OAuth clien
 `{stateHash, browserHash, codeVerifier, userId, workspaceId, provider, integrationId, lng, usedAt}`: one document per started "Connect with Google/Jira/…" flow, single use, removed by a TTL. Only the hashes of `state` and of the browser's binding nonce are stored.
 
 ### 3.22 `Places` (a member's places for travel)
-`{_id, workspaceId, ownerUserId, name, aliases[], address | null, lat, lon, home, createdAt, updatedAt}`. Private to its member: every read and write names the owner as well as the workspace, and no other member, no agent (agents see `name`, `aliases` and `home` only) and no log or audit row gets an address or a coordinate. `address` is as typed (null when the place was given by its coordinates). At most one place per member is Home, held by a unique partial index. At most 30 per member (`PLAN_LIMITS.placesPerMember`). Hard-deleted when the member's membership ends or the workspace is deleted.
+`{_id, workspaceId, ownerUserId, name, aliases[], address | null, home, createdAt, updatedAt}`. No coordinates, and nothing is looked up (the owner's decision of 2026-11-18): `address` is free text as typed (null when he gave none), used only to open Waze or Google Maps on his device (a leg's links). Private to its member: every read and write names the owner as well as the workspace, and no other member, no agent (agents see `name`, `aliases` and `home` only) and no log or audit row gets an address. Validator: `workspaceId`, `ownerUserId`, `name` and `home` required; `address` a string or null. At most one place per member is Home, held by a unique partial index. At most 30 per member (`PLAN_LIMITS.placesPerMember`). Hard-deleted when the member's membership ends or the workspace is deleted.
 
 ### 3.23 `TravelRules` (when to travel, and how)
 `{_id, workspaceId, ownerUserId, scope, mode, direction, placeId | null, createdAt, updatedAt}`. `scope` is `{kind: "where", where: <rule group>}`, `{kind: "series", itemId}` or `{kind: "item", itemId, occurrence}` (`occurrence` is an original start, or `single`). `mode` is `walk`, `drive` or `transit`; `direction` is `there`, `back` or `both`; `placeId` is one of the member's places (null: the item's own place). Precedence: item, then series, then where-rules oldest first. Private to its member, at most 50 per member (`PLAN_LIMITS.travelRulesPerMember`); audited with `mode`, `direction` and `scopeKind` only. Hard-deleted like Places.
 
 ### 3.24 `TravelProfiles` (one per member and workspace)
-`{_id: "<workspaceId>|<userId>", workspaceId, ownerUserId, settings, remembered{}, geocodes{}, itemPlaces{}, containerPlaces{}, hasTravel, lastPassDay, updatedAt}`.
-- `settings`: `factors` and `buffers` per mode, `goHome` (`enabled`, `minWindowMinutes`, `minAtHomeMinutes`) and `defaultMode`.
-- `remembered`: minutes the member last entered, by trip (`from|to|mode`, place ids).
-- `geocodes`: where a location text resolved to, keyed by the sha256 of the normalized text (never the text), null when no geocoder found it; at most 500, the oldest dropped first. Only a real "not found" is stored: a geocoder outage is never cached.
+`{_id: "<workspaceId>|<userId>", workspaceId, ownerUserId, settings, tripLengths{}, itemPlaces{}, containerPlaces{}, hasTravel, lastPassDay, updatedAt}`.
+- `settings`: `goHome` (`enabled`, `minWindowMinutes`, `minAtHomeMinutes`) and `defaultMode`. No factors or buffers: there is no computed length for them to scale.
+- `tripLengths`: how long each trip takes as the member set it, in minutes, by trip (`from|to|mode`, place ids; each direction is its own trip). The only source of a leg's length: every leg of the trip takes it, every day and every occurrence, but legs whose times he set by hand. A trip without one is drawn with `UNSET_TRIP_MINUTES` (30). Removing a place removes the trips from or to it.
 - `itemPlaces` and `containerPlaces`: a place pinned to an item, or a default place for a calendar or project.
 - `hasTravel` (the member has rules, so item changes and the daily pass regenerate their legs) and `lastPassDay` (the last workspace-zone day the daily pass ran for them).
 Private to its member; hard-deleted like Places.
 
-### 3.25 `RoutingQuotas` (the OpenRouteService budget)
-`{_id: "<workspaceId>|<YYYY-MM-DD>", count, routes{}, expireAt}`: one document per workspace and day for the free key every member shares. A call is reserved (`count` incremented, atomically, under `ROUTING_CALLS_PER_DAY` = 100) before it is made, so parallel regenerations cannot pass the limit together; `routes` keeps the seconds fetched that day per trip so a trip asked again is not fetched twice. TTL two days after its day.
+`RoutingQuotas` (the OpenRouteService budget of an earlier draft of travel) is gone with the routing service (the owner's decision of 2026-11-18): no collection, model or index. It never reached a stage database.
 
 ---
 
@@ -489,8 +487,6 @@ Sharing between two people: Shalev (owner) invites the other person as a `viewer
 // TravelProfiles (_id = workspaceId|userId gives uniqueness for free)
 { workspaceId: 1 }                                                    // a workspace's deletion
 { hasTravel: 1 }                              partialFilterExpression: { hasTravel: true }   // the daily pass
-// RoutingQuotas (_id = workspaceId|day gives uniqueness for free)
-{ expireAt: 1 }                               expireAfterSeconds: 0  (TTL, two days after its day)
 ```
 The `sync-db` action (`config/providers/mongoose.ts`) creates these indexes and validators per model, then runs the data migrations (below). `autoIndex` stays off in prod Lambdas to avoid slowing cold starts. The partial indexes (a `partialFilterExpression`) hold only the documents their query needs: live items, live links, the few unanswered claims, the running sync runs.
 

@@ -69,17 +69,16 @@ export const CREDENTIALS_VALIDATOR = {
   },
 };
 
-/** A member's place: private to them, always with its coordinates. */
+/** A member's place: private to them; a name, and an address as typed (or none). No coordinates. */
 export const PLACES_VALIDATOR = {
   $jsonSchema: {
     bsonType: 'object',
-    required: ['workspaceId', 'ownerUserId', 'name', 'lat', 'lon', 'home'],
+    required: ['workspaceId', 'ownerUserId', 'name', 'home'],
     properties: {
       workspaceId: { bsonType: 'string' },
       ownerUserId: { bsonType: 'string' },
       name: { bsonType: 'string' },
-      lat: { bsonType: ['double', 'int', 'long', 'decimal'], minimum: -90, maximum: 90 },
-      lon: { bsonType: ['double', 'int', 'long', 'decimal'], minimum: -180, maximum: 180 },
+      address: { bsonType: ['string', 'null'] },
       home: { bsonType: 'bool' },
     },
   },

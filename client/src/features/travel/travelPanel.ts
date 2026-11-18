@@ -1,25 +1,27 @@
 /**
  * "Add travel time" (docs/superpowers/specs/2026-11-17-travel-time-design.md, "Where travel comes
- * from"), as pure functions: the panel the create forms and the item sheet share (mode, from, to,
- * there and back, and the trip there: leave, arrive and length, any two set the third), the
- * `POST …/travel/items/:itemId` request it becomes, its preview line, where it starts and goes by
- * default, which items take travel at all, and what a mark's answer means to the member.
+ * from", as the owner's decision of 2026-11-18 amends it), as pure functions: the panel the create
+ * forms, the item sheet and a leg's sheet share (mode, from, to, there and back, and the trip
+ * there), the `POST …/travel/items/:itemId` and `PATCH …/travel/legs/:id` requests it becomes, its
+ * preview line, where it starts and goes by default, which items take travel at all, and what a
+ * mark's answer means to the member.
  *
- * The trip there arrives by the item's start unless he types otherwise: its arrival and length
- * stand, and the leave time is worked out (`@api-types/timeSpan`). What he never typed is never
- * sent: the server works the trip out (OpenRouteService, his last trip, or an estimate).
+ * Two kinds of change, kept apart so he always knows which one he makes:
+ * - how long the trip takes, every time (`minutes`): the trip's length (from place, to place,
+ *   mode), which every leg of that trip takes; until he sets one it is drawn with
+ *   UNSET_TRIP_MINUTES and says "Set how long";
+ * - leave and arrive: this trip only. One alone keeps the trip's length; both are its span.
+ *
+ * A trip there arrives by the item's start (a trip back leaves as it ends) unless he types a time.
+ * What he never typed is never sent.
  */
 import type { TFunction } from 'i18next';
 import type { ItemSummary } from '@api-types/items.ts';
-import {
-  derivedField,
-  solveSpan,
-  touchSpan,
-  type Span,
-  type SpanField,
-} from '@api-types/timeSpan.ts';
+import type { Span } from '@api-types/timeSpan.ts';
 import { toDate } from '@api-types/recurrence/occurrences.ts';
 import {
+  TRIP_MINUTES_MAX,
+  UNSET_TRIP_MINUTES,
   travelPropsOf,
   type LegEditRequest,
   type LegSource,
@@ -37,6 +39,8 @@ import {
 import { placeByName } from '@api-types/travelPlaceNames.ts';
 import { dateInZone, instantInZone } from '../items/zonedDate.ts';
 
+const MINUTE_MS = 60_000;
+
 export interface TravelPanelState {
   mode: TravelMode;
   /** Where he starts from (the preview's; where a leg starts is the day plan's). */
@@ -45,53 +49,83 @@ export interface TravelPanelState {
   toPlaceId: string | null;
   there: boolean;
   back: boolean;
-  /** The trip there. */
-  span: { start: Date | null; end: Date | null; minutes: number | null };
-  /** The span fields he typed, most recent first (empty: all of it is worked out). */
-  edited: SpanField[];
   /**
-   * A trip back keeps its departure (it leaves as the event ends): what he didn't type stands as
-   * the leave time and the length, and the arrival follows. Absent: the trip arrives by the event.
+   * How long the trip takes, every time: as he typed it, else the trip's own (the preview's);
+   * null while it has none (it is drawn with UNSET_TRIP_MINUTES).
    */
+  minutes: number | null;
+  /** He typed the length: it is sent, and becomes the trip's. */
+  lengthTyped: boolean;
+  /** This trip's leave and arrive, as he typed them; null: not typed (it follows). */
+  start: Date | null;
+  end: Date | null;
+  /**
+   * Where the trip is held until he types a time: a trip there arrives by it (the item's start, or
+   * a leg's arrival), a trip back leaves at it (`keepsDeparture`).
+   */
+  anchor: Date | null;
   keepsDeparture?: boolean;
+  /**
+   * A leg's own length (its sheet): its times stay its own until he types; null on the add panel,
+   * where the trip's length (or the placeholder) makes the times.
+   */
+  ownMinutes?: number | null;
 }
 
-/** Arrive by: the arrival and the length stand unless he types two others; the leave time follows. */
-const ARRIVE_BY: readonly SpanField[] = ['end', 'minutes'];
-
-/** A trip back keeps its departure and length. */
-const LEAVE_AT: readonly SpanField[] = ['start', 'minutes'];
-
-const keptOrder = (edited: readonly SpanField[], departure = false): SpanField[] => [
-  ...edited,
-  ...(departure ? LEAVE_AT : ARRIVE_BY),
-];
-
-/** The two fields that stand (the two most recent of his edits, then the arrival and length). */
-function keptFields(edited: readonly SpanField[], departure = false): SpanField[] {
-  const kept: SpanField[] = [];
-  for (const field of keptOrder(edited, departure)) {
-    if (!kept.includes(field)) {
-      kept.push(field);
-    }
-    if (kept.length === 2) {
-      break;
-    }
+/** A length he can type: whole minutes, more than none and at most a day; else null. */
+export function lengthFromInput(text: string): number | null {
+  if (!/^\d{1,4}$/.test(text.trim())) {
+    return null;
   }
-  return kept;
+  const minutes = Number(text.trim());
+  return minutes > 0 && minutes <= TRIP_MINUTES_MAX ? minutes : null;
 }
 
-/** The whole trip there; null while its two standing fields make none. */
+/** The trip's length, every time, as he typed it (null: not typed, or nothing to send). */
+function typedLength(state: TravelPanelState): number | null {
+  return state.lengthTyped ? state.minutes : null;
+}
+
+/** The length this trip's times are drawn with: typed, the leg's own, the trip's, the placeholder. */
+function drawnMinutes(state: TravelPanelState): number {
+  return typedLength(state) ?? state.ownMinutes ?? state.minutes ?? UNSET_TRIP_MINUTES;
+}
+
+/**
+ * This trip's span as the panel shows it: both times he typed; one of them and the length; else
+ * held at its anchor with the length. Null without an anchor, or when what he typed makes no trip.
+ */
 export function panelSpan(state: TravelPanelState): Span | null {
-  return solveSpan(state.span, keptOrder(state.edited, state.keepsDeparture));
+  const length = drawnMinutes(state) * MINUTE_MS;
+  let start: number;
+  let end: number;
+  if (state.start !== null && state.end !== null) {
+    start = state.start.getTime();
+    end = state.end.getTime();
+  } else if (state.start !== null) {
+    start = state.start.getTime();
+    end = start + length;
+  } else if (state.end !== null) {
+    end = state.end.getTime();
+    start = end - length;
+  } else if (state.anchor === null) {
+    return null;
+  } else if (state.keepsDeparture === true) {
+    start = state.anchor.getTime();
+    end = start + length;
+  } else {
+    end = state.anchor.getTime();
+    start = end - length;
+  }
+  if (!(end > start)) {
+    return null;
+  }
+  return { start: new Date(start), end: new Date(end), minutes: (end - start) / MINUTE_MS };
 }
 
-/** The worked-out field written from the trip (cleared while there is none). */
-function withSolved(state: TravelPanelState): TravelPanelState {
-  const field = derivedField(keptOrder(state.edited, state.keepsDeparture));
-  const span = panelSpan(state);
-  const value = span === null ? null : span[field];
-  return { ...state, span: { ...state.span, [field]: value } };
+/** Whether the trip's length isn't set yet (nor typed): its times are drawn with the placeholder. */
+function lengthUnset(state: TravelPanelState): boolean {
+  return state.minutes === null && (state.ownMinutes ?? null) === null;
 }
 
 /** The panel as it opens: both ways, arriving at the item's start, its length not known yet. */
@@ -101,66 +135,71 @@ export function initialPanelState(input: {
   toPlaceId: string | null;
   anchorStart: Date | null;
 }): TravelPanelState {
-  return withSolved({
+  return {
     mode: input.mode,
     fromPlaceId: input.fromPlaceId,
     toPlaceId: input.toPlaceId,
     there: true,
     back: true,
-    span: { start: null, end: input.anchorStart, minutes: null },
-    edited: [],
-  });
-}
-
-/** He typed one of leave, arrive or length: it stands now, and the oldest one follows. */
-export function editPanelSpan(
-  state: TravelPanelState,
-  field: SpanField,
-  value: Date | number | null,
-): TravelPanelState {
-  return withSolved({
-    ...state,
-    span: { ...state.span, [field]: value },
-    edited: touchSpan(state.edited, field),
-  });
-}
-
-/** The item's start moved (the new to-do's time): the arrival follows it until he typed one. */
-export function anchorPanel(state: TravelPanelState, anchorStart: Date | null): TravelPanelState {
-  if (state.edited.includes('end')) {
-    return state;
-  }
-  return withSolved({ ...state, span: { ...state.span, end: anchorStart } });
-}
-
-/** The computed length (the preview's) fills the trip until he types any of it. */
-export function previewFill(state: TravelPanelState, minutes: number | null): TravelPanelState {
-  if (state.edited.length > 0 || state.span.minutes === minutes) {
-    return state;
-  }
-  return withSolved({ ...state, span: { ...state.span, minutes } });
+    minutes: null,
+    lengthTyped: false,
+    start: null,
+    end: null,
+    anchor: input.anchorStart,
+  };
 }
 
 /**
- * `HH:MM` typed for the leave or arrive time, on the day of the trip (its arrival's) in the zone.
- * A leave time later than the arrival is the day before. '' clears it.
+ * He typed how long the trip takes, every time (null: cleared, or not a length): the trip's times
+ * follow it, but what he typed of them.
+ */
+export function editPanelLength(state: TravelPanelState, minutes: number | null): TravelPanelState {
+  return { ...state, minutes, lengthTyped: true };
+}
+
+/** The item's start moved (the new to-do's time): the trip follows it until he typed a time. */
+export function anchorPanel(state: TravelPanelState, anchorStart: Date | null): TravelPanelState {
+  return { ...state, anchor: anchorStart };
+}
+
+/**
+ * The trip's own length (the preview's answer) fills the length until he types one: the length
+ * he set for the trip, or none while it is not set yet.
+ */
+export function previewFill(
+  state: TravelPanelState,
+  answer: TravelPreviewResponse | undefined,
+): TravelPanelState {
+  if (state.lengthTyped || answer === undefined) {
+    return state;
+  }
+  const minutes = answer.lengthUnset ? null : answer.minutes;
+  return state.minutes === minutes ? state : { ...state, minutes };
+}
+
+/**
+ * `HH:MM` typed for the leave or arrive time of this trip, on the day of the trip (its arrival's)
+ * in the zone. A leave time later than the arrival is the day before. '' clears it (it follows
+ * again).
  */
 export function editPanelTime(
   state: TravelPanelState,
   field: 'start' | 'end',
   time: string,
-  anchorStart: Date,
   timeZone: string,
 ): TravelPanelState {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
-    return editPanelSpan(state, field, null);
+    return { ...state, [field]: null };
   }
-  const arrival = state.span.end ?? anchorStart;
+  const arrival = state.end ?? panelSpan(state)?.end ?? state.anchor;
+  if (arrival === null) {
+    return state;
+  }
   let instant = new Date(instantInZone(dateInZone(arrival, timeZone), time, timeZone));
   if (field === 'start' && instant.getTime() >= arrival.getTime()) {
     instant = new Date(instant.getTime() - 24 * 60 * 60_000);
   }
-  return editPanelSpan(state, field, instant);
+  return { ...state, [field]: instant };
 }
 
 export function directionOf(state: Pick<TravelPanelState, 'there' | 'back'>): RuleDirection {
@@ -170,44 +209,50 @@ export function directionOf(state: Pick<TravelPanelState, 'there' | 'back'>): Ru
   return state.back ? 'back' : 'there';
 }
 
-/** The trip there as he typed it: nothing he didn't type, and for every occurrence a length only. */
-function thereOf(
-  state: TravelPanelState,
-  anchorStart: Date,
-  every: boolean,
-): SpanInput | undefined {
-  const span = panelSpan(state);
-  if (!state.there || state.edited.length === 0 || span === null) {
+/**
+ * The trip there as he typed it: the length (the trip's, every time) and the times he typed (this
+ * trip's). An arrival he typed as the item's own start is no time of his. Every occurrence takes a
+ * length only.
+ */
+function thereOf(state: TravelPanelState, every: boolean): SpanInput | undefined {
+  if (!state.there) {
     return undefined;
   }
-  const kept = keptFields(state.edited, state.keepsDeparture);
-  // A length that arrives at the item is a length: every occurrence (and a moved item) keeps it.
-  const lengthOnly =
-    every ||
-    (kept.includes('minutes') &&
-      kept.includes('end') &&
-      span.end.getTime() === anchorStart.getTime());
-  const there: SpanInput = lengthOnly
-    ? { minutes: span.minutes }
-    : {
-        ...(kept.includes('start') ? { startAt: span.start.toISOString() } : {}),
-        ...(kept.includes('end') ? { endAt: span.end.toISOString() } : {}),
-        ...(kept.includes('minutes') ? { minutes: span.minutes } : {}),
-      };
+  const minutes = typedLength(state);
+  const startAt = every ? null : state.start;
+  const arrival = every ? null : state.end;
+  const endAt =
+    arrival !== null &&
+    startAt === null &&
+    state.anchor !== null &&
+    arrival.getTime() === state.anchor.getTime()
+      ? null
+      : arrival;
+  if (minutes === null && startAt === null && endAt === null) {
+    return undefined;
+  }
+  if (startAt !== null && endAt !== null && panelSpan(state) === null) {
+    return undefined;
+  }
+  const there: SpanInput = {
+    ...(startAt === null ? {} : { startAt: startAt.toISOString() }),
+    ...(endAt === null ? {} : { endAt: endAt.toISOString() }),
+    ...(minutes === null ? {} : { minutes }),
+  };
   return state.fromPlaceId === null ? there : { ...there, fromPlaceId: state.fromPlaceId };
 }
 
 /**
- * The minutes every occurrence would keep when he typed a leave or arrive time of his own: every
- * occurrence takes a length only (each arrives as it starts), so those times would not be kept.
- * Null when nothing typed would be lost.
+ * What every occurrence would not keep of what he typed: the leave and arrive times are this
+ * trip's own, and every occurrence takes a length only. The length kept (null: none typed), or
+ * undefined when nothing typed would be lost.
  */
-export function everyKeepsOnlyLength(state: TravelPanelState, anchorStart: Date): number | null {
-  const there = thereOf(state, anchorStart, false);
-  if (there === undefined || (there.startAt === undefined && there.endAt === undefined)) {
-    return null;
+export function everyDropsTimes(state: TravelPanelState): { minutes: number | null } | undefined {
+  const one = thereOf(state, false);
+  if (one === undefined || (one.startAt === undefined && one.endAt === undefined)) {
+    return undefined;
   }
-  return panelSpan(state)?.minutes ?? null;
+  return { minutes: typedLength(state) };
 }
 
 /**
@@ -217,10 +262,10 @@ export function everyKeepsOnlyLength(state: TravelPanelState, anchorStart: Date)
  */
 export function markRequestOf(
   state: TravelPanelState,
-  anchor: { itemId: string; occurrence: Date | null; start: Date },
+  anchor: { occurrence: Date | null },
   every: boolean,
 ): MarkItemRequest {
-  const there = thereOf(state, anchor.start, every);
+  const there = thereOf(state, every);
   return {
     mode: state.mode,
     direction: directionOf(state),
@@ -237,9 +282,9 @@ export function markRequestOf(
 // ─── The preview ────────────────────────────────────────────────────────────
 
 /**
- * `POST …/travel/preview` for the trip: by mode and places only (not dated), so a new time costs
- * no routing call and the same trip is asked once. Its own place goes by the guess; without a
- * place to go to there is no length (null: nothing to ask).
+ * `POST …/travel/preview` for the trip: by mode and places only (not dated), so a new time asks
+ * nothing new and the same trip is asked once. Its own place goes by the guess; without a place to
+ * go to there is no length (null: nothing to ask).
  */
 export function previewRequestOf(
   state: TravelPanelState,
@@ -264,7 +309,11 @@ export interface PanelPreview {
   source: LegSource;
 }
 
-/** His times once he typed any; else the computed length, with where it came from. */
+/**
+ * The trip as it will be: his length and times once he typed any, else the trip's own length
+ * (`set`) or the placeholder (`unset`). Null until the trip's length is read, or when what he
+ * typed makes no trip.
+ */
 export function panelPreview(
   state: TravelPanelState,
   answer: TravelPreviewResponse | undefined,
@@ -273,14 +322,19 @@ export function panelPreview(
   if (span === null) {
     return null;
   }
-  const source: LegSource | null = state.edited.length > 0 ? 'manual' : (answer?.source ?? null);
-  return source === null ? null : { ...span, source };
+  if (typedLength(state) !== null || state.start !== null || state.end !== null) {
+    return { ...span, source: 'set' };
+  }
+  if ((answer?.source ?? null) === null) {
+    return null;
+  }
+  return { ...span, source: lengthUnset(state) ? 'unset' : 'set' };
 }
 
 /** "13:20" kept left to right inside a Hebrew line. */
 const ltr = (text: string): string => `⁦${text}⁩`;
 
-/** "Leave 13:20 · arrive 13:52 · 32 min (OpenRouteService)". */
+/** "Leave 13:20 · arrive 13:52 · 32 min (set by you)". */
 export function previewLine(
   t: TFunction,
   preview: PanelPreview,
@@ -297,7 +351,7 @@ export function previewLine(
     start: ltr(time(preview.start)),
     end: ltr(time(preview.end)),
     minutes: Math.round(preview.minutes),
-    source: t(`travel.add.preview.sources.${preview.source}`),
+    source: t(`travel.leg.sources.${preview.source}`),
   });
 }
 
@@ -470,45 +524,69 @@ export function outcomeOf(answer: MarkItemResponse, ownPlace: boolean): TravelOu
     : { kind: 'pending', ownPlace };
 }
 
-// ─── A leg's own times ──────────────────────────────────────────────────────
+// ─── A leg's own sheet ──────────────────────────────────────────────────────
 
 /**
- * A leg's times as its form opens: its own start, end and length, none of them typed yet. What he
- * types stands (the two most recent), and the third follows.
+ * A leg's sheet as it opens: its own times (held at its arrival, or its departure for a trip
+ * back), its own length, and how long its trip takes every time (`tripMinutes`: null while the
+ * trip has none). Nothing typed yet.
  */
 export function legPanelState(
   item: { startAt: Date | string | null; endAt: Date | string | null },
   travel: TravelLegProps,
+  tripMinutes: number | null,
 ): TravelPanelState {
+  const start = toDate(item.startAt);
   const end = toDate(item.endAt);
+  const departs = travel.direction === 'back';
   return {
     ...initialPanelState({
       mode: travel.mode,
       fromPlaceId: travel.fromPlaceId,
       toPlaceId: travel.toPlaceId,
-      anchorStart: end,
+      anchorStart: departs ? start : end,
     }),
-    span: { start: toDate(item.startAt), end, minutes: travel.minutes },
-    edited: [],
+    minutes: tripMinutes,
+    ownMinutes:
+      start !== null && end !== null
+        ? (end.getTime() - start.getTime()) / MINUTE_MS
+        : travel.minutes,
     // A leg back leaves as its event ends: a length alone keeps that, as the server does.
-    ...(travel.direction === 'back' ? { keepsDeparture: true } : {}),
+    ...(departs ? { keepsDeparture: true } : {}),
   };
 }
 
 /**
- * `PATCH …/travel/legs/:id`: the two fields that stand (the last two he typed, then the arrival and
- * the length; a trip back keeps its departure and length), exactly as the form shows them, so the server's answer is what he saw. Null while he
+ * How long a leg's trip takes, every time, as its sheet knows it: the leg's own length while it
+ * follows the trip (not set yet: null); for a leg he timed by hand, the trip's own (`tripAnswer`,
+ * the preview's; undefined while it is read), since his times are this leg's only.
+ */
+export function legTripMinutes(
+  travel: TravelLegProps,
+  tripAnswer: TravelPreviewResponse | undefined,
+): number | null | undefined {
+  if (!travel.edited) {
+    return travel.lengthUnset ? null : travel.minutes;
+  }
+  if (tripAnswer === undefined) {
+    return undefined;
+  }
+  return tripAnswer.lengthUnset ? null : tripAnswer.minutes;
+}
+
+/**
+ * `PATCH …/travel/legs/:id`: the length he typed (the trip's, every time) and the times he typed
+ * (this leg's only), as the form shows them, so the server's answer is what he saw. Null while he
  * has typed nothing, or what he typed makes no trip.
  */
 export function legEditOf(state: TravelPanelState): LegEditRequest | null {
-  const span = panelSpan(state);
-  if (state.edited.length === 0 || span === null) {
+  const minutes = typedLength(state);
+  if ((minutes === null && state.start === null && state.end === null) || !panelSpan(state)) {
     return null;
   }
-  const given = keptFields(state.edited, state.keepsDeparture);
   return {
-    ...(given.includes('start') ? { startAt: span.start.toISOString() } : {}),
-    ...(given.includes('end') ? { endAt: span.end.toISOString() } : {}),
-    ...(given.includes('minutes') ? { minutes: Math.round(span.minutes) } : {}),
+    ...(state.start === null ? {} : { startAt: state.start.toISOString() }),
+    ...(state.end === null ? {} : { endAt: state.end.toISOString() }),
+    ...(minutes === null ? {} : { minutes }),
   };
 }

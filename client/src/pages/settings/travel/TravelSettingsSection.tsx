@@ -9,55 +9,36 @@ import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { cn } from '@/lib/utils';
 import { SettingsSection } from '@/pages/settings/SettingsLayout';
-import { DEFAULT_TRAVEL_SETTINGS, TRAVEL_MODES, type TravelSettings } from '@api-types/travel.ts';
-import {
-  bufferFromInput,
-  factorFromInput,
-  goHomeFromInput,
-  sameSettings,
-  settingsDraftOf,
-} from './travelForms';
+import { TRAVEL_MODES, type TravelSettings } from '@api-types/travel.ts';
+import { goHomeFromInput, sameSettings, settingsDraftOf } from './travelForms';
 
 /**
  * A number field that keeps what is typed while focused and shows the value as kept (clamped)
- * once it loses focus. The digits read left to right in both languages, after their sign.
+ * once it loses focus. The digits read left to right in both languages.
  */
 function NumberField({
   id,
   value,
   parse,
   onValue,
-  label,
-  sign,
   unit,
-  inputMode,
   disabled,
 }: {
   id: string;
   value: number;
   parse: (text: string, fallback: number) => number;
   onValue: (value: number) => void;
-  /** Its name when no visible label names it (a table cell). */
-  label?: string;
-  sign?: string;
   unit?: string;
-  inputMode: 'decimal' | 'numeric';
   disabled?: boolean;
 }) {
   const [text, setText] = useState<string | null>(null);
   return (
     <span className="inline-flex items-center gap-1.5">
       <span dir="ltr" className="inline-flex items-center gap-1">
-        {sign === undefined ? null : (
-          <span aria-hidden="true" className="text-sm text-muted-foreground">
-            {sign}
-          </span>
-        )}
         <Input
           id={id}
           dir="ltr"
-          inputMode={inputMode}
-          aria-label={label}
+          inputMode="numeric"
           disabled={disabled}
           className="w-[4.5rem] text-end tabular-nums"
           value={text ?? String(value)}
@@ -80,9 +61,9 @@ function NumberField({
 }
 
 /**
- * The member's travel settings (travel-time spec, Concepts 5): per mode a factor (×, 0.5–3) and a
- * buffer (+ minutes, 0–120), going home in a long window (a window of at least 3 h that leaves at
- * least an hour at home), and the default mode. Edited as one draft and saved together.
+ * The member's travel options (travel-time spec, Concepts 5): going home in a long window (a
+ * window of at least 3 h that leaves at least an hour at home), and the default mode. Edited as
+ * one draft and saved together. How long a trip takes is no setting: it is set on the trip.
  */
 export function TravelSettingsSection({
   workspaceId,
@@ -118,80 +99,6 @@ export function TravelSettingsSection({
       layout="stacked"
     >
       <div data-travel-settings className="flex flex-col gap-6" key={generation}>
-        <div className="flex flex-col gap-2">
-          <table className="w-full max-w-md text-sm">
-            <thead>
-              <tr className="text-start text-[13px] text-muted-foreground">
-                <th scope="col" className="pb-1 text-start font-medium">
-                  {t('travel.settings.mode')}
-                </th>
-                <th scope="col" className="pb-1 text-start font-medium">
-                  {t('travel.settings.factor')}
-                </th>
-                <th scope="col" className="pb-1 text-start font-medium">
-                  {t('travel.settings.buffer')}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {TRAVEL_MODES.map((mode) => {
-                const name = t(`travel.modes.${mode}`);
-                return (
-                  <tr key={mode} data-travel-mode={mode}>
-                    <th scope="row" className="py-1.5 pe-3 text-start font-normal">
-                      {name}
-                    </th>
-                    <td className="py-1.5 pe-3">
-                      <NumberField
-                        id={`${id}-${mode}-factor`}
-                        value={draft.factors[mode]}
-                        parse={factorFromInput}
-                        inputMode="decimal"
-                        sign="×"
-                        label={t('travel.settings.factorOf', { mode: name })}
-                        onValue={(value) => {
-                          change((next) => {
-                            next.factors[mode] = value;
-                          });
-                        }}
-                      />
-                    </td>
-                    <td className="py-1.5">
-                      <NumberField
-                        id={`${id}-${mode}-buffer`}
-                        value={draft.buffers[mode]}
-                        parse={bufferFromInput}
-                        inputMode="numeric"
-                        sign="+"
-                        unit={t('travel.settings.minutes')}
-                        label={t('travel.settings.bufferOf', { mode: name })}
-                        onValue={(value) => {
-                          change((next) => {
-                            next.buffers[mode] = value;
-                          });
-                        }}
-                      />
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-          <p data-travel-defaults className="text-[13px] text-muted-foreground">
-            {t('travel.settings.defaults')}{' '}
-            {TRAVEL_MODES.map((mode, index) => (
-              <span key={mode}>
-                {index === 0 ? '' : ', '}
-                {t(`travel.modes.${mode}`)}{' '}
-                <span dir="ltr">
-                  ×{DEFAULT_TRAVEL_SETTINGS.factors[mode]} +{DEFAULT_TRAVEL_SETTINGS.buffers[mode]}
-                </span>{' '}
-                {t('travel.settings.minutes')}
-              </span>
-            ))}
-          </p>
-        </div>
-
         <div className="flex flex-col gap-3 rounded-lg border bg-card px-4 py-3">
           <div className="relative flex min-h-11 items-center gap-4">
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -235,7 +142,6 @@ export function TravelSettingsSection({
                   id={`${id}-${field}`}
                   value={draft.goHome[field]}
                   parse={(text, fallback) => goHomeFromInput(text, field, fallback)}
-                  inputMode="numeric"
                   unit={t('travel.settings.minutes')}
                   disabled={goHomeOff}
                   onValue={(value) => {

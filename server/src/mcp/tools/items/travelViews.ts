@@ -1,7 +1,7 @@
 /**
  * What the travel tools answer with. A place is its agent view (`Place#toAgentView`: id, name,
- * aliases, Home) and nothing more: an address or a coordinate goes in through travel_set_place and
- * is never returned, by any tool. A rule names its place by name.
+ * aliases, Home) and nothing more: an address goes in through travel_set_place and is never
+ * returned, by any tool. A rule names its place by name.
  */
 import { z } from 'zod';
 
@@ -10,7 +10,7 @@ import { TRAVEL_MODES, RULE_DIRECTIONS, TravelSettingsSchema } from '../../../ty
 
 /** Said by every travel tool: the privacy rule an agent can rely on. */
 export const PRIVACY_NOTE =
-  'Addresses and coordinates are accepted but never returned: an agent sees places by name only.';
+  'Addresses are accepted but never returned: an agent sees places by name only.';
 
 export const PlaceAgentViewSchema = z.object({
   id: z.string(),
@@ -41,7 +41,6 @@ export const SettingsViewSchema = z.object({
   containerPlaces: z
     .array(z.object({ containerId: z.string(), placeId: z.string() }))
     .describe('The default places of calendars and projects, by container and place id'),
-  orsAvailable: z.boolean().describe('Whether walking and driving lengths are routed'),
 });
 
 /** A rule as an agent sees it: its place by name. */

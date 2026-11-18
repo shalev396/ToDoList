@@ -47,7 +47,7 @@ export const legal = {
       },
       travel: {
         title: 'Places and travel time',
-        body: 'Travel time is optional. When you turn it on, TodoList keeps the places you save (Home, campus, the gym) with their addresses and coordinates, together with your travel rules and settings.\n\nTo work out how long a trip takes, TodoList sends the coordinates of two of your places to OpenRouteService, a routing service. To find a place from an address you type, or from the location of an event you mark for travel, it sends that address to OpenRouteService’s geocoder or to OpenStreetMap Nominatim. Both are free services, and their own privacy policies cover what they do with a request. Without an OpenRouteService key, trips use the length you entered or a rough estimate from the distance.\n\nYour places, addresses and coordinates are private to you: they are never shared with other members of a workspace, never logged, and never given to AI agents, which see place names only. A travel leg on your calendar carries place names only, and only you can see it. When you leave a workspace, your places, travel rules and travel settings are deleted at once, and so are your legs.',
+        body: 'Travel time is optional. When you turn it on, TodoList keeps the places you save (Home, campus, the gym), with an address if you type one, together with your travel rules, your settings and how long you say each trip takes.\n\nNothing about your places or trips is sent to any other service: TodoList doesn’t look addresses up and doesn’t work routes out. You set how long each trip takes yourself.\n\nYour places and addresses are private to you: they are never shared with other members of a workspace, never logged, and never given to AI agents, which see place names only. An address is used only to open a map app on your device, when you tap Waze or Google Maps on a trip. A travel leg on your calendar carries place names only, and only you can see it. When you leave a workspace, your places, travel rules and travel settings are deleted at once, and so are your legs.',
       },
       retention: {
         title: 'How long we keep things',
@@ -55,7 +55,7 @@ export const legal = {
       },
       processors: {
         title: 'Who processes data for us',
-        body: 'Amazon Web Services hosts the service, holds the encryption keys (KMS) and sends our email (SES).\n\nMongoDB Atlas hosts the database.\n\nIf you turn on travel time, OpenRouteService works out routes and finds places from addresses, and OpenStreetMap Nominatim finds places from addresses. They receive the addresses and coordinates described under Places and travel time.\n\nThe providers you connect, such as Atlassian, ClickUp, Linear, your school’s Moodle, Google and GitHub, receive the requests we make on your behalf. Their own privacy policies cover what they do with your data.',
+        body: 'Amazon Web Services hosts the service, holds the encryption keys (KMS) and sends our email (SES).\n\nMongoDB Atlas hosts the database.\n\nThe providers you connect, such as Atlassian, ClickUp, Linear, your school’s Moodle, Google and GitHub, receive the requests we make on your behalf. Their own privacy policies cover what they do with your data.',
       },
       promises: {
         title: 'What we don’t do',

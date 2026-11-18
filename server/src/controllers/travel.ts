@@ -1,7 +1,7 @@
 /**
  * The travel routes (routes/private/travel.ts): parse, one class, the view. A place is answered
- * through its member's view only (`Place#toView`: never a coordinate), a profile through its
- * settings view, never as stored.
+ * through its member's view only (`Place#toView`), a profile through its settings view, never as
+ * stored.
  */
 import { type RequestHandler } from 'express';
 
@@ -169,8 +169,7 @@ const preview: RequestHandler = async (req, res): Promise<void> => {
 const editLeg: RequestHandler = async (req, res): Promise<void> => {
   const { startAt, endAt, minutes } = parseOr400(LegEditBody, req.body);
   const { caller } = req as WorkspaceRequest;
-  const leg = await TravelLeg.findOwn(caller, routeParam(req, 'id'));
-  const edited = await leg.editTimes(caller, {
+  const edited = await TravelSetup.of(caller).editLeg(routeParam(req, 'id'), {
     startAt: optionalTime(startAt),
     endAt: optionalTime(endAt),
     minutes,

@@ -51,16 +51,6 @@ function TravelSetup({ workspace }: { workspace: WorkspaceView }) {
   const travel = settings.data;
   return (
     <>
-      {travel.orsAvailable ? null : (
-        <p
-          data-ors-missing
-          role="note"
-          className="mb-6 flex items-start gap-2 rounded-sm bg-sunken px-3 py-2.5 text-sm text-muted-foreground"
-        >
-          <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-          <span>{t('travel.noOrsKey')}</span>
-        </p>
-      )}
       <PlacesSection workspaceId={workspace.id} places={places.data} />
       <TravelRulesSection
         workspaceId={workspace.id}
@@ -79,9 +69,10 @@ function TravelSetup({ workspace }: { workspace: WorkspaceView }) {
 }
 
 /**
- * Settings → Travel (travel-time spec): the member's own places, rules, factors and buffers, going
- * home in a long window, the default mode, default places by calendar or project, and the next
- * 14 days. Each editor and owner has their own; a viewer is told travel is not theirs to set up.
+ * Settings → Travel (travel-time spec): the member's own places, rules, going home in a long
+ * window, the default mode, default places by calendar or project, and the next 14 days. How long
+ * a trip takes is set on the trip itself. Each editor and owner has their own; a viewer is told
+ * travel is not theirs to set up.
  */
 export default function TravelPage() {
   const { t } = useTranslation();

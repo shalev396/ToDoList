@@ -51,6 +51,8 @@ export interface CalendarEventProps {
   legMode: TravelMode | null;
   /** A travel leg whose event moved since he edited it ("check this trip"). */
   anchorMoved: boolean;
+  /** A leg whose trip has no length yet: drawn dashed. */
+  lengthUnset: boolean;
 }
 
 /**
@@ -115,6 +117,7 @@ export function toEventInput(
     past: item.leg?.past ?? false,
     legMode: item.leg?.mode ?? null,
     anchorMoved: item.leg?.moved ?? false,
+    lengthUnset: item.leg?.unset ?? false,
   };
   // FullCalendar sets an event's attributes once, when its element is made (`eventDidMount`). A leg's
   // marks change under it (a conflict clears, the day moves on, he edits its times), so they are
@@ -129,6 +132,7 @@ export function toEventInput(
           item.leg.conflict,
           item.leg.past,
           item.leg.moved,
+          item.leg.unset,
         ]
           .map(String)
           .join('|');
@@ -139,6 +143,7 @@ export function toEventInput(
       ...(colour.role === 'travel' ? ['tc-travel'] : []),
       ...(item.leg?.conflict === true ? ['tc-conflict'] : []),
       ...(item.leg?.past === true ? ['tc-past'] : []),
+      ...(item.leg?.unset === true ? ['tc-unset'] : []),
       ...(o.dueOnly ? ['fc-due'] : []),
     ],
     backgroundColor: paint.fill,

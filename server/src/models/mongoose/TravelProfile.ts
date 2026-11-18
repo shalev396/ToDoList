@@ -2,10 +2,8 @@ import mongoose from 'mongoose';
 
 import type { TravelSettings } from '../../types/travel.js';
 import {
-  GEOCODES_MAX,
   TRAVEL_PROFILE_TABLE_NAME,
   type ITravelProfileRepository,
-  type StoredLatLon,
   type TravelProfileData,
 } from '../definitions/TravelProfile.js';
 import { assertFieldKey } from './common.js';
@@ -19,8 +17,7 @@ const travelProfileSchema = new mongoose.Schema<TravelProfileFields>(
     workspaceId: { type: String, required: true },
     ownerUserId: { type: String, required: true },
     settings: { type: mongoose.Schema.Types.Mixed, required: true },
-    remembered: { type: mongoose.Schema.Types.Mixed, default: (): Record<string, number> => ({}) },
-    geocodes: { type: mongoose.Schema.Types.Mixed, default: (): Record<string, unknown> => ({}) },
+    tripLengths: { type: mongoose.Schema.Types.Mixed, default: (): Record<string, number> => ({}) },
     itemPlaces: { type: mongoose.Schema.Types.Mixed, default: (): Record<string, string> => ({}) },
     containerPlaces: {
       type: mongoose.Schema.Types.Mixed,
@@ -60,8 +57,7 @@ function toTravelProfileData(doc: TravelProfileFields): TravelProfileData {
     workspaceId: doc.workspaceId,
     ownerUserId: doc.ownerUserId,
     settings: doc.settings,
-    remembered: mapOf(doc.remembered),
-    geocodes: mapOf(doc.geocodes),
+    tripLengths: mapOf(doc.tripLengths),
     itemPlaces: mapOf(doc.itemPlaces),
     containerPlaces: mapOf(doc.containerPlaces),
     hasTravel: doc.hasTravel,
@@ -110,8 +106,7 @@ export const TravelProfileRepository: ITravelProfileRepository = {
           {
             $setOnInsert: {
               settings: defaults.settings,
-              remembered: {},
-              geocodes: {},
+              tripLengths: {},
               itemPlaces: {},
               containerPlaces: {},
               hasTravel: false,
@@ -132,10 +127,10 @@ export const TravelProfileRepository: ITravelProfileRepository = {
     return change(workspaceId, ownerUserId, { $set: { settings, updatedAt: new Date() } });
   },
 
-  async setRemembered(workspaceId, ownerUserId, tripKey, minutes) {
+  async setTripLength(workspaceId, ownerUserId, tripKey, minutes) {
     assertFieldKey(tripKey);
     return change(workspaceId, ownerUserId, {
-      $set: { [`remembered.${tripKey}`]: minutes, updatedAt: new Date() },
+      $set: { [`tripLengths.${tripKey}`]: minutes, updatedAt: new Date() },
     });
   },
 
@@ -149,34 +144,6 @@ export const TravelProfileRepository: ITravelProfileRepository = {
         ? { $unset: { [path]: '' }, $set: { updatedAt: new Date() } }
         : { $set: { [path]: placeId, updatedAt: new Date() } },
     );
-  },
-
-  async storeGeocode(workspaceId, ownerUserId, hash, point: StoredLatLon | null) {
-    assertFieldKey(hash);
-    // One pipeline write: merged in (an existing key keeps its place), then the newest
-    // GEOCODES_MAX kept, so parallel writes can't leave more.
-    await TravelProfileMongoModel.updateOne(ownFilter(workspaceId, ownerUserId), [
-      {
-        $set: {
-          geocodes: {
-            $arrayToObject: {
-              $slice: [
-                {
-                  $objectToArray: {
-                    $mergeObjects: [
-                      { $ifNull: ['$geocodes', {}] },
-                      { $literal: { [hash]: point } },
-                    ],
-                  },
-                },
-                -GEOCODES_MAX,
-              ],
-            },
-          },
-          updatedAt: '$$NOW',
-        },
-      },
-    ]);
   },
 
   async setLastPassDay(workspaceId, ownerUserId, day) {
@@ -199,7 +166,7 @@ export const TravelProfileRepository: ITravelProfileRepository = {
           itemPlaces: filteredMap('itemPlaces', { $ne: ['$$this.v', place] }),
           containerPlaces: filteredMap('containerPlaces', { $ne: ['$$this.v', place] }),
           // A trip key is `from|to|mode`: the trips from or to the place go.
-          remembered: filteredMap('remembered', {
+          tripLengths: filteredMap('tripLengths', {
             $not: [{ $in: [place, { $split: ['$$this.k', '|'] }] }],
           }),
           updatedAt: '$$NOW',

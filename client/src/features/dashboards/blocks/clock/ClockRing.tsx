@@ -234,18 +234,23 @@ export function ClockRing({
               >
                 <path
                   className={paint === null ? SOURCE_STYLES[event.source].fill : undefined}
-                  // A leg that can't be made in time has a red edge.
+                  // A leg that can't be made in time has a red edge; one whose trip has no length
+                  // yet is dashed.
                   style={{
                     ...(paint === null ? {} : { fill: paint.fill }),
                     ...(leg?.conflict === true
                       ? { stroke: 'var(--destructive)', strokeWidth: 2 }
-                      : {}),
+                      : leg?.unset === true
+                        ? { stroke: 'var(--foreground)', strokeWidth: 1.5 }
+                        : {}),
+                    ...(leg?.unset === true ? { strokeDasharray: '4 3' } : {}),
                   }}
                   data-family={event.colour?.family}
                   data-role={event.colour?.role}
                   data-leg-mode={leg?.mode}
                   data-conflict={leg === null ? undefined : String(leg.conflict)}
                   data-past={leg === null ? undefined : String(leg.past)}
+                  data-length-unset={leg === null ? undefined : String(leg.unset)}
                   d={d}
                 >
                   <title>{labels.describeEvent(event)}</title>

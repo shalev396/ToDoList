@@ -23,10 +23,12 @@
  * - A removed leg is a tombstone: soft-deleted, with its reason at `props.travel.removedReason`, so
  *   the day panel can say why it went (the purge keeps it at least until the leg is over). A skip
  *   is a tombstone with reason `skipped`, which no regeneration brings back; Reset does.
- * - The member's own changes: new times (any two of start, end and length, the third worked out),
- *   a skip, a reset. Each is the owner's only (404 for anyone else) and an editor's (403).
- * - The member's own reads (plan Task 13): a leg's app links, worked out from the places on each
- *   read and never stored, and the day panel (each day's legs, and the ones removed, with why).
+ * - The member's own changes: how long its trip takes (every time: it is the trip's length, which
+ *   every leg of the trip takes), times that move this leg only, a skip, a reset. Each is the
+ *   owner's only (404 for anyone else) and an editor's (403).
+ * - The member's own reads (plan Task 13): a leg's app links, worked out from the places' text on
+ *   each read and never stored, and the day panel (each day's legs, and the ones removed, with
+ *   why).
  *
  * Stored props that aren't a leg's read as none (`travel` is null): reads never throw on them.
  */
@@ -48,9 +50,9 @@ import { getItemRepository } from '../../models/index.js';
 import { redactString } from '../../services/secretPatterns.js';
 import { SUBJECT_ATTRIBUTE_KEY } from '../../types/attributes.js';
 import { addLocalDays, wallDate, zonedTime } from '../../types/recurrence/zoned.js';
-import { solveSpan, type Span, type SpanField } from '../../types/timeSpan.js';
 import {
   TRAVEL_DAYS_MAX,
+  TRIP_MINUTES_MAX,
   travelPropsOf,
   type RemovalReason,
   type TravelDayView,
@@ -65,7 +67,10 @@ import { ScheduledItem } from './ScheduledItem.js';
 
 const FROM_ITS_EVENT = 'travel takes it from its event';
 
-/** New times for a leg: any two of start, end and length (minutes); one keeps the rest. */
+/**
+ * A change of a leg: `minutes` is how long its trip takes, every time (the trip's length);
+ * `startAt` and `endAt` move this leg only (one alone keeps its length). At least one.
+ */
 export interface LegTimesChange {
   startAt?: Date | undefined;
   endAt?: Date | undefined;
@@ -79,8 +84,6 @@ export interface AppliedPlan {
   removed: number;
 }
 
-/** The longest leg: a day. */
-const MAX_MINUTES = 24 * 60;
 const MINUTE_MS = 60_000;
 const DAY_MS = 24 * 60 * MINUTE_MS;
 const DAY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -100,8 +103,12 @@ function calendarDay(text: string, field: string): Date {
 /** How often a change made on a stale read is read again and retried before a 409. */
 const SAVE_ATTEMPTS = 5;
 
-/** The change's fields as the span solver names them, in the order the solver keeps them. */
-const SPAN_FIELDS = { startAt: 'start', endAt: 'end', minutes: 'minutes' } as const;
+/** A leg's span: when it starts and ends, and so how long it is. */
+interface LegSpan {
+  start: Date;
+  end: Date;
+  minutes: number;
+}
 
 /** The caller's places as a leg names them: by id, and which is Home. */
 interface PlaceNames {
@@ -317,28 +324,46 @@ export class TravelLeg extends ScheduledItem {
   // ─── The member's changes ─────────────────────────────────────────────────
 
   /**
-   * New times, by hand: any two of start, end and length (`solveSpan`), the third worked out. One
-   * alone keeps the length (a new start or end), or the arrival (a new length of a leg there or
-   * between; a leg back keeps its departure). The leg is then the member's (`edited`, source
-   * `manual`): a regeneration keeps his times until he resets it, and the length is remembered for
-   * the same trip. A leg flagged "the event moved" is edited against the anchor's new start, so the
-   * flag clears. 400 for anything that isn't a span of more than 0 and at most a day.
+   * The member's change of this leg (the owner's decision of 2026-11-18), two kinds he can tell
+   * apart:
+   * - `minutes`: how long its trip (from place, to place, mode) takes, every time. It is stored as
+   *   the trip's length (TravelProfile#setTripLength), which every leg of that trip takes from the
+   *   next regeneration on (TravelSetup#editLeg runs it), but the legs whose times he set by hand.
+   *   This leg takes it at once: it keeps its arrival (a leg there or between) or its departure (a
+   *   leg back), and stays as it was otherwise (a leg he never timed by hand still follows the
+   *   plan).
+   * - `startAt`, `endAt`: this leg only. One alone keeps its length (the new `minutes` when given),
+   *   both are its span. The leg is then his (`edited`): a regeneration keeps his times until he
+   *   resets it. A leg flagged "the event moved" is edited against the anchor's new start, so the
+   *   flag clears.
+   * Either way its source is `set`. 400 for nothing to change, or anything that isn't a span of
+   * more than 0 and at most a day.
    */
   async editTimes(caller: Caller, change: LegTimesChange): Promise<TravelLeg> {
     this.#authorize(caller);
     if (this.isDeleted) {
       throw new AppError(409, 'This travel was skipped or removed: reset it before editing it');
     }
-    const given = (Object.keys(SPAN_FIELDS) as (keyof LegTimesChange)[]).filter(
-      (field) => change[field] !== undefined,
-    );
-    if (given.length === 0 || given.length === 3) {
-      throw new ValidationError('startAt: give one or two of startAt, endAt and minutes');
+    const { startAt, endAt, minutes } = change;
+    const byHand = startAt !== undefined || endAt !== undefined;
+    if (!byHand && minutes === undefined) {
+      throw new ValidationError('minutes: give minutes, startAt or endAt');
     }
-    const saved = await this.#save((current) => {
+    if (minutes !== undefined && !(minutes > 0 && minutes <= TRIP_MINUTES_MAX)) {
+      throw new ValidationError(`minutes: more than 0 and at most ${String(TRIP_MINUTES_MAX)}`);
+    }
+    const trip = this.travel;
+    if (trip === null) throw new ValidationError('travel: this leg has no travel to edit');
+    if (minutes !== undefined) {
+      // The trip's length first: it is what he asked for, and the next regeneration applies it.
+      const key = DayPlanner.tripKey(trip.fromPlaceId, trip.toPlaceId, trip.mode);
+      await (await TravelProfile.of(caller)).setTripLength(caller, key, minutes);
+    }
+    return this.#save((current) => {
       const travel = current.travel;
       if (travel === null) throw new ValidationError('travel: this leg has no travel to edit');
-      const span = current.#spanAfter(change, given, travel);
+      const span = current.#spanAfter(change, travel);
+      const edited = byHand || travel.edited;
       return {
         startAt: span.start,
         endAt: span.end,
@@ -347,9 +372,10 @@ export class TravelLeg extends ScheduledItem {
           travel: {
             ...travel,
             minutes: span.minutes,
-            source: 'manual',
+            source: 'set',
+            lengthUnset: false,
             computedAt: new Date().toISOString(),
-            edited: true,
+            edited,
             // An edit after the event moved is made against its new start: it acknowledges it.
             ...(travel.anchorStartNow === null
               ? {}
@@ -358,12 +384,6 @@ export class TravelLeg extends ScheduledItem {
         },
       };
     });
-    const travel = saved.travel;
-    if (travel !== null && travel.fromPlaceId !== '' && travel.toPlaceId !== '') {
-      const trip = DayPlanner.tripKey(travel.fromPlaceId, travel.toPlaceId, travel.mode);
-      await (await TravelProfile.of(caller)).remember(caller, trip, travel.minutes);
-    }
-    return saved;
   }
 
   /**
@@ -407,22 +427,24 @@ export class TravelLeg extends ScheduledItem {
   }
 
   /**
-   * Its member's only (404 for anyone else), an editor's: the apps that open the trip (Google Maps,
-   * Waze for driving, Moovit for public transport), arriving as it ends. Worked out on each read
-   * from the places' coordinates, never stored, never given to an agent (plan Ruling 10). None
-   * without a place to go to (it went since).
+   * Its member's only (404 for anyone else), an editor's: the apps that open the trip (Waze for
+   * driving, Google Maps directions in its mode), from each place's address as he typed it, or its
+   * name when it has none. Worked out on each read, never stored, never given to an agent (plan
+   * Ruling 10). None without a place to go to (it went since).
    */
   async links(caller: Caller): Promise<TravelLink[]> {
     this.#authorize(caller);
     const travel = this.travel;
-    const arriveBy = this.data.endAt ?? this.data.startAt;
-    if (travel === null || arriveBy === null) return [];
-    const places = new Map((await Place.listOwn(caller)).map((place) => [place.id, place.coords]));
+    if (travel === null) return [];
+    const places = new Map((await Place.listOwn(caller)).map((place) => [place.id, place]));
+    const where = (id: string): string | null => {
+      const place = places.get(id);
+      return place === undefined ? null : (place.address ?? place.name);
+    };
     return TravelLinks.for({
       mode: travel.mode,
-      from: places.get(travel.fromPlaceId) ?? null,
-      to: places.get(travel.toPlaceId) ?? null,
-      arriveBy,
+      from: where(travel.fromPlaceId),
+      to: where(travel.toPlaceId),
     });
   }
 
@@ -517,38 +539,45 @@ export class TravelLeg extends ScheduledItem {
   }
 
   /**
-   * Its span after `change`: the fields given stand; with one alone, the length stands (a new
-   * start or end), or the arrival (a new length; a leg back keeps its departure instead).
+   * Its span after `change`: both times given are its span; one alone keeps its length (the new
+   * `minutes` when given); a length alone keeps its arrival, or its departure for a leg back.
    */
-  #spanAfter(
-    change: LegTimesChange,
-    given: readonly (keyof LegTimesChange)[],
-    travel: TravelLegProps,
-  ): Span {
-    const { startAt, endAt } = this.data;
+  #spanAfter(change: LegTimesChange, travel: TravelLegProps): LegSpan {
+    const stored = { start: this.data.startAt, end: this.data.endAt };
     const storedMinutes =
-      startAt !== null && endAt !== null
-        ? (endAt.getTime() - startAt.getTime()) / MINUTE_MS
+      stored.start !== null && stored.end !== null
+        ? (stored.end.getTime() - stored.start.getTime()) / MINUTE_MS
         : travel.minutes;
-    const edited: SpanField[] = given.map((field) => SPAN_FIELDS[field]);
-    if (edited.length === 1) {
-      const [only] = edited;
-      if (only === 'minutes') edited.push(travel.direction === 'back' ? 'start' : 'end');
-      else edited.push('minutes');
+    const length = (change.minutes ?? storedMinutes) * MINUTE_MS;
+    const at = (date: Date | null): number => {
+      if (date === null) throw new ValidationError('travel: this leg has no times to edit');
+      return date.getTime();
+    };
+    let start: number;
+    let end: number;
+    if (change.startAt !== undefined && change.endAt !== undefined) {
+      start = change.startAt.getTime();
+      end = change.endAt.getTime();
+    } else if (change.startAt !== undefined) {
+      start = change.startAt.getTime();
+      end = start + length;
+    } else if (change.endAt !== undefined || travel.direction !== 'back') {
+      end = change.endAt?.getTime() ?? at(stored.end);
+      start = end - length;
+    } else {
+      start = at(stored.start);
+      end = start + length;
     }
-    const span = solveSpan(
-      {
-        start: change.startAt ?? startAt,
-        end: change.endAt ?? endAt,
-        minutes: change.minutes ?? storedMinutes,
-      },
-      edited,
-    );
-    if (span === null) throw new ValidationError('endAt: travel ends after it starts');
-    if (span.minutes > MAX_MINUTES) {
-      throw new ValidationError(`minutes: travel lasts at most ${String(MAX_MINUTES)} minutes`);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      throw new ValidationError('endAt: travel ends after it starts');
     }
-    return span;
+    const minutes = (end - start) / MINUTE_MS;
+    if (minutes > TRIP_MINUTES_MAX) {
+      throw new ValidationError(
+        `minutes: travel lasts at most ${String(TRIP_MINUTES_MAX)} minutes`,
+      );
+    }
+    return { start: new Date(start), end: new Date(end), minutes };
   }
 
   /**
@@ -612,6 +641,7 @@ export class TravelLeg extends ScheduledItem {
     const prior = stored === null ? null : travelPropsOf(stored.row.props);
     const kept = TravelLeg.#keptTimes(stored, prior, leg);
     const moved = kept !== null && stored?.anchorMoved === true;
+    const source = kept?.prior.source ?? leg.source;
     const sameLength =
       prior !== null &&
       prior.minutes === leg.minutes &&
@@ -636,7 +666,8 @@ export class TravelLeg extends ScheduledItem {
       fromHome: leg.fromPlaceId === places.homeId,
       toHome: leg.toPlaceId === places.homeId,
       minutes: kept?.prior.minutes ?? leg.minutes,
-      source: kept?.prior.source ?? leg.source,
+      source,
+      lengthUnset: source === 'unset',
       // Worked out again only when its length or trip changed: an identical plan writes nothing.
       computedAt: kept?.prior.computedAt ?? (sameLength ? prior.computedAt : now.toISOString()),
       conflict: kept?.prior.conflict ?? leg.conflict,

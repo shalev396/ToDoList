@@ -9,7 +9,7 @@ import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
 import { useItemParam } from '@/features/items/useItemParam';
 import { ConflictMark, LegModeIcon } from '@/features/travel/LegMark';
-import { CONFLICT_EDGE, legMarksOf } from '@/features/travel/legView';
+import { CONFLICT_EDGE, UNSET_OUTLINE, legMarksOf } from '@/features/travel/legView';
 import { cn } from '@/lib/utils';
 import { instantInZone } from '@/features/items/zonedDate';
 import { useShellUi } from '@/features/shell/shellUi';
@@ -104,11 +104,14 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
         data-timeline-leg={leg === null ? undefined : leg.mode}
         data-conflict={leg === null ? undefined : String(leg.conflict)}
         data-past={leg === null ? undefined : String(leg.past)}
+        data-length-unset={leg === null ? undefined : String(leg.unset)}
         className={cn(
           'flex min-h-11 items-center gap-2 py-1',
-          // A leg that can't be made in time has a red edge; one that is over is dimmed.
+          // A leg that can't be made in time has a red edge; one that is over is dimmed; one whose
+          // trip has no length yet is dashed.
           leg?.conflict === true && CONFLICT_EDGE,
           leg?.past === true && 'opacity-60',
+          leg?.unset === true && UNSET_OUTLINE,
         )}
       >
         <span className="w-24 shrink-0 text-[13px] text-muted-foreground tabular-nums" dir="ltr">

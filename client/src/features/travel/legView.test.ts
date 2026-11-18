@@ -48,7 +48,8 @@ const LEG: TravelLegProps = {
   fromHome: true,
   toHome: false,
   minutes: 40,
-  source: 'ors',
+  source: 'set',
+  lengthUnset: false,
   computedAt: '2026-11-18T10:00:00.000Z',
   conflict: false,
   edited: false,
@@ -178,7 +179,11 @@ describe('legFlagsOf', () => {
       conflict: true,
       past: false,
       moved: true,
+      unset: false,
     });
+    // A trip with no length yet is drawn dashed: its flag says so (read from its source).
+    const unset = occurrenceOf(legRow({ source: 'unset', minutes: 30 }), start, minutes(start, 30));
+    assert.equal(legFlagsOf(unset, minutes(start, -600))?.unset, true);
     const todo: TimeRow = { ...legRow(), kind: 'todo', props: {} };
     assert.equal(legFlagsOf(occurrenceOf(todo, start, null), NOW), null);
     // Props that are not a leg's read as none: the row shows as itself.
@@ -198,8 +203,8 @@ describe('legFlagsOf', () => {
   });
 });
 
-describe('conflict and past flags reach the calendar event props', () => {
-  it('conflict and past flags reach the calendar event props', () => {
+describe('conflict, past and unset flags reach the calendar event props', () => {
+  it('conflict, past and unset flags reach the calendar event props', () => {
     const start = new Date('2026-11-19T06:00:00.000Z');
     const row = legRow({ conflict: true, mode: 'drive' });
     const occurrence = occurrenceOf(row, start, minutes(start, 40));
@@ -211,11 +216,24 @@ describe('conflict and past flags reach the calendar event props', () => {
     assert.equal(props['past'], true);
     assert.equal(props['legMode'], 'drive');
     assert.equal(props['anchorMoved'], false);
+    assert.equal(props['lengthUnset'], false);
     assert.equal(input.title, 'Drive to Braude');
     assert.deepEqual(
       (input.classNames as string[]).filter((name) => name.startsWith('tc-')),
       ['tc-travel', 'tc-conflict', 'tc-past'],
     );
+    // A trip with no length yet is dashed (tc-unset), and says so in its props.
+    const unsetRow = legRow({ source: 'unset', minutes: 30, mode: 'drive' });
+    const unsetOccurrence = occurrenceOf(unsetRow, start, minutes(start, 30));
+    const unsetLeg = legMarksOf(tEn, unsetOccurrence, NOW);
+    assert.ok(unsetLeg);
+    const dashed = toEventInput(
+      { occurrence: unsetOccurrence, badges: [], leg: unsetLeg },
+      'Asia/Jerusalem',
+      colour,
+    );
+    assert.equal((dashed.extendedProps as Record<string, unknown>)['lengthUnset'], true);
+    assert.ok((dashed.classNames as string[]).includes('tc-unset'));
 
     // Any other item carries none of it.
     const plain = occurrenceOf({ ...row, kind: 'event', props: {} }, start, minutes(start, 40));
@@ -244,6 +262,7 @@ describe('conflict and past flags reach the calendar event props', () => {
       conflict: true,
       past: false,
       moved: false,
+      unset: false,
     });
     assert.equal(model.current?.row.id, 'leg-1');
   });

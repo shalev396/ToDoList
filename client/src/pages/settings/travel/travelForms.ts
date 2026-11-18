@@ -1,7 +1,7 @@
 /**
  * Settings → Travel's forms, pure (docs/superpowers/specs/2026-11-17-travel-time-design.md):
- * a place as typed (an address, or coordinates typed as "lat, lon"), the settings' number fields
- * with the server's bounds, a rule's "When …" sentence as its where-scope, and the next 14 days.
+ * a place as typed (a name, and an address that only opens a map app), the go-home fields with the
+ * server's bounds, a rule's "When …" sentence as its where-scope, and the next 14 days.
  */
 import type { Query, RuleGroup } from '@api-types/builder.ts';
 import {
@@ -28,23 +28,6 @@ export interface PlaceDraft {
 
 export const EMPTY_PLACE: PlaceDraft = { name: '', address: '', aliases: '', home: false };
 
-/** The server's own pattern (Geocoder.parseCoordinates): "lat, lon" in decimal degrees. */
-const COORDINATES = /^\s*(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/;
-
-/** Coordinates typed as "lat, lon" (latitude −90 to 90, longitude −180 to 180), or null. */
-export function parseCoordinates(text: string): { lat: number; lon: number } | null {
-  const match = COORDINATES.exec(text);
-  if (match === null) {
-    return null;
-  }
-  const lat = Number(match[1]);
-  const lon = Number(match[2]);
-  if (Math.abs(lat) > 90 || Math.abs(lon) > 180) {
-    return null;
-  }
-  return { lat, lon };
-}
-
 /** Aliases split on commas and lines, trimmed, each once whatever its case. */
 export function parseAliases(text: string): string[] {
   const seen = new Set<string>();
@@ -61,32 +44,21 @@ export function parseAliases(text: string): string[] {
   return aliases;
 }
 
-export type PlaceForm =
-  | { ok: true; request: CreatePlaceRequest }
-  | { ok: false; problem: 'name' | 'address' };
+export type PlaceForm = { ok: true; request: CreatePlaceRequest } | { ok: false; problem: 'name' };
 
 /**
- * The request for a place as typed. Typed coordinates go as `coords` (no lookup), the text kept
- * as its address so its owner sees what they typed; any other address is looked up by the server.
- * A new place needs an address or coordinates; an `editing` one may have its address cleared (its
- * coordinates stay).
+ * The request for a place as typed: a name, and an address if he typed one (free text, never
+ * looked up; it only opens a map app).
  */
-export function placeRequestOf(draft: PlaceDraft, editing = false): PlaceForm {
+export function placeRequestOf(draft: PlaceDraft): PlaceForm {
   const name = draft.name.trim();
   const address = draft.address.trim();
   if (name === '') {
     return { ok: false, problem: 'name' };
   }
-  if (address === '' && !editing) {
-    return { ok: false, problem: 'address' };
-  }
   const request: CreatePlaceRequest = { name };
   if (address !== '') {
     request.address = address;
-    const coords = parseCoordinates(address);
-    if (coords !== null) {
-      request.coords = coords;
-    }
   }
   request.aliases = parseAliases(draft.aliases);
   request.home = draft.home;
@@ -103,10 +75,7 @@ export function placeDraftOf(place: PlaceView): PlaceDraft {
   };
 }
 
-/**
- * What changed in a saved place, as its PATCH: only the parts that differ, so an address that
- * stayed the same is not looked up again. Null when nothing changed.
- */
+/** What changed in a saved place, as its PATCH: only the parts that differ. Null when nothing did. */
 export function placePatchOf(
   place: PlaceView,
   request: CreatePlaceRequest,
@@ -117,9 +86,6 @@ export function placePatchOf(
   }
   if ((request.address ?? '') !== (place.address ?? '')) {
     patch.address = request.address ?? '';
-    if (request.coords !== undefined) {
-      patch.coords = request.coords;
-    }
   }
   const aliases = request.aliases ?? [];
   if (aliases.join('\n') !== place.aliases.join('\n')) {
@@ -135,8 +101,6 @@ export function placePatchOf(
 
 /** The server's bounds (TravelSettingsSchema). */
 export const TRAVEL_BOUNDS = {
-  factor: { min: 0.5, max: 3 },
-  buffer: { min: 0, max: 120 },
   minWindowMinutes: { min: 180, max: 24 * 60 },
   minAtHomeMinutes: { min: 60, max: 24 * 60 },
 } as const;
@@ -155,21 +119,6 @@ function clamp(value: number, bounds: { min: number; max: number }): number {
   return Math.min(bounds.max, Math.max(bounds.min, value));
 }
 
-/** A factor as typed, clamped to 0.5–3 and rounded to hundredths; `fallback` when not a number. */
-export function factorFromInput(text: string, fallback: number): number {
-  const value = typedNumber(text);
-  if (value === null) {
-    return fallback;
-  }
-  return Math.round(clamp(value, TRAVEL_BOUNDS.factor) * 100) / 100;
-}
-
-/** A buffer as typed, in whole minutes, 0–120; `fallback` when not a number. */
-export function bufferFromInput(text: string, fallback: number): number {
-  const value = typedNumber(text);
-  return value === null ? fallback : clamp(Math.round(value), TRAVEL_BOUNDS.buffer);
-}
-
 /** Go-home minutes as typed: a window of at least 3 hours, at least an hour at home. */
 export function goHomeFromInput(
   text: string,
@@ -183,18 +132,13 @@ export function goHomeFromInput(
 /** A copy of the settings to edit (the saved ones are never changed in place). */
 export function settingsDraftOf(settings: Readonly<TravelSettings>): TravelSettings {
   return {
-    factors: { ...settings.factors },
-    buffers: { ...settings.buffers },
     goHome: { ...settings.goHome },
     defaultMode: settings.defaultMode,
   };
 }
 
 export function sameSettings(a: Readonly<TravelSettings>, b: Readonly<TravelSettings>): boolean {
-  const modes = ['walk', 'drive', 'transit'] as const;
   return (
-    modes.every((mode) => a.factors[mode] === b.factors[mode]) &&
-    modes.every((mode) => a.buffers[mode] === b.buffers[mode]) &&
     a.goHome.enabled === b.goHome.enabled &&
     a.goHome.minWindowMinutes === b.goHome.minWindowMinutes &&
     a.goHome.minAtHomeMinutes === b.goHome.minAtHomeMinutes &&

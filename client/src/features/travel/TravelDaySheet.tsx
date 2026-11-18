@@ -18,7 +18,14 @@ import type { ItemSummary } from '@api-types/items.ts';
 import { toDate } from '@api-types/recurrence/occurrences.ts';
 import { travelPropsOf, type RemovedLegView } from '@api-types/travel.ts';
 import { ConflictMark, LegModeIcon } from './LegMark';
-import { CONFLICT_EDGE, isPastLeg, legTitle, removalText, removedLegTitle } from './legView';
+import {
+  CONFLICT_EDGE,
+  UNSET_OUTLINE,
+  isPastLeg,
+  legTitle,
+  removalText,
+  removedLegTitle,
+} from './legView';
 import { TRAVEL_DAY_PARAM, openedDaySheet, travelDayOf } from './travelDay';
 
 /**
@@ -191,10 +198,12 @@ function TripRow({
       data-leg-mode={travel.mode}
       data-conflict={String(travel.conflict)}
       data-past={String(past)}
+      data-length-unset={String(travel.lengthUnset)}
       className={cn(
         'border-b last:border-b-0',
         travel.conflict && CONFLICT_EDGE,
         past && 'opacity-60',
+        travel.lengthUnset && UNSET_OUTLINE,
       )}
     >
       <button
@@ -211,6 +220,12 @@ function TripRow({
             {title}
           </span>
           {travel.conflict ? <ConflictMark className="text-xs text-destructive" /> : null}
+          {travel.lengthUnset ? (
+            // Its trip has no length yet: the trip's sheet (this row opens it) asks for it.
+            <span data-leg-set-length="" className="text-xs font-medium text-primary">
+              {t('travel.leg.setLength')}
+            </span>
+          ) : null}
           {travel.anchorMoved ? (
             <span className="text-xs font-medium">{t('travel.leg.moved')}</span>
           ) : null}

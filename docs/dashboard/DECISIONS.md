@@ -220,11 +220,11 @@ Rulings 1 to 26 of the plan, one line each:
 7. Completing reserved time is 409 `not_completable`, deleting a leg is 409 `not_deletable` (skip it); a generic `PATCH` of a block is an "All" edit, of a leg a hand edit of start and end.
 8. Legs are stored private and owned by their member, and `ItemPolicy` adds a kind branch on top.
 9. A leg's key is `ownerUserId|anchorItemId|occurrence|direction`; a moved Google occurrence anchors on its series master, so two members can share a lecture.
-10. App links are computed on read, served to the owner by REST only, never stored and never sent over MCP, since they carry coordinates.
+10. App links are computed on read, served to the owner by REST only, never stored and never sent over MCP, since they carry the places' addresses (superseded in part on 2026-11-18: Waze and Google Maps only, from text; see below).
 11. One `TravelRule` model with three scopes (`where`, `series`, `item`); precedence item, then series, then where-rules oldest first.
 12. Regeneration is one member's whole 14-day horizon; the daily pass runs per member and gets 120 s per tick, the rest wait for the next hour.
-13. Factor and buffer apply to computed lengths only, never to the member's own entries; public transport's straight-line speed is 25 km/h with a 1.3 detour.
-14. Geocoding uses OpenRouteService's geocoder when the key exists, else Nominatim; at most 10 new lookups per regeneration, cached per member; "lat, lon" typed as an address is taken as coordinates.
+13. ~~Factor and buffer apply to computed lengths only; public transport's straight-line speed is 25 km/h with a 1.3 detour.~~ Superseded on 2026-11-18: there are no computed lengths, and no factors or buffers.
+14. ~~Geocoding uses OpenRouteService's geocoder when the key exists, else Nominatim; "lat, lon" typed as an address is taken as coordinates.~~ Superseded on 2026-11-18: nothing is looked up; a place has no coordinates, and an event's location matches a place by name or alias only.
 15. Places are not audited; rule changes are audited with `mode`, `direction` and `scopeKind` only.
 16. Travel is for editors and owners (`requireWorkspace('editor')`, MCP `minRole: 'editor'`), and its MCP tools join the `items` toolset.
 17. Travel hears about item writes through an `ItemChanges` observer, and a travel failure never fails the item write.
@@ -232,25 +232,36 @@ Rulings 1 to 26 of the plan, one line each:
 19. Leg titles are stored from English templates (for MCP and push); the UI draws a leg from `props.travel` through i18n; the day panel opens from a leg's sheet, Settings, Travel and an agenda chip.
 20. A skipped leg is a tombstone with reason `skipped`; regeneration never restores it, Reset does.
 21. One `rrule` copy: the server adds it, and the client's Vite config has `resolve.dedupe: ['rrule']`.
-22. New error codes: `not_completable`, `not_deletable`, `not_an_occurrence`, `place_not_found`, `travel_home_missing`, `travel_limit`.
+22. New error codes: `not_completable`, `not_deletable`, `not_an_occurrence`, `travel_home_missing`, `travel_limit` (`place_not_found` went with the geocoders on 2026-11-18).
 23. Limits: 30 places and 50 travel rules per member.
 24. Marking travel with no Home is 409 `travel_home_missing`.
 25. When a membership ends, the member's places, rules and profile are hard-deleted and their legs soft-deleted; deleting a workspace removes all its travel documents.
 26. The workspace-calendar push leaves out blocks and travel in this version, with no setting.
 
+**Owner decision 2026-11-18: no routing service; trip lengths set by the user, one per trip, reused on every occurrence; Moovit link removed.** In his words: "We said there is no free API. So let's just let the user decide how much time it's going to take. And of course, if it's a repetitive drive, it's going to be the same thing on all of them."
+
+- No outbound calls from travel: OpenRouteService, Nominatim, the straight-line estimate, the routing quota (`RoutingQuotas`) and the geocode cache are deleted, not disabled. `OPENROUTESERVICE_API_KEY` is gone from `APP_SECRETS`. A test (`classes/travel/noOutbound.test.ts`) fails if any travel module imports an HTTP client, a socket, the sync transports or the app secrets, or calls `fetch`.
+- A place is `name`, `aliases`, `home` and an optional free-text `address`, owner-only, used only to open a map app. No coordinates, no lookup; a typed "lat, lon" is text. Agents still get names only.
+- A trip is (from place, to place, mode); each direction is its own trip. Its length is one number per member (`TravelProfile.tripLengths`), set by him, and the only source of a leg's length: every leg of the trip takes it, every day and every occurrence, but legs whose times he set by hand.
+- Changing a leg's length (the leg sheet's "How long this trip takes (every time)", `travel_edit_leg` or `travel_mark_item` with minutes, the Add-travel panel) sets the trip's length and regenerates; the leg keeps its arrival (a leg back, its departure). Changing only leave or arrive moves that one leg (`edited`, kept until Reset). Both can come in one request.
+- A trip with no length yet still gets its legs, drawn with `UNSET_TRIP_MINUTES` (30, every mode) and flagged `lengthUnset` (source `unset`): "Set how long" in the leg sheet and day panel, dashed in the time views, and in conflicts with the placeholder. Sources are `set` ("set by you") and `unset` ("not set yet").
+- Settings lose `factors`, `buffers` and `orsAvailable`; they keep `goHome` and `defaultMode` (with default places, rules and places).
+- An event's location is matched to his places by name or alias (`types/travelPlaceNames.ts`) only; unmatched, it takes the calendar's or project's default place, or has none ("set its place").
+- App links: Waze (driving) to the destination's address, else its name; Google Maps directions with origin and destination as text and the mode mapped. No Moovit.
+- The privacy page names no outside travel service: places and addresses are private to the member, never shared, logged or given to agents, and an address only opens a map app on the device.
+
 Rulings made during the build that changed behaviour and that a developer would trip over:
 
 - Areas anchor travel like a time block (the spec's "an area can carry travel"). The build first ruled that areas never anchor; the owner reversed that on 2026-11-18 ("sometimes I'm going to go to study and it will take time"). An area is marked, matched by rules and placed as a block is, and stays `busy: false` (its legs are busy). Items inside it nest: an inner item's own place wins for its own time (the area is cut around it; of two overlapping areas the later-starting one is inner); an inner item with no place takes the place of the innermost area around its start; the rest of the area is spent at its place, so there is no leg between two inner items there and none from the area's place to itself. The leg back into the area after an inner item elsewhere leaves as that item ends, in that item's mode, keyed as that item's `back` (a conflict only when it reaches an appointment inside the area late); leaving the area for an inner item arrives as that item starts. Legs go to the area at its start and back (or onward) at its end, by the usual rules.
 - A stored leg that has started (`startAt` before now) is left alone by regeneration: never shifted, never removed. A planned leg already past is not updated either. If its anchor moved into the past before it started, the leg goes as `moved`.
-- Write-path regeneration (an item write, a rule or setting change) waits at most about 8 s and reads cached geocodes only; new places are geocoded on the sync or daily pass. A regeneration error after a change is stored is logged, never a 500.
+- Write-path regeneration (an item write, a rule, setting or trip-length change) runs before the write answers; it is database work only (since 2026-11-18 nothing calls out). A regeneration error after a change is stored is logged, never a 500.
 - The after-dispatch passes (`TravelHorizonPass`) run even if the sync dispatch throws, each in its own try/catch, and the tick still reports the dispatch failure. One member's error never stops the pass.
-- Geocoding is three-valued: a provider that fails throws, `null` means not found. Only a real "not found" is cached; an outage is never cached, and `Place.create` answers 503 (`provider_unreachable`) when it cannot look an address up.
-- Agents see place names only: `travel_*` tools return names, aliases and the Home flag, never an address or a coordinate; places are named by saved name or alias.
+- Agents see place names only: `travel_*` tools return names, aliases and the Home flag, never an address; places are named by saved name or alias.
 - A second "every occurrence" mark of a series updates the rule in place instead of adding one.
 - A moved Google occurrence's mark lives under its series master and its original start; the client resolves a mark the same way (the item view carries `seriesOccurrence` (`seriesId`, `originalStart`), ids and times only), and one name matcher (`normalize`, `byName`) is shared by server and client.
 - Marking checks the occurrence against the shared expansion: a start that is none of the series' occurrences is 400 `not_an_occurrence` and stores nothing.
 - A leg the member edited keeps his times until Reset, and is flagged `anchorMoved` ("the event moved; check this trip") when its anchor moves; his next edit acknowledges it. A leg whose mode or place changed is recomputed. An edited leg that has not started is still removed as `moved` when its anchor moves into the past.
 - A removed leg is a tombstone carrying `mode`, `fromName`, `toName`, `fromHome` and `toHome`, so the day panel can say what it was ("Bus to Braude removed: the event was cancelled"); the purge keeps it until the leg is over, so a skip survives. The reason says "the event", since a removed row has no anchor kind.
-- A leg's sheet has no status and no tick (never `complete_todo` on a leg); its length edit sends exactly the fields that stand (any two of start, end and length), and a length-only edit on a back leg keeps its departure.
+- A leg's sheet has no status and no tick (never `complete_todo` on a leg). Since 2026-11-18 it has two changes, each said for what it is: how long the trip takes, every time (`minutes`, the trip's), and this trip only (leave and arrive); it sends what he typed, and a length-only edit on a back leg keeps its departure.
 - The leg is private to the member: `get_item`, search and the calendar tools never return another member's leg or any place data.
 - Block and travel e2e that create stored legs or blocks are strict `xfail` ("DEFERRED until merge to dev") until the dev deploy installs the new `Items` validator; nothing runs `sync-db` by hand against the shared dev database.

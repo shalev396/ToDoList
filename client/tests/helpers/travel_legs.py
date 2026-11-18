@@ -7,17 +7,19 @@ Every shape is built from the server's own types and serializers, field for fiel
   - an ItemSummary / ItemDetail: server/src/classes/item/Item.ts (`toSummary`, `toView`) over a local
     item (server/src/models/mongoose/Item.ts `localItemDoc`: `source.url` is `/w/<wid>/items/<id>`);
   - an item row of POST …/query: server/src/builder/run.ts (`toItemRow`);
-  - the day panel: server/src/types/travel.ts (`TravelDaysResponse`), links: `TravelLinks`.
+  - the day panel: server/src/types/travel.ts (`TravelDaysResponse`), links: `TravelLinks`;
+  - a trip's length (`POST …/travel/preview`): `TravelPreviewResponse`.
 The envelope is `{ data }` (middlewares/responseFormatter.ts); a skip answers 204.
 
-The stub answers only reads and the leg's own changes (edit, skip, reset), and keeps their effect, so
-what the page shows after one is what the server would show. Its request bodies are kept for the test
+The stub answers only reads (a trip's length too) and the leg's own changes (edit, skip, reset), and
+keeps their effect, so what the page shows after one is what the server would show. Its request bodies are kept for the test
 to assert. Everything else goes to the real server (`route.fallback()`).
 """
 import json
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from urllib.parse import quote
 
 from playwright.sync_api import Page, Request, Route
 
@@ -30,7 +32,8 @@ TOMORROW = "2026-11-19"
 USER_ID = "00000000-0000-4000-8000-000000000001"
 
 VERBS = {"transit": "Bus", "drive": "Drive", "walk": "Walk"}
-MOOVIT_FALLBACK = "https://moovitapp.com/"
+#: The length a trip is drawn with until it is set (UNSET_TRIP_MINUTES).
+UNSET_MINUTES = 30
 
 
 def at(day: str, time: str) -> datetime:
@@ -53,7 +56,7 @@ def travel_props(
     to_name: str,
     anchor_start: datetime,
     minutes: int,
-    source: str = "ors",
+    source: str = "set",
     from_home: bool = False,
     to_home: bool = False,
     conflict: bool = False,
@@ -62,7 +65,8 @@ def travel_props(
     anchor_start_now: Optional[datetime] = None,
     removed_reason: Optional[str] = None,
 ) -> dict:
-    """`props.travel` (TravelLegProps): every field the server stores, place ids and names only."""
+    """`props.travel` (TravelLegProps): every field the server stores, place ids and names only.
+    `source` is `set` (the trip's length, or his times) or `unset` (the placeholder)."""
     return {
         "anchorItemId": anchor,
         "occurrence": "single",
@@ -77,6 +81,7 @@ def travel_props(
         "toHome": to_home,
         "minutes": minutes,
         "source": source,
+        "lengthUnset": source == "unset",
         "computedAt": iso(NOW - timedelta(hours=3)),
         "conflict": conflict,
         "edited": edited,
@@ -92,25 +97,23 @@ def stored_title(travel: dict) -> str:
     return f"{verb} home" if travel["toHome"] else f"{verb} to {travel['toName']}"
 
 
+#: The fixture places' addresses, as their member typed them (a link carries them; nothing else does).
+ADDRESSES = {"from": "Herzl 1, Haifa", "to": "Snunit St 51, Karmiel"}
+
+
 def links_of(mode: str) -> list:
-    """What `GET …/legs/:id/links` answers (TravelLinks): Waze for driving, Moovit for transit,
-    Google Maps for all. The coordinates are a fixture's; they are never shown as text."""
+    """What `GET …/legs/:id/links` answers (TravelLinks): Waze for driving, Google Maps for every
+    trip, from the places' text. They are never shown as text."""
     google = {
         "app": "google_maps",
-        "url": "https://www.google.com/maps/dir/?api=1&origin=32.794,34.9896&destination=32.9141,35.2922"
+        "url": f"https://www.google.com/maps/dir/?api=1&origin={quote(ADDRESSES['from'], safe='')}"
+        f"&destination={quote(ADDRESSES['to'], safe='')}"
         f"&travelmode={ {'walk': 'walking', 'drive': 'driving', 'transit': 'transit'}[mode] }",
     }
-    if mode == "walk":
-        return [google]
     if mode == "drive":
-        return [{"app": "waze", "url": "https://waze.com/ul?ll=32.9141,35.2922&navigate=yes"}, google]
-    moovit = {
-        "app": "moovit",
-        "url": "moovit://directions?orig_lat=32.794&orig_lon=34.9896&dest_lat=32.9141&dest_lon=35.2922"
-        "&date=2026-11-18T11:00:00.000Z&auto_run=true",
-        "fallbackUrl": MOOVIT_FALLBACK,
-    }
-    return [moovit, google]
+        waze = f"https://waze.com/ul?q={quote(ADDRESSES['to'], safe='')}&navigate=yes"
+        return [{"app": "waze", "url": waze}, google]
+    return [google]
 
 
 class Leg:
@@ -253,6 +256,13 @@ class StubbedLegs:
         self.days_requested: list = []
         # Rows of other kinds the blocks' query also answers (a screenshot's ordinary event).
         self.extra_rows: list = []
+        # How long each trip takes, as set (from place, to place, mode → minutes): the length its
+        # legs are computed with, read from the legs as computed.
+        self.trip_lengths: dict = {
+            StubbedLegs._trip(leg.computed["travel"]): leg.computed["travel"]["minutes"]
+            for leg in legs
+            if leg.computed["travel"]["source"] == "set"
+        }
 
     # ─── What the page reads ────────────────────────────────────────────────
 
@@ -297,7 +307,10 @@ class StubbedLegs:
         """Routes the stub's reads and changes on `page`; any other call goes on to the server."""
         self.block_ids = set(block_ids)
         prefix = re.escape(f"/private/workspaces/{self.workspace_id}/")
-        page.route(re.compile(rf".*{prefix}(query|travel/days|travel/legs/.*|items/[^/?]+)(\?.*)?$"), self._handle)
+        page.route(
+            re.compile(rf".*{prefix}(query|travel/days|travel/preview|travel/legs/.*|items/[^/?]+)(\?.*)?$"),
+            self._handle,
+        )
 
     def _answer(self, route: Route, data: Any = None, status: int = 200) -> None:
         origin = route.request.headers.get("origin", "*")
@@ -329,6 +342,8 @@ class StubbedLegs:
             query = dict(part.split("=") for part in request.url.split("?")[1].split("&"))
             self.days_requested.append((query["from"], query["to"]))
             return self._answer(route, self._days(query["from"], query["to"]))
+        if method == "POST" and path == "travel/preview":
+            return self._answer(route, self._preview(request.post_data_json or {}))
         if method == "GET" and path.startswith("items/"):
             leg = self.legs.get(path.split("/")[1])
             if leg is None or leg.skipped:
@@ -361,24 +376,61 @@ class StubbedLegs:
         return route.fallback()
 
     @staticmethod
-    def _edit(leg: Leg, body: dict) -> None:
-        """LegEditRequest: the two fields given stand, the third follows (`solveSpan`); the leg is
-        his (`edited`, source `manual`) and the "event moved" flag is acknowledged."""
+    def _trip(travel: dict) -> tuple:
+        return (travel["fromPlaceId"], travel["toPlaceId"], travel["mode"])
+
+    def _preview(self, body: dict) -> dict:
+        """A trip's length (TravelPreviewResponse): the one set for it, else the placeholder,
+        flagged."""
+        minutes = self.trip_lengths.get((body.get("fromPlaceId"), body.get("toPlaceId"), body.get("mode")))
+        if minutes is None:
+            return {"minutes": UNSET_MINUTES, "source": "unset", "lengthUnset": True,
+                    "startAt": None, "endAt": None}
+        return {"minutes": minutes, "source": "set", "lengthUnset": False, "startAt": None, "endAt": None}
+
+    def _follow(self, trip: tuple, minutes: int, edited: Leg) -> None:
+        """A trip's length set: every leg of it is computed with it (a trip back keeps its
+        departure, any other its arrival), and the ones he never timed by hand take it now."""
+        self.trip_lengths[trip] = minutes
+        for leg in self.legs.values():
+            if StubbedLegs._trip(leg.computed["travel"]) != trip:
+                continue
+            start, end = leg.computed["start"], leg.computed["end"]
+            if leg.computed["travel"]["direction"] == "back":
+                end = start + timedelta(minutes=minutes)
+            else:
+                start = end - timedelta(minutes=minutes)
+            computed = {**leg.computed["travel"], "minutes": minutes, "source": "set", "lengthUnset": False}
+            leg.computed = {"start": start, "end": end, "travel": computed}
+            if leg is not edited and not leg.travel["edited"]:
+                leg.start, leg.end, leg.travel = start, end, {**computed}
+
+    def _edit(self, leg: Leg, body: dict) -> None:
+        """LegEditRequest (TravelLeg#editTimes): `minutes` is the trip's length, every time (this
+        leg keeps its arrival, or its departure for a trip back); `startAt` and `endAt` move this
+        leg only (one alone keeps its length) and make it his (`edited`). Its source is `set`, and
+        the "event moved" flag is acknowledged."""
         start = datetime.fromisoformat(body["startAt"].replace("Z", "+00:00")) if "startAt" in body else None
         end = datetime.fromisoformat(body["endAt"].replace("Z", "+00:00")) if "endAt" in body else None
-        minutes = body.get("minutes")
-        if start is not None and end is not None:
-            minutes = round((end - start).total_seconds() / 60)
-        elif end is not None and minutes is not None:
-            start = end - timedelta(minutes=minutes)
-        elif start is not None and minutes is not None:
-            end = start + timedelta(minutes=minutes)
+        length = timedelta(minutes=body.get("minutes") or (leg.end - leg.start).total_seconds() / 60)
+        if start is not None and end is None:
+            end = start + length
+        elif end is not None and start is None:
+            start = end - length
+        elif start is None and end is None:
+            if leg.travel["direction"] == "back":
+                start, end = leg.start, leg.start + length
+            else:
+                start, end = leg.end - length, leg.end
         leg.start, leg.end = start, end
         leg.travel = {
             **leg.travel,
-            "minutes": minutes,
-            "source": "manual",
-            "edited": True,
+            "minutes": round((end - start).total_seconds() / 60),
+            "source": "set",
+            "lengthUnset": False,
+            "edited": leg.travel["edited"] or "startAt" in body or "endAt" in body,
             "anchorMoved": False,
             "anchorStartNow": None,
         }
+        if "minutes" in body:
+            self._follow(StubbedLegs._trip(leg.travel), body["minutes"], leg)

@@ -40,7 +40,7 @@ export async function listPlaces(workspaceId: string, config?: ApiRequestConfig)
   return response.data;
 }
 
-/** 201. An address is looked up: 400 `place_not_found`, 503 `provider_unreachable`. */
+/** 201. A name, and an address as typed if any (never looked up). 409 `travel_limit` at the cap. */
 export async function createPlace(
   workspaceId: string,
   body: CreatePlaceRequest,

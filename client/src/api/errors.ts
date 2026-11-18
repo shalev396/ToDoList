@@ -60,7 +60,6 @@ export const ERROR_CODE_KEYS: Readonly<Record<ErrorCode, string>> = {
   not_completable: 'errors.codes.notCompletable',
   not_deletable: 'errors.codes.notDeletable',
   not_an_occurrence: 'errors.codes.notAnOccurrence',
-  place_not_found: 'errors.codes.placeNotFound',
   travel_home_missing: 'errors.codes.travelHomeMissing',
   travel_limit: 'errors.codes.travelLimit',
   oauth_unavailable: 'errors.codes.oauthUnavailable',
@@ -133,17 +132,6 @@ export function errorKey(error: unknown, fallbackKey: string): string {
 /** The text for a failed API call, translated. The free-tier limits are there to interpolate. */
 export function errorMessage(t: TFunction, error: unknown, fallbackKey: string): string {
   return t(errorKey(error, fallbackKey), { ...limits });
-}
-
-/**
- * The text for a failed address lookup (a place saved, a place made for travel): the geocoder not
- * answering (`provider_unreachable`) says so in travel's words, not "that tool" (a connected app).
- * Anything else is `errorMessage`.
- */
-export function geocodeErrorMessage(t: TFunction, error: unknown, fallbackKey: string): string {
-  return apiErrorCode(error) === 'provider_unreachable'
-    ? t('errors.codes.geocoderUnreachable')
-    : errorMessage(t, error, fallbackKey);
 }
 
 /**

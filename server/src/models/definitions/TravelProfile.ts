@@ -1,16 +1,9 @@
 import type { TravelSettings } from '../../types/travel.js';
 
-/** A point a location text was geocoded to (classes/travel/geo.ts' LatLon). */
-export interface StoredLatLon {
-  lat: number;
-  lon: number;
-}
-
 /**
  * A member's travel profile, one per member and workspace (`_id`: `<workspaceId>|<userId>`): their
- * settings, the lengths they last entered per trip, the places geocoded location texts resolved
- * to, their pins (an item's place, a calendar's or project's default place), and where the daily
- * pass stands. Private to its member.
+ * settings, the length they set for each trip, their pins (an item's place, a calendar's or
+ * project's default place), and where the daily pass stands. Private to its member.
  */
 export interface TravelProfileData {
   /** `<workspaceId>|<userId>`. */
@@ -18,13 +11,8 @@ export interface TravelProfileData {
   workspaceId: string;
   ownerUserId: string;
   settings: TravelSettings;
-  /** Minutes, by trip (`from|to|mode`, place ids). */
-  remembered: Record<string, number>;
-  /**
-   * By the sha256 of a location text, normalized (never the text itself): where it is, or null
-   * when no geocoder found it. At most GEOCODES_MAX, the oldest dropped first.
-   */
-  geocodes: Record<string, StoredLatLon | null>;
+  /** How long each trip takes, as he set it: minutes, by trip (`from|to|mode`, place ids). */
+  tripLengths: Record<string, number>;
   /** A place pinned to an item (item id → place id). */
   itemPlaces: Record<string, string>;
   /** A calendar's or project's default place (container id → place id). */
@@ -35,9 +23,6 @@ export interface TravelProfileData {
   lastPassDay: string | null;
   updatedAt: Date;
 }
-
-/** Geocoded texts a profile keeps. */
-export const GEOCODES_MAX = 500;
 
 export interface ITravelProfileRepository {
   /** The member's profile, made with these settings on first read. */
@@ -52,7 +37,8 @@ export interface ITravelProfileRepository {
     ownerUserId: string,
     settings: TravelSettings,
   ): Promise<TravelProfileData | null>;
-  setRemembered(
+  /** How long a trip takes (`from|to|mode`), as the member set it. */
+  setTripLength(
     workspaceId: string,
     ownerUserId: string,
     tripKey: string,
@@ -66,16 +52,9 @@ export interface ITravelProfileRepository {
     id: string,
     placeId: string | null,
   ): Promise<TravelProfileData | null>;
-  /** Adds (or replaces) one geocode, dropping the oldest beyond GEOCODES_MAX, in one write. */
-  storeGeocode(
-    workspaceId: string,
-    ownerUserId: string,
-    hash: string,
-    point: StoredLatLon | null,
-  ): Promise<void>;
   setLastPassDay(workspaceId: string, ownerUserId: string, day: string): Promise<void>;
   setHasTravel(workspaceId: string, ownerUserId: string, hasTravel: boolean): Promise<void>;
-  /** A place was removed: the pins to it and the remembered trips through it go. */
+  /** A place was removed: the pins to it and the lengths of the trips from or to it go. */
   forgetPlace(workspaceId: string, ownerUserId: string, placeId: string): Promise<void>;
   /** A membership ended: the member's profile, hard-deleted. False when there was none. */
   delete(workspaceId: string, ownerUserId: string): Promise<boolean>;

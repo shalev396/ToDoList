@@ -101,8 +101,6 @@ export const ERROR_CODES = [
   /** Editing or skipping one occurrence of a time block at a start that is none of its series'. */
   'not_an_occurrence',
   // Travel
-  /** A place's address that no free geocoder could find (typed coordinates always work). */
-  'place_not_found',
   /** Travel asked for before the member set their Home: legs start and end there. */
   'travel_home_missing',
   /** A member's places or travel rules are at their cap (PLAN_LIMITS). */

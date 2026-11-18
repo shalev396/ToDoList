@@ -1,8 +1,7 @@
-/** Place matching: by name or alias, and by distance. */
+/** Place matching: by name or alias, as whole words (nothing is looked up). */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { distanceMeters, nearestWithin } from './geo.js';
 import { PlaceMatcher } from './PlaceMatcher.js';
 
 const PLACES = [
@@ -80,15 +79,5 @@ describe('PlaceMatcher', () => {
       assert.equal(PlaceMatcher.byName('Braude library, floor 2', longer)?.name, 'Library');
       assert.equal(PlaceMatcher.byName('Braude, floor 2', longer)?.name, 'Campus');
     });
-  });
-
-  it('nearest within 300 m wins, 301 m does not', () => {
-    const origin = { lat: 32.8, lon: 35.2 };
-    const metersToDegrees = (m: number): number => m / 111_194.9;
-    const near = { id: 'near', lat: 32.8 + metersToDegrees(299), lon: 35.2 };
-    const far = { id: 'far', lat: 32.8 + metersToDegrees(301.5), lon: 35.2 };
-    assert.ok(Math.abs(distanceMeters(origin, near) - 299) < 0.5);
-    assert.equal(nearestWithin(origin, [far, near], 300)?.id, 'near');
-    assert.equal(nearestWithin(origin, [far], 300), null);
   });
 });

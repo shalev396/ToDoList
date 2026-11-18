@@ -72,12 +72,16 @@ export function isPastLeg(occurrence: Slot, now: Date): boolean {
   return (occurrence.end ?? occurrence.start).getTime() <= now.getTime();
 }
 
-/** What a view marks on a leg: its mode, the conflict, past, and "the event moved" flags. */
+/**
+ * What a view marks on a leg: its mode, the conflict, past, and "the event moved" flags, and
+ * whether its trip has no length yet (`unset`: drawn dashed, with the placeholder length).
+ */
 export interface LegFlags {
   mode: TravelMode;
   conflict: boolean;
   past: boolean;
   moved: boolean;
+  unset: boolean;
 }
 
 /** `LegFlags`, with the title in the UI language. */
@@ -102,6 +106,7 @@ export function legFlagsOf(occurrence: LegOccurrence, now: Date): LegFlags | nul
         conflict: travel.conflict,
         past: isPastLeg(occurrence, now),
         moved: travel.anchorMoved,
+        unset: travel.lengthUnset,
       };
 }
 
@@ -130,3 +135,11 @@ export function rowTitle(
  */
 export const CONFLICT_EDGE =
   'relative before:absolute before:inset-y-1 before:-start-2 before:w-1 before:rounded-full before:bg-destructive';
+
+/**
+ * A dashed outline round a row, for a leg whose trip has no length yet (it is drawn with the
+ * placeholder until he sets how long it takes). An outline: it takes no room and never shifts the
+ * row.
+ */
+export const UNSET_OUTLINE =
+  'rounded-sm outline-1 outline-offset-[-1px] outline-dashed outline-muted-foreground/70';

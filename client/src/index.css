@@ -734,6 +734,11 @@
 .todolist-calendar .fc .tc-past {
   opacity: 0.55;
 }
+/* A leg whose trip has no length yet (drawn with the placeholder until he sets it): dashed. */
+.todolist-calendar .fc .tc-unset {
+  outline: 1.5px dashed color-mix(in oklab, var(--foreground) 65%, transparent);
+  outline-offset: -2px;
+}
 /* A short event has no room for the words: the warning in its label and the edge still say it. */
 .todolist-calendar .fc .fc-timegrid-event-short .tc-leg-words {
   display: none;

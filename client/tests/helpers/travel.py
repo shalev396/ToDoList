@@ -2,7 +2,7 @@
 Travel in E2E tests: places, rules and marks set up through the API (requests), never the UI.
 
 Routes: server/src/routes/private/travel.ts (editors and owners; everything is the caller's own).
-Places are best made by coordinates, so no test waits on a geocoder.
+A place is a name, and an address if a test wants one (free text, never looked up).
 """
 from typing import Any, Optional
 
@@ -28,16 +28,13 @@ def create_place(
     user,
     workspace_id: str,
     name: str,
-    coords: Optional[tuple[float, float]] = None,
     address: Optional[str] = None,
     aliases: Optional[list[str]] = None,
     home: bool = False,
 ) -> dict:
-    """POST …/travel/places: a place at `coords` (lat, lon) or an `address` to look up. Returns
-    its PlaceView (id, name, aliases, home, address)."""
+    """POST …/travel/places: a place by name, with `address` as typed (it only opens a map app).
+    Returns its PlaceView (id, name, aliases, home, address)."""
     body: dict[str, Any] = {"name": name, "home": home}
-    if coords is not None:
-        body["coords"] = {"lat": coords[0], "lon": coords[1]}
     if address is not None:
         body["address"] = address
     if aliases:
@@ -90,7 +87,7 @@ def list_rules(api_base_url: str, user, workspace_id: str) -> list:
 
 
 def get_settings(api_base_url: str, user, workspace_id: str) -> dict:
-    """GET …/travel/settings: {settings, containerPlaces, orsAvailable}."""
+    """GET …/travel/settings: {settings, containerPlaces}."""
     response = requests.get(
         _url(api_base_url, workspace_id, "settings"), headers=_headers(user), timeout=30
     )
@@ -112,7 +109,8 @@ def mark_item(
 ) -> dict:
     """POST …/travel/items/:itemId: travel to (and from) one timed item, every occurrence of a
     series (`every=True`) or one occurrence (`occurrence`, its original start). `there` and `back`
-    are spans (`startAt`, `endAt`, `minutes`). Returns {rule, legs}. Needs a Home first."""
+    are spans: `minutes` is the trip's length (every time), `startAt` and `endAt` that leg's own.
+    Returns {rule, legs}. Needs a Home first."""
     body: dict[str, Any] = {"mode": mode, "direction": direction}
     for key, value in (
         ("every", every),

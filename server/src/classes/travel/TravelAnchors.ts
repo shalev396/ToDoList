@@ -12,17 +12,13 @@
  * - Rule (Ruling 11): the item rule of that occurrence, else the series rule of its series, else
  *   the oldest where-rule that matches (each where-rule is its own draft, ANDed with the range).
  * - Place, in order: the member's pin of the item; the rule's place; a place named (or aliased) in
- *   the event's location; the location geocoded to a place within PLACE_MATCH_RADIUS_M; the default
- *   place of its calendar or project. Otherwise none of its own: the day plan gives it the place of
- *   an area around it, if any, else it gets no travel.
- * - Geocodes are cached per member by the text's hash. New lookups: at most `lookups` per gather
- *   (NEW_GEOCODES_MAX; 0 on an item write, which reads the cache only), each within the
- *   regeneration's time (TimeBox). Only "not found" is cached: a geocoder that failed or ran out of
- *   time is asked again by a later gather.
+ *   the event's location, by whole words (`types/travelPlaceNames.ts`: nothing is looked up); the
+ *   default place of its calendar or project. Otherwise none of its own: the day plan gives it the
+ *   place of an area around it, if any, else it gets no travel (and the item says "set its place").
  * - An occurrence is anchored by its series (`seriesRowId`, a moved Google occurrence's master) or
  *   its own row, and by its ORIGINAL start (`single` for an item that doesn't repeat).
  *
- * Read-only: it reads items and writes nothing but the member's own geocode cache.
+ * Read-only: it reads items and writes nothing.
  */
 import { QueryValidationError } from '../../builder/errors.js';
 import { logger } from '../../services/logger.js';
@@ -35,13 +31,10 @@ import {
   type Occurrence,
   type Range,
 } from '../../types/recurrence/occurrences.js';
-import { PLACE_MATCH_RADIUS_M, type TravelRuleScope } from '../../types/travel.js';
+import type { TravelRuleScope } from '../../types/travel.js';
 import type { Caller } from '../base/Caller.js';
 import { ItemQuery } from '../item/ItemQuery.js';
 import type { Anchor } from './DayPlanner.js';
-import { nearestWithin, type LatLon } from './geo.js';
-import { parseCoordinates, type Geocoder } from './geocoding/Geocoder.js';
-import type { TimeBox } from './TimeBox.js';
 import type { AnchorFate } from './LegReconciler.js';
 import type { Place } from './Place.js';
 import { PlaceMatcher } from './PlaceMatcher.js';
@@ -50,8 +43,6 @@ import type { TravelRule } from './TravelRule.js';
 
 /** The most rows one draft reads: a member's timed items over the horizon (a series is one). */
 export const ANCHOR_ROWS_MAX = 1000;
-/** New geocoder lookups per gather (each Nominatim one takes a second). */
-export const NEW_GEOCODES_MAX = 10;
 
 export interface GatherInput {
   profile: TravelProfile;
@@ -59,11 +50,6 @@ export interface GatherInput {
   places: readonly Place[];
   range: Range;
   now: Date;
-  geocoder: Geocoder;
-  /** The regeneration's time: a lookup starts and is waited for only within it. */
-  time: TimeBox;
-  /** New geocoder lookups allowed (default NEW_GEOCODES_MAX); 0: cached geocodes only. */
-  lookups?: number;
 }
 
 export interface Gathered {
@@ -127,9 +113,6 @@ export class TravelAnchors {
   readonly #defaults: ReadonlyMap<string, string>;
   readonly #rules: readonly Scoped[];
   readonly #fates = new Map<string, AnchorFate>();
-  /** Location texts geocoded (or tried) in this gather. */
-  readonly #geocoded = new Map<string, LatLon | null>();
-  #lookups = 0;
 
   private constructor(caller: Caller, input: GatherInput) {
     this.#caller = caller;
@@ -164,17 +147,17 @@ export class TravelAnchors {
     const anchors: Anchor[] = [];
     for (const occurrence of expandOccurrences(rows, range, this.#caller.settings.timezone)) {
       if (occurrence.allDay || occurrence.dueOnly) continue;
-      const anchor = await this.#anchorOf(occurrence, matches);
+      const anchor = this.#anchorOf(occurrence, matches);
       if (anchor !== null) anchors.push(anchor);
     }
     return { anchors, fates: this.#fates };
   }
 
   /** One occurrence as an anchor; null when no rule asks for travel to it. */
-  async #anchorOf(
+  #anchorOf(
     occurrence: Occurrence,
     matches: ReadonlyMap<TravelRule, ReadonlySet<string>>,
-  ): Promise<Anchor | null> {
+  ): Anchor | null {
     const row = occurrence.row as ItemQueryRow;
     const itemId = occurrence.seriesRowId ?? row.id;
     const slot =
@@ -185,7 +168,7 @@ export class TravelAnchors {
       this.#fate(key, 'no_longer_matches');
       return null;
     }
-    const placeId = await this.#placeOf(row, itemId, rule);
+    const placeId = this.#placeOf(row, itemId, rule);
     this.#fate(key, placeId === null ? 'no_place' : 'present');
     return {
       itemId,
@@ -223,8 +206,8 @@ export class TravelAnchors {
     return null;
   }
 
-  /** Pin, rule's place, a name in its location, its location geocoded, its container's default. */
-  async #placeOf(row: ItemQueryRow, itemId: string, rule: TravelRule): Promise<string | null> {
+  /** Pin, rule's place, a place its location names, its container's default; else none. */
+  #placeOf(row: ItemQueryRow, itemId: string, rule: TravelRule): string | null {
     const known = (id: string | null | undefined): string | null =>
       id !== null && id !== undefined && this.#places.has(id) ? id : null;
     const pinned = known(this.#pins.get(itemId)) ?? known(this.#pins.get(row.id));
@@ -232,52 +215,10 @@ export class TravelAnchors {
     const ruled = known(rule.placeId);
     if (ruled !== null) return ruled;
     const location = locationOf(row);
-    if (location !== null) {
-      const places = [...this.#places.values()];
-      const named = PlaceMatcher.byName(location, places);
-      if (named !== null) return named.id;
-      const point = await this.#geocode(location);
-      const near = point === null ? null : nearestWithin(point, places, PLACE_MATCH_RADIUS_M);
-      if (near !== null) return near.id;
-    }
+    const named =
+      location === null ? null : PlaceMatcher.byName(location, [...this.#places.values()]);
+    if (named !== null) return named.id;
     return row.containerId === null ? null : known(this.#defaults.get(row.containerId));
-  }
-
-  /**
-   * Where a location text is: typed "lat, lon"; else the member's cache; else, while lookups and
-   * time are left, the geocoder's answer. A point or "not found" is kept for next time; a lookup
-   * that failed or ran out of time is not (the next gather asks again).
-   */
-  async #geocode(text: string): Promise<LatLon | null> {
-    const typed = parseCoordinates(text);
-    if (typed !== null) return typed;
-    const seen = this.#geocoded.get(text);
-    if (seen !== undefined) return seen;
-    const cached = this.#input.profile.cachedGeocode(text);
-    if (cached !== undefined) return cached;
-    const { geocoder, time, lookups = NEW_GEOCODES_MAX } = this.#input;
-    if (this.#lookups >= lookups || !time.open) return null;
-    this.#lookups += 1;
-    let point: LatLon | null;
-    try {
-      const answer = await time.run(() => geocoder.geocode(text));
-      if (!answer.inTime) {
-        this.#geocoded.set(text, null);
-        return null;
-      }
-      point = answer.value;
-    } catch (error) {
-      // Never the text: it may be an address.
-      logger.warn('travel: a location could not be geocoded', {
-        workspaceId: this.#caller.workspaceId,
-        reason: error instanceof Error ? error.name : 'unknown',
-      });
-      this.#geocoded.set(text, null);
-      return null;
-    }
-    this.#geocoded.set(text, point);
-    await this.#input.profile.storeGeocode(text, point);
-    return point;
   }
 
   /**

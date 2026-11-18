@@ -76,11 +76,11 @@ export const queryKeys = {
   travelLegLinks: (workspaceId: string, legId: string) =>
     workspaceKey(workspaceId, 'travel', 'leg-links', legId),
   /**
-   * A trip's preview, by its request (mode and places). Outside `travel`: a travel change doesn't
-   * ask every open preview again, since each may spend a call of the shared routing quota.
+   * A trip's preview, by its request (mode and places): how long he set it to take. Under `travel`:
+   * a change (a trip's length set on a leg) reads it again.
    */
   travelPreview: (workspaceId: string, trip: string) =>
-    workspaceKey(workspaceId, 'travel-preview', trip),
+    workspaceKey(workspaceId, 'travel', 'preview', trip),
   views: (workspaceId: string) => workspaceKey(workspaceId, 'views'),
   view: (workspaceId: string, viewId: string) => workspaceKey(workspaceId, 'view', viewId),
 };

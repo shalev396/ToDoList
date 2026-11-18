@@ -36,7 +36,7 @@ function planned(
     startAt: start,
     endAt: new Date(start.getTime() + 30 * MINUTE),
     minutes: 30,
-    source: 'estimate',
+    source: 'set',
     conflict: false,
     past: start < NOW,
     topicId: null,
@@ -290,7 +290,7 @@ describe('LegReconciler', () => {
     // A lecture at Braude 14:00–16:00 (Jerusalem, 12:00–14:00Z), by bus both ways, 50 min. The
     // back leg is computed for 16:00; he edited it to leave at 16:30. A regeneration runs at 16:05.
     const now = new Date('2026-11-18T14:05:00.000Z');
-    const minutes = { minutes: 50, source: 'remembered' } as const;
+    const minutes = { minutes: 50, source: 'set' } as const;
     const legs = DayPlanner.plan(
       {
         ownerUserId: 'u-1',
@@ -355,7 +355,7 @@ describe('LegReconciler', () => {
 
   it('a trip that got longer past now, its anchor where it was, is updated as a conflict, never removed', () => {
     // A lecture at 11:00 (anchor unchanged). The leg was 10:15–11:00 (45 min); at 10:00 the trip
-    // is 70 min (a bigger buffer, or the straight line while the router is down): 09:50, past.
+    // is 70 min (he set a longer length for the trip): 09:50, past.
     const leg = planned('lec', 'there', '2026-11-18T09:50:00.000Z', {
       anchorStart: new Date('2026-11-18T11:00:00.000Z'),
       endAt: new Date('2026-11-18T11:00:00.000Z'),

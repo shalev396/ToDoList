@@ -3,17 +3,14 @@
  * and "Privacy and safety"; plan Global Constraints): a regeneration adds TodoList's own travel
  * legs for the member and changes nothing else. Its anchors (a Google lecture series, a to-do, a
  * time block) and every other member's items are stored byte for byte as before; no provider
- * write path runs (Integration's write gate and its write audit); the only requests are to
- * OpenRouteService, through the test transport, and nothing leaves the machine.
+ * write path runs (Integration's write gate and its write audit); and travel makes no request at
+ * all (the owner's decision of 2026-11-18: no routing service, no geocoder).
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { setTravelTransportForTests } from '../../config/testSwitches.js';
 import type * as Models from '../../models/index.js';
 import type { SourceRef } from '../../models/definitions/common.js';
-import type * as AppSecrets from '../../services/appSecrets.js';
-import type { HttpRequest, HttpResponse, Transport } from '../../sync/http.js';
 import { seedIntegration } from '../../testing/integrationFixtures.js';
 import { installOutboundGuard, type OutboundGuard } from '../../testing/outboundGuard.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
@@ -25,40 +22,20 @@ let db: TestDatabase;
 let guard: OutboundGuard;
 let classes: typeof Classes;
 let models: typeof Models;
-let appSecrets: typeof AppSecrets;
 
 const A = 'u-readonly-a';
 const B = 'u-readonly-b';
 const ZONE = 'Asia/Jerusalem';
 const GCAL = 'int-readonly-gcal';
-const ORS_HOST = 'api.openrouteservice.org';
-
-/** OpenRouteService's answer to every directions request: 25 minutes. */
-class FakeOrs implements Transport {
-  readonly maxRetries = 0;
-  readonly requests: HttpRequest[] = [];
-
-  send(request: HttpRequest): Promise<HttpResponse> {
-    this.requests.push(request);
-    return Promise.resolve({
-      status: 200,
-      headers: {},
-      body: JSON.stringify({ features: [{ properties: { summary: { duration: 1500 } } }] }),
-    });
-  }
-}
 
 before(async () => {
   db = await startTestDatabase('todolist_travel_read_only_test');
   guard = installOutboundGuard();
   classes = await import('../index.js');
   models = await import('../../models/index.js');
-  appSecrets = await import('../../services/appSecrets.js');
 });
 
 after(async () => {
-  setTravelTransportForTests(null);
-  appSecrets.setAppSecretsForTests({});
   guard.restore();
   await db.stop();
 });
@@ -90,10 +67,8 @@ async function anchorDocs(workspaceId: string): Promise<string> {
 }
 
 describe('the read-only guarantee', () => {
-  it('regeneration writes only travel items of the member', async (t) => {
-    const ors = new FakeOrs();
-    setTravelTransportForTests(ors);
-    appSecrets.setAppSecretsForTests({ openrouteservice: { apiKey: 'test-ors-key' } });
+  it('regeneration writes only travel items of the member, and calls nobody', async (t) => {
+    const fetches = t.mock.method(globalThis, 'fetch');
     const created = await (
       await models.getWorkspaceRepository()
     ).create({ name: 'Read only', slug: 'read-only', ownerId: A });
@@ -143,17 +118,13 @@ describe('the read-only guarantee', () => {
     });
     await classes.Todo.create(b, { title: "B's errand" });
 
-    await classes.Place.create(a, {
-      name: 'Home',
-      coords: { lat: 32.794, lon: 34.9896 },
-      home: true,
-    });
+    await classes.Place.create(a, { name: 'Home', address: 'Herzl 1, Haifa', home: true });
     const braude = await classes.Place.create(a, {
       name: 'Braude',
       aliases: ['ORT Braude'],
-      coords: { lat: 32.9141, lon: 35.2922 },
+      address: 'Snunit St 51, Karmiel',
     });
-    const gym = await classes.Place.create(a, { name: 'Gym', coords: { lat: 32.82, lon: 35.0 } });
+    const gym = await classes.Place.create(a, { name: 'Gym' });
     await classes.TravelRule.create(a, {
       scope: {
         kind: 'where',
@@ -202,12 +173,7 @@ describe('the read-only guarantee', () => {
     for (const one of legs) {
       assert.deepEqual([one.ownerUserId, one.visibility, one.integrationId], [A, 'private', null]);
     }
-    assert.ok(ors.requests.length > 0);
-    assert.deepEqual(
-      [...new Set(ors.requests.map((request) => new URL(request.url).host))],
-      [ORS_HOST],
-    );
-    assert.ok(ors.requests.every((request) => request.method === 'GET'));
+    assert.equal(fetches.mock.callCount(), 0);
     assert.deepEqual(guard.externalHosts(), []);
   });
 });

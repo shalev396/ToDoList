@@ -1,7 +1,7 @@
 /**
  * DayPlanner (docs/superpowers/specs/2026-11-17-travel-time-design.md, "The day plan"): anchors,
- * Home and lengths in, legs out. Pure: every length comes from the estimates map, which holds
- * exactly the trips `trips()` lists. Times are read on the Asia/Jerusalem wall clock, the owner's.
+ * Home and lengths in, legs out. Pure: every length comes from the lengths map (the member's own,
+ * or the placeholder of a trip he hasn't set), which holds exactly the trips `trips()` lists. Times are read on the Asia/Jerusalem wall clock, the owner's.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,6 +10,7 @@ import { fromWallString, wallString } from '../../types/recurrence/zoned.js';
 import {
   DEFAULT_TRAVEL_SETTINGS,
   TravelSettingsSchema,
+  UNSET_TRIP_MINUTES,
   type TravelMode,
   type TravelSettings,
 } from '../../types/travel.js';
@@ -75,7 +76,7 @@ function estimates(
   return new Map(
     trips.map(([from, to, mode, minutes]) => [
       DayPlanner.tripKey(from, to, mode),
-      { minutes, source: 'estimate' } as const,
+      { minutes, source: 'set' } as const,
     ]),
   );
 }
@@ -136,7 +137,7 @@ describe('DayPlanner', () => {
     assert.deepEqual(back.anchorStart, at('14:00'));
     for (const leg of legs) {
       assert.equal(leg.minutes, 50);
-      assert.equal(leg.source, 'estimate');
+      assert.equal(leg.source, 'set');
       assert.equal(leg.topicId, 't-college');
       assert.equal(leg.past, false);
     }
@@ -301,6 +302,40 @@ describe('DayPlanner', () => {
     assert.deepEqual(lines(DayPlanner.plan(input(day('12:40')), est)), [
       'between braude→tlv drive 12:00–12:40',
     ]);
+  });
+
+  it('a trip with no length yet plans with the placeholder, flagged, and conflicts with it', () => {
+    const day = [
+      anchor({ itemId: 'a', start: at('10:00'), end: at('12:00'), there: true, back: false }),
+      anchor({
+        itemId: 'b',
+        start: at('12:15'),
+        end: at('14:00'),
+        placeId: TLV,
+        mode: 'drive',
+        there: false,
+        back: false,
+      }),
+    ];
+    const unset: Estimate = { minutes: UNSET_TRIP_MINUTES, source: 'unset' };
+    const legs = DayPlanner.plan(
+      input(day),
+      new Map([
+        [DayPlanner.tripKey(HOME, BRAUDE, 'transit'), { minutes: 25, source: 'set' } as const],
+        [DayPlanner.tripKey(BRAUDE, TLV, 'drive'), unset],
+      ]),
+    );
+    assert.deepEqual(lines(legs), [
+      'there home→braude transit 09:35–10:00',
+      'between braude→tlv drive 12:00–12:30 conflict',
+    ]);
+    assert.deepEqual(
+      legs.map((leg) => [leg.source, leg.minutes]),
+      [
+        ['set', 25],
+        ['unset', UNSET_TRIP_MINUTES],
+      ],
+    );
   });
 
   it('anchor at 23:30 ending 00:45: back leg starts 00:45 next day, belongs to this day', () => {
@@ -516,7 +551,7 @@ describe('DayPlanner', () => {
     assert.equal(new Set(trips).size, trips.length);
 
     const reads = new RecordingMap(
-      trips.map((trip): [TripKey, Estimate] => [trip, { minutes: 30, source: 'ors' }]),
+      trips.map((trip): [TripKey, Estimate] => [trip, { minutes: 30, source: 'set' }]),
     );
     const legs = DayPlanner.plan(day, reads);
     assert.ok(legs.length > 0);
@@ -859,7 +894,7 @@ describe('DayPlanner: painted areas (the owner’s ruling of 2026-11-18)', () =>
     const day = input([studying({ end: at('12:00') }), lab, lecture], { settings: goHomeOn });
     const trips = DayPlanner.trips(day);
     const reads = new RecordingMap(
-      trips.map((trip): [TripKey, Estimate] => [trip, { minutes: 50, source: 'estimate' }]),
+      trips.map((trip): [TripKey, Estimate] => [trip, { minutes: 50, source: 'set' }]),
     );
     const legs = DayPlanner.plan(day, reads);
     assert.deepEqual(lines(legs), [
@@ -887,12 +922,9 @@ describe('travel settings', () => {
       patch(copy);
       return !TravelSettingsSchema.safeParse(copy).success;
     };
-    assert.ok(fails((s) => (s.factors.walk = 0.4)));
-    assert.ok(fails((s) => (s.factors.drive = 3.1)));
-    assert.ok(!fails((s) => (s.factors.drive = 3)));
-    assert.ok(fails((s) => (s.buffers.drive = 121)));
-    assert.ok(fails((s) => (s.buffers.walk = -1)));
-    assert.ok(!fails((s) => (s.buffers.transit = 120)));
+    // No factors or buffers: there is no computed length for them to scale.
+    assert.ok(fails((s) => Object.assign(s, { factors: { walk: 1, drive: 1, transit: 1 } })));
+    assert.ok(fails((s) => Object.assign(s, { buffers: { walk: 0, drive: 10, transit: 5 } })));
     assert.ok(fails((s) => (s.goHome.minWindowMinutes = 179)));
     assert.ok(fails((s) => (s.goHome.minAtHomeMinutes = 59)));
     assert.ok(fails((s) => Object.assign(s, { defaultMode: 'bike' })));

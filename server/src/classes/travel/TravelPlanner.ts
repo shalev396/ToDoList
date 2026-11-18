@@ -4,32 +4,29 @@
  * TRAVEL_HORIZON_DAYS - 1 days after it in the workspace's zone, made again as one unit (an anchor
  * moved to another day is an update, not a removal and a create).
  *
- * A regeneration gathers the member's anchors (TravelAnchors), plans each day (DayPlanner), works
- * out every trip's length (RouteChain: OpenRouteService when the stage has its key and the
- * workspace's daily quota allows, then the length the member last entered, then the straight
- * line), reconciles the plan with the stored legs (LegReconciler) and writes the result
- * (TravelLeg.applyPlan). It writes only the member's own travel legs (and their geocode cache and
- * the workspace's routing quota): never an anchor, never a provider.
+ * A regeneration gathers the member's anchors (TravelAnchors), plans each day (DayPlanner), takes
+ * every trip's length from the member's own (TravelProfile#tripLength: the one he set, else
+ * UNSET_TRIP_MINUTES, flagged; the owner's decision of 2026-11-18: no routing service, nothing is
+ * looked up), reconciles the plan with the stored legs (LegReconciler) and writes the result
+ * (TravelLeg.applyPlan). It writes only the member's own travel legs: never an anchor, never a
+ * provider, and it never calls out.
  *
  * Triggers:
  * - an item write of the member's (ItemChanges, subscribed in ./index.ts), for members with travel;
  * - a sync of an integration (sync/worker.ts), for every member with travel in its workspace;
  * - the daily pass (jobs/TravelHorizonPass.ts, from the hourly tick), once a day per member, while
  *   the tick's budget lasts;
- * - rule, place, setting and pin changes, a leg's reset (TravelSetup), and marking or unmarking an
- *   item (TravelRule.markItem, unmarkItem), before they answer (`afterOwnChange`: the request's
- *   budget, cached geocodes only, a failure logged and never the change's).
+ * - rule, place, setting and pin changes, a trip's length, a leg's reset (TravelSetup), and marking
+ *   or unmarking an item (TravelRule.markItem, unmarkItem), before they answer (`afterOwnChange`: a
+ *   failure logged and never the change's).
  *
- * `preview` works out one trip's length through the same chain, without making a leg.
+ * `preview` reads one trip's length the same way, without making a leg.
  *
  * A member who is no longer one (left, removed, or the workspace deleted) gets nothing: their
  * travel is forgotten instead (TravelData.forgetMember), also when they left while it ran.
  *
- * Time: each regeneration calls out (geocodes, routes) only within its TimeBudget (TimeBox), and
- * goes on without what didn't answer in time (no new place, a fallback length). An item write
- * waits ITEM_CHANGE_BUDGET_MS at most and reads cached geocodes only; a sync's members share
- * AFTER_SYNC_BUDGET_MS; the daily pass hands each member what is left of its own budget. New
- * places are geocoded after syncs and in the daily pass.
+ * Time: a regeneration is database work only. A sync's members share AFTER_SYNC_BUDGET_MS (no new
+ * one starts past it); the daily pass starts members while its own budget lasts.
  */
 import { ValidationError } from '../../errors/ValidationError.js';
 import type { ItemData } from '../../models/definitions/Item.js';
@@ -55,22 +52,13 @@ import {
   type Estimate,
   type TripKey,
 } from './DayPlanner.js';
-import { FreeGeocoder } from './geocoding/FreeGeocoder.js';
 import { LegReconciler, type AnchorFate } from './LegReconciler.js';
 import { Place } from './Place.js';
-import { RouteChain } from './routing/RouteChain.js';
-import { RoutingQuota } from './RoutingQuota.js';
-import { NEW_GEOCODES_MAX, TravelAnchors } from './TravelAnchors.js';
+import { TravelAnchors } from './TravelAnchors.js';
 import { TravelData } from './TravelData.js';
-import { openRouteServiceKey, sharedRoutingReachability, travelClient } from './travelHttp.js';
 import { TravelProfile } from './TravelProfile.js';
 import { TravelRule } from './TravelRule.js';
-import { TimeBox } from './TimeBox.js';
 
-/** A regeneration's time when its caller gives none (a rule's change, a sync's member). */
-export const REGENERATION_BUDGET_MS = 20_000;
-/** An item write's regeneration: the request waits for it. */
-export const ITEM_CHANGE_BUDGET_MS = 8_000;
 /** Every member's regeneration after one sync, together (the rest wait for the daily pass). */
 export const AFTER_SYNC_BUDGET_MS = 60_000;
 /**
@@ -79,13 +67,6 @@ export const AFTER_SYNC_BUDGET_MS = 60_000;
  * job stopped there is run again.
  */
 export const AFTER_SYNC_MARGIN_MS = 20_000;
-/** A preview's time: the travel panel waits for it. */
-export const PREVIEW_BUDGET_MS = 8_000;
-/**
- * The member's own travel change (a place, a rule, a setting, a pin, a mark, a reset): the request
- * waits for its regeneration, as for an item write.
- */
-export const OWN_CHANGE_BUDGET_MS = 8_000;
 
 const MINUTE_MS = 60_000;
 
@@ -99,13 +80,6 @@ const TRAVEL_FIELDS = [
   'containerId',
   'deletedAt',
 ] as const satisfies readonly (keyof ItemData)[];
-
-export interface RegenerateOptions {
-  /** Its time (default REGENERATION_BUDGET_MS from now). */
-  budget?: TimeBudget;
-  /** New geocoder lookups (default NEW_GEOCODES_MAX); 0: cached geocodes only. */
-  lookups?: number;
-}
 
 /** A trip to preview (`TravelPlanner.preview`). */
 export interface PreviewInput {
@@ -127,23 +101,15 @@ const isMode = (text: string | undefined): text is TravelMode =>
 export class TravelPlanner {
   readonly #caller: Caller;
   readonly #now: Date;
-  readonly #time: TimeBox;
-  readonly #lookups: number;
 
-  private constructor(caller: Caller, now: Date, options: RegenerateOptions) {
+  private constructor(caller: Caller, now: Date) {
     this.#caller = caller;
     this.#now = now;
-    this.#time = new TimeBox(options.budget ?? TimeBudget.start(REGENERATION_BUDGET_MS));
-    this.#lookups = options.lookups ?? NEW_GEOCODES_MAX;
   }
 
   /** The caller's legs over the horizon from `now`'s day, made again: what was written. */
-  static async regenerate(
-    caller: Caller,
-    now: Date = new Date(),
-    options: RegenerateOptions = {},
-  ): Promise<AppliedPlan> {
-    return new TravelPlanner(caller, now, options).#regenerate();
+  static async regenerate(caller: Caller, now: Date = new Date()): Promise<AppliedPlan> {
+    return new TravelPlanner(caller, now).#regenerate();
   }
 
   /**
@@ -154,27 +120,23 @@ export class TravelPlanner {
     workspaceId: string,
     userId: string,
     now: Date = new Date(),
-    options: RegenerateOptions = {},
   ): Promise<AppliedPlan> {
     const caller = await TravelPlanner.#enter(workspaceId, userId);
-    return caller === null ? { ...NOTHING } : TravelPlanner.regenerate(caller, now, options);
+    return caller === null ? { ...NOTHING } : TravelPlanner.regenerate(caller, now);
   }
 
   /**
    * ItemChanges' listener: the caller wrote an item in a way a leg can follow (`movesTravel`: its
    * times, status, topic, place or deletion; never a rename or a note), so their legs are made
-   * again when they have travel, within ITEM_CHANGE_BUDGET_MS and from cached geocodes only (the
-   * request waits). A member without travel costs one read. A failure is logged and swallowed: it
-   * never fails the write. An arrow: it is handed to ItemChanges as it is.
+   * again when they have travel (the request waits). A member without travel costs one read. A
+   * failure is logged and swallowed: it never fails the write. An arrow: it is handed to
+   * ItemChanges as it is.
    */
   static readonly onItemChange = async (caller: Caller, change: ItemChange): Promise<void> => {
     if (change.kind === 'travel' || !TravelPlanner.movesTravel(change)) return;
     try {
       if (!(await TravelProfile.hasTravelFor(caller))) return;
-      await TravelPlanner.regenerate(caller, new Date(), {
-        budget: TimeBudget.start(ITEM_CHANGE_BUDGET_MS),
-        lookups: 0,
-      });
+      await TravelPlanner.regenerate(caller, new Date());
     } catch (error) {
       logger.error('travel: regeneration after an item change failed', {
         workspaceId: caller.workspaceId,
@@ -206,18 +168,13 @@ export class TravelPlanner {
 
   /**
    * The member changed their own travel and the change is stored (a place, a rule, a setting, a
-   * pin, a mark, a reset: `change` names which): their legs are made again while the request
-   * waits, within OWN_CHANGE_BUDGET_MS and from cached geocodes only (a place being added was
-   * looked up by its own create; new locations are looked up after syncs and in the daily pass).
-   * A failure is logged with ids only and swallowed: the change stands and answers as stored, and
-   * the next change, sync or daily pass makes the legs. Whether it ran.
+   * pin, a trip's length, a mark, a reset: `change` names which): their legs are made again while
+   * the request waits. A failure is logged with ids only and swallowed: the change stands and
+   * answers as stored, and the next change, sync or daily pass makes the legs. Whether it ran.
    */
   static async afterOwnChange(caller: Caller, change: string): Promise<boolean> {
     try {
-      await TravelPlanner.regenerate(caller, new Date(), {
-        budget: TimeBudget.start(OWN_CHANGE_BUDGET_MS),
-        lookups: 0,
-      });
+      await TravelPlanner.regenerate(caller, new Date());
       return true;
     } catch (error) {
       // Never its message: it may quote what it read.
@@ -276,7 +233,7 @@ export class TravelPlanner {
         return;
       }
       try {
-        await TravelPlanner.regenerateFor(workspaceId, userId, now, { budget });
+        await TravelPlanner.regenerateFor(workspaceId, userId, now);
       } catch (error) {
         logger.error('travel: regeneration after a sync failed', { workspaceId, error });
       }
@@ -286,8 +243,8 @@ export class TravelPlanner {
   /**
    * The daily pass: each member with travel whose legs the pass hasn't made again today (in their
    * workspace's zone) gets them made, while `budget` can start one more; the rest (`left`, and any
-   * that failed, logged) wait for the next tick. `done`: those made today by this run. Each
-   * regeneration gets what is left of `budget`; one member's error never stops the pass.
+   * that failed, logged) wait for the next tick. `done`: those made today by this run. One
+   * member's error never stops the pass.
    */
   static async runDailyPass(
     now: Date,
@@ -307,7 +264,7 @@ export class TravelPlanner {
         }
         // Read first: it is never made again for a member who left meanwhile.
         const profile = await TravelProfile.of(caller);
-        await TravelPlanner.regenerate(caller, now, { budget });
+        await TravelPlanner.regenerate(caller, now);
         await profile.markPassed(today);
         done += 1;
       } catch (error) {
@@ -338,9 +295,6 @@ export class TravelPlanner {
       places,
       range: { from, to },
       now,
-      geocoder: new FreeGeocoder(),
-      time: this.#time,
-      lookups: this.#lookups,
     });
     const homeId = places.find((place) => place.isHome)?.id ?? null;
     const days = this.#days(from, anchors, {
@@ -351,7 +305,7 @@ export class TravelPlanner {
       placeNames: new Map(places.map((place) => [place.id, place.name])),
       settings: profile.settings,
     });
-    const estimates = await this.#estimates(days, profile, places);
+    const estimates = TravelPlanner.#lengths(days, profile, places);
     const planned = days.flatMap((day) => DayPlanner.plan(day, estimates));
     // A leg back after midnight of the last day starts past the horizon: read it too. A leg of an
     // anchor that started before the horizon (a leg home after midnight) is not this plan's: it is
@@ -392,17 +346,12 @@ export class TravelPlanner {
 
   /**
    * A trip's length as a leg would get it, without making one (the travel panel's live preview):
-   * from `fromPlaceId` (default: Home) to `toPlaceId`, by `mode`, through the same chain as a
-   * regeneration (OpenRouteService with a key and today's quota, then his last length for the
-   * trip, then the straight line), within PREVIEW_BUDGET_MS. Without both places there is no
-   * length. `arriveBy` ends the trip, `departAt` starts it (not both: 400); the other end follows
-   * from the length. 400 for a place that isn't the caller's. Editors (Ruling 16).
+   * from `fromPlaceId` (default: Home) to `toPlaceId`, by `mode`: the length he set for the trip,
+   * else UNSET_TRIP_MINUTES with `lengthUnset`. Without both places there is no length.
+   * `arriveBy` ends the trip, `departAt` starts it (not both: 400); the other end follows from the
+   * length. 400 for a place that isn't the caller's. Editors (Ruling 16).
    */
-  static async preview(
-    caller: Caller,
-    input: PreviewInput,
-    now: Date = new Date(),
-  ): Promise<TravelPreviewResponse> {
+  static async preview(caller: Caller, input: PreviewInput): Promise<TravelPreviewResponse> {
     caller.require('editor');
     const { arriveBy, departAt } = input;
     if (arriveBy !== undefined && departAt !== undefined) {
@@ -419,78 +368,43 @@ export class TravelPlanner {
         ? (places.find((place) => place.isHome) ?? null)
         : placeOf(input.fromPlaceId, 'fromPlaceId');
     const to = input.toPlaceId === undefined ? null : placeOf(input.toPlaceId, 'toPlaceId');
-    let estimate: Estimate | null = null;
-    if (from !== null && to !== null) {
-      const planner = new TravelPlanner(caller, now, {
-        budget: TimeBudget.start(PREVIEW_BUDGET_MS),
-      });
-      const chain = await planner.#chain(await TravelProfile.of(caller));
-      estimate = await chain.estimate({
-        from: { id: from.id, ...from.coords },
-        to: { id: to.id, ...to.coords },
-        mode: input.mode,
-      });
-    }
+    const estimate =
+      from === null || to === null
+        ? null
+        : (await TravelProfile.of(caller)).tripLength(
+            DayPlanner.tripKey(from.id, to.id, input.mode),
+          );
     const minutes = estimate?.minutes ?? null;
     const shifted = (time: Date, sign: 1 | -1): string | null =>
       minutes === null ? null : new Date(time.getTime() + sign * minutes * MINUTE_MS).toISOString();
     return {
       minutes,
       source: estimate?.source ?? null,
+      lengthUnset: estimate?.source === 'unset',
       startAt: departAt?.toISOString() ?? (arriveBy === undefined ? null : shifted(arriveBy, -1)),
       endAt: arriveBy?.toISOString() ?? (departAt === undefined ? null : shifted(departAt, 1)),
     };
   }
 
-  /** The length of every trip the days may take, each asked once. */
-  async #estimates(
+  /**
+   * The length of every trip the days may take: the member's own for each (or the placeholder of
+   * one he hasn't set), the same for every day and every occurrence.
+   */
+  static #lengths(
     days: readonly DayPlanInput[],
     profile: TravelProfile,
     places: readonly Place[],
-  ): Promise<Map<TripKey, Estimate>> {
-    const trips = new Set(days.flatMap((day) => DayPlanner.trips(day)));
-    const estimates = new Map<TripKey, Estimate>();
-    if (trips.size === 0) return estimates;
-    const chain = await this.#chain(profile);
-    const byId = new Map(places.map((place) => [place.id, place]));
-    for (const trip of trips) {
+  ): Map<TripKey, Estimate> {
+    const known = new Set(places.map((place) => place.id));
+    const lengths = new Map<TripKey, Estimate>();
+    for (const trip of new Set(days.flatMap((day) => DayPlanner.trips(day)))) {
       const [fromId, toId, mode] = trip.split('|');
-      const start = fromId === undefined ? undefined : byId.get(fromId);
-      const end = toId === undefined ? undefined : byId.get(toId);
-      if (start === undefined || end === undefined || !isMode(mode)) {
+      if (!known.has(fromId ?? '') || !known.has(toId ?? '') || !isMode(mode)) {
         throw new Error('TravelPlanner: a trip between places the member does not have');
       }
-      const estimate = await chain.estimate({
-        from: { id: start.id, ...start.coords },
-        to: { id: end.id, ...end.coords },
-        mode,
-      });
-      // The straight line always answers: no answer is a broken chain.
-      if (estimate === null) throw new Error('TravelPlanner: no length for a trip');
-      estimates.set(trip, estimate);
+      lengths.set(trip, profile.tripLength(trip));
     }
-    return estimates;
-  }
-
-  /**
-   * The lengths' chain: OpenRouteService (with the stage's key, on the workspace's quota of today
-   * in its zone, and only within this run's time), then his last length for the trip, then the
-   * straight line.
-   */
-  async #chain(profile: TravelProfile): Promise<RouteChain> {
-    return RouteChain.standard({
-      apiKey: await openRouteServiceKey(),
-      client: travelClient('openrouteservice'),
-      budget: RoutingQuota.for(
-        this.#caller.workspaceId,
-        wallDate(this.#now, this.#caller.settings.timezone),
-      ),
-      settings: profile.settings,
-      remembered: (fromId, toId, mode) =>
-        profile.rememberedMinutes(DayPlanner.tripKey(fromId, toId, mode)),
-      time: this.#time,
-      reachability: sharedRoutingReachability(),
-    });
+    return lengths;
   }
 
   /** Without a Home there are no legs (Ruling 24): the ones that go, go for want of a place. */

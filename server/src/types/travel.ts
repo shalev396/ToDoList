@@ -5,12 +5,16 @@
  *
  * A leg is a local item of kind `travel`, private to its member. What makes it a leg is kept at
  * `props.travel` (TravelLegProps) and its key at `props.travelKey`. Places are named by id and
- * name only: an address or a coordinate is never stored on a leg.
+ * name only: an address is never stored on a leg.
  *
- * Also the member's travel settings (factors, buffers, going home in a window, the default mode),
- * the fixed numbers travel runs by, what a travel rule applies to, a place as its member and as an
- * agent see it (an agent: its name only), and what the travel routes (`…/travel/*`) take and
- * answer.
+ * A trip's length is the member's own (the owner's decision of 2026-11-18: no routing service):
+ * one number per trip (from place, to place, mode) that he sets once, and that every leg of that
+ * trip takes, every day and every occurrence. A trip without one is drawn with UNSET_TRIP_MINUTES
+ * and flagged `lengthUnset` until he sets it.
+ *
+ * Also the member's travel settings (going home in a window, the default mode), the fixed numbers
+ * travel runs by, what a travel rule applies to, a place as its member and as an agent see it (an
+ * agent: its name only), and what the travel routes (`…/travel/*`) take and answer.
  */
 import { z } from 'zod';
 
@@ -32,29 +36,17 @@ export type RuleDirection = (typeof RULE_DIRECTIONS)[number];
 export const TRAVEL_HORIZON_DAYS = 14;
 /** The most days one read of the day panel (`GET …/travel/days`) covers. */
 export const TRAVEL_DAYS_MAX = TRAVEL_HORIZON_DAYS;
-/** OpenRouteService calls a workspace may make a day, on the free key every member shares. */
-export const ROUTING_CALLS_PER_DAY = 100;
-/** A geocoded location is at a saved place when it is at most this far from it. */
-export const PLACE_MATCH_RADIUS_M = 300;
 
 /**
- * The straight-line estimate, the last fallback: the distance × `detour`, at `kmh`. Public
- * transport's speed is a rough value of ours (plan Ruling 13); the member corrects it by hand.
+ * The length a trip is drawn with until its member sets one, the same for every mode: its legs are
+ * made with it, take part in conflicts with it, and ask "Set how long".
  */
-export const STRAIGHT_LINE: Readonly<
-  Record<TravelMode, Readonly<{ kmh: number; detour: number }>>
-> = Object.freeze({
-  walk: Object.freeze({ kmh: 4.5, detour: 1.3 }),
-  drive: Object.freeze({ kmh: 40, detour: 1 }),
-  transit: Object.freeze({ kmh: 25, detour: 1.3 }),
-});
+export const UNSET_TRIP_MINUTES = 30;
+/** The longest trip: a day, in minutes. */
+export const TRIP_MINUTES_MAX = 24 * 60;
 
 /** A member's travel settings, the "global variables" of the spec. */
 export interface TravelSettings {
-  /** A computed length (OpenRouteService, straight line) is multiplied by this, per mode. */
-  factors: Record<TravelMode, number>;
-  /** Minutes added to a computed length (parking, the walk to the stop), per mode. */
-  buffers: Record<TravelMode, number>;
   /**
    * Go home in a window between two events at one place: only a window of at least
    * `minWindowMinutes` that leaves at least `minAtHomeMinutes` at home after the trips both ways.
@@ -66,19 +58,12 @@ export interface TravelSettings {
 
 /** The spec's defaults (Concepts, 5). Frozen: copy it to change it. */
 export const DEFAULT_TRAVEL_SETTINGS: Readonly<TravelSettings> = Object.freeze({
-  factors: Object.freeze({ walk: 1, drive: 1.15, transit: 1 }),
-  buffers: Object.freeze({ walk: 0, drive: 10, transit: 5 }),
   goHome: Object.freeze({ enabled: false, minWindowMinutes: 180, minAtHomeMinutes: 60 }),
   defaultMode: 'transit',
 });
 
-const FactorSchema = z.number().min(0.5).max(3);
-const BufferSchema = z.number().int().min(0).max(120);
-
-/** Travel settings as given (a whole set): factor 0.5–3, buffer 0–120 minutes. */
+/** Travel settings as given (a whole set). */
 export const TravelSettingsSchema = z.strictObject({
-  factors: z.strictObject({ walk: FactorSchema, drive: FactorSchema, transit: FactorSchema }),
-  buffers: z.strictObject({ walk: BufferSchema, drive: BufferSchema, transit: BufferSchema }),
   goHome: z.strictObject({
     enabled: z.boolean(),
     minWindowMinutes: z.number().int().min(180),
@@ -92,8 +77,6 @@ type Some<T> = { [K in keyof T]?: T[K] | undefined };
 
 /** A change to the settings: any part of them; what is left out stays as it is. */
 export interface TravelSettingsPatch {
-  factors?: Some<Record<TravelMode, number>> | undefined;
-  buffers?: Some<Record<TravelMode, number>> | undefined;
   goHome?: Some<TravelSettings['goHome']> | undefined;
   defaultMode?: TravelMode | undefined;
 }
@@ -111,7 +94,10 @@ export type TravelRuleScope =
 
 export type TravelRuleScopeKind = TravelRuleScope['kind'];
 
-/** One of the member's places as their own REST answers show it (never to anyone else). */
+/**
+ * One of the member's places as their own REST answers show it (never to anyone else): its name,
+ * and the address he typed for it, if any (free text, used only to open a map app on his device).
+ */
 export interface PlaceView {
   id: string;
   name: string;
@@ -120,7 +106,7 @@ export interface PlaceView {
   address: string | null;
 }
 
-/** A place as an agent sees it: its name only, never an address or a coordinate. */
+/** A place as an agent sees it: its name only, never an address. */
 export interface PlaceAgentView {
   id: string;
   name: string;
@@ -128,8 +114,11 @@ export interface PlaceAgentView {
   home: boolean;
 }
 
-/** Where a leg's length came from: OpenRouteService, the member's last entry, by hand, a guess. */
-export const LEG_SOURCES = ['ors', 'remembered', 'manual', 'estimate'] as const;
+/**
+ * Where a leg's length came from: `set` by the member (the trip's length, or his own times for
+ * this leg), or `unset`: the trip has no length yet, and the leg is drawn with UNSET_TRIP_MINUTES.
+ */
+export const LEG_SOURCES = ['set', 'unset'] as const;
 export type LegSource = (typeof LEG_SOURCES)[number];
 
 /** Why a leg went (a removed leg stays as a tombstone with its reason; a skip is one). */
@@ -167,11 +156,16 @@ export interface TravelLegProps {
   toHome: boolean;
   minutes: number;
   source: LegSource;
+  /**
+   * The trip has no length yet (source `unset`): the leg is drawn with UNSET_TRIP_MINUTES, dashed,
+   * and asks "Set how long". Read from `source`.
+   */
+  lengthUnset: boolean;
   /** When its length was worked out (ISO). */
   computedAt: string;
   /** It can't be made in time (it starts before the previous anchor ends). */
   conflict: boolean;
-  /** The member set its times by hand: regeneration keeps them. */
+  /** The member set this leg's times by hand: regeneration keeps them until he resets it. */
   edited: boolean;
   /** Its anchor moved since the member edited it ("the event moved; check this trip"). */
   anchorMoved: boolean;
@@ -196,7 +190,8 @@ const isInstant = (value: unknown): value is string =>
 
 /**
  * A leg's travel props, read from its item's props: null unless every field it needs is there and
- * well formed. The flags default to off, the removal reason and the anchor's moved start to none.
+ * well formed. The flags default to off, the removal reason and the anchor's moved start to none;
+ * `lengthUnset` follows the source.
  */
 export function travelPropsOf(props: Readonly<Record<string, unknown>>): TravelLegProps | null {
   const raw = props['travel'];
@@ -240,6 +235,7 @@ export function travelPropsOf(props: Readonly<Record<string, unknown>>): TravelL
     toHome: travel['toHome'] === true,
     minutes,
     source,
+    lengthUnset: source === 'unset',
     computedAt,
     conflict: travel['conflict'] === true,
     edited: travel['edited'] === true,
@@ -249,30 +245,31 @@ export function travelPropsOf(props: Readonly<Record<string, unknown>>): TravelL
   };
 }
 
-/** An app link for one leg (the client opens `url`, or `fallbackUrl` when the app is missing). */
+/** An app link for one leg: Waze (driving) or Google Maps directions, from the places' text. */
 export interface TravelLink {
-  app: 'google_maps' | 'waze' | 'moovit';
+  app: 'google_maps' | 'waze';
   url: string;
-  fallbackUrl?: string;
 }
 
 // ─── The travel routes (`/api/private/workspaces/:wid/travel/*`) ─────────────
 //
 // Editors and owners only, each about the caller's own travel: another member's place, rule or
-// leg is a 404, as one that never existed. A place's address is in its member's own answers only;
-// a coordinate is in none of them (a leg's app links carry the trip's, to its member only).
+// leg is a 404, as one that never existed. A place's address is in its member's own answers only
+// (and in a leg's app links, to its member only); nothing is ever looked up from it.
 
-/** `POST …/travel/places`: coordinates, or an address to look up (`lat, lon` typed is taken as such). */
+/**
+ * `POST …/travel/places`: a name, and an address if he wants one (free text, never looked up: it
+ * only opens a map app; a typed "lat, lon" is text like any other).
+ */
 export interface CreatePlaceRequest {
   name: string;
   address?: string;
-  coords?: { lat: number; lon: number };
   aliases?: string[];
   /** Makes it the member's one Home (the old one becomes a plain place). */
   home?: boolean;
 }
 
-/** `PATCH …/travel/places/:id`: any of it (an empty `address` clears it and keeps the coordinates). */
+/** `PATCH …/travel/places/:id`: any of it (an empty `address` clears it). */
 export type UpdatePlaceRequest = Partial<CreatePlaceRequest>;
 
 /** A travel rule as its member's own answers show it. */
@@ -306,8 +303,6 @@ export interface TravelSettingsResponse {
   settings: TravelSettings;
   /** The default places of calendars and projects, by container id. */
   containerPlaces: { containerId: string; placeId: string }[];
-  /** Whether the stage has an OpenRouteService key (else walking and driving are estimates). */
-  orsAvailable: boolean;
 }
 
 /** `PUT …/travel/container-places/:containerId` and `PUT …/travel/item-places/:itemId`. */
@@ -317,8 +312,9 @@ export interface PlacePinRequest {
 }
 
 /**
- * One leg's times as the member typed them when marking an item: any two of start, end and length
- * (or one, which keeps the rest).
+ * One leg as the member typed it when marking an item: `minutes` is how long the trip takes, every
+ * time (the trip's length: every leg of it follows); `startAt` and `endAt` move this leg only (one
+ * alone keeps its length).
  */
 export interface SpanInput {
   startAt?: string;
@@ -334,8 +330,9 @@ export interface SpanInput {
 /**
  * `POST …/travel/items/:itemId`: travel to (and from) one timed item. Every occurrence of a
  * repeating item (`every`: a series rule), one occurrence of it (`occurrence`, its original
- * start), or an item that doesn't repeat (neither). `there` and `back` are applied to its legs as
- * hand edits (with `every`, a length only: it applies to each occurrence's leg).
+ * start), or an item that doesn't repeat (neither). In `there` and `back`, `minutes` sets the
+ * length of the trip its leg takes (every leg of that trip follows); times move that one leg (with
+ * `every`, a length only).
  */
 export interface MarkItemRequest {
   occurrence?: string;
@@ -355,9 +352,9 @@ export interface MarkItemResponse {
 }
 
 /**
- * `POST …/travel/preview`: a trip's length as a leg would get it (no leg is made). From defaults
- * to Home; without a place to go to there is no length. `arriveBy` or `departAt` (not both) dates
- * the trip.
+ * `POST …/travel/preview`: a trip's length as a leg would get it (no leg is made): the length he
+ * set for it, else UNSET_TRIP_MINUTES with `lengthUnset`. From defaults to Home; without a place to
+ * go to there is no length. `arriveBy` or `departAt` (not both) dates the trip.
  */
 export interface TravelPreviewRequest {
   mode: TravelMode;
@@ -371,11 +368,17 @@ export interface TravelPreviewRequest {
 export interface TravelPreviewResponse {
   minutes: number | null;
   source: LegSource | null;
+  /** No length is set for the trip yet: `minutes` is UNSET_TRIP_MINUTES. */
+  lengthUnset: boolean;
   startAt: string | null;
   endAt: string | null;
 }
 
-/** `PATCH …/travel/legs/:id`: one or two of start, end and length; the rest is worked out. */
+/**
+ * `PATCH …/travel/legs/:id`: `minutes` sets how long the trip takes, every time (every leg of the
+ * trip follows, but the ones whose times he set by hand); `startAt` and `endAt` move this leg only
+ * (one alone keeps its length). At least one of them.
+ */
 export interface LegEditRequest {
   startAt?: string;
   endAt?: string;
@@ -396,8 +399,8 @@ export interface RemovedLegView {
   removedAt: string;
   /**
    * What the trip was, so a view can word its title in its own language: the mode, whether it went
-   * home, and the place it went to by name (never an address or a coordinate). Absent when the
-   * stored props are not a leg's.
+   * home, and the place it went to by name (never an address). Absent when the stored props are
+   * not a leg's.
    */
   mode?: TravelMode;
   toHome?: boolean;

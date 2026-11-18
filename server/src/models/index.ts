@@ -34,10 +34,6 @@ import {
   TRAVEL_PROFILE_TABLE_NAME,
   type ITravelProfileRepository,
 } from './definitions/TravelProfile.js';
-import {
-  ROUTING_QUOTA_TABLE_NAME,
-  type IRoutingQuotaRepository,
-} from './definitions/RoutingQuota.js';
 import { VIEW_TABLE_NAME, type IViewRepository } from './definitions/View.js';
 import { WORKSPACE_TABLE_NAME, type IWorkspaceRepository } from './definitions/Workspace.js';
 import { NotSupportedError } from './errors.js';
@@ -74,7 +70,6 @@ export type { OAuthStateData, IOAuthStateRepository } from './definitions/OAuthS
 export type { PlaceData, IPlaceRepository } from './definitions/Place.js';
 export type { TravelRuleData, ITravelRuleRepository } from './definitions/TravelRule.js';
 export type { TravelProfileData, ITravelProfileRepository } from './definitions/TravelProfile.js';
-export type { IRoutingQuotaRepository } from './definitions/RoutingQuota.js';
 
 let _userRepository: IUserRepository | null = null;
 let _mediaRepository: IMediaRepository | null = null;
@@ -231,7 +226,7 @@ export const getOAuthStateRepository = mongoOnly<IOAuthStateRepository>(
 );
 
 // Travel (docs/superpowers/specs/2026-11-17-travel-time-design.md): a member's places, rules and
-// profile, and a workspace's daily routing quota.
+// profile.
 export const getPlaceRepository = mongoOnly<IPlaceRepository>(
   PLACE_TABLE_NAME,
   async () => (await import('./mongoose/Place.js')).PlaceRepository,
@@ -245,9 +240,4 @@ export const getTravelRuleRepository = mongoOnly<ITravelRuleRepository>(
 export const getTravelProfileRepository = mongoOnly<ITravelProfileRepository>(
   TRAVEL_PROFILE_TABLE_NAME,
   async () => (await import('./mongoose/TravelProfile.js')).TravelProfileRepository,
-);
-
-export const getRoutingQuotaRepository = mongoOnly<IRoutingQuotaRepository>(
-  ROUTING_QUOTA_TABLE_NAME,
-  async () => (await import('./mongoose/RoutingQuota.js')).RoutingQuotaRepository,
 );

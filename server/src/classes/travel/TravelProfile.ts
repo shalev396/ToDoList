@@ -1,17 +1,15 @@
 /**
  * A member's travel profile, one per member and workspace, made on first read: their settings
- * (the spec's "global variables": factors, buffers, going home in a window, the default mode), the
- * length they last entered per trip (from place, to place, mode → minutes; a trip without both
- * places is never remembered), the places location texts were geocoded to (by the text's hash,
- * never the text; at most GEOCODES_MAX, the oldest dropped first), their pins (an item's place, a
- * calendar's or project's default place), whether they have travel at all, and the last day the
- * daily pass regenerated their legs. Private to its member; changes are for editors and owners.
+ * (the spec's "global variables": going home in a window, the default mode), how long each trip
+ * takes as he set it (from place, to place, mode → minutes: the only source of a leg's length, the
+ * owner's decision of 2026-11-18; a trip he hasn't set is drawn with UNSET_TRIP_MINUTES), their
+ * pins (an item's place, a calendar's or project's default place), whether they have travel at
+ * all, and the last day the daily pass regenerated their legs. Private to its member; changes are
+ * for editors and owners.
  *
  * The defaults are DEFAULT_TRAVEL_SETTINGS, deep-copied (it is frozen at every depth), and a
  * change is merged into a copy of the stored settings and checked whole (TravelSettingsSchema).
  */
-import { createHash } from 'node:crypto';
-
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
 import type { TravelProfileData } from '../../models/definitions/TravelProfile.js';
@@ -19,7 +17,9 @@ import { getTravelProfileRepository } from '../../models/index.js';
 import {
   DEFAULT_TRAVEL_SETTINGS,
   TRAVEL_MODES,
+  TRIP_MINUTES_MAX,
   TravelSettingsSchema,
+  UNSET_TRIP_MINUTES,
   type TravelSettings,
   type TravelSettingsPatch,
   type TravelSettingsResponse,
@@ -27,12 +27,9 @@ import {
 import type { Caller } from '../base/Caller.js';
 import type { Owned } from '../base/contracts.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
-import type { TripKey } from './DayPlanner.js';
-import type { LatLon } from './geo.js';
+import type { Estimate, TripKey } from './DayPlanner.js';
 import { Place } from './Place.js';
 
-/** The longest trip a member can enter: a day. */
-const MAX_MINUTES = 24 * 60;
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 /** An id a pin is keyed by (an item's, a container's). */
 const ID_PATTERN = /^[A-Za-z0-9_:-]{1,200}$/;
@@ -40,12 +37,6 @@ const ID_PATTERN = /^[A-Za-z0-9_:-]{1,200}$/;
 /** A deep copy of the defaults (they are frozen at every depth). */
 function defaultSettings(): TravelSettings {
   return structuredClone(DEFAULT_TRAVEL_SETTINGS);
-}
-
-/** A location text as its geocode is keyed: normalized, then hashed (the text is never stored). */
-function hashOf(text: string): string {
-  const normalized = text.normalize('NFKC').toLocaleLowerCase().replace(/\s+/g, ' ').trim();
-  return createHash('sha256').update(normalized).digest('hex');
 }
 
 /** 400 unless `key` is a trip: `from|to|mode`, two place ids and a mode. */
@@ -83,8 +74,6 @@ function settingsOf(stored: unknown): TravelSettings {
 
 export class TravelProfile extends WorkspaceEntity<TravelProfileData> implements Owned {
   readonly #settings: TravelSettings;
-  /** Geocodes stored through this instance since it was read. */
-  readonly #stored = new Map<string, LatLon | null>();
 
   private constructor(data: TravelProfileData) {
     super(data);
@@ -169,34 +158,32 @@ export class TravelProfile extends WorkspaceEntity<TravelProfileData> implements
 
   /**
    * As its member's own answers show it: the settings and the default places, never what else it
-   * keeps (geocodes, remembered lengths, pins). `orsAvailable`: the stage has its routing key.
+   * keeps (trip lengths, pins).
    */
-  toSettingsView(orsAvailable: boolean): TravelSettingsResponse {
+  toSettingsView(): TravelSettingsResponse {
     return {
       settings: this.settings,
       containerPlaces: [...this.containerPlaces]
         .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         .map(([containerId, placeId]) => ({ containerId, placeId })),
-      orsAvailable,
     };
   }
 
-  /** The length the member last entered for this trip, in minutes; null when none. */
-  rememberedMinutes(key: TripKey): number | null {
-    const minutes = Object.hasOwn(this.data.remembered, key) ? this.data.remembered[key] : null;
+  /** How long this trip takes as the member set it, in minutes; null while he hasn't. */
+  tripMinutes(key: TripKey): number | null {
+    const minutes = Object.hasOwn(this.data.tripLengths, key) ? this.data.tripLengths[key] : null;
     return typeof minutes === 'number' && Number.isFinite(minutes) && minutes > 0 ? minutes : null;
   }
 
   /**
-   * Where this location text was geocoded to: the point, null when no geocoder found it, or
-   * undefined when it was never geocoded (a lookup is due).
+   * The length every leg of this trip takes, every day and every occurrence alike: the one he set
+   * (`set`), else UNSET_TRIP_MINUTES (`unset`).
    */
-  cachedGeocode(text: string): LatLon | null | undefined {
-    const hash = hashOf(text);
-    if (this.#stored.has(hash)) return this.#stored.get(hash);
-    if (!Object.hasOwn(this.data.geocodes, hash)) return undefined;
-    const point = this.data.geocodes[hash];
-    return point === null || point === undefined ? null : { lat: point.lat, lon: point.lon };
+  tripLength(key: TripKey): Estimate {
+    const minutes = this.tripMinutes(key);
+    return minutes === null
+      ? { minutes: UNSET_TRIP_MINUTES, source: 'unset' }
+      : { minutes, source: 'set' };
   }
 
   // ─── Changes ──────────────────────────────────────────────────────────────
@@ -206,8 +193,6 @@ export class TravelProfile extends WorkspaceEntity<TravelProfileData> implements
     this.#authorize(caller);
     const current = this.settings;
     const merged = {
-      factors: { ...current.factors, ...given(patch.factors) },
-      buffers: { ...current.buffers, ...given(patch.buffers) },
       goHome: { ...current.goHome, ...given(patch.goHome) },
       defaultMode: patch.defaultMode ?? current.defaultMode,
     };
@@ -226,18 +211,19 @@ export class TravelProfile extends WorkspaceEntity<TravelProfileData> implements
   }
 
   /**
-   * Editors, their own: the length they entered for a trip (`from|to|mode`), which the next leg of
-   * that trip starts from ("your last trip"). More than 0 and at most a day.
+   * Editors, their own: how long a trip (`from|to|mode`) takes, every time. Every leg of that trip
+   * takes it from the next regeneration on, every day and every occurrence, but the legs whose
+   * times he set by hand. More than 0 and at most a day.
    */
-  async remember(caller: Caller, key: TripKey, minutes: number): Promise<TravelProfile> {
+  async setTripLength(caller: Caller, key: TripKey, minutes: number): Promise<TravelProfile> {
     this.#authorize(caller);
-    if (!Number.isFinite(minutes) || minutes <= 0 || minutes > MAX_MINUTES) {
-      throw new ValidationError(`minutes: more than 0 and at most ${String(MAX_MINUTES)}`);
+    if (!Number.isFinite(minutes) || minutes <= 0 || minutes > TRIP_MINUTES_MAX) {
+      throw new ValidationError(`minutes: more than 0 and at most ${String(TRIP_MINUTES_MAX)}`);
     }
     return this.#asStored(
       await (
         await getTravelProfileRepository()
-      ).setRemembered(this.workspaceId, this.ownerUserId, checkedTrip(key), minutes),
+      ).setTripLength(this.workspaceId, this.ownerUserId, checkedTrip(key), minutes),
     );
   }
 
@@ -257,19 +243,6 @@ export class TravelProfile extends WorkspaceEntity<TravelProfileData> implements
     placeId: string | null,
   ): Promise<TravelProfile> {
     return this.#pin(caller, 'containerPlaces', checkedId(containerId, 'containerId'), placeId);
-  }
-
-  /**
-   * Keeps where a location text was geocoded to (null: nowhere), for the next regeneration. The
-   * text itself is never stored, only its hash.
-   */
-  async storeGeocode(text: string, result: LatLon | null): Promise<void> {
-    const hash = hashOf(text);
-    const point = result === null ? null : { lat: result.lat, lon: result.lon };
-    await (
-      await getTravelProfileRepository()
-    ).storeGeocode(this.workspaceId, this.ownerUserId, hash, point);
-    this.#stored.set(hash, point);
   }
 
   /** The daily pass regenerated the member's legs on `day` (`YYYY-MM-DD`, the workspace's zone). */

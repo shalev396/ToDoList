@@ -58,12 +58,11 @@ describe('syncMongo (sync-db on MongoDB)', () => {
     // MCP sign-in adds McpClients and McpAuthRequests (TTL indexes; the request's code hash).
     assert.ok(first.includes('McpClients: indexes ok (1)'), first.join('\n'));
     assert.ok(first.includes('McpAuthRequests: indexes ok (2)'), first.join('\n'));
-    // Travel adds a member's places (one Home), rules and profile, and the routing quota's days.
+    // Travel adds a member's places (one Home), rules and profile.
     assert.ok(first.includes('Places: indexes ok (2), validator ok'), first.join('\n'));
     assert.ok(first.includes('TravelRules: indexes ok (1), validator ok'), first.join('\n'));
     assert.ok(first.includes('TravelProfiles: indexes ok (2), validator ok'), first.join('\n'));
-    assert.ok(first.includes('RoutingQuotas: indexes ok (1)'), first.join('\n'));
-    assert.equal(first.length, 27, first.join('\n'));
+    assert.equal(first.length, 26, first.join('\n'));
   });
 
   it('reports collection names and counts only, never a value', () => {

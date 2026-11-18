@@ -2,24 +2,33 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { TFunction } from 'i18next';
 import type { ItemSummary } from '@api-types/items.ts';
-import type { PlaceView, TravelLegProps, TravelRuleView } from '@api-types/travel.ts';
+import type {
+  PlaceView,
+  TravelLegProps,
+  TravelPreviewResponse,
+  TravelRuleView,
+} from '@api-types/travel.ts';
 import { en } from '../../i18n/translations/en/index.ts';
 import {
   anchorPanel,
   canTravelTo,
   defaultFromPlace,
   defaultToPlace,
-  editPanelSpan,
-  everyKeepsOnlyLength,
+  editPanelLength,
+  editPanelTime,
+  everyDropsTimes,
   initialPanelState,
   legEditOf,
   legPanelState,
+  legTripMinutes,
+  lengthFromInput,
   markOf,
   markRequestOf,
   markTargetOf,
   outcomeOf,
   ownPlaceOf,
   panelPreview,
+  panelSpan,
   previewFill,
   previewLine,
   previewRequestOf,
@@ -30,6 +39,7 @@ const ZONE = 'Asia/Jerusalem';
 /** Thursday 19 Nov 2026, 14:00 in Jerusalem (+02:00). */
 const AT_TWO = new Date('2026-11-19T12:00:00.000Z');
 const minutesBefore = (date: Date, minutes: number) => new Date(date.getTime() - minutes * 60_000);
+const minutesAfter = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
 
 const HOME: PlaceView = { id: 'home', name: 'Home', aliases: [], home: true, address: null };
 const BRAUDE: PlaceView = {
@@ -40,6 +50,22 @@ const BRAUDE: PlaceView = {
   address: null,
 };
 const TLVTECH: PlaceView = { id: 'tlv', name: 'TLVTech', aliases: [], home: false, address: null };
+
+/** The trip's own length as the preview answers it: set (minutes), or not yet (the placeholder). */
+const SET = (minutes: number): TravelPreviewResponse => ({
+  minutes,
+  source: 'set',
+  lengthUnset: false,
+  startAt: null,
+  endAt: null,
+});
+const UNSET: TravelPreviewResponse = {
+  minutes: 30,
+  source: 'unset',
+  lengthUnset: true,
+  startAt: null,
+  endAt: null,
+};
 
 function panel(patch: Partial<TravelPanelState> = {}): TravelPanelState {
   return {
@@ -62,53 +88,93 @@ const t = ((key: string, options: Record<string, unknown> = {}) => {
   return (text as string).replace(/\{\{(\w+)\}\}/g, (_, name: string) => String(options[name]));
 }) as unknown as TFunction;
 
-describe('the trip there', () => {
-  it('arrive-by fills start from minutes', () => {
-    const state = editPanelSpan(panel(), 'minutes', 32);
-    assert.deepEqual(state.span, {
-      start: minutesBefore(AT_TWO, 32),
-      end: AT_TWO,
-      minutes: 32,
-    });
-    assert.deepEqual(state.edited, ['minutes']);
-  });
+const spanOf = (state: TravelPanelState) => {
+  const span = panelSpan(state);
+  return span === null ? null : [span.start.toISOString(), span.end.toISOString(), span.minutes];
+};
 
-  it('opens arriving at the item, with no length until one is known', () => {
+describe('the trip there', () => {
+  it('opens arriving at the item, with no length until the trip’s own is read', () => {
     const state = panel();
-    assert.deepEqual(state.span, { start: null, end: AT_TWO, minutes: null });
-    assert.deepEqual(state.edited, []);
+    assert.deepEqual(
+      [state.minutes, state.lengthTyped, state.start, state.end],
+      [null, false, null, null],
+    );
     assert.equal(state.there, true);
     assert.equal(state.back, true);
+    // Not set yet: drawn with the placeholder, arriving as the item starts.
+    assert.deepEqual(spanOf(state), [
+      minutesBefore(AT_TWO, 30).toISOString(),
+      AT_TWO.toISOString(),
+      30,
+    ]);
   });
 
-  it('a computed length fills it until a field is typed', () => {
-    const filled = previewFill(panel(), 40);
-    assert.deepEqual(filled.span.start, minutesBefore(AT_TWO, 40));
-    assert.deepEqual(filled.edited, []);
-    const typed = editPanelSpan(filled, 'minutes', 25);
-    assert.equal(previewFill(typed, 40).span.minutes, 25);
+  it('the trip’s own length fills it until he types one; not set yet stays empty', () => {
+    const filled = previewFill(panel(), SET(40));
+    assert.equal(filled.minutes, 40);
+    assert.deepEqual(spanOf(filled)?.[0], minutesBefore(AT_TWO, 40).toISOString());
+    assert.equal(previewFill(panel(), UNSET).minutes, null);
+    const typed = editPanelLength(filled, 25);
+    assert.equal(previewFill(typed, SET(40)).minutes, 25);
   });
 
-  it('a typed departure keeps the arrival: the length follows', () => {
-    const state = editPanelSpan(previewFill(panel(), 40), 'start', minutesBefore(AT_TWO, 55));
-    assert.equal(state.span.minutes, 55);
-    assert.deepEqual(state.span.end, AT_TWO);
+  it('the length he types is every time’s; it moves the trip, arriving as the item starts', () => {
+    const state = editPanelLength(panel(), 32);
+    assert.deepEqual(spanOf(state), [
+      minutesBefore(AT_TWO, 32).toISOString(),
+      AT_TWO.toISOString(),
+      32,
+    ]);
+    assert.equal(state.lengthTyped, true);
+    assert.equal(lengthFromInput('32'), 32);
+    assert.equal(lengthFromInput('0'), null);
+    assert.equal(lengthFromInput('1441'), null);
+    assert.equal(lengthFromInput('2.5'), null);
   });
 
-  it('follows a new time of the item until its arrival is typed', () => {
+  it('a leave time alone keeps the length; both times are this trip’s own span', () => {
+    const filled = previewFill(panel(), SET(40));
+    const leave = editPanelTime(filled, 'start', '13:10', ZONE);
+    assert.deepEqual(spanOf(leave), [
+      minutesBefore(AT_TWO, 50).toISOString(),
+      minutesBefore(AT_TWO, 10).toISOString(),
+      40,
+    ]);
+    const both = editPanelTime(leave, 'end', '13:55', ZONE);
+    assert.deepEqual(spanOf(both), [
+      minutesBefore(AT_TWO, 50).toISOString(),
+      minutesBefore(AT_TWO, 5).toISOString(),
+      45,
+    ]);
+    // The trip's length (every time) is untouched by his times.
+    assert.equal(both.minutes, 40);
+    // Cleared: it follows again.
+    assert.equal(editPanelTime(both, 'end', '', ZONE).end, null);
+  });
+
+  it('follows a new time of the item until he types a time', () => {
     const later = new Date('2026-11-19T13:00:00.000Z');
-    const moved = anchorPanel(previewFill(panel(), 30), later);
-    assert.deepEqual(moved.span, { start: minutesBefore(later, 30), end: later, minutes: 30 });
-    const typed = editPanelSpan(panel(), 'end', minutesBefore(AT_TWO, 10));
-    assert.deepEqual(anchorPanel(typed, later).span.end, minutesBefore(AT_TWO, 10));
+    const moved = anchorPanel(previewFill(panel(), SET(30)), later);
+    assert.deepEqual(spanOf(moved), [
+      minutesBefore(later, 30).toISOString(),
+      later.toISOString(),
+      30,
+    ]);
+    const typed = editPanelTime(previewFill(panel(), SET(30)), 'end', '13:50', ZONE);
+    assert.deepEqual(
+      spanOf(anchorPanel(typed, later))?.[1],
+      minutesBefore(AT_TWO, 10).toISOString(),
+    );
   });
 });
 
 describe('markRequestOf', () => {
-  const series = { itemId: 'lecture', occurrence: AT_TWO, start: AT_TWO };
+  const series = { occurrence: AT_TWO };
 
-  it('every on a series sends every:true without occurrence', () => {
-    const request = markRequestOf(editPanelSpan(panel(), 'minutes', 35), series, true);
+  it('every on a series sends every:true without occurrence, and the length only', () => {
+    const typed = editPanelTime(editPanelLength(panel(), 35), 'start', '13:00', ZONE);
+    const request = markRequestOf(typed, series, true);
     assert.equal(request.every, true);
     assert.equal('occurrence' in request, false);
     // Every occurrence takes a length only: times are each occurrence's own.
@@ -118,54 +184,60 @@ describe('markRequestOf', () => {
     assert.equal(request.placeId, 'braude');
   });
 
-  it('one occurrence sends its original start', () => {
-    // Moved to 15:00 this week; its slot in the series is 14:00.
-    const moved = new Date('2026-11-19T13:00:00.000Z');
-    const request = markRequestOf(
-      panel({ there: true, back: false }),
-      { itemId: 'lecture', occurrence: AT_TWO, start: moved },
-      false,
-    );
+  it('one occurrence sends its original start; nothing typed sends no trip', () => {
+    const request = markRequestOf(panel({ there: true, back: false }), series, false);
     assert.equal(request.occurrence, '2026-11-19T12:00:00.000Z');
     assert.equal('every' in request, false);
     assert.equal(request.direction, 'there');
-    // Nothing typed: the server works the trip out.
+    // Nothing typed: the trip's own length (or the placeholder) applies.
     assert.equal('there' in request, false);
+    // The trip's own length read into the field is not sent: it is already the trip's.
+    assert.equal('there' in markRequestOf(previewFill(panel(), SET(40)), series, false), false);
   });
 
-  it('an item that does not repeat sends neither, and typed times as he typed them', () => {
-    const typed = editPanelSpan(
-      editPanelSpan(panel(), 'start', minutesBefore(AT_TWO, 50)),
+  it('an item that does not repeat sends neither, and his times as he typed them', () => {
+    const typed = editPanelTime(
+      editPanelTime(panel(), 'start', '13:10', ZONE),
       'end',
-      minutesBefore(AT_TWO, 5),
+      '13:55',
+      ZONE,
     );
-    const request = markRequestOf(
-      typed,
-      { itemId: 'todo', occurrence: null, start: AT_TWO },
-      false,
-    );
+    const request = markRequestOf(typed, { occurrence: null }, false);
     assert.equal('every' in request, false);
     assert.equal('occurrence' in request, false);
     assert.deepEqual(request.there, {
-      endAt: minutesBefore(AT_TWO, 5).toISOString(),
       startAt: minutesBefore(AT_TWO, 50).toISOString(),
+      endAt: minutesBefore(AT_TWO, 5).toISOString(),
       fromPlaceId: 'home',
     });
   });
 
-  it('a length that arrives at the item is a length only', () => {
-    const request = markRequestOf(
-      editPanelSpan(panel(), 'minutes', 32),
-      { itemId: 'todo', occurrence: null, start: AT_TWO },
-      false,
+  it('a length is the trip’s (every time); with a time it is both', () => {
+    assert.deepEqual(
+      markRequestOf(editPanelLength(panel(), 32), { occurrence: null }, false).there,
+      {
+        minutes: 32,
+        fromPlaceId: 'home',
+      },
     );
-    assert.deepEqual(request.there, { minutes: 32, fromPlaceId: 'home' });
+    const both = editPanelTime(editPanelLength(panel(), 32), 'start', '13:00', ZONE);
+    assert.deepEqual(markRequestOf(both, { occurrence: null }, false).there, {
+      startAt: minutesBefore(AT_TWO, 60).toISOString(),
+      minutes: 32,
+      fromPlaceId: 'home',
+    });
+    // An arrival typed as the item's own start is no time of his.
+    const asStarts = editPanelTime(editPanelLength(panel(), 32), 'end', '14:00', ZONE);
+    assert.deepEqual(markRequestOf(asStarts, { occurrence: null }, false).there, {
+      minutes: 32,
+      fromPlaceId: 'home',
+    });
   });
 
   it('back only, to its own place', () => {
     const request = markRequestOf(
       panel({ there: false, back: true, toPlaceId: null }),
-      { itemId: 'todo', occurrence: null, start: AT_TWO },
+      { occurrence: null },
       false,
     );
     assert.equal(request.direction, 'back');
@@ -175,33 +247,41 @@ describe('markRequestOf', () => {
 });
 
 describe('the preview', () => {
-  const at = (minutes: number, source: 'ors' | 'remembered' | 'manual' | 'estimate') => ({
-    start: minutesBefore(AT_TWO, minutes),
-    end: AT_TWO,
-    minutes,
-    source,
-  });
-
-  it('preview line names the source', () => {
+  it('preview line names the source: set by you, or not set yet', () => {
     const clock = { locale: 'en-GB', timeZone: ZONE };
+    const at = (minutes: number, source: 'set' | 'unset') => ({
+      start: minutesBefore(AT_TWO, minutes),
+      end: AT_TWO,
+      minutes,
+      source,
+    });
     assert.equal(
-      previewLine(t, at(32, 'ors'), clock),
-      'Leave ⁦13:28⁩ · arrive ⁦14:00⁩ · 32 min (OpenRouteService)',
+      previewLine(t, at(32, 'set'), clock),
+      'Leave ⁦13:28⁩ · arrive ⁦14:00⁩ · 32 min (set by you)',
     );
-    assert.match(previewLine(t, at(32, 'remembered'), clock), /\(your last trip\)$/);
-    assert.match(previewLine(t, at(32, 'estimate'), clock), /\(estimate\)$/);
-    assert.match(previewLine(t, at(32, 'manual'), clock), /\(your times\)$/);
+    assert.match(previewLine(t, at(30, 'unset'), clock), /30 min \(not set yet\)$/);
   });
 
-  it('is his times once he typed one, else the computed length and its source', () => {
-    const answer = { minutes: 40, source: 'ors' as const, startAt: null, endAt: null };
-    assert.deepEqual(panelPreview(previewFill(panel(), 40), answer), at(40, 'ors'));
-    const typed = editPanelSpan(previewFill(panel(), 40), 'minutes', 45);
-    assert.deepEqual(panelPreview(typed, answer), at(45, 'manual'));
+  it('is his trip once he typed any of it, else the trip’s own length or the placeholder', () => {
+    assert.deepEqual(panelPreview(previewFill(panel(), SET(40)), SET(40)), {
+      start: minutesBefore(AT_TWO, 40),
+      end: AT_TWO,
+      minutes: 40,
+      source: 'set',
+    });
+    assert.deepEqual(panelPreview(previewFill(panel(), UNSET), UNSET), {
+      start: minutesBefore(AT_TWO, 30),
+      end: AT_TWO,
+      minutes: 30,
+      source: 'unset',
+    });
+    const typed = editPanelLength(previewFill(panel(), UNSET), 45);
+    assert.equal(panelPreview(typed, UNSET)?.source, 'set');
+    // Not read yet: nothing to say.
     assert.equal(panelPreview(panel(), undefined), null);
   });
 
-  it('asks for a trip by mode and places only, so a new time costs no call', () => {
+  it('asks for a trip by mode and places only, so a new time asks nothing new', () => {
     assert.deepEqual(previewRequestOf(panel(), null), {
       mode: 'transit',
       fromPlaceId: 'home',
@@ -234,7 +314,7 @@ describe('where from and where to', () => {
           fromHome: true,
           toHome,
           minutes: 30,
-          source: 'estimate',
+          source: 'set',
           computedAt: endAt,
         },
       },
@@ -344,21 +424,21 @@ describe('which items take travel, and their mark', () => {
     assert.deepEqual(markTargetOf({ id: 'lab' }, AT_TWO), { itemId: 'lab', slot: AT_TWO });
   });
 
-  it('every occurrence keeping only the length is said when he typed times of his own', () => {
-    // Nothing typed, or a length that arrives as it starts: nothing is lost.
-    assert.equal(everyKeepsOnlyLength(previewFill(panel(), 40), AT_TWO), null);
-    assert.equal(everyKeepsOnlyLength(editPanelSpan(panel(), 'minutes', 35), AT_TWO), null);
-    // An arrival of 13:50 of his own: every occurrence keeps its 35 minutes only.
-    const typed = editPanelSpan(
-      editPanelSpan(panel(), 'minutes', 35),
-      'end',
-      minutesBefore(AT_TWO, 10),
-    );
-    assert.equal(everyKeepsOnlyLength(typed, AT_TWO), 35);
-    assert.deepEqual(
-      markRequestOf(typed, { itemId: 'lecture', occurrence: AT_TWO, start: AT_TWO }, true).there,
-      { minutes: 35, fromPlaceId: 'home' },
-    );
+  it('every occurrence dropping his times is said, with the length it keeps', () => {
+    // Nothing typed, or a length only: nothing is lost.
+    assert.equal(everyDropsTimes(previewFill(panel(), SET(40))), undefined);
+    assert.equal(everyDropsTimes(editPanelLength(panel(), 35)), undefined);
+    // An arrival of 13:50 of his own and 35 minutes: every occurrence keeps the 35 minutes only.
+    const typed = editPanelTime(editPanelLength(panel(), 35), 'end', '13:50', ZONE);
+    assert.deepEqual(everyDropsTimes(typed), { minutes: 35 });
+    assert.deepEqual(markRequestOf(typed, { occurrence: AT_TWO }, true).there, {
+      minutes: 35,
+      fromPlaceId: 'home',
+    });
+    // Times only: every occurrence keeps nothing of them.
+    assert.deepEqual(everyDropsTimes(editPanelTime(panel(), 'start', '13:00', ZONE)), {
+      minutes: null,
+    });
   });
 
   it('an answer with no trips yet is a calm note, not an error', () => {
@@ -372,68 +452,96 @@ describe('which items take travel, and their mark', () => {
   });
 });
 
-describe('a leg’s own times', () => {
+describe('a leg’s own sheet', () => {
   const LEG = {
     minutes: 40,
     mode: 'transit',
+    direction: 'there',
     fromPlaceId: 'home',
     toPlaceId: 'braude',
+    source: 'set',
+    lengthUnset: false,
+    edited: false,
   } as TravelLegProps;
   const start = minutesBefore(AT_TWO, 40);
-  const open = () => legPanelState({ startAt: start, endAt: AT_TWO }, LEG);
+  const open = (travel: TravelLegProps = LEG, trip: number | null = 40) =>
+    legPanelState({ startAt: start, endAt: AT_TWO }, travel, trip);
 
   it('opens on the leg’s own times and sends nothing until he types', () => {
     const state = open();
-    assert.deepEqual(state.span, { start, end: AT_TWO, minutes: 40 });
+    assert.deepEqual(spanOf(state), [start.toISOString(), AT_TWO.toISOString(), 40]);
+    assert.equal(state.minutes, 40);
     assert.equal(legEditOf(state), null);
   });
 
-  it('sends the two fields that stand, as the form shows them', () => {
-    // A new leave time: it and the arrival stand, the length follows.
-    const later = minutesBefore(AT_TWO, 30);
-    assert.deepEqual(legEditOf(editPanelSpan(open(), 'start', later)), {
-      startAt: later.toISOString(),
-      endAt: AT_TWO.toISOString(),
-    });
-    // A new length: it and the arrival stand, the leave time follows.
-    assert.deepEqual(legEditOf(editPanelSpan(open(), 'minutes', 25)), {
-      endAt: AT_TWO.toISOString(),
-      minutes: 25,
-    });
-    // A new arrival after a new length: those two stand.
-    const arrive = new Date(AT_TWO.getTime() + 10 * 60_000);
-    assert.deepEqual(
-      legEditOf(editPanelSpan(editPanelSpan(open(), 'minutes', 25), 'end', arrive)),
-      {
-        endAt: arrive.toISOString(),
-        minutes: 25,
-      },
-    );
+  it('a length is the trip’s, every time: it keeps the arrival (a trip there)', () => {
+    const shorter = editPanelLength(open(), 25);
+    assert.deepEqual(spanOf(shorter), [
+      minutesBefore(AT_TWO, 25).toISOString(),
+      AT_TWO.toISOString(),
+      25,
+    ]);
+    assert.deepEqual(legEditOf(shorter), { minutes: 25 });
   });
 
-  it('a length alone on a trip back keeps its departure, on a trip there its arrival', () => {
-    const there = editPanelSpan(open(), 'minutes', 25);
-    assert.deepEqual(legEditOf(there), { endAt: AT_TWO.toISOString(), minutes: 25 });
-    const back = legPanelState(
-      { startAt: start, endAt: AT_TWO },
-      {
-        ...LEG,
-        direction: 'back',
-      },
-    );
-    const shorter = editPanelSpan(back, 'minutes', 25);
+  it('a length on a trip back keeps its departure', () => {
+    const back = open({ ...LEG, direction: 'back' });
+    const shorter = editPanelLength(back, 25);
     // It still leaves at 13:20; it arrives sooner (13:45).
-    assert.deepEqual(legEditOf(shorter), {
-      startAt: start.toISOString(),
-      minutes: 25,
+    assert.deepEqual(spanOf(shorter), [
+      start.toISOString(),
+      minutesAfter(start, 25).toISOString(),
+      25,
+    ]);
+    assert.deepEqual(legEditOf(shorter), { minutes: 25 });
+  });
+
+  it('leave or arrive move this trip only, keeping its own length', () => {
+    const leave = editPanelTime(open(), 'start', '13:30', ZONE);
+    assert.deepEqual(spanOf(leave), [
+      minutesBefore(AT_TWO, 30).toISOString(),
+      minutesAfter(AT_TWO, 10).toISOString(),
+      40,
+    ]);
+    assert.deepEqual(legEditOf(leave), { startAt: minutesBefore(AT_TWO, 30).toISOString() });
+    const both = editPanelTime(leave, 'end', '14:05', ZONE);
+    assert.deepEqual(legEditOf(both), {
+      startAt: minutesBefore(AT_TWO, 30).toISOString(),
+      endAt: minutesAfter(AT_TWO, 5).toISOString(),
     });
+    // With a length too: the trip's length, and this trip's times.
+    assert.deepEqual(legEditOf(editPanelLength(both, 20)), {
+      startAt: minutesBefore(AT_TWO, 30).toISOString(),
+      endAt: minutesAfter(AT_TWO, 5).toISOString(),
+      minutes: 20,
+    });
+  });
+
+  it('a leg he timed by hand keeps its own times; the field shows the trip’s length', () => {
+    // His leg is 40 min; the trip takes 25 every time.
+    const own = open({ ...LEG, edited: true }, 25);
+    assert.equal(own.minutes, 25);
+    assert.deepEqual(spanOf(own), [start.toISOString(), AT_TWO.toISOString(), 40]);
+    assert.equal(legTripMinutes({ ...LEG, edited: true }, SET(25)), 25);
+    assert.equal(legTripMinutes({ ...LEG, edited: true }, UNSET), null);
+    // Still being read.
+    assert.equal(legTripMinutes({ ...LEG, edited: true }, undefined), undefined);
+    // A leg that follows its trip: its own length is the trip's; not set yet: none.
+    assert.equal(legTripMinutes(LEG, undefined), 40);
     assert.equal(
-      shorter.span.end?.toISOString(),
-      new Date(start.getTime() + 25 * 60_000).toISOString(),
+      legTripMinutes({ ...LEG, source: 'unset', lengthUnset: true, minutes: 30 }, undefined),
+      null,
     );
   });
 
-  it('sends nothing for a length that makes no trip', () => {
-    assert.equal(legEditOf(editPanelSpan(open(), 'minutes', null)), null);
+  it('sends nothing for what makes no trip', () => {
+    assert.equal(legEditOf(editPanelLength(open(), null)), null);
+    const backwards = editPanelTime(
+      editPanelTime(open(), 'start', '13:50', ZONE),
+      'end',
+      '13:40',
+      ZONE,
+    );
+    assert.equal(legEditOf(backwards), null);
   });
 });

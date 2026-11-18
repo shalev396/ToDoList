@@ -4,7 +4,13 @@ import { Link, useLocation } from 'react-router-dom';
 import { ArrowRight, CircleAlert, RotateCcw, Route, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
 import { errorMessage } from '@/api/errors';
-import { useEditLeg, useLegLinks, useResetLeg, useSkipLeg } from '@/api/queries/travel';
+import {
+  useEditLeg,
+  useLegLinks,
+  useResetLeg,
+  useSkipLeg,
+  useTravelPreview,
+} from '@/api/queries/travel';
 import { dateLocale, longDate, timeOfDay } from '@/components/items/format';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,28 +19,42 @@ import { useItemParam } from '@/features/items/useItemParam';
 import { dateInZone, timeInZone } from '@/features/items/zonedDate';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
+import { cn } from '@/lib/utils';
 import { DAY_SHEET_STATE } from './travelDay';
 import { dayLink } from '@/pages/settings/travel/travelForms';
 import type { ItemDetail } from '@api-types/items.ts';
 import { toDate } from '@api-types/recurrence/occurrences.ts';
-import { travelPropsOf, type LegEditRequest, type TravelLegProps } from '@api-types/travel.ts';
+import {
+  TRIP_MINUTES_MAX,
+  UNSET_TRIP_MINUTES,
+  travelPropsOf,
+  type LegEditRequest,
+  type TravelLegProps,
+} from '@api-types/travel.ts';
 import { AppLinks } from './AppLinks';
 import { ConflictMark, LegModeIcon } from './LegMark';
 import { legTitle } from './legView';
-import { editPanelSpan, editPanelTime, legEditOf, legPanelState } from './travelPanel';
-
-/** The longest leg the server takes: a day, in minutes. */
-const DAY_MINUTES = 24 * 60;
+import {
+  editPanelLength,
+  editPanelTime,
+  legEditOf,
+  legPanelState,
+  legTripMinutes,
+  lengthFromInput,
+  panelSpan,
+  type TravelPanelState,
+} from './travelPanel';
 
 /** "13:20" kept left to right inside a Hebrew line. */
 const ltr = (text: string): string => `⁦${text}⁩`;
 
 /**
- * A travel leg in the item sheet (travel-time design, "Conflicts", "Editing a leg"): when it is,
- * how he gets there (mode, from → to by name, where its length came from), the flags it carries
- * ("You can't make it", "the event moved; check this trip"), its times to change (any two of
- * leave, arrive and length), Skip and Reset, and the apps that open the trip. A leg is not a to-do:
- * there is no status and nothing to tick. Place names only: never an address or a coordinate.
+ * A travel leg in the item sheet (travel-time design, "Conflicts", "Editing a leg", as the owner's
+ * decision of 2026-11-18 amends it): when it is, how he gets there (mode, from → to by name, its
+ * length or "Set how long"), the flags it carries ("You can't make it", "the event moved; check
+ * this trip"), how long the trip takes (every time) and this trip's own leave and arrive, Skip and
+ * Reset, and the apps that open the trip. A leg is not a to-do: there is no status and nothing to
+ * tick. Place names only: never an address.
  */
 export function TravelLegSection({ item, canWrite }: { item: ItemDetail; canWrite: boolean }) {
   const travel = travelPropsOf(item.props);
@@ -67,6 +87,14 @@ function Leg({
   const skip = useSkipLeg(workspaceId);
   const reset = useResetLeg(workspaceId);
   const links = useLegLinks(workspaceId, item.id, canWrite);
+  // A leg he timed by hand isn't its trip's length: the trip's own is read (the preview's).
+  const trip = useTravelPreview(
+    workspaceId,
+    canWrite && travel.edited
+      ? { mode: travel.mode, fromPlaceId: travel.fromPlaceId, toPlaceId: travel.toPlaceId }
+      : null,
+  );
+  const tripMinutes = legTripMinutes(travel, trip.data);
   const [error, setError] = useState<string | null>(null);
   const busy = edit.isPending || skip.isPending || reset.isPending;
   const canReset = travel.edited || travel.anchorMoved;
@@ -101,6 +129,7 @@ function Leg({
       data-travel-leg=""
       data-leg-mode={travel.mode}
       data-leg-source={travel.source}
+      data-length-unset={String(travel.lengthUnset)}
       data-conflict={String(travel.conflict)}
       data-anchor-moved={String(travel.anchorMoved)}
       className="flex flex-col gap-4"
@@ -162,10 +191,16 @@ function Leg({
         </dd>
         <dt className="text-muted-foreground">{t('travel.leg.sheet.lengthLabel')}</dt>
         <dd className="m-0" data-leg-length="">
-          {t('travel.leg.sheet.lengthSource', {
-            minutes: Math.round(travel.minutes),
-            source: t(`travel.leg.sources.${travel.source}`),
-          })}
+          {travel.lengthUnset ? (
+            <span className="font-medium text-primary">
+              {t('travel.leg.sheet.lengthUnset', { minutes: Math.round(travel.minutes) })}
+            </span>
+          ) : (
+            t('travel.leg.sheet.lengthSource', {
+              minutes: Math.round(travel.minutes),
+              source: t(`travel.leg.sources.${travel.source}`),
+            })
+          )}
         </dd>
       </dl>
 
@@ -176,12 +211,16 @@ function Leg({
             key={`${item.updatedAt.toString()}|${String(item.startAt)}|${String(item.endAt)}`}
             item={item}
             travel={travel}
+            title={title}
+            tripMinutes={tripMinutes}
             timeZone={timeZone}
             busy={busy}
             onSave={(body) =>
               run(
                 () => edit.mutateAsync({ legId: item.id, body }),
-                t('travel.leg.sheet.saved'),
+                body.minutes === undefined
+                  ? t('travel.leg.sheet.saved')
+                  : t('travel.leg.sheet.lengthSaved', { title, minutes: body.minutes }),
                 'travel.leg.sheet.saveFailed',
               )
             }
@@ -275,10 +314,16 @@ function removeItemParams(search: string): string {
   return params.toString();
 }
 
-/** Leave, Arrive and Length: change any two, the third follows; Save sends what he typed. */
+/**
+ * The trip's two changes, each said for what it is: how long this trip takes, every time (the
+ * trip's length: every leg of it follows, but legs he timed himself), and this trip only (leave
+ * and arrive: this leg, kept until Reset). Save sends what he typed.
+ */
 function LegTimes({
   item,
   travel,
+  title,
+  tripMinutes,
   timeZone,
   busy,
   saving,
@@ -286,6 +331,10 @@ function LegTimes({
 }: {
   item: ItemDetail;
   travel: TravelLegProps;
+  /** The trip's title in the UI language ("Bus to Braude"). */
+  title: string;
+  /** How long the trip takes, every time; null while it has none; undefined while it is read. */
+  tripMinutes: number | null | undefined;
   timeZone: string;
   busy: boolean;
   saving: boolean;
@@ -293,17 +342,26 @@ function LegTimes({
 }) {
   const { t } = useTranslation();
   const ids = useId();
-  const [state, setState] = useState(() => legPanelState(item, travel));
-  const anchorStart = new Date(travel.anchorStartNow ?? travel.anchorStart);
-  const shown = state.span;
-  const time = (date: Date | null) => (date === null ? '' : timeInZone(date, timeZone));
-  const body = legEditOf(state);
+  const [state, setState] = useState(() => legPanelState(item, travel, tripMinutes ?? null));
+  // The trip's length fills the field until he types one (it may be read after the form opens).
+  const withTrip = (current: TravelPanelState): TravelPanelState =>
+    current.lengthTyped ? current : { ...current, minutes: tripMinutes ?? null };
+  const shown = withTrip(state);
+  const span = panelSpan(shown);
+  const time = (date: Date | null | undefined) =>
+    date === null || date === undefined ? '' : timeInZone(date, timeZone);
+  const body = legEditOf(shown);
   const length = shown.minutes === null ? '' : String(Math.round(shown.minutes));
+  // Not set yet (and not typed): the field asks for it.
+  const unset = !state.lengthTyped && tripMinutes === null;
+  const edit = (update: (current: TravelPanelState) => TravelPanelState) => {
+    setState((current) => update(withTrip(current)));
+  };
 
   return (
     <form
       data-leg-times=""
-      className="flex flex-col gap-2"
+      className="flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
         if (body !== null) {
@@ -311,69 +369,80 @@ function LegTimes({
         }
       }}
     >
-      <p className="text-sm font-medium">{t('travel.leg.sheet.times')}</p>
-      <div className="grid grid-cols-3 items-end gap-2 max-sm:grid-cols-2">
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor={`${ids}-leave`} className="text-[13px] font-normal">
-            {t('travel.add.leave')}
-          </Label>
-          <Input
-            id={`${ids}-leave`}
-            type="time"
-            dir="ltr"
-            value={time(shown.start)}
-            onChange={(event) => {
-              const value = event.target.value;
-              setState((previous) =>
-                editPanelTime(previous, 'start', value, anchorStart, timeZone),
-              );
-            }}
-          />
-        </div>
-        <div className="flex min-w-0 flex-col gap-1">
-          <Label htmlFor={`${ids}-arrive`} className="text-[13px] font-normal">
-            {t('travel.add.arrive')}
-          </Label>
-          <Input
-            id={`${ids}-arrive`}
-            type="time"
-            dir="ltr"
-            value={time(shown.end)}
-            onChange={(event) => {
-              const value = event.target.value;
-              setState((previous) => editPanelTime(previous, 'end', value, anchorStart, timeZone));
-            }}
-          />
-        </div>
-        <div className="flex min-w-0 flex-col gap-1 max-sm:col-span-2">
-          <Label htmlFor={`${ids}-length`} className="text-[13px] font-normal">
-            {t('travel.add.length')}
-          </Label>
+      <div className="flex flex-col gap-1" data-leg-length-field="">
+        <Label htmlFor={`${ids}-length`} className="text-sm font-medium">
+          {t('travel.leg.sheet.length')}
+        </Label>
+        <div className="flex items-center gap-2">
           <Input
             id={`${ids}-length`}
             type="number"
             inputMode="numeric"
             min={1}
-            max={DAY_MINUTES}
-            className="tabular-nums"
+            max={TRIP_MINUTES_MAX}
+            className={cn('w-36 tabular-nums', unset && 'border-dashed border-primary/60')}
+            placeholder={t('travel.leg.sheet.lengthPlaceholder')}
+            aria-describedby={`${ids}-length-hint`}
             value={length}
             onChange={(event) => {
-              const typed = event.target.value;
-              const minutes = /^\d{1,4}$/.test(typed) ? Number(typed) : null;
-              setState((previous) =>
-                editPanelSpan(
-                  previous,
-                  'minutes',
-                  minutes !== null && minutes > 0 && minutes <= DAY_MINUTES ? minutes : null,
-                ),
-              );
+              const minutes = lengthFromInput(event.target.value);
+              edit((current) => editPanelLength(current, minutes));
             }}
           />
+          <span aria-hidden="true" className="text-sm text-muted-foreground">
+            {t('travel.settings.minutes')}
+          </span>
         </div>
+        <p
+          id={`${ids}-length-hint`}
+          className={cn('text-[13px]', unset ? 'text-primary' : 'text-muted-foreground')}
+          data-leg-length-hint={unset ? 'unset' : 'set'}
+        >
+          {unset
+            ? t('travel.leg.sheet.lengthUnsetHint', { minutes: UNSET_TRIP_MINUTES })
+            : t('travel.leg.sheet.lengthHint', { title })}
+        </p>
       </div>
-      <p className="text-[13px] text-muted-foreground">
-        {travel.edited ? t('travel.leg.sheet.edited') : t('travel.leg.sheet.timesHint')}
-      </p>
+
+      <fieldset className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0" data-leg-this-trip="">
+        <legend className="mb-1 text-sm font-medium">{t('travel.leg.sheet.thisTrip')}</legend>
+        <div className="grid grid-cols-2 items-end gap-2">
+          <div className="flex min-w-0 flex-col gap-1">
+            <Label htmlFor={`${ids}-leave`} className="text-[13px] font-normal">
+              {t('travel.add.leave')}
+            </Label>
+            <Input
+              id={`${ids}-leave`}
+              type="time"
+              dir="ltr"
+              value={time(state.start ?? span?.start)}
+              onChange={(event) => {
+                const value = event.target.value;
+                edit((current) => editPanelTime(current, 'start', value, timeZone));
+              }}
+            />
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <Label htmlFor={`${ids}-arrive`} className="text-[13px] font-normal">
+              {t('travel.add.arrive')}
+            </Label>
+            <Input
+              id={`${ids}-arrive`}
+              type="time"
+              dir="ltr"
+              value={time(state.end ?? span?.end)}
+              onChange={(event) => {
+                const value = event.target.value;
+                edit((current) => editPanelTime(current, 'end', value, timeZone));
+              }}
+            />
+          </div>
+        </div>
+        <p className="text-[13px] text-muted-foreground">
+          {travel.edited ? t('travel.leg.sheet.edited') : t('travel.leg.sheet.thisTripHint')}
+        </p>
+      </fieldset>
+
       <Button
         type="submit"
         size="sm"

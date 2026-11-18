@@ -13,8 +13,9 @@
  * Marking an item (the spec's "Where travel comes from", 1 and 2) is a rule too: every occurrence
  * of a repeating item is a series rule, one occurrence (or an item that doesn't repeat) an item
  * rule. Marking the same scope again changes its rule, never adds a second one. A mark regenerates
- * the member's legs at once and applies the times he typed to them as hand edits; an unmark
- * removes the rules and regenerates (their legs go, as no longer matching).
+ * the member's legs at once; a length he typed becomes the length of the trips its legs take, and
+ * times he typed move its legs as hand edits. An unmark removes the rules and regenerates (their
+ * legs go, as no longer matching).
  */
 import { parseQuery } from '../../builder/compile.js';
 import { QueryValidationError } from '../../builder/errors.js';
@@ -31,6 +32,7 @@ import {
   RULE_DIRECTIONS,
   TRAVEL_HORIZON_DAYS,
   TRAVEL_MODES,
+  TRIP_MINUTES_MAX,
   type RuleDirection,
   type SpanInput,
   type TravelDirection,
@@ -45,6 +47,7 @@ import type { Auditable, Owned, Viewable } from '../base/contracts.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { AuditLog } from '../AuditLog.js';
 import { CalendarEvent, isRecurring, Item, TravelLeg, type LegTimesChange } from '../item/index.js';
+import { DayPlanner, type TripKey } from './DayPlanner.js';
 import { Place } from './Place.js';
 import { TravelPlanner } from './TravelPlanner.js';
 import { TravelProfile } from './TravelProfile.js';
@@ -75,7 +78,10 @@ export interface MarkItemInput {
   direction: RuleDirection;
   /** One of the caller's places; null or absent: the item's own place. */
   placeId?: string | null | undefined;
-  /** The leg that gets him there (from Home, or from the place before), as he typed it. */
+  /**
+   * The leg that gets him there (from Home, or from the place before), as he typed it: `minutes`
+   * is how long its trip takes, every time; times move this leg only.
+   */
   there?: SpanChange | undefined;
   /** The leg after it (Home, or back into the area around it), as he typed it. */
   back?: SpanChange | undefined;
@@ -98,8 +104,6 @@ interface MarkSpan {
 }
 
 const ID_MAX = 200;
-/** The longest leg: a day. */
-const DAY_MINUTES = 24 * 60;
 const NOT_ITS_OCCURRENCE = 'occurrence: not an occurrence of this item';
 
 /** An item's rule lines: a repeating item's, else none. */
@@ -329,10 +333,11 @@ export class TravelRule
    *
    * Then the member's legs are made again, and `there` (the leg that gets him to the item, from
    * Home or from the place before) and `back` (the leg after it: Home, or back into the area
-   * around it) are applied to the item's legs as hand edits: his times stand until he resets them,
-   * and the length is remembered for the trip. With `every`, a span is a length only, applied to
-   * each occurrence's leg. A leg already under way is left as it is. The answer: the rule, and the
-   * item's live legs in the horizon, by start.
+   * around it) are applied to the item's legs: `minutes` becomes how long the trip each of those
+   * legs takes, every time (TravelProfile#setTripLength: every leg of that trip follows, but the
+   * ones he timed by hand), and times move the leg itself as a hand edit (his times stand until he
+   * resets them). With `every`, a span is a length only. A leg already under way is left as it is.
+   * The answer: the rule, and the item's live legs in the horizon, by start.
    *
    * A moved occurrence of a mirrored series, marked by its own row, is its series' occurrence at its
    * original start (with `every`, its series), as the planner keys its legs.
@@ -379,14 +384,32 @@ export class TravelRule
     await TravelPlanner.afterOwnChange(caller, 'mark');
     const now = new Date();
     if (spans.length === 0) return { rule, legs: await TravelRule.#legsOf(caller, scope, now) };
+    // A length is the trip's, set once per trip however many of its legs the mark has.
+    const lengths = new Map<TripKey, number>();
+    let lengthSet = false;
     for (const { directions, change } of spans) {
       for (const leg of await TravelRule.#legsOf(caller, scope, now)) {
-        const direction = leg.travel?.direction;
-        if (direction === undefined || !directions.includes(direction)) continue;
+        const travel = leg.travel;
+        if (travel === null || !directions.includes(travel.direction)) continue;
         // Under way (or done): history, as a regeneration leaves it.
         if (leg.startAt !== null && leg.startAt < now) continue;
-        await leg.editTimes(caller, change);
+        if (change.startAt !== undefined || change.endAt !== undefined) {
+          // His times for this leg (and its trip's length with them, when he typed one).
+          await leg.editTimes(caller, change);
+          lengthSet ||= change.minutes !== undefined;
+        } else if (change.minutes !== undefined) {
+          lengths.set(
+            DayPlanner.tripKey(travel.fromPlaceId, travel.toPlaceId, travel.mode),
+            change.minutes,
+          );
+        }
       }
+    }
+    if (lengths.size > 0 || lengthSet) {
+      const profile = await TravelProfile.of(caller);
+      for (const [trip, minutes] of lengths) await profile.setTripLength(caller, trip, minutes);
+      // Every leg of those trips takes the length now.
+      await TravelPlanner.afterOwnChange(caller, 'length');
     }
     return { rule, legs: await TravelRule.#legsOf(caller, scope, now) };
   }
@@ -495,7 +518,8 @@ export class TravelRule
   /**
    * The spans typed, checked before anything is stored: each a change of the legs it names
    * (`there`: the leg there or from the place before; `back`: the leg after it, Home or back into
-   * the area around it). A span that names no time changes nothing.
+   * the area around it): a length (its trip's), times (that leg's), or both. A span that names
+   * neither changes nothing.
    */
   static #spans(input: MarkItemInput, placeIds: ReadonlySet<string>): MarkSpan[] {
     const spans: MarkSpan[] = [];
@@ -513,9 +537,6 @@ export class TravelRule
       };
       const given = Object.values(change).filter((value) => value !== undefined).length;
       if (given === 0) continue;
-      if (given === 3) {
-        throw new ValidationError(`${side}: give one or two of startAt, endAt and minutes`);
-      }
       if (input.every && (change.startAt !== undefined || change.endAt !== undefined)) {
         throw new ValidationError(`${side}: every occurrence takes a length (minutes) only`);
       }
@@ -523,7 +544,7 @@ export class TravelRule
       if (startAt !== undefined && endAt !== undefined && endAt <= startAt) {
         throw new ValidationError(`${side}.endAt: travel ends after it starts`);
       }
-      if (minutes !== undefined && (!(minutes > 0) || minutes > DAY_MINUTES)) {
+      if (minutes !== undefined && (!(minutes > 0) || minutes > TRIP_MINUTES_MAX)) {
         throw new ValidationError(`${side}.minutes: more than 0 and at most a day`);
       }
       spans.push({ directions: side === 'there' ? ['there', 'between'] : ['back'], change });

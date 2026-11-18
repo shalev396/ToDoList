@@ -36,14 +36,16 @@ export const travelListPlaces = defineTool({
 export const travelSetPlace = defineTool({
   name: 'travel_set_place',
   title: 'Save or change a travel place',
-  description: `Saves a place the member travels to or from (a new one needs a name, and lat and lon or an address that is looked up; a "lat, lon" address needs no lookup), or changes one (give its id; anything left out stays). aliases are other names rules and marks may use ("ORT Braude", "בראודה"). home: true makes it the member’s one Home (the old one becomes a plain place). The member’s legs are made again before it answers. Up to 30 places. A lookup that finds nothing is an error (place_not_found); one that can’t reach a geocoder is too (provider_unreachable): nothing is stored. ${PRIVACY_NOTE}`,
+  description: `Saves a place the member travels to or from (a new one needs a name), or changes one (give its id; anything left out stays). address is optional free text, never looked up: it only opens Waze or Google Maps on the member’s own device (a typed "lat, lon" is just text). aliases are other names rules, marks and event locations may use ("ORT Braude", "בראודה"). home: true makes it the member’s one Home (the old one becomes a plain place). The member’s legs are made again before it answers. Up to 30 places. ${PRIVACY_NOTE}`,
   toolset: 'items',
   inputSchema: z.strictObject({
     id: PlaceId.optional().describe('Change this place; left out: a new place'),
     name: z.string().max(200).optional(),
-    address: z.string().max(1000).optional().describe('Looked up unless lat and lon are given'),
-    lat: z.number().min(-90).max(90).optional(),
-    lon: z.number().min(-180).max(180).optional(),
+    address: z
+      .string()
+      .max(1000)
+      .optional()
+      .describe('Free text for map links only, never looked up; empty clears it'),
     aliases: z.array(z.string().max(200)).max(20).optional(),
     home: z.boolean().optional(),
   }),
@@ -52,23 +54,19 @@ export const travelSetPlace = defineTool({
     readOnlyHint: false,
     destructiveHint: false,
     idempotentHint: false,
-    openWorldHint: true,
+    openWorldHint: false,
   },
   scopes: ['items:write'],
   minRole: 'editor',
   async handler(ctx, input) {
-    const { id, name, lat, lon, ...rest } = input;
-    if ((lat === undefined) !== (lon === undefined)) {
-      throw new ValidationError('lat: give lat and lon together');
-    }
-    const coords = lat === undefined || lon === undefined ? undefined : { lat, lon };
+    const { id, name, ...rest } = input;
     const setup = TravelSetup.of(itemCaller(ctx));
     let place: Place;
     if (id !== undefined) {
-      place = await setup.changePlace(id, { ...rest, name, coords });
+      place = await setup.changePlace(id, { ...rest, name });
     } else {
       if (name === undefined) throw new ValidationError('name: Required for a new place');
-      place = await setup.addPlace({ ...rest, name, coords });
+      place = await setup.addPlace({ ...rest, name });
     }
     return { output: { place: place.toAgentView() }, target: { type: 'place', id: place.id } };
   },

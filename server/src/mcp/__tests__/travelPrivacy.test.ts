@@ -1,6 +1,6 @@
 /**
  * Travel privacy over MCP (the travel spec, "Privacy and safety"): an agent sees a place by its
- * name only, never an address or a coordinate, in any answer; and a key is its member's alone:
+ * name only, never an address (there are no coordinates), in any answer; and a key is its member's alone:
  * another member's key never sees their legs, on any path that lists time (get_calendar,
  * list_today's scheduled, search_items by kind).
  */
@@ -24,7 +24,7 @@ let keyA: string;
 let keyB: string;
 
 const ADDRESS = 'Snunit St 51, Karmiel';
-const SECRETS = [ADDRESS, '32.9141', '35.2922'];
+const SECRETS = [ADDRESS, encodeURIComponent(ADDRESS)];
 
 function at(days: number, hour: number): Date {
   const day = new Date(Date.now() + days * 86_400_000);
@@ -52,7 +52,7 @@ after(async () => {
 });
 
 describe('travel privacy over MCP', () => {
-  it('no tool output carries an address or coordinates', async () => {
+  it('no tool output carries an address', async () => {
     const client = await h.connect(keyA);
     const outputs: string[] = [];
     const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -62,15 +62,9 @@ describe('travel privacy over MCP', () => {
       return structured(result);
     };
 
-    // The address and the coordinates go in; neither comes back.
-    await call('travel_set_place', {
-      name: 'Home',
-      address: ADDRESS,
-      lat: 32.9141,
-      lon: 35.2922,
-      home: true,
-    });
-    await call('travel_set_place', { name: 'Campus', lat: 32.7767, lon: 35.0231 });
+    // The address goes in; it never comes back.
+    await call('travel_set_place', { name: 'Home', address: ADDRESS, home: true });
+    await call('travel_set_place', { name: 'Campus' });
     await call('travel_list_places', {});
     const todo = (await call('create_todo', {
       title: 'Lecture',
@@ -85,7 +79,7 @@ describe('travel privacy over MCP', () => {
     });
     await call('travel_list_rules', {});
     await call('travel_get_settings', {});
-    await call('travel_set_settings', { buffers: { transit: 7 } });
+    await call('travel_set_settings', { goHome: { enabled: true } });
     const marked = (await call('travel_mark_item', {
       itemId: todo.item.id,
       mode: 'transit',
@@ -194,7 +188,7 @@ describe('travel privacy over MCP', () => {
 
     // A coffee a short walk from A's Home, two hours from now: its legs are today unless today is
     // nearly over in the workspace's zone.
-    await call(a, 'travel_set_place', { name: 'Cafe', lat: 32.915, lon: 35.293 });
+    await call(a, 'travel_set_place', { name: 'Cafe' });
     const start = new Date(Date.now() + 2 * 3_600_000);
     const end = new Date(start.getTime() + 30 * 60_000);
     const coffee = (await call(a, 'create_todo', {

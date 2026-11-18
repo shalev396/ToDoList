@@ -354,7 +354,7 @@ export const MANIFEST: readonly Entry[] = [
   {
     method: 'POST',
     path: `${W}/travel/places`,
-    body: () => ({ name: 'Technion', coords: { lat: 32.7767, lon: 35.0231 } }),
+    body: () => ({ name: 'Technion', address: 'Technion City, Haifa' }),
     expect: [2],
   },
   {
@@ -386,7 +386,7 @@ export const MANIFEST: readonly Entry[] = [
   {
     method: 'PATCH',
     path: `${W}/travel/settings`,
-    body: () => ({ buffers: { drive: 15 } }),
+    body: () => ({ goHome: { enabled: true } }),
     expect: [2],
   },
   {

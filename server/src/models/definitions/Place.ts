@@ -1,8 +1,9 @@
 /**
  * A member's place for travel (docs/superpowers/specs/2026-11-17-travel-time-design.md, "Concepts"):
- * a name, aliases, an address and its coordinates. Private to its member: every read and write
- * names the owner as well as the workspace. At most one place per member is Home (a unique partial
- * index holds it).
+ * a name, aliases, and an address if he typed one (free text, only for opening a map app: nothing
+ * is looked up, and no coordinate is kept). Private to its member: every read and write names the
+ * owner as well as the workspace. At most one place per member is Home (a unique partial index
+ * holds it).
  */
 export interface PlaceData {
   id: string;
@@ -10,10 +11,8 @@ export interface PlaceData {
   ownerUserId: string;
   name: string;
   aliases: string[];
-  /** As typed; null when the place was given by its coordinates only. */
+  /** As typed; null when he gave none. */
   address: string | null;
-  lat: number;
-  lon: number;
   home: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -24,8 +23,6 @@ export interface NewPlaceRecord {
   name: string;
   aliases: string[];
   address: string | null;
-  lat: number;
-  lon: number;
   home: boolean;
 }
 
@@ -33,8 +30,6 @@ export interface PlacePatch {
   name?: string;
   aliases?: string[];
   address?: string | null;
-  lat?: number;
-  lon?: number;
   home?: boolean;
 }
 

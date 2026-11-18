@@ -1,16 +1,15 @@
 /**
- * A member's place (docs/superpowers/specs/2026-11-17-travel-time-design.md, "Concepts", 1): a
- * name, aliases ("ORT Braude", "בראודה"), an address and its coordinates. Places are their
- * member's only: every read and write is scoped to the caller as owner (another member's place
- * is a 404, as one that never existed), only the owner's REST answers carry the address
- * (`toView`), and an agent gets names only (`toAgentView`). Coordinates are never in a view.
- * Places are not audited (plan Ruling 15), so neither is ever in an audit row.
+ * A member's place (docs/superpowers/specs/2026-11-17-travel-time-design.md, "Concepts", 1, as the
+ * owner's decision of 2026-11-18 amends it): a name, aliases ("ORT Braude", "בראודה"), and an
+ * address if he wants one. The address is free text, never looked up: it is used only to open a
+ * map app on his device (TravelLeg#links); a typed "lat, lon" is text like any other. Places are
+ * their member's only: every read and write is scoped to the caller as owner (another member's
+ * place is a 404, as one that never existed), only the owner's REST answers carry the address
+ * (`toView`), and an agent gets names only (`toAgentView`). Places are not audited (plan Ruling
+ * 15), so an address is never in an audit row, and never logged.
  *
  * - At most one place is Home, the start and end of every day: making one Home makes the old one a
  *   plain place (and a unique index holds it).
- * - Its coordinates are given, typed as "lat, lon" in the address, or looked up by the free
- *   geocoders (FreeGeocoder); nothing found is 400 `place_not_found`, never a 500. Geocoders that
- *   can't be reached are a 503 `provider_unreachable` (nothing was stored; try again later).
  * - A member keeps at most PLAN_LIMITS.placesPerMember places (409 `travel_limit`).
  * - Changes are for editors and owners (Ruling 16).
  */
@@ -24,17 +23,13 @@ import type { PlaceAgentView, PlaceView } from '../../types/travel.js';
 import type { Caller } from '../base/Caller.js';
 import type { Owned, Viewable } from '../base/contracts.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
-import type { LatLon } from './geo.js';
-import { FreeGeocoder } from './geocoding/FreeGeocoder.js';
-import { GeocodingUnavailableError, parseCoordinates } from './geocoding/Geocoder.js';
 import { TravelData } from './TravelData.js';
 
-/** A new place as callers give it: an address, coordinates, or both. */
+/** A new place as callers give it: a name, and an address if he wants one. */
 export interface NewPlace {
   name: string;
-  /** Looked up when no coordinates are given ("lat, lon" typed here needs no lookup). */
+  /** Free text, for map links only (never looked up). */
   address?: string | undefined;
-  coords?: LatLon | undefined;
   aliases?: string[] | undefined;
   home?: boolean | undefined;
 }
@@ -84,32 +79,6 @@ function addressOf(address: string): string | null {
     throw new ValidationError(`address: at most ${String(ADDRESS_MAX)} characters`);
   }
   return trimmed === '' ? null : trimmed;
-}
-
-function checkedCoords(coords: LatLon): LatLon {
-  const { lat, lon } = coords;
-  if (!Number.isFinite(lat) || Math.abs(lat) > 90 || !Number.isFinite(lon) || Math.abs(lon) > 180) {
-    throw new ValidationError('coords: lat is −90 to 90 and lon −180 to 180');
-  }
-  return { lat, lon };
-}
-
-/**
- * Where the address is: typed coordinates, else the free geocoders. 400 when nothing is found; 503
- * when no geocoder could be reached (never taken for "not found").
- */
-async function located(address: string): Promise<LatLon> {
-  let point: LatLon | null;
-  try {
-    point = parseCoordinates(address) ?? (await new FreeGeocoder().geocode(address));
-  } catch (error) {
-    if (!(error instanceof GeocodingUnavailableError)) throw error;
-    throw new AppError(503, 'The address could not be looked up: try again later', {
-      code: 'provider_unreachable',
-    });
-  }
-  if (point === null) throw new AppError(400, 'address: not found', { code: 'place_not_found' });
-  return point;
 }
 
 export class Place extends WorkspaceEntity<PlaceData> implements Owned, Viewable<PlaceView> {
@@ -182,20 +151,7 @@ export class Place extends WorkspaceEntity<PlaceData> implements Owned, Viewable
     return this.data.home;
   }
 
-  /** Its coordinates: for routing and matching only, never in a view. */
-  get lat(): number {
-    return this.data.lat;
-  }
-
-  get lon(): number {
-    return this.data.lon;
-  }
-
-  get coords(): LatLon {
-    return { lat: this.data.lat, lon: this.data.lon };
-  }
-
-  /** As its member's own REST answers show it: with its address, never its coordinates. */
+  /** As its member's own REST answers show it: with its address. */
   toView(): PlaceView {
     return {
       id: this.id,
@@ -219,19 +175,14 @@ export class Place extends WorkspaceEntity<PlaceData> implements Owned, Viewable
   // ─── Changes ──────────────────────────────────────────────────────────────
 
   /**
-   * Editors: a new place of the caller's. Coordinates given are used as they are; else the address
-   * is located (typed "lat, lon" first, then the free geocoders): nothing found is 400
-   * `place_not_found`. A new Home makes the old one a plain place. 409 `travel_limit` at the cap.
+   * Editors: a new place of the caller's, by name (an address is optional, and never looked up).
+   * A new Home makes the old one a plain place. 409 `travel_limit` at the cap.
    */
   static async create(caller: Caller, input: NewPlace): Promise<Place> {
     caller.require('editor');
     const name = label(input.name, 'name');
     const aliases = aliasesOf(input.aliases ?? [], name);
     const address = input.address === undefined ? null : addressOf(input.address);
-    let coords: LatLon;
-    if (input.coords !== undefined) coords = checkedCoords(input.coords);
-    else if (address !== null) coords = await located(address);
-    else throw new ValidationError('address: give an address or coordinates');
     const places = await getPlaceRepository();
     if ((await places.countOwn(caller.workspaceId, caller.userId)) >= PLAN_LIMITS.placesPerMember) {
       throw new AppError(409, 'You have the most places allowed: remove one first', {
@@ -246,17 +197,12 @@ export class Place extends WorkspaceEntity<PlaceData> implements Owned, Viewable
         name,
         aliases,
         address,
-        lat: coords.lat,
-        lon: coords.lon,
         home,
       });
     });
   }
 
-  /**
-   * Editors, on their own place: a new name, aliases, address (located again unless coordinates
-   * come with it; empty clears it and keeps the coordinates), coordinates or Home.
-   */
+  /** Editors, on their own place: a new name, aliases, address (empty clears it) or Home. */
   async update(caller: Caller, patch: PlaceChange): Promise<Place> {
     this.#authorize(caller);
     const change: PlacePatch = {};
@@ -266,16 +212,6 @@ export class Place extends WorkspaceEntity<PlaceData> implements Owned, Viewable
       change.aliases = aliasesOf(patch.aliases ?? this.aliases, name);
     }
     if (patch.address !== undefined) change.address = addressOf(patch.address);
-    const coords =
-      patch.coords !== undefined
-        ? checkedCoords(patch.coords)
-        : change.address === undefined || change.address === null
-          ? null
-          : await located(change.address);
-    if (coords !== null) {
-      change.lat = coords.lat;
-      change.lon = coords.lon;
-    }
     if (patch.home !== undefined) change.home = patch.home;
     const places = await getPlaceRepository();
     return Place.#asHome(change.home === true, async () => {
@@ -288,8 +224,8 @@ export class Place extends WorkspaceEntity<PlaceData> implements Owned, Viewable
 
   /**
    * Editors, on their own place: it goes, and so does everything of theirs that points at it (a
-   * rule's place, a pin, the lengths remembered for trips through it). Removing Home leaves no
-   * Home: the next regeneration makes no legs until there is one.
+   * rule's place, a pin, the lengths set for trips from or to it). Removing Home leaves no Home:
+   * the next regeneration makes no legs until there is one.
    */
   async remove(caller: Caller): Promise<void> {
     this.#authorize(caller);

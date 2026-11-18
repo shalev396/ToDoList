@@ -87,9 +87,6 @@ const SEAMS: Record<string, () => void> = {
   setVaultLoaderForTests: () => {
     setVaultLoaderForTests(null);
   },
-  setTravelTransportForTests: () => {
-    switches.setTravelTransportForTests(null);
-  },
   setMetadataFetchForTests: () => {
     McpClient.setMetadataFetchForTests(null);
   },

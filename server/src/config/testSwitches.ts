@@ -6,7 +6,6 @@
  *
  * No imports of its own, so a test can import it statically before the environment is set up.
  */
-import type { Transport } from '../sync/http.js';
 import type { SyncMode } from '../types/env.d.ts';
 
 /** Throws unless this process runs under node:test: the guard of every *ForTests setter. */
@@ -54,17 +53,4 @@ export function setLoopbackAllowedForTests(allowed: boolean): void {
 /** False on every server; true only while a test allows loopback hosts. */
 export function loopbackAllowedForTests(): boolean {
   return loopbackAllowed;
-}
-
-let travelTransport: Transport | null = null;
-
-/** Tests only: the travel providers (OpenRouteService, Nominatim) answer through this transport. */
-export function setTravelTransportForTests(transport: Transport | null): void {
-  assertUnderTest('setTravelTransportForTests');
-  travelTransport = transport;
-}
-
-/** The transport a test set, or null (always null on a deployed stage). */
-export function travelTransportForTests(): Transport | null {
-  return travelTransport;
 }

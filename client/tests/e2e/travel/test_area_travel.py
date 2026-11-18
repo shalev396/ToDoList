@@ -3,8 +3,8 @@ Travel to a painted area (time-blocks design, "Areas": "an area can carry travel
 "The day plan", 7; the owner's ruling of 2026-11-18): the area form's "Add travel time", "Add
 travel" in an area's sheet, and the legs of a day with a block inside the area at another place.
 
-Home, Braude and the gym are seeded by coordinates through the API (tests/helpers/travel.py), so no
-test waits on a geocoder.
+Home, Braude and the gym are seeded by name through the API (tests/helpers/travel.py): nothing is
+looked up.
 
 DEFERRED until the branch is merged to dev: the dev database's Items validator predates kinds
 `block` and `travel`, so neither an area nor a leg can be stored there. What runs now is
@@ -36,9 +36,6 @@ from tests.helpers.travel import create_place, get_days, list_rules, mark_item
 from tests.helpers.workspaces import open_as
 from tests.viewports import DESKTOP_VIEWPORT
 
-HOME = (32.7940, 34.9896)
-BRAUDE = (32.9141, 35.2922)
-GYM = (32.8012, 35.0123)
 DEFERRED = (
     "DEFERRED until merge to dev: the dev Items validator rejects kinds block and travel, so no area "
     "or leg is stored"
@@ -93,9 +90,9 @@ def _seed(api_base_url: str, fresh_owner, page: Page, base_url: str) -> tuple:
     """Home, Braude and the gym by coordinates, the default dashboard, the page open on it.
     Returns (user, workspace, home, braude, gym)."""
     user, workspace = fresh_owner
-    home = create_place(api_base_url, user, workspace["id"], "Home", coords=HOME, home=True)
-    braude = create_place(api_base_url, user, workspace["id"], "Braude", coords=BRAUDE)
-    gym = create_place(api_base_url, user, workspace["id"], "Gym", coords=GYM)
+    home = create_place(api_base_url, user, workspace["id"], "Home", home=True)
+    braude = create_place(api_base_url, user, workspace["id"], "Braude")
+    gym = create_place(api_base_url, user, workspace["id"], "Gym")
     create_dashboard(api_base_url, user, workspace["id"])
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, "/en/dashboard")
@@ -171,13 +168,11 @@ def test_area_form_offers_travel_and_marks_the_new_area(
     # A weekly area's travel is for every occurrence: a length only, each trip arriving as its
     # occurrence starts (this one at 08:00).
     expect(panel.get_by_label("Arrive", exact=True)).to_have_count(0)
-    expect(panel.get_by_label("Length, in minutes")).to_be_visible()
-    expect(panel).to_contain_text("Every occurrence keeps this length, arriving as each one starts.")
+    expect(panel.get_by_label("How long this trip takes (every time), in minutes")).to_be_visible()
+    expect(panel).to_contain_text("Every occurrence uses this length, arriving as each one starts.")
+    # No length set for the trip yet: the 30-minute placeholder, said as such.
     expect(panel.locator("[data-travel-preview]")).to_have_text(
-        re.compile(
-            rf"^Leave {LTR}\d\d:\d\d{END} · arrive {LTR}08:00{END} · \d+ min "
-            r"\((OpenRouteService|estimate)\)$"
-        ),
+        f"Leave {LTR}07:30{END} · arrive {LTR}08:00{END} · 30 min (not set yet)",
         timeout=NORMAL_TIMEOUT,
     )
 

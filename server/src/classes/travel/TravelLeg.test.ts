@@ -2,9 +2,10 @@
  * Travel legs as storage writes them (docs/superpowers/specs/2026-11-17-travel-time-design.md,
  * "Generation and lifecycle"; plan Rulings 8, 9 and 20): a reconciliation is applied by key, only
  * to the caller's own legs, and twice changes nothing; two members going to one shared lecture get
- * two legs, each private to its member (Review Focus 3); the member's hand edits (any two of start,
- * end and length) are kept and remembered; a skip is a tombstone no regeneration brings back (and
- * no purge removes before its leg is over); Reset brings back a skip and the computed times.
+ * two legs, each private to its member (Review Focus 3); a length the member sets is his trip's,
+ * every time, and times he sets move that leg only, kept until Reset (the owner's decision of
+ * 2026-11-18); a skip is a tombstone no regeneration brings back (and no purge removes before its
+ * leg is over); Reset brings back a skip and the computed times.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,14 +56,10 @@ after(async () => {
 });
 
 async function placesOf(caller: Caller): Promise<Member> {
-  const home = await classes.Place.create(caller, {
-    name: 'Home',
-    coords: { lat: 32.794, lon: 34.9896 },
-    home: true,
-  });
+  const home = await classes.Place.create(caller, { name: 'Home', home: true });
   const braude = await classes.Place.create(caller, {
     name: 'Braude',
-    coords: { lat: 32.9141, lon: 35.2922 },
+    address: 'Snunit St 51, Karmiel',
   });
   return { caller, homeId: home.id, braudeId: braude.id };
 }
@@ -107,7 +104,7 @@ function there(
     startAt: at(anchorStart, -40),
     endAt: anchorStart,
     minutes: 40,
-    source: 'estimate',
+    source: 'set',
     conflict: false,
     past: false,
     topicId: null,
@@ -202,7 +199,8 @@ describe('TravelLeg storage', () => {
       fromHome: true,
       toHome: false,
       minutes: 40,
-      source: 'estimate',
+      source: 'set',
+      lengthUnset: false,
       computedAt: first.travel?.computedAt,
       conflict: false,
       edited: false,
@@ -323,57 +321,76 @@ describe('TravelLeg storage', () => {
     assert.deepEqual(await classes.TravelLeg.storedFacts(ws.b.caller, FROM, TO), factsB);
   });
 
-  it('editTimes any two, remembers the trip', async () => {
+  it('a length is the trip’s, every time; times move this leg only', async () => {
     const ws = await workspace();
     const { a } = ws;
     await regenerate(a, [there(a)]);
     const leg = await legOf(a, 'there');
     const trip = classes.DayPlanner.tripKey(a.homeId, a.braudeId, 'transit');
-    const remembered = async (): Promise<number | null> =>
-      (await classes.TravelProfile.of(a.caller)).rememberedMinutes(trip);
+    const tripLength = async (): Promise<number | null> =>
+      (await classes.TravelProfile.of(a.caller)).tripMinutes(trip);
+    const facts = (entry: Classes.TravelLeg): unknown[] => [
+      entry.travel?.minutes,
+      entry.travel?.source,
+      entry.travel?.lengthUnset,
+      entry.travel?.edited,
+    ];
 
-    // Start and end: the length is worked out.
-    const one = await leg.editTimes(a.caller, {
+    // A length alone is the trip's: stored for it, and this leg keeps its arrival. Not a hand
+    // edit: the leg still follows the plan.
+    const one = await leg.editTimes(a.caller, { minutes: 35 });
+    assert.deepEqual(span(one), [at(LECTURE, -35).toISOString(), LECTURE.toISOString()]);
+    assert.deepEqual(facts(one), [35, 'set', false, false]);
+    assert.equal(await tripLength(), 35);
+    // Leave and arrive: this leg only, his until Reset; the trip's length stays.
+    const two = await one.editTimes(a.caller, {
       startAt: at(LECTURE, -50),
       endAt: at(LECTURE, -5),
     });
-    assert.deepEqual(span(one), [at(LECTURE, -50).toISOString(), at(LECTURE, -5).toISOString()]);
-    assert.deepEqual(
-      [one.travel?.minutes, one.travel?.source, one.travel?.edited],
-      [45, 'manual', true],
-    );
-    assert.equal(await remembered(), 45);
-    // End and length: the start.
-    const two = await one.editTimes(a.caller, { endAt: LECTURE, minutes: 30 });
-    assert.deepEqual(span(two), [at(LECTURE, -30).toISOString(), LECTURE.toISOString()]);
-    // Start and length: the end.
-    const three = await two.editTimes(a.caller, { startAt: at(LECTURE, -45), minutes: 20 });
-    assert.deepEqual(span(three), [at(LECTURE, -45).toISOString(), at(LECTURE, -25).toISOString()]);
-    // The length alone: a leg there keeps its arrival.
-    const four = await three.editTimes(a.caller, { minutes: 35 });
-    assert.deepEqual(span(four), [at(LECTURE, -60).toISOString(), at(LECTURE, -25).toISOString()]);
-    // The start alone: it keeps its length.
-    const five = await four.editTimes(a.caller, { startAt: at(LECTURE, -70) });
-    assert.deepEqual(span(five), [at(LECTURE, -70).toISOString(), at(LECTURE, -35).toISOString()]);
-    assert.equal(five.travel?.minutes, 35);
-    assert.equal(await remembered(), 35);
-    // A generic edit (PATCH /items/:id) is the same hand edit; other fields are 400.
-    const six = await five.edit(a.caller, classes.ItemEdit.of({ endAt: at(LECTURE, -10) }));
-    assert.deepEqual(span(six), [at(LECTURE, -45).toISOString(), at(LECTURE, -10).toISOString()]);
-    await assert.rejects(six.edit(a.caller, classes.ItemEdit.of({ title: 'Taxi' })), {
+    assert.deepEqual(span(two), [at(LECTURE, -50).toISOString(), at(LECTURE, -5).toISOString()]);
+    assert.deepEqual(facts(two), [45, 'set', false, true]);
+    assert.equal(await tripLength(), 35);
+    // One time alone keeps the leg's length.
+    const three = await two.editTimes(a.caller, { startAt: at(LECTURE, -70) });
+    assert.deepEqual(span(three), [at(LECTURE, -70).toISOString(), at(LECTURE, -25).toISOString()]);
+    assert.equal(await tripLength(), 35);
+    // A length with a time: the trip's length, and this leg by hand with it.
+    const four = await three.editTimes(a.caller, { endAt: LECTURE, minutes: 30 });
+    assert.deepEqual(span(four), [at(LECTURE, -30).toISOString(), LECTURE.toISOString()]);
+    assert.deepEqual(facts(four), [30, 'set', false, true]);
+    assert.equal(await tripLength(), 30);
+    // All three: the trip's length is the minutes; the leg is his span.
+    const five = await four.editTimes(a.caller, {
+      startAt: at(LECTURE, -45),
+      endAt: at(LECTURE, -5),
+      minutes: 25,
+    });
+    assert.deepEqual(span(five), [at(LECTURE, -45).toISOString(), at(LECTURE, -5).toISOString()]);
+    assert.deepEqual(facts(five), [40, 'set', false, true]);
+    assert.equal(await tripLength(), 25);
+    // A length alone on a leg he timed: it keeps its arrival, and stays his.
+    const six = await five.editTimes(a.caller, { minutes: 20 });
+    assert.deepEqual(span(six), [at(LECTURE, -25).toISOString(), at(LECTURE, -5).toISOString()]);
+    assert.deepEqual(facts(six), [20, 'set', false, true]);
+    // A generic edit (PATCH /items/:id) moves this leg only; other fields are 400.
+    const seven = await six.edit(a.caller, classes.ItemEdit.of({ endAt: at(LECTURE, -10) }));
+    assert.deepEqual(span(seven), [at(LECTURE, -30).toISOString(), at(LECTURE, -10).toISOString()]);
+    assert.equal(await tripLength(), 20);
+    await assert.rejects(seven.edit(a.caller, classes.ItemEdit.of({ title: 'Taxi' })), {
       statusCode: 400,
     });
-    // Not a span, or more than a day, or nothing to change: 400; a viewer: 403.
+    // Not a span, or more than a day, or nothing to change: 400 (the trip's length untouched); a
+    // viewer: 403.
     for (const change of [
       { startAt: LECTURE, endAt: at(LECTURE, -10) },
       { minutes: 0 },
       { minutes: 25 * 60 },
       {},
-      { startAt: LECTURE, endAt: at(LECTURE, 10), minutes: 10 },
     ]) {
-      await assert.rejects(six.editTimes(a.caller, change), { statusCode: 400 });
+      await assert.rejects(seven.editTimes(a.caller, change), { statusCode: 400 });
     }
-    await assert.rejects(six.editTimes(ws.viewerA, { minutes: 30 }), { statusCode: 403 });
+    assert.equal(await tripLength(), 20);
+    await assert.rejects(seven.editTimes(ws.viewerA, { minutes: 30 }), { statusCode: 403 });
 
     // A regeneration keeps his times; the lecture moving flags the leg instead of shifting it.
     assert.deepEqual(await regenerate(a, [there(a)]), { created: 0, updated: 0, removed: 0 });
@@ -384,7 +401,7 @@ describe('TravelLeg storage', () => {
       removed: 0,
     });
     const flagged = await classes.TravelLeg.findOwn(a.caller, leg.id);
-    assert.deepEqual(span(flagged), span(six));
+    assert.deepEqual(span(flagged), span(seven));
     assert.deepEqual(
       [
         flagged.travel?.edited,
@@ -466,7 +483,8 @@ describe('TravelLeg storage', () => {
 
     // An edit is reset: the flags go, and the next regeneration recomputes its times.
     const backLeg = await legOf(a, 'back');
-    const edited = await backLeg.editTimes(a.caller, { minutes: 55 });
+    const leaves = at(LECTURE, LECTURE_HOURS * 60);
+    const edited = await backLeg.editTimes(a.caller, { startAt: leaves, endAt: at(leaves, 55) });
     const later = at(LECTURE, 60);
     await regenerate(a, [there(a, later), back(a, later)]);
     const flagged = await classes.TravelLeg.findOwn(a.caller, backLeg.id);
@@ -485,7 +503,7 @@ describe('TravelLeg storage', () => {
     assert.deepEqual(span(recomputed), [ends.toISOString(), at(ends, 40).toISOString()]);
     assert.deepEqual(
       [recomputed.travel?.minutes, recomputed.travel?.source, recomputed.travel?.anchorStart],
-      [40, 'estimate', later.toISOString()],
+      [40, 'set', later.toISOString()],
     );
     // Resetting a leg that holds nothing to reset changes nothing.
     assert.equal(
@@ -570,7 +588,7 @@ describe('TravelLeg storage: what changed while a plan was worked out', () => {
     const facts = await classes.TravelLeg.storedFacts(a.caller, FROM, TO);
     const recon = classes.LegReconciler.reconcile(facts, [there(a, later)], new Map(), now);
     assert.equal(recon.update[0]?.keepTimes, false, 'the facts were read before his edit');
-    const edited = await leg.editTimes(a.caller, { minutes: 55 });
+    const edited = await leg.editTimes(a.caller, { startAt: at(LECTURE, -55), endAt: LECTURE });
     assert.deepEqual(await classes.TravelLeg.applyPlan(a.caller, recon, now), {
       created: 0,
       updated: 0,
@@ -601,7 +619,8 @@ describe('TravelLeg storage: what changed while a plan was worked out', () => {
         await (await classes.TravelLeg.findOwn(a.caller, thereLeg.id)).skip(a.caller);
       } else if (key === backLeg.key) {
         const stored = await classes.TravelLeg.findOwn(a.caller, backLeg.id);
-        await stored.editTimes(a.caller, { minutes: 55 });
+        const leaves = at(LECTURE, LECTURE_HOURS * 60);
+        await stored.editTimes(a.caller, { startAt: leaves, endAt: at(leaves, 55) });
       }
       return upsert(...args);
     });
@@ -642,10 +661,12 @@ describe('TravelLeg storage: what changed while a plan was worked out', () => {
     const ws = await workspace();
     const { a } = ws;
     await regenerate(a, [there(a)]);
-    const leg = await (await legOf(a, 'there')).editTimes(a.caller, { minutes: 55 });
+    const leg = await (
+      await legOf(a, 'there')
+    ).editTimes(a.caller, { startAt: at(LECTURE, -55), endAt: LECTURE });
     const transit = classes.DayPlanner.tripKey(a.homeId, a.braudeId, 'transit');
     const drive = classes.DayPlanner.tripKey(a.homeId, a.braudeId, 'drive');
-    // The rule now drives: the leg is the plan's, not his transit length marked manual.
+    // The rule now drives: the leg is the plan's, not his transit times.
     const driving = there(a, LECTURE, {
       mode: 'drive',
       minutes: 25,
@@ -657,21 +678,15 @@ describe('TravelLeg storage: what changed while a plan was worked out', () => {
     const { travel } = recomputed;
     assert.deepEqual(
       [recomputed.title, travel?.mode, travel?.minutes, travel?.source, travel?.edited],
-      ['Drive to Braude', 'drive', 25, 'estimate', false],
+      ['Drive to Braude', 'drive', 25, 'set', false],
     );
     assert.deepEqual(span(recomputed), [at(LECTURE, -25).toISOString(), LECTURE.toISOString()]);
-    // His next edit is remembered for the drive; the transit length stays the transit's.
+    // A length he sets now is the drive's; the transit trip has none (his times were the leg's).
     await recomputed.editTimes(a.caller, { minutes: 30 });
     const profile = await classes.TravelProfile.of(a.caller);
-    assert.deepEqual(
-      [profile.rememberedMinutes(drive), profile.rememberedMinutes(transit)],
-      [30, 55],
-    );
+    assert.deepEqual([profile.tripMinutes(drive), profile.tripMinutes(transit)], [30, null]);
     // A new place recomputes it too.
-    const work = await classes.Place.create(a.caller, {
-      name: 'TLVTech',
-      coords: { lat: 32.0853, lon: 34.7818 },
-    });
+    const work = await classes.Place.create(a.caller, { name: 'TLVTech' });
     const toWork = there(a, LECTURE, {
       mode: 'drive',
       toPlaceId: work.id,
@@ -691,7 +706,9 @@ describe('TravelLeg storage: what changed while a plan was worked out', () => {
     const ws = await workspace();
     const { a } = ws;
     await regenerate(a, [there(a)]);
-    const leg = await (await legOf(a, 'there')).editTimes(a.caller, { minutes: 50 });
+    const leg = await (
+      await legOf(a, 'there')
+    ).editTimes(a.caller, { startAt: at(LECTURE, -50), endAt: LECTURE });
     const flags = (entry: Classes.TravelLeg): unknown[] => [
       entry.travel?.anchorStart,
       entry.travel?.anchorMoved,
