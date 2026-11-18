@@ -13,6 +13,7 @@ answers, with no legs). Every assertion that needs a stored leg is in its own te
 xfail turns that into a failure, and the marks must come off. Nothing here is gated on a result.
 """
 import re
+import time
 from datetime import datetime
 
 import pytest
@@ -345,15 +346,23 @@ def demo_owner(api_base_url, new_workspace):
 
 
 def _lecture(api_base_url: str, user, workspace_id: str) -> dict:
-    """The demo's Data Structures series (its master item)."""
-    response = requests.get(
-        f"{api_base_url}/private/workspaces/{workspace_id}/items",
-        params={"provider": "google_calendar", "q": "Data Structures"},
-        headers={"Authorization": f"Bearer {user.id_token}"},
-        timeout=30,
-    )
-    assert response.status_code == 200, response.text[:300]
-    series = [item for item in response.json()["data"]["items"] if item["props"].get("recurrence")]
+    """The demo's Data Structures series (its master item). The demo data is written after the
+    workspace answers, so it is waited for (up to 60 s) rather than assumed."""
+    series: list = []
+    for _ in range(30):
+        response = requests.get(
+            f"{api_base_url}/private/workspaces/{workspace_id}/items",
+            params={"provider": "google_calendar", "q": "Data Structures"},
+            headers={"Authorization": f"Bearer {user.id_token}"},
+            timeout=30,
+        )
+        assert response.status_code == 200, response.text[:300]
+        series = [
+            item for item in response.json()["data"]["items"] if item["props"].get("recurrence")
+        ]
+        if series:
+            break
+        time.sleep(2)
     assert len(series) == 1, series
     return series[0]
 

@@ -293,11 +293,20 @@ export class TravelLeg extends ScheduledItem {
       const reason = leg.removedReason;
       const removedAt = leg.deletedAt;
       if (reason === null || removedAt === null) continue;
+      const trip = leg.travel;
       dayOf(leg)?.removed.push({
         id: leg.id,
         title: redactString(leg.title),
         reason,
         removedAt: removedAt.toISOString(),
+        // What the trip was, by name only, so a view can word it in its language.
+        ...(trip === null
+          ? {}
+          : {
+              mode: trip.mode,
+              toHome: trip.toHome,
+              toName: redactString(trip.toName),
+            }),
       });
     }
     return { days: [...days.values()] };

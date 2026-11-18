@@ -18,7 +18,7 @@ import type { ItemSummary } from '@api-types/items.ts';
 import { toDate } from '@api-types/recurrence/occurrences.ts';
 import { travelPropsOf, type RemovedLegView } from '@api-types/travel.ts';
 import { ConflictMark, LegModeIcon } from './LegMark';
-import { CONFLICT_EDGE, isPastLeg, legTitle, removalText, storedLegTitle } from './legView';
+import { CONFLICT_EDGE, isPastLeg, legTitle, removalText, removedLegTitle } from './legView';
 import { TRAVEL_DAY_PARAM, travelDayOf } from './travelDay';
 
 /**
@@ -218,7 +218,7 @@ function RemovedRow({ removed, workspaceId }: { removed: RemovedLegView; workspa
   const { t } = useTranslation();
   const reset = useResetLeg(workspaceId);
   // The server keeps the leg's English title; it is drawn again in the UI language.
-  const title = storedLegTitle(t, removed.title);
+  const title = removedLegTitle(t, removed);
   return (
     <li
       data-travel-removed={removed.id}

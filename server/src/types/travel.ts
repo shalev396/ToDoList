@@ -394,6 +394,14 @@ export interface RemovedLegView {
   reason: RemovalReason;
   /** ISO. */
   removedAt: string;
+  /**
+   * What the trip was, so a view can word its title in its own language: the mode, whether it went
+   * home, and the place it went to by name (never an address or a coordinate). Absent when the
+   * stored props are not a leg's.
+   */
+  mode?: TravelMode;
+  toHome?: boolean;
+  toName?: string;
 }
 
 /** One day of the member's travel (a leg is on the day it starts, in the workspace's zone). */

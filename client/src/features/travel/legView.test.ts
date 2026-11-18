@@ -13,7 +13,7 @@ import {
   legMarksOf,
   legTitle,
   removalText,
-  storedLegTitle,
+  removedLegTitle,
 } from './legView.ts';
 
 /** `t` over a language's texts, with `{{name}}` filled in (as i18next does). */
@@ -135,14 +135,22 @@ describe('removalText', () => {
   });
 });
 
-describe('storedLegTitle', () => {
-  it('draws the server’s English title again in the UI language', () => {
-    assert.equal(storedLegTitle(tEn, 'Bus to Braude'), 'Bus to Braude');
-    assert.equal(storedLegTitle(tHe, 'Bus to בראודה'), 'נסיעה באוטובוס לבראודה');
-    assert.equal(storedLegTitle(tHe, 'Drive home'), 'נסיעה ברכב הביתה');
-    assert.equal(storedLegTitle(tHe, 'Walk to Tel Aviv'), 'הליכה ל-Tel Aviv');
-    // Anything else stays as it was stored.
-    assert.equal(storedLegTitle(tHe, 'Team lunch'), 'Team lunch');
+describe('removedLegTitle', () => {
+  it('words a removed trip in the UI language from what it was', () => {
+    const gone = {
+      title: 'Bus to בראודה',
+      mode: 'transit',
+      toHome: false,
+      toName: 'בראודה',
+    } as const;
+    assert.equal(removedLegTitle(tEn, gone), 'Bus to בראודה');
+    assert.equal(removedLegTitle(tHe, gone), 'נסיעה באוטובוס לבראודה');
+    assert.equal(
+      removedLegTitle(tHe, { title: 'Drive home', mode: 'drive', toHome: true, toName: 'Home' }),
+      'נסיעה ברכב הביתה',
+    );
+    // Without it (props that aren't a leg's) the stored title stands.
+    assert.equal(removedLegTitle(tHe, { title: 'Team lunch' }), 'Team lunch');
   });
 });
 

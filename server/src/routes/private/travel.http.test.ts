@@ -582,6 +582,24 @@ describe('marking an item', () => {
       [{ id: back.id, title: 'Bus home', reason: 'skipped' }],
     );
     assert.ok(!Number.isNaN(Date.parse(day.removed[0]?.removedAt ?? '')));
+    // The removed trip says what it was by name only, so a view words it in its own language.
+    assert.deepEqual(Object.keys(day.removed[0] ?? {}).sort(), [
+      'id',
+      'mode',
+      'reason',
+      'removedAt',
+      'title',
+      'toHome',
+      'toName',
+    ]);
+    assert.deepEqual(
+      {
+        mode: day.removed[0]?.mode,
+        toHome: day.removed[0]?.toHome,
+        toName: day.removed[0]?.toName,
+      },
+      { mode: 'transit', toHome: true, toName: 'Home' },
+    );
     // Skipped twice is still skipped; a skipped leg is edited only after a reset.
     assert.equal((await call('editor', 'POST', `/travel/legs/${back.id}/skip`)).status, 204);
     const edit = await call('editor', 'PATCH', `/travel/legs/${back.id}`, { minutes: 30 });

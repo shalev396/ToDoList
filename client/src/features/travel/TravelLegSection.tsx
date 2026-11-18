@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router-dom';
-import { ArrowRight, CircleAlert, ExternalLink, RotateCcw, Route, SkipForward } from 'lucide-react';
+import { ArrowRight, CircleAlert, RotateCcw, Route, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
 import { errorMessage } from '@/api/errors';
 import { useEditLeg, useLegLinks, useResetLeg, useSkipLeg } from '@/api/queries/travel';
@@ -13,28 +13,17 @@ import { useItemParam } from '@/features/items/useItemParam';
 import { dateInZone, timeInZone } from '@/features/items/zonedDate';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
-import { cn } from '@/lib/utils';
 import { dayLink } from '@/pages/settings/travel/travelForms';
 import type { ItemDetail } from '@api-types/items.ts';
 import { toDate } from '@api-types/recurrence/occurrences.ts';
-import {
-  travelPropsOf,
-  type LegEditRequest,
-  type TravelLegProps,
-  type TravelLink,
-} from '@api-types/travel.ts';
+import { travelPropsOf, type LegEditRequest, type TravelLegProps } from '@api-types/travel.ts';
+import { AppLinks } from './AppLinks';
 import { ConflictMark, LegModeIcon } from './LegMark';
 import { legTitle } from './legView';
 import { editPanelSpan, editPanelTime, legEditOf, legPanelState } from './travelPanel';
 
 /** The longest leg the server takes: a day, in minutes. */
 const DAY_MINUTES = 24 * 60;
-
-const LINK_NAMES = {
-  google_maps: 'travel.leg.sheet.linkGoogle',
-  waze: 'travel.leg.sheet.linkWaze',
-  moovit: 'travel.leg.sheet.linkMoovit',
-} as const;
 
 /** "13:20" kept left to right inside a Hebrew line. */
 const ltr = (text: string): string => `⁦${text}⁩`;
@@ -394,87 +383,4 @@ function LegTimes({
       </Button>
     </form>
   );
-}
-
-/**
- * The apps that open the trip: Google Maps, Waze for driving, Moovit for transit. A link whose app
- * may be missing (Moovit's own scheme) falls back to its web page after a moment. The links carry
- * the trip's coordinates, so they are read for its member only and never shown as text.
- */
-function AppLinks({
-  links,
-  failed,
-  loading,
-}: {
-  links: readonly TravelLink[];
-  failed: boolean;
-  loading: boolean;
-}) {
-  const { t } = useTranslation();
-  if (failed) {
-    return (
-      <p className="text-[13px] text-muted-foreground" data-leg-links-failed="">
-        {t('travel.leg.sheet.linksFailed')}
-      </p>
-    );
-  }
-  if (loading || links.length === 0) {
-    return null;
-  }
-  return (
-    <div className="flex flex-col gap-1.5" data-leg-links="">
-      <p className="text-sm font-medium">{t('travel.leg.sheet.links')}</p>
-      <ul className="m-0 flex list-none flex-wrap gap-2 p-0">
-        {links.map((link) => (
-          <li key={link.app}>
-            <a
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-leg-link={link.app}
-              className={cn(
-                'inline-flex min-h-11 items-center gap-1.5 rounded-md border bg-background px-3 text-sm font-medium',
-                'hover:border-primary/50 hover:bg-primary/5 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-fine:min-h-8',
-              )}
-              onClick={(event) => {
-                if (link.fallbackUrl !== undefined) {
-                  openWithFallback(event, link.url, link.fallbackUrl);
-                }
-              }}
-            >
-              {t(LINK_NAMES[link.app])}
-              <ExternalLink aria-hidden="true" className="size-3.5" />
-            </a>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
-/** How long a link's own app has to take the page before its web page is opened instead. */
-const APP_WAIT_MS = 1500;
-
-/**
- * Opens an app's own address; when the app isn't there the page stays in front, and the fallback
- * (its web page) opens after a moment. The app taking over hides the page, which cancels it.
- */
-function openWithFallback(
-  event: { preventDefault: () => void },
-  url: string,
-  fallbackUrl: string,
-): void {
-  event.preventDefault();
-  const timer = window.setTimeout(() => {
-    document.removeEventListener('visibilitychange', cancel);
-    window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
-  }, APP_WAIT_MS);
-  function cancel() {
-    if (document.visibilityState === 'hidden') {
-      window.clearTimeout(timer);
-      document.removeEventListener('visibilitychange', cancel);
-    }
-  }
-  document.addEventListener('visibilitychange', cancel);
-  window.location.assign(url);
 }

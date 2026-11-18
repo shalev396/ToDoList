@@ -138,7 +138,8 @@ def test_leg_sheet_edit_skip_reset(page: Page, base_url: str, api_base_url: str,
     expect(section.locator("[data-leg-route]")).to_have_text(re.compile(r"^Home\s*to\s*Braude$"))
     expect(section.locator("[data-leg-length]")).to_have_text("40 min · set by you")
     expect(sheet.get_by_role("checkbox")).to_have_count(0)
-    expect(sheet.get_by_label("Status")).to_have_count(0)
+    expect(sheet.get_by_role("combobox")).to_have_count(0)
+    expect(sheet.get_by_text(re.compile(r"Status|סטטוס"))).to_have_count(0)
     expect(section.locator("[data-leg-link='waze']")).to_have_count(1)
     expect(section.locator("[data-leg-link='google_maps']")).to_have_count(1)
 
@@ -325,7 +326,6 @@ TEXT = {
         "mode_bus": "Public transport",
         "length_ors": "40 min · OpenRouteService",
         "length_manual": "40 min · set by you",
-        "length_manual_50": "50 min · set by you",
         "kind": "Travel",
         "to": "to",
     },
@@ -347,7 +347,6 @@ TEXT = {
         "mode_bus": "תחבורה ציבורית",
         "length_ors": "40 דק׳ · OpenRouteService",
         "length_manual": "40 דק׳ · נקבע על ידכם",
-        "length_manual_50": "50 דק׳ · נקבע על ידכם",
         "kind": "נסיעה",
         "to": "אל",
     },
@@ -416,6 +415,9 @@ def fixture_legs(language: str) -> StubbedLegs:
         "id": "leg-gone",
         "title": f"Bus to {braude}",
         "reason": "cancelled",
+        "mode": "transit",
+        "toHome": False,
+        "toName": braude,
         "removedAt": iso(NOW - timedelta(hours=1)),
     }
     return StubbedLegs(
@@ -511,6 +513,11 @@ def _check_clock(page: Page, text: dict) -> None:
     expect(arcs).to_have_count(4)
     expect(ring.locator("path[data-conflict='true']")).to_have_count(1)
     expect(ring.locator("path[data-conflict='true']")).to_have_attribute("data-leg-mode", "drive")
+    # The red edge: a destructive stroke on the conflict arc, none on the others.
+    expect(ring.locator("path[data-conflict='true']")).to_have_attribute(
+        "style", re.compile(r"stroke: var\(--destructive\)")
+    )
+    expect(ring.locator("path[data-conflict='false'][style*='stroke']")).to_have_count(0)
     expect(ring.locator("path[data-past='true']")).to_have_count(1)
     expect(ring.locator("path[data-past='true']")).to_have_attribute("data-leg-mode", "walk")
     # The ring's own words name the trip in the UI language.
@@ -539,6 +546,8 @@ def _check_agenda(page: Page, text: dict) -> None:
     expect(rows.locator("xpath=self::*[@data-past='true']")).to_have_count(0)
     drive = agenda.locator("li[data-agenda-leg='drive']")
     expect(drive).to_have_attribute("data-conflict", "true")
+    expect(drive).to_have_class(re.compile(r"before:bg-destructive"))
+    expect(agenda.locator("li[data-agenda-leg][data-conflict='false'][class*='before:bg-destructive']")).to_have_count(0)
     expect(drive).to_contain_text(text["drive_tlv"])
     expect(drive).to_contain_text(text["conflict"])
     expect(drive.locator("svg[data-leg-mode='drive']")).to_have_count(1)
@@ -564,6 +573,8 @@ def _check_timeline(page: Page, text: dict) -> None:
     conflict = timeline.locator("li[data-timeline-leg][data-conflict='true']")
     expect(conflict).to_have_count(1)
     expect(conflict).to_have_attribute("data-timeline-leg", "drive")
+    expect(conflict).to_have_class(re.compile(r"before:bg-destructive"))
+    expect(timeline.locator("li[data-timeline-leg][data-conflict='false'][class*='before:bg-destructive']")).to_have_count(0)
     expect(conflict).to_contain_text(text["drive_tlv"])
     expect(conflict).to_contain_text(text["conflict"])
     expect(conflict.locator("svg[data-leg-mode='drive']")).to_have_count(1)
@@ -613,39 +624,46 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
     expect(section.locator("[data-leg-flag='conflict']")).to_have_count(0)
     # A trip is not a to-do: no status, no tick, no "mark as done".
     expect(sheet.get_by_role("checkbox")).to_have_count(0)
-    expect(sheet.get_by_label("Status")).to_have_count(0)
+    expect(sheet.get_by_role("combobox")).to_have_count(0)
+    expect(sheet.get_by_text(re.compile(r"Status|סטטוס"))).to_have_count(0)
     expect(sheet.locator("[data-item-local-edit]")).to_have_count(0)
     expect(sheet.locator("[data-item-details], #item-details")).to_have_count(0)
     # App links: Moovit and Google Maps for the bus (never shown as text, so no place or address).
     expect(section.locator("[data-leg-link='moovit']")).to_have_count(1)
+    # The app's web page is its own plain link: no timer decides between them.
+    expect(section.locator("[data-leg-link='moovit-web']")).to_have_attribute(
+        "href", "https://moovitapp.com/"
+    )
     expect(section.locator("[data-leg-link='google_maps']")).to_have_count(1)
     expect(section.locator("[data-leg-link='waze']")).to_have_count(0)
     expect(sheet.locator("[data-leg-links]")).not_to_contain_text("32.")
 
-    # Leave at 16:50, arrival stands: it sends the two fields that stand (50 minutes follows).
+    # A trip back keeps its length when he leaves earlier (16:50): the arrival follows (17:30), and
+    # it sends the two fields that stand.
     section.locator("[data-leg-times] input[type='time']").first.fill("16:50")
-    expect(section.locator("[data-leg-times] input[type='number']")).to_have_value("50")
+    expect(section.locator("[data-leg-times] input[type='number']")).to_have_value("40")
+    expect(section.locator("[data-leg-times] input[type='time']").nth(1)).to_have_value("17:30")
     expect(section.locator("[data-leg-save]")).to_be_enabled()
-    with page.expect_request(
-        lambda r: r.method == "PATCH" and r.url.endswith("/travel/legs/leg-bus-moved"),
+    with page.expect_response(
+        lambda r: r.request.method == "PATCH" and r.url.endswith("/travel/legs/leg-bus-moved"),
         timeout=APP_REQUEST_TIMEOUT,
     ):
         section.locator("[data-leg-save]").click()
     assert stub.calls[-1] == (
         "edit",
         "leg-bus-moved",
-        {"startAt": iso(at(TODAY, "16:50")), "endAt": iso(at(TODAY, "17:40"))},
+        {"startAt": iso(at(TODAY, "16:50")), "minutes": 40},
     )
     # His times, acknowledged: the "moved" flag is gone and the length is his.
-    expect(section.locator("[data-leg-length]")).to_have_text(text["length_manual_50"])
+    expect(section.locator("[data-leg-length]")).to_have_text(text["length_manual"])
     expect(section.locator("[data-leg-flag='moved']")).to_have_count(0)
     expect(page.locator("[data-calendar-view] .fc-event[data-item-id='leg-bus-moved']")).to_have_attribute(
         "data-anchor-moved", "false"
     )
 
     # Reset: computed again (18:00-18:40), nothing left to reset.
-    with page.expect_request(
-        lambda r: r.method == "POST" and r.url.endswith("/travel/legs/leg-bus-moved/reset"),
+    with page.expect_response(
+        lambda r: r.request.method == "POST" and r.url.endswith("/travel/legs/leg-bus-moved/reset"),
         timeout=APP_REQUEST_TIMEOUT,
     ):
         section.locator("[data-leg-reset]").click()
@@ -658,8 +676,8 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
 
     # Skip a trip that was in the way: the sheet closes, and the calendar loses it.
     sheet = _open_leg(page, "leg-bus-next")
-    with page.expect_request(
-        lambda r: r.method == "POST" and r.url.endswith("/travel/legs/leg-bus-next/skip"),
+    with page.expect_response(
+        lambda r: r.request.method == "POST" and r.url.endswith("/travel/legs/leg-bus-next/skip"),
         timeout=APP_REQUEST_TIMEOUT,
     ):
         sheet.locator("[data-leg-skip]").click()
@@ -693,8 +711,8 @@ def _check_day_panel(page: Page, stub: StubbedLegs, text: dict) -> None:
     skipped = panel.locator("[data-travel-removed='leg-bus-next']")
     expect(skipped.locator("[data-travel-removed-text]")).to_have_text(text["skipped"])
     expect(panel.locator("[data-travel-bring-back]")).to_have_count(1)
-    with page.expect_request(
-        lambda r: r.method == "POST" and r.url.endswith("/travel/legs/leg-bus-next/reset"),
+    with page.expect_response(
+        lambda r: r.request.method == "POST" and r.url.endswith("/travel/legs/leg-bus-next/reset"),
         timeout=APP_REQUEST_TIMEOUT,
     ):
         skipped.locator("[data-travel-bring-back]").click()
@@ -713,6 +731,14 @@ def test_leg_views_render_from_stubbed_api(
     page: Page, base_url: str, api_base_url: str, fresh_owner, language: str
 ):
     text = TEXT[language]
+    # React says so in the console when two siblings share a key (the shell's sheets once did).
+    problems: list = []
+    page.on(
+        "console",
+        lambda message: problems.append(message.text)
+        if message.type in ("error", "warning") and "same key" in message.text
+        else None,
+    )
     stub, _, _ = _open_stubbed(page, base_url, api_base_url, fresh_owner, language)
     _check_calendar(page, text)
     _check_clock(page, text)
@@ -720,3 +746,4 @@ def test_leg_views_render_from_stubbed_api(
     _check_timeline(page, text)
     _check_leg_sheet(page, stub, text)
     _check_day_panel(page, stub, text)
+    assert problems == [], problems

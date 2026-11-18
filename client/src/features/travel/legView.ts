@@ -36,25 +36,21 @@ export function legTitle(
   });
 }
 
-const VERB_MODES: Readonly<Record<string, TravelMode>> = {
-  Bus: 'transit',
-  Drive: 'drive',
-  Walk: 'walk',
-};
-const STORED_TITLE = /^(Bus|Drive|Walk) (?:(home)|to (.+))$/s;
-
 /**
- * A leg's title as the server stored it ("Bus to Braude", "Drive home": English, for MCP and
- * pushes), drawn again in the UI language. A removed leg has no props, only that title. Anything
- * that isn't one of those two forms is returned as it is.
+ * A removed trip's title in the UI language, from what the server says it was (`RemovedLegView`:
+ * mode, whether it went home, the place's name); the stored English title when it says none.
  */
-export function storedLegTitle(t: TFunction, stored: string): string {
-  const match = STORED_TITLE.exec(stored);
-  const mode = match === null ? undefined : VERB_MODES[match[1] ?? ''];
-  if (match === null || mode === undefined) {
-    return stored;
-  }
-  return legTitle(t, { mode, toHome: match[2] === 'home', toName: match[3] ?? '' });
+export function removedLegTitle(
+  t: TFunction,
+  removed: { title: string; mode?: TravelMode; toHome?: boolean; toName?: string },
+): string {
+  return removed.mode === undefined
+    ? removed.title
+    : legTitle(t, {
+        mode: removed.mode,
+        toHome: removed.toHome === true,
+        toName: removed.toName ?? '',
+      });
 }
 
 /** "Bus to Braude removed: the event was cancelled". `title` is the leg's title (`legTitle`). */
@@ -133,4 +129,4 @@ export function rowTitle(
  * flips in right-to-left pages), for a leg that can't be made in time.
  */
 export const CONFLICT_EDGE =
-  'relative before:absolute before:inset-y-1 before:start-0 before:w-1 before:rounded-full before:bg-destructive';
+  'relative before:absolute before:inset-y-1 before:-start-2 before:w-1 before:rounded-full before:bg-destructive';

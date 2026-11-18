@@ -50,17 +50,28 @@ export interface TravelPanelState {
   span: { start: Date | null; end: Date | null; minutes: number | null };
   /** The span fields he typed, most recent first (empty: all of it is worked out). */
   edited: SpanField[];
+  /**
+   * A trip back keeps its departure (it leaves as the event ends): what he didn't type stands as
+   * the leave time and the length, and the arrival follows. Absent: the trip arrives by the event.
+   */
+  keepsDeparture?: boolean;
 }
 
 /** Arrive by: the arrival and the length stand unless he types two others; the leave time follows. */
 const ARRIVE_BY: readonly SpanField[] = ['end', 'minutes'];
 
-const keptOrder = (edited: readonly SpanField[]): SpanField[] => [...edited, ...ARRIVE_BY];
+/** A trip back keeps its departure and length. */
+const LEAVE_AT: readonly SpanField[] = ['start', 'minutes'];
+
+const keptOrder = (edited: readonly SpanField[], departure = false): SpanField[] => [
+  ...edited,
+  ...(departure ? LEAVE_AT : ARRIVE_BY),
+];
 
 /** The two fields that stand (the two most recent of his edits, then the arrival and length). */
-function keptFields(edited: readonly SpanField[]): SpanField[] {
+function keptFields(edited: readonly SpanField[], departure = false): SpanField[] {
   const kept: SpanField[] = [];
-  for (const field of keptOrder(edited)) {
+  for (const field of keptOrder(edited, departure)) {
     if (!kept.includes(field)) {
       kept.push(field);
     }
@@ -73,12 +84,12 @@ function keptFields(edited: readonly SpanField[]): SpanField[] {
 
 /** The whole trip there; null while its two standing fields make none. */
 export function panelSpan(state: TravelPanelState): Span | null {
-  return solveSpan(state.span, keptOrder(state.edited));
+  return solveSpan(state.span, keptOrder(state.edited, state.keepsDeparture));
 }
 
 /** The worked-out field written from the trip (cleared while there is none). */
 function withSolved(state: TravelPanelState): TravelPanelState {
-  const field = derivedField(keptOrder(state.edited));
+  const field = derivedField(keptOrder(state.edited, state.keepsDeparture));
   const span = panelSpan(state);
   const value = span === null ? null : span[field];
   return { ...state, span: { ...state.span, [field]: value } };
@@ -170,7 +181,7 @@ function thereOf(
   if (!state.there || state.edited.length === 0 || span === null) {
     return undefined;
   }
-  const kept = keptFields(state.edited);
+  const kept = keptFields(state.edited, state.keepsDeparture);
   // A length that arrives at the item is a length: every occurrence (and a moved item) keeps it.
   const lengthOnly =
     every ||
@@ -484,12 +495,14 @@ export function legPanelState(
     }),
     span: { start: toDate(item.startAt), end, minutes: travel.minutes },
     edited: [],
+    // A leg back leaves as its event ends: a length alone keeps that, as the server does.
+    ...(travel.direction === 'back' ? { keepsDeparture: true } : {}),
   };
 }
 
 /**
  * `PATCH …/travel/legs/:id`: the two fields that stand (the last two he typed, then the arrival and
- * the length), exactly as the form shows them, so the server's answer is what he saw. Null while he
+ * the length; a trip back keeps its departure and length), exactly as the form shows them, so the server's answer is what he saw. Null while he
  * has typed nothing, or what he typed makes no trip.
  */
 export function legEditOf(state: TravelPanelState): LegEditRequest | null {
@@ -497,7 +510,7 @@ export function legEditOf(state: TravelPanelState): LegEditRequest | null {
   if (state.edited.length === 0 || span === null) {
     return null;
   }
-  const given = keptFields(state.edited);
+  const given = keptFields(state.edited, state.keepsDeparture);
   return {
     ...(given.includes('start') ? { startAt: span.start.toISOString() } : {}),
     ...(given.includes('end') ? { endAt: span.end.toISOString() } : {}),

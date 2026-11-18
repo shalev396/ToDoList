@@ -167,7 +167,7 @@ export default function AppShellLayout() {
           <JoinInviteDialog open={joinOpen} onOpenChange={setJoinOpen} />
           <AddPageDialog open={addPageOpen} onOpenChange={setAddPageOpen} />
           <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
-          <TravelDaySheet key={generation} />
+          <TravelDaySheet key={`travel-day-${String(generation)}`} />
           <NewTodoSheet
             key={generation}
             open={newItemOpen}

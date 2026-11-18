@@ -251,6 +251,8 @@ class StubbedLegs:
         self.calls: list = []
         self.block_ids: set = set()
         self.days_requested: list = []
+        # Rows of other kinds the blocks' query also answers (a screenshot's ordinary event).
+        self.extra_rows: list = []
 
     # ─── What the page reads ────────────────────────────────────────────────
 
@@ -271,6 +273,9 @@ class StubbedLegs:
                 "title": leg.title,
                 "reason": "skipped",
                 "removedAt": iso(NOW),
+                "mode": leg.travel["mode"],
+                "toHome": leg.travel["toHome"],
+                "toName": leg.travel["toName"],
             }
             for leg in self.legs.values()
             if leg.skipped and leg.start.astimezone(JERUSALEM).strftime("%Y-%m-%d") == date
@@ -318,7 +323,7 @@ class StubbedLegs:
             body = request.post_data_json or {}
             if body.get("blockId") not in self.block_ids:
                 return route.fallback()
-            rows = [leg.row(self.workspace_id) for leg in self._live()]
+            rows = [leg.row(self.workspace_id) for leg in self._live()] + self.extra_rows
             return self._answer(route, {"rows": rows, "total": len(rows), "appliedVars": {}, "warnings": []})
         if method == "GET" and path == "travel/days":
             query = dict(part.split("=") for part in request.url.split("?")[1].split("&"))

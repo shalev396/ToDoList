@@ -56,7 +56,7 @@ function AgendaRow({
       data-conflict={leg === null ? undefined : String(leg.conflict)}
       data-past={leg === null ? undefined : String(leg.past)}
       className={cn(
-        'flex min-h-11 items-center gap-2 border-b py-1 last:border-b-0',
+        'flex min-h-11 items-center gap-2 py-1 shadow-[inset_0_-1px_0_var(--border)] last:shadow-none',
         // A leg that can't be made in time has a red edge; one that is over is dimmed.
         leg?.conflict === true && CONFLICT_EDGE,
         leg?.past === true && 'opacity-60',
@@ -67,7 +67,7 @@ function AgendaRow({
       </span>
       <ColourDot colour={colour} />
       {leg === null ? null : <LegModeIcon mode={leg.mode} className="text-muted-foreground" />}
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="-my-1 flex min-w-0 flex-1 flex-col">
         <button
           type="button"
           onClick={() => {

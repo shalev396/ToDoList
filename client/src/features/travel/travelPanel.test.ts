@@ -406,6 +406,28 @@ describe('a leg’s own times', () => {
     );
   });
 
+  it('a length alone on a trip back keeps its departure, on a trip there its arrival', () => {
+    const there = editPanelSpan(open(), 'minutes', 25);
+    assert.deepEqual(legEditOf(there), { endAt: AT_TWO.toISOString(), minutes: 25 });
+    const back = legPanelState(
+      { startAt: start, endAt: AT_TWO },
+      {
+        ...LEG,
+        direction: 'back',
+      },
+    );
+    const shorter = editPanelSpan(back, 'minutes', 25);
+    // It still leaves at 13:20; it arrives sooner (13:45).
+    assert.deepEqual(legEditOf(shorter), {
+      startAt: start.toISOString(),
+      minutes: 25,
+    });
+    assert.equal(
+      shorter.span.end?.toISOString(),
+      new Date(start.getTime() + 25 * 60_000).toISOString(),
+    );
+  });
+
   it('sends nothing for a length that makes no trip', () => {
     assert.equal(legEditOf(editPanelSpan(open(), 'minutes', null)), null);
   });

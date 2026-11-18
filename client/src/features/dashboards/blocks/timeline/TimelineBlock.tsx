@@ -116,7 +116,7 @@ export default function TimelineBlock({ dashboard, block }: BlockComponentProps)
         </span>
         <ColourDot colour={colourOf(row.id)} />
         {leg === null ? null : <LegModeIcon mode={leg.mode} className="text-muted-foreground" />}
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="-my-1 flex min-w-0 flex-1 flex-col">
           <button
             type="button"
             onClick={() => {
