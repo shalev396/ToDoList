@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { timeOfDay } from '@/components/items/format';
 import { ColourDot } from '@/features/colours/ColourDot';
+import { isolateAuto, isolateLtr } from '../time/areas';
 import type { ItemColour } from '@api-types/colours';
 
 /** An area's section header in the agenda: "Studying 13:00–17:00" with its colour. */
@@ -23,11 +24,12 @@ export function AgendaAreaHeader({
   return (
     <div className="flex items-center gap-2 pt-1.5 text-[13px] font-medium text-foreground">
       <ColourDot colour={colour} />
-      <span className="truncate" dir="auto">
+      <span className="truncate text-start">
         {t('timeBlocks.agenda.areaRange', {
-          title,
-          start: timeOfDay(start, locale, timeZone),
-          end: timeOfDay(end, locale, timeZone),
+          title: isolateAuto(title),
+          range: isolateLtr(
+            `${timeOfDay(start, locale, timeZone)}–${timeOfDay(end, locale, timeZone)}`,
+          ),
         })}
       </span>
     </div>

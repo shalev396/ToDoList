@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { timeOfDay } from '@/components/items/format';
-import { colourVar, paintOf } from '@/features/colours/palette';
+import { markStyle } from '@/features/colours/palette';
+import { isolateAuto, isolateLtr } from '../time/areas';
 import type { ItemColour } from '@api-types/colours';
 
 /**
@@ -33,16 +34,14 @@ export function TimelineAreaBand({
       data-family={colour.family}
       data-role={colour.role}
       className="my-1 rounded-md px-2 py-1"
-      style={{
-        backgroundColor: paintOf(colour).fill,
-        boxShadow: `inset 0 0 0 1px ${colourVar(colour.family, 'scheduled')}`,
-      }}
+      style={markStyle(colour)}
     >
-      <p className="m-0 truncate text-[13px] font-medium text-foreground" dir="auto">
+      <p className="m-0 truncate text-start text-[13px] font-medium text-foreground">
         {t('timeBlocks.timeline.areaRange', {
-          title,
-          start: timeOfDay(start, locale, timeZone),
-          end: timeOfDay(end, locale, timeZone),
+          title: isolateAuto(title),
+          range: isolateLtr(
+            `${timeOfDay(start, locale, timeZone)}–${timeOfDay(end, locale, timeZone)}`,
+          ),
         })}
       </p>
       {children}

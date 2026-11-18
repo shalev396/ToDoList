@@ -10,6 +10,7 @@
  * - Tomorrow: everything on the next local day.
  */
 import { endOfZonedDay } from '../clock/ClockRing.math.ts';
+import { nestInAreas, type AreaGroup } from '../time/areas.ts';
 import { expandOccurrences, type Occurrence, type TimeRow } from '../time/occurrences.ts';
 import { startOfZonedDay } from '../clock/ClockRing.math.ts';
 
@@ -114,4 +115,59 @@ export function isEmptyAgenda(model: AgendaModel): boolean {
       model.tomorrow.length ===
     0
   );
+}
+
+export type AgendaPart = keyof AgendaModel;
+export const AGENDA_PARTS: readonly AgendaPart[] = [
+  'overdue',
+  'earlierToday',
+  'now',
+  'allDay',
+  'next',
+  'laterToday',
+  'tomorrow',
+];
+
+const holds = (area: Occurrence, item: Occurrence): boolean =>
+  area.start <= item.start && item.start < (area.end ?? area.start);
+
+/**
+ * Where each area goes. `model` is the agenda of the items, `areaModel` the agenda of the areas
+ * alone (only to find their occurrences and what is still to come).
+ *
+ * - An area appears in every part that holds an item starting inside it (areas may overlap: an
+ *   area whose items went to the first one still shows, empty).
+ * - An area with no item anywhere is listed in the part where it starts, placed by start time
+ *   against the items' parts: what is on now is Now; a later start is Next when it is no later
+ *   than the next items, else Later today.
+ * - Within a part, areas and loose items are in time order (`nestInAreas`).
+ */
+export function agendaAreas(
+  model: AgendaModel,
+  areaModel: AgendaModel,
+): Record<AgendaPart, AreaGroup<Occurrence>[]> {
+  const everyItem = AGENDA_PARTS.flatMap((part) => model[part]);
+  const nextAt = model.next[0]?.start.getTime();
+  const placed = (part: AgendaPart, area: Occurrence): AgendaPart =>
+    part === 'next' || part === 'laterToday'
+      ? nextAt === undefined || area.start.getTime() <= nextAt
+        ? 'next'
+        : 'laterToday'
+      : part;
+  const listed = AGENDA_PARTS.flatMap((part) =>
+    areaModel[part].map((area) => ({ area, part: placed(part, area) })),
+  );
+
+  const result = {} as Record<AgendaPart, AreaGroup<Occurrence>[]>;
+  for (const part of AGENDA_PARTS) {
+    const areas = listed
+      .filter(
+        ({ area, part: at }) =>
+          model[part].some((item) => holds(area, item)) ||
+          (at === part && !everyItem.some((item) => holds(area, item))),
+      )
+      .map(({ area }) => area);
+    result[part] = nestInAreas(model[part], areas);
+  }
+  return result;
 }

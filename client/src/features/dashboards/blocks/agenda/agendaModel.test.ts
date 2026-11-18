@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { TimeRow } from '../time/occurrences.ts';
-import { buildAgenda, isEmptyAgenda } from './agendaModel.ts';
+import { agendaAreas, buildAgenda, isEmptyAgenda } from './agendaModel.ts';
 
 const TZ = 'Asia/Jerusalem';
 
@@ -138,5 +138,67 @@ describe('agenda: now / next / later today / tomorrow', () => {
       isEmptyAgenda(buildAgenda([row('x', { startAt: at('15:00'), endAt: at('16:00') })], NOW, TZ)),
       false,
     );
+  });
+});
+
+describe('agenda: areas', () => {
+  const place = (items: TimeRow[], areas: TimeRow[]) =>
+    agendaAreas(buildAgenda(items, NOW, TZ), buildAgenda(areas, NOW, TZ));
+  const shape = (groups: { area: { row: TimeRow } | null; items: { row: TimeRow }[] }[]) =>
+    groups.map((group) => [group.area?.row.id ?? null, ids(group.items)]);
+
+  it('nests items under the area they start in, others stay loose', () => {
+    const result = place(
+      [
+        row('lecture', { startAt: at('14:00'), endAt: at('15:00') }),
+        row('dentist', { startAt: at('18:00'), endAt: at('19:00') }),
+      ],
+      [row('study', { startAt: at('13:00'), endAt: at('17:00') })],
+    );
+    assert.deepEqual(shape(result.next), [['study', ['lecture']]]);
+    assert.deepEqual(shape(result.laterToday), [[null, ['dentist']]]);
+  });
+
+  it('lists an empty area in the part where it starts, by time against the items', () => {
+    // Now 12:00; the lecture at 14:00 is Next, the meeting at 16:00 Later today.
+    const result = place(
+      [
+        row('lecture', { startAt: at('14:00'), endAt: at('15:00') }),
+        row('meeting', { startAt: at('16:00'), endAt: at('17:00') }),
+      ],
+      [
+        row('gym', { startAt: at('18:00'), endAt: at('19:00') }),
+        row('early', { startAt: at('13:00'), endAt: at('13:30') }),
+        row('tmrw', { startAt: at('08:00', '13'), endAt: at('09:00', '13') }),
+      ],
+    );
+    assert.deepEqual(shape(result.next), [
+      ['early', []],
+      [null, ['lecture']],
+    ]);
+    assert.deepEqual(shape(result.laterToday), [
+      [null, ['meeting']],
+      ['gym', []],
+    ]);
+    assert.deepEqual(shape(result.tomorrow), [['tmrw', []]]);
+  });
+
+  it('keeps an overlapping area that got no items, as an empty one', () => {
+    const result = place(
+      [row('task', { startAt: at('14:45'), endAt: at('15:15') })],
+      [
+        row('work', { startAt: at('13:00'), endAt: at('17:00') }),
+        row('deep', { startAt: at('14:30'), endAt: at('16:00') }),
+      ],
+    );
+    assert.deepEqual(shape(result.next), [
+      ['work', ['task']],
+      ['deep', []],
+    ]);
+  });
+
+  it('puts an area in progress under now', () => {
+    const result = place([], [row('on', { startAt: at('11:00'), endAt: at('13:00') })]);
+    assert.deepEqual(shape(result.now), [['on', []]]);
   });
 });

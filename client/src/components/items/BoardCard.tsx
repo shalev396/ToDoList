@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
-import { paintOf } from '@/features/colours/palette';
+import { colourVar, paintOf } from '@/features/colours/palette';
 import type { ItemColour } from '@api-types/colours';
 import { DueChip } from './DueChip';
 import { initials } from './format';
@@ -50,7 +50,16 @@ export function BoardCard({
       data-family={colour?.family}
       data-role={colour?.role}
       className={cn('rounded-md border bg-card p-3', colour && 'border-s-4', className)}
-      style={colour ? { borderInlineStartColor: paintOf(colour).fill } : undefined}
+      style={
+        colour
+          ? {
+              borderInlineStartColor:
+                colour.role === 'area'
+                  ? colourVar(colour.family, 'scheduled')
+                  : paintOf(colour).fill,
+            }
+          : undefined
+      }
     >
       <div className="flex items-start gap-2">
         <OpenTitle

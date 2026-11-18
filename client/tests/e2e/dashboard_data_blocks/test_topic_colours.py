@@ -81,7 +81,7 @@ def _seed(page: Page, api_base_url: str, fresh_owner) -> dict:
             "rules": [r for r in deadlines["query"]["where"]["rules"] if r.get("field") != "topic"],
         },
     }
-    time_query = {"source": "items", "where": LOCAL, "dateRange": "next7d", "dateField": "startAt"}
+    time_query = {"source": "items", "where": LOCAL, "dateRange": "next_7d", "dateField": "startAt"}
     apply_ops(
         api_base_url,
         user,
@@ -216,7 +216,7 @@ def test_chart_segments_use_scheduled_tokens(page: Page, base_url: str, api_base
     families = _seed(page, api_base_url, fresh_owner)
     _open(page, base_url, fresh_owner)
     chart = _block(page, CHART)
-    legend = chart.get_by_role("list", name="Legend")
+    legend = chart.get_by_role("list", name="Filter by segment")
     expect(legend).to_be_visible(timeout=NORMAL_TIMEOUT)
     for topic in ("Work", "College"):
         dot = legend.get_by_role("listitem").filter(has_text=topic).locator("span[aria-hidden]").first
@@ -236,7 +236,8 @@ def test_timeline_agenda_and_deadlines_rows(page: Page, base_url: str, api_base_
     for block_title in (TIMELINE, AGENDA):
         block = _block(page, block_title)
         for title, topic in ((WORK_TITLE, "Work"), (COLLEGE_TITLE, "College")):
-            row = block.locator("li", has_text=title).first
+            # The innermost row: a day or an area <li> holds the rows, so it has no nested <li>.
+            row = block.locator("li:not(:has(li))", has_text=title).first
             expect(_dot(row, families[topic])).to_be_visible(timeout=NORMAL_TIMEOUT)
             expect(row.locator("[data-source-icon='local']")).to_have_count(1)
     deadlines = _block(page, DEADLINES)

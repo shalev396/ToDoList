@@ -65,3 +65,13 @@ export function nestInAreas<O extends { start: Date; end: Date | null }>(
   }
   return result;
 }
+
+/** A time kept in its own left-to-right run, so a range keeps its order inside Hebrew text. */
+export function isolateLtr(text: string): string {
+  return `⁦${text}⁩`;
+}
+
+/** User text kept in its own run, so its direction never bends the text around it. */
+export function isolateAuto(text: string): string {
+  return `⁨${text}⁩`;
+}
