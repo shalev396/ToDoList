@@ -2,9 +2,12 @@
  * Occurrences as FullCalendar events. FullCalendar has no zone database of its own, so the
  * calendar runs in its `UTC` zone and every event carries the wall clock of the workspace's
  * time zone (`2026-11-12T10:00:00`, no offset): it is drawn at that time whatever zone the browser
- * is in. Pure; unit-tested.
+ * is in. Each event is painted in its colour (topic or subject, and role; features/colours), never
+ * its source's; an area is a background band in its tint. Pure; unit-tested.
  */
 import type { EventInput } from '@fullcalendar/core';
+import type { ColourFamily, ColourRole, ItemColour } from '@api-types/colours.ts';
+import { colourVar, paintOf } from '../../../colours/palette.ts';
 import { wallDate, wallString, type Occurrence } from '../time/occurrences.ts';
 import type { Tone } from '../../rules/applyDisplayRules.ts';
 
@@ -24,6 +27,15 @@ export interface CalendarEventProps {
   tone: Tone | undefined;
   badges: readonly string[];
   url: string;
+  family: ColourFamily;
+  role: ColourRole;
+}
+
+/** An area's props: it is a band, not an event (no click, no source). */
+export interface CalendarAreaProps {
+  rowId: string;
+  area: true;
+  family: ColourFamily;
 }
 
 function addDay(date: string): string {
@@ -40,8 +52,27 @@ function pointEnd(start: Date, timeZone: string): string {
     : endWall;
 }
 
-export function toEventInput(item: DisplayedOccurrence, timeZone: string): EventInput {
+/** Where an occurrence sits on the calendar, in the workspace's wall clock. */
+function timing(o: Occurrence, timeZone: string): EventInput {
+  if (o.allDay) {
+    const start = wallDate(o.start, timeZone);
+    // An all-day event's end is the (exclusive) midnight after its last day.
+    const last = o.end === null ? start : wallDate(new Date(o.end.getTime() - 1), timeZone);
+    return { allDay: true, start, end: addDay(last < start ? start : last) };
+  }
+  const end =
+    o.end === null ? (o.dueOnly ? pointEnd(o.start, timeZone) : null) : wallString(o.end, timeZone);
+  return { allDay: false, start: wallString(o.start, timeZone), ...(end === null ? {} : { end }) };
+}
+
+/** A solid fill under its ink; travel is hatched over its muted fill (`tc-travel`). */
+export function toEventInput(
+  item: DisplayedOccurrence,
+  timeZone: string,
+  colour: ItemColour,
+): EventInput {
   const { occurrence: o } = item;
+  const paint = paintOf(colour);
   const extendedProps: CalendarEventProps = {
     rowId: o.row.id,
     provider: o.row.source.provider,
@@ -49,25 +80,42 @@ export function toEventInput(item: DisplayedOccurrence, timeZone: string): Event
     tone: item.tone,
     badges: item.badges,
     url: o.row.source.url,
+    family: colour.family,
+    role: colour.role,
   };
-  const base = {
+  return {
     id: o.key,
     title: o.row.title,
-    classNames: [`fc-src-${o.row.source.provider}`, ...(o.dueOnly ? ['fc-due'] : [])],
+    classNames: [
+      ...(colour.role === 'travel' ? ['tc-travel'] : []),
+      ...(o.dueOnly ? ['fc-due'] : []),
+    ],
+    backgroundColor: paint.fill,
+    borderColor: paint.fill,
+    textColor: paint.ink,
     extendedProps,
+    ...timing(o, timeZone),
   };
-  if (o.allDay) {
-    const start = wallDate(o.start, timeZone);
-    // An all-day event's end is the (exclusive) midnight after its last day.
-    const last = o.end === null ? start : wallDate(new Date(o.end.getTime() - 1), timeZone);
-    return { ...base, allDay: true, start, end: addDay(last < start ? start : last) };
-  }
-  const end =
-    o.end === null ? (o.dueOnly ? pointEnd(o.start, timeZone) : null) : wallString(o.end, timeZone);
+}
+
+/** An area: a band in its family's tint behind every event, its title on top (`tc-area`). */
+export function toAreaEventInput(
+  occurrence: Occurrence,
+  colour: ItemColour,
+  timeZone: string,
+): EventInput {
+  const extendedProps: CalendarAreaProps = {
+    rowId: occurrence.row.id,
+    area: true,
+    family: colour.family,
+  };
   return {
-    ...base,
-    allDay: false,
-    start: wallString(o.start, timeZone),
-    ...(end === null ? {} : { end }),
+    id: occurrence.key,
+    title: occurrence.row.title,
+    display: 'background',
+    backgroundColor: colourVar(colour.family, 'area'),
+    classNames: ['tc-area'],
+    extendedProps,
+    ...timing(occurrence, timeZone),
   };
 }

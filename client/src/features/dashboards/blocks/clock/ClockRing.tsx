@@ -1,7 +1,9 @@
 import { useId, useMemo } from 'react';
 import { cn } from '@/lib/utils';
 import { SOURCE_STYLES } from '@/components/items/sources';
-import type { Provider } from '@/components/items/types';
+import { HatchPatternDefs } from '@/features/colours/Hatch';
+import { colourVar, hatchFill, paintOf } from '@/features/colours/palette';
+import type { ColourFamily } from '@api-types/colours';
 import {
   angleForTime,
   arcPath,
@@ -10,14 +12,9 @@ import {
   dayArcAngles,
   polar,
 } from './ClockRing.math';
+import type { ClockArea, ClockEvent } from './clockModel';
 
-export interface ClockEvent {
-  id: string;
-  title: string;
-  start: Date;
-  end: Date;
-  source: Provider;
-}
+export type { ClockArea, ClockEvent };
 
 export interface ClockRingLabels {
   /** The ring's accessible name: a short summary of the day, written by the caller. */
@@ -26,10 +23,14 @@ export interface ClockRingLabels {
   eventList: string;
   /** One event as text, for the hidden list and the hover tooltip ("Lecture, 14:00 to 15:30, Moodle"). */
   describeEvent: (event: ClockEvent) => string;
+  /** One area as text, for the hidden list and the hover tooltip; its title when not given. */
+  describeArea?: ((area: ClockArea) => string) | undefined;
 }
 
 export interface ClockRingProps {
   events: readonly ClockEvent[];
+  /** Painted time for parts of life: a thin band just outside the ring, behind the arcs. */
+  areas?: readonly ClockArea[] | undefined;
   /** Places the needle, and picks the day the ring shows. */
   now: Date;
   /** IANA zone whose wall clock the ring shows. */
@@ -56,9 +57,14 @@ const MAX_LANES = 3;
  */
 const SURFACE = { stroke: 'var(--ring-surface, var(--card))' } as const;
 
+const NO_AREAS: readonly ClockArea[] = [];
+
 /**
  * Today on a 24-hour ring: midnight at the top, running clockwise, one arc per event in its
- * source colour, and an ink needle at now. Events that cross midnight are clipped to the day.
+ * colour (topic or subject, and role; travel hatched), and an ink needle at now. An event
+ * without a colour (the landing demos) draws in its source colour. Areas are a thin band just
+ * outside the ring, in their tint with a 1px edge in the Scheduled step (the tint alone is close
+ * to the card). Events and areas that cross midnight are clipped to the day.
  *
  * Presentational only: the caller passes the events, the time and all accessible text. The ring
  * is never mirrored in right-to-left pages. It assumes a card surface behind it; on another
@@ -66,6 +72,7 @@ const SURFACE = { stroke: 'var(--ring-surface, var(--card))' } as const;
  */
 export function ClockRing({
   events,
+  areas = NO_AREAS,
   now,
   timeZone,
   size = 240,
@@ -75,12 +82,15 @@ export function ClockRing({
   className,
 }: ClockRingProps) {
   const maskId = useId();
+  const hatchId = `hatch-${maskId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const half = size / 2;
   const scale = size / 240;
   const showHourLabels = size >= 160;
   // Hour labels sit outside the ring, where the needle never reaches, so they are never covered.
   const labelSpace = showHourLabels ? 17 * scale : 0;
-  const outer = half - 1 - labelSpace;
+  // The area band sits between the ring and the hour labels (or the edge, without labels).
+  const areaWidth = Math.max(2, 3 * scale);
+  const outer = half - 1 - (showHourLabels ? labelSpace : areas.length > 0 ? areaWidth : 0);
   const band = Math.max(8, Math.round(19 * scale));
   const inner = outer - band;
 
@@ -97,9 +107,36 @@ export function ClockRing({
     return onDay.map((item, index) => ({ ...item, lane: lanes[index] ?? 0 }));
   }, [events, now, timeZone]);
 
+  const bands = useMemo(
+    () =>
+      areas.flatMap((area) => {
+        const clipped = clipToDay(area, now, timeZone);
+        const angles = dayArcAngles(area, now, timeZone);
+        return clipped && angles ? [{ area, clipped, ...angles }] : [];
+      }),
+    [areas, now, timeZone],
+  );
+  const hatched = [
+    ...new Set(
+      events.flatMap((event) => (event.colour?.role === 'travel' ? [event.colour.family] : [])),
+    ),
+  ] satisfies ColourFamily[];
+  const describeArea = labels.describeArea ?? ((area: ClockArea) => area.title);
+
   const laneCount = Math.max(1, ...placed.map((item) => item.lane + 1));
   const laneWidth = (band - (laneCount - 1) * GAP) / laneCount;
-  const listed = [...placed].sort((a, b) => a.clipped.start.getTime() - b.clipped.start.getTime());
+  const listed = [
+    ...placed.map(({ event, clipped }) => ({
+      key: event.id,
+      start: clipped.start,
+      text: labels.describeEvent(event),
+    })),
+    ...bands.map(({ area, clipped }) => ({
+      key: area.id,
+      start: clipped.start,
+      text: describeArea(area),
+    })),
+  ].sort((a, b) => a.start.getTime() - b.start.getTime());
   const needleAngle = angleForTime(now, timeZone);
   const tick = (hour: number) => {
     const angle = (hour / 24) * 360;
@@ -143,35 +180,73 @@ export function ClockRing({
             </mask>
           </defs>
         ) : null}
+        {hatched.length > 0 ? <HatchPatternDefs idPrefix={hatchId} families={hatched} /> : null}
 
         <g mask={animateIn ? `url(#${maskId})` : undefined}>
           <path
             className="fill-sunken"
             d={arcPath({ innerRadius: inner, outerRadius: outer, startAngle: 0, endAngle: 360 })}
           />
+          {bands.map(({ area, startAngle, endAngle }) => (
+            <path
+              key={area.id}
+              data-clock-area=""
+              data-family={area.colour.family}
+              data-role="area"
+              style={{
+                fill: colourVar(area.colour.family, 'area'),
+                stroke: colourVar(area.colour.family, 'scheduled'),
+              }}
+              strokeWidth={1}
+              d={arcPath({
+                innerRadius: outer,
+                outerRadius: outer + areaWidth,
+                startAngle,
+                endAngle,
+                gap: GAP,
+                minLength: 1.5,
+              })}
+            >
+              <title>{describeArea(area)}</title>
+            </path>
+          ))}
           {placed.map(({ event, startAngle, endAngle, lane }) => {
             const laneOuter = outer - lane * (laneWidth + GAP);
+            const paint = event.colour === undefined ? null : paintOf(event.colour);
+            const d = arcPath({
+              innerRadius: laneOuter - laneWidth,
+              outerRadius: laneOuter,
+              startAngle,
+              endAngle,
+              gap: GAP,
+              minLength: 1.5,
+            });
             return (
-              <path
+              <g
                 // A new key restarts the arc's fade-in when it is the one that just changed.
                 key={
                   event.id === emphasize ? `${event.id}-${String(event.start.getTime())}` : event.id
                 }
-                className={cn(
-                  SOURCE_STYLES[event.source].fill,
-                  event.id === emphasize && 'clock-arc-fresh',
-                )}
-                d={arcPath({
-                  innerRadius: laneOuter - laneWidth,
-                  outerRadius: laneOuter,
-                  startAngle,
-                  endAngle,
-                  gap: GAP,
-                  minLength: 1.5,
-                })}
+                className={event.id === emphasize ? 'clock-arc-fresh' : undefined}
               >
-                <title>{labels.describeEvent(event)}</title>
-              </path>
+                <path
+                  className={paint === null ? SOURCE_STYLES[event.source].fill : undefined}
+                  style={paint === null ? undefined : { fill: paint.fill }}
+                  data-family={event.colour?.family}
+                  data-role={event.colour?.role}
+                  d={d}
+                >
+                  <title>{labels.describeEvent(event)}</title>
+                </path>
+                {event.colour?.role === 'travel' ? (
+                  <path
+                    aria-hidden="true"
+                    pointerEvents="none"
+                    style={{ fill: hatchFill(hatchId, event.colour.family) }}
+                    d={d}
+                  />
+                ) : null}
+              </g>
             );
           })}
           {TICK_HOURS.map(tick).map(({ hour, from, to }) => (
@@ -235,8 +310,8 @@ export function ClockRing({
       </svg>
 
       <ul className="sr-only" aria-label={labels.eventList}>
-        {listed.map(({ event }) => (
-          <li key={event.id}>{labels.describeEvent(event)}</li>
+        {listed.map(({ key, text }) => (
+          <li key={key}>{text}</li>
         ))}
       </ul>
     </div>

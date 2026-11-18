@@ -13,8 +13,12 @@ import { Button } from '@/components/ui/button';
 import { SelectField } from '@/components/ui/select';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { dateLocale, shortDate, timeOfDay } from '@/components/items/format';
+import { SourceIcon } from '@/components/items/SourceIcon';
 import { sourceNameKey } from '@/components/items/sources';
+import { colourVar, hatchBackground, paintOf } from '@/features/colours/palette';
+import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
+import { cn } from '@/lib/utils';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useNow } from '@/hooks/useNow';
@@ -26,6 +30,8 @@ import type { BlockComponentProps } from '../../registry/types';
 import { applyDisplayRules } from '../../rules/applyDisplayRules';
 import { usePageVars } from '../../variables/pageVars';
 import { zonedParts, zonedTime } from '../clock/ClockRing.math';
+import { ringProvider } from '../clock/clockModel';
+import { splitAreas } from '../time/areas';
 import { ToneMark } from '../time/ToneMark';
 import {
   expandOccurrences,
@@ -34,7 +40,13 @@ import {
   wallString,
   type WeekStart,
 } from '../time/occurrences';
-import { toEventInput, type CalendarEventProps, type DisplayedOccurrence } from './calendarEvents';
+import {
+  toAreaEventInput,
+  toEventInput,
+  type CalendarAreaProps,
+  type CalendarEventProps,
+  type DisplayedOccurrence,
+} from './calendarEvents';
 import { readStartHour, slotTime, startScrollTop } from './startHour';
 import { useSaveCalendarViz } from './useSaveCalendarViz';
 
@@ -84,8 +96,10 @@ function readView(viz: Record<string, unknown>): { view: View; list: boolean; mo
 /**
  * The calendar block (FullCalendar, MIT plugins only). Week is the default; Week or Month is
  * saved in the block's viz options for editors. Events are placed in the workspace's time zone
- * and coloured by source; a click opens the item Sheet (`?item=`). The series' cancelled
- * occurrences are excluded, never listed (occurrences.ts).
+ * and coloured by subject or topic and role (features/colours), with their source as a small
+ * icon; travel is hatched, its label on a plate of its fill. Areas are bands in their tint behind
+ * everything, labelled at the top. A click opens the item Sheet (`?item=`). The series'
+ * cancelled occurrences are excluded, never listed (occurrences.ts).
  */
 export default function CalendarBlock({ dashboard, block, editing }: BlockComponentProps) {
   const { t } = useTranslation();
@@ -115,23 +129,32 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   const [startHour, setStartHour] = useState(() => readStartHour(block.viz));
   const region = useRef<HTMLDivElement>(null);
 
-  const displayed = useMemo<DisplayedOccurrence[]>(() => {
+  const visible = useMemo(() => {
     const rows = (data.data?.rows ?? []).filter(isTimeRow);
     const shown = applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars });
-    const visible = shown.filter((entry) => !entry.hidden);
+    return shown.filter((entry) => !entry.hidden);
+  }, [data.data?.rows, block.rules, now, timeZone, vars]);
+  const visibleRows = useMemo(() => visible.map((entry) => entry.row), [visible]);
+  const colourOf = useRowColours(visibleRows);
+  const { areas, displayed } = useMemo(() => {
     const byRow = new Map(visible.map((entry) => [entry.row.id, entry] as const));
-    return expandOccurrences(
-      visible.map((entry) => entry.row),
-      range,
-      timeZone,
-    ).map((occurrence) => {
-      const entry = byRow.get(occurrence.row.id);
-      return { occurrence, tone: entry?.tone, badges: entry?.badges ?? [] };
-    });
-  }, [data.data?.rows, block.rules, now, timeZone, vars, range]);
+    const split = splitAreas(expandOccurrences(visibleRows, range, timeZone), colourOf);
+    return {
+      areas: split.areas,
+      displayed: split.items.map((occurrence): DisplayedOccurrence => {
+        const entry = byRow.get(occurrence.row.id);
+        return { occurrence, tone: entry?.tone, badges: entry?.badges ?? [] };
+      }),
+    };
+  }, [visible, visibleRows, range, timeZone, colourOf]);
   const events = useMemo(
-    () => displayed.map((item) => toEventInput(item, timeZone)),
-    [displayed, timeZone],
+    () => [
+      ...areas.map((occurrence) =>
+        toAreaEventInput(occurrence, colourOf(occurrence.row.id), timeZone),
+      ),
+      ...displayed.map((item) => toEventInput(item, timeZone, colourOf(item.occurrence.row.id))),
+    ],
+    [areas, displayed, timeZone, colourOf],
   );
 
   const calendar = useRef<FullCalendar>(null);
@@ -190,10 +213,38 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     return `${shortDate(range.from, locale, timeZone)} – ${shortDate(last, locale, timeZone)}`;
   }, [view, anchor, range, locale, timeZone]);
 
+  /** The event's time as the workspace's wall clock (FullCalendar reads it as UTC). */
+  const wallTime = (date: Date | null) => (date === null ? '' : timeOfDay(date, locale, 'UTC'));
+
   const renderEvent = (arg: EventContentArg) => {
-    const props = arg.event.extendedProps as CalendarEventProps;
+    const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
+    if ('area' in props) {
+      const when = arg.event.allDay
+        ? t('timeBlocks.calendar.allDay')
+        : `${wallTime(arg.event.start)}–${wallTime(arg.event.end)}`;
+      return (
+        <div className="tc-area-label">
+          <span aria-hidden="true" dir="auto">
+            {arg.event.title}
+          </span>
+          <span className="sr-only">
+            {t('timeBlocks.calendar.areaLabel', { title: arg.event.title, when })}
+          </span>
+        </div>
+      );
+    }
+    // On a fill the source icon takes the fill's ink; in a list (no fill) it stays muted. Travel's
+    // label sits on a plate of its own fill, never on the stripes (a list row has none).
+    const list = arg.view.type.startsWith('list');
+    const plate = props.role === 'travel' && !list;
     return (
-      <div className="flex min-w-0 items-center gap-1 px-1 text-[11px] leading-4">
+      <div
+        className={cn(
+          'flex min-w-0 items-center gap-1 px-1 text-[11px] leading-4',
+          plate && 'w-fit max-w-full rounded-sm',
+        )}
+        style={plate ? { backgroundColor: paintOf(props).fill } : undefined}
+      >
         {props.dueOnly ? (
           <CalendarClock aria-hidden="true" className="size-3 shrink-0" data-due-marker />
         ) : null}
@@ -201,6 +252,10 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         {arg.timeText === '' || arg.event.allDay ? null : (
           <span className="shrink-0 font-medium tabular-nums">{arg.timeText}</span>
         )}
+        <SourceIcon
+          source={ringProvider(props.provider)}
+          className={cn('shrink-0', !list && '[&>svg]:text-current')}
+        />
         <span dir="auto" className="min-w-0 truncate">
           {arg.event.title}
         </span>
@@ -214,14 +269,21 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   };
 
   const describe = (arg: EventMountArg) => {
-    const props = arg.event.extendedProps as CalendarEventProps;
-    const start = arg.event.start;
-    // The event's dates are the workspace's wall clock read as UTC.
-    const when = arg.event.allDay
-      ? t('timeBlocks.calendar.allDay')
-      : start === null
-        ? ''
-        : timeOfDay(start, locale, 'UTC');
+    const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
+    arg.el.setAttribute('data-item-id', props.rowId);
+    arg.el.setAttribute('data-family', props.family);
+    if ('area' in props) {
+      // The tint alone is close to the card: a 1px edge in the Scheduled step outlines it.
+      arg.el.setAttribute('data-role', 'area');
+      arg.el.style.setProperty('--tc-edge', colourVar(props.family, 'scheduled'));
+      return;
+    }
+    arg.el.setAttribute('data-role', props.role);
+    const { stripe } = paintOf(props);
+    if (stripe !== null) {
+      arg.el.style.setProperty('--tc-hatch', hatchBackground(stripe));
+    }
+    const when = arg.event.allDay ? t('timeBlocks.calendar.allDay') : wallTime(arg.event.start);
     const source = t(sourceNameKey(props.provider as never));
     arg.el.setAttribute(
       'aria-label',
@@ -231,7 +293,6 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         source,
       }),
     );
-    arg.el.setAttribute('data-item-id', props.rowId);
   };
 
   const status = data.isLoading ? 'loading' : data.isError ? 'error' : 'ready';
@@ -356,6 +417,8 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             eventTimeFormat={EVENT_TIME}
             slotLabelFormat={EVENT_TIME}
             dayMaxEvents
+            // Month's timed events as filled blocks too (not dots): every event shows its colour.
+            eventDisplay="block"
             eventInteractive
             displayEventEnd={false}
             events={events}
@@ -363,8 +426,11 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             eventDidMount={describe}
             eventClick={(arg) => {
               arg.jsEvent.preventDefault();
-              const props = arg.event.extendedProps as CalendarEventProps;
-              openItem(props.rowId);
+              const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
+              // An area is the time behind the events, not one of them.
+              if (!('area' in props)) {
+                openItem(props.rowId);
+              }
             }}
             noEventsContent={() => null}
           />

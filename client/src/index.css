@@ -649,8 +649,10 @@
 
 /*
  * The calendar block (FullCalendar), restyled with the theme's tokens: a hairline grid on the card,
- * the sunken wash for today, an ink now-line, and events tinted by their source colour (a wash and
- * a solid edge on the leading side, as the public calendar does). Colour only encodes the source.
+ * the sunken wash for today and an ink now-line. Events are painted in their topic colour (fill and
+ * ink set per event from features/colours, never the source's); travel is hatched (`--tc-hatch`,
+ * set per event) with its label on a plate of its fill; an area is a band in its tint behind
+ * everything, edged in its Scheduled step (`--tc-edge`) and labelled at the top.
  */
 .todolist-calendar .fc {
   --fc-border-color: var(--border);
@@ -691,45 +693,62 @@
 .todolist-calendar .fc .fc-list-event td {
   border-color: var(--border);
 }
-.todolist-calendar .fc .fc-event {
-  --src: var(--color-source-local);
+.todolist-calendar .fc .fc-timegrid-event,
+.todolist-calendar .fc .fc-daygrid-event {
   border: 0;
-  border-inline-start: 3px solid var(--src);
   border-radius: 4px;
-  background: color-mix(in oklab, var(--src) 16%, var(--card));
-  color: var(--foreground);
+}
+.todolist-calendar .fc .fc-event:not(.fc-bg-event) {
   cursor: pointer;
 }
 .todolist-calendar .fc .fc-event:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
-.todolist-calendar .fc .fc-event.fc-due {
-  border-inline-start-style: dashed;
+.todolist-calendar .fc .tc-travel:not(.fc-list-event) {
+  background-image: var(--tc-hatch);
 }
-.todolist-calendar .fc .fc-list-event-dot {
-  border-color: var(--src);
+/* In a list, travel's dot is hatched inside a ring of its fill. */
+.todolist-calendar .fc .fc-list-event.tc-travel .fc-list-event-dot {
+  border-width: 2px;
+  padding: 3px;
+  background-image: var(--tc-hatch);
 }
-.todolist-calendar .fc .fc-src-jira {
-  --src: var(--color-source-jira);
+.todolist-calendar .fc .tc-area {
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px var(--tc-edge, var(--border));
 }
-.todolist-calendar .fc .fc-src-moodle {
-  --src: var(--color-source-moodle);
+.todolist-calendar .fc .tc-area-label {
+  overflow: hidden;
+  padding: 2px 4px;
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.todolist-calendar .fc .fc-src-google_calendar {
-  --src: var(--color-source-google-calendar);
+/* In the week grid, events would cover a label at the band's top: a day with an area keeps a rail
+   along its start, clear of events, and the label runs down it. */
+.todolist-calendar .fc .fc-timegrid-col:has(.tc-area) .fc-timegrid-col-events {
+  margin-inline-start: 18px;
 }
-.todolist-calendar .fc .fc-src-clickup {
-  --src: var(--color-source-clickup);
+.todolist-calendar .fc .fc-timegrid-col .tc-area-label {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  display: flex;
+  justify-content: center;
+  width: 18px;
+  padding: 4px 0;
 }
-.todolist-calendar .fc .fc-src-github {
-  --src: var(--color-source-github);
-}
-.todolist-calendar .fc .fc-src-linear {
-  --src: var(--color-source-linear);
-}
-.todolist-calendar .fc .fc-src-local {
-  --src: var(--color-source-local);
+.todolist-calendar .fc .fc-timegrid-col .tc-area-label > [aria-hidden] {
+  max-height: 100%;
+  overflow: hidden;
+  /* Line-left is the top in a vertical line, in either direction: the label starts at the top. */
+  text-align: left;
+  text-overflow: ellipsis;
+  writing-mode: vertical-rl;
 }
 .todolist-calendar .fc .fc-daygrid-more-link {
   color: var(--muted-foreground);
