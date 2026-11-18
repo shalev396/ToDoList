@@ -345,10 +345,23 @@ export interface MarkItemRequest {
   back?: SpanInput;
 }
 
-/** The rule the item is marked with, and its legs in the horizon as they are now. */
+/**
+ * A marked item with no trips of its own because it sits inside a marked area at the area's place
+ * (its own, or the one it takes from the area): the area's title and the place's name.
+ */
+export interface WithinArea {
+  area: string;
+  place: string;
+}
+
+/**
+ * The rule the item is marked with, and its legs in the horizon as they are now. With no legs,
+ * `within` names the marked area it is spent in, when that is why (else null).
+ */
 export interface MarkItemResponse {
   rule: TravelRuleView;
   legs: ItemDetail[];
+  within: WithinArea | null;
 }
 
 /**

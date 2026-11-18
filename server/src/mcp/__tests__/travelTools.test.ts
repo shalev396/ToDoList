@@ -215,7 +215,7 @@ describe('the travel tools', () => {
       mode: 'transit',
       direction: 'both',
       place: 'Technion',
-    })) as { rule: { scope: unknown }; legs: Entry[] };
+    })) as { rule: { scope: unknown }; legs: Entry[]; within: unknown };
     assert.deepEqual(marked.rule.scope, {
       kind: 'item',
       itemId: area.item.id,
@@ -230,6 +230,22 @@ describe('the travel tools', () => {
     );
     assert.equal(marked.legs[0]?.endAt, at(6, 6).toISOString());
     assert.equal(marked.legs[1]?.startAt, at(6, 14).toISOString());
+    assert.equal(marked.within, null);
+
+    // A block inside it with no place: the marked area lends it the Technion, so no trips of its
+    // own, and the answer says where it is spent.
+    const reading = (await call('create_time_block', {
+      title: 'Reading',
+      startAt: at(6, 8).toISOString(),
+      endAt: at(6, 9).toISOString(),
+    })) as { item: { id: string } };
+    const inside = (await call('travel_mark_item', {
+      itemId: reading.item.id,
+      mode: 'walk',
+      direction: 'both',
+    })) as { legs: Entry[]; within: unknown };
+    assert.deepEqual(inside.legs, []);
+    assert.deepEqual(inside.within, { area: 'Studying', place: 'Technion' });
 
     const calendar = (await call('get_calendar', {
       range: 'custom',
@@ -242,6 +258,7 @@ describe('the travel tools', () => {
       [
         ['Bus to Technion', 'travel', true],
         ['Studying', 'block', false],
+        ['Reading', 'block', true],
         ['Bus home', 'travel', true],
       ],
     );

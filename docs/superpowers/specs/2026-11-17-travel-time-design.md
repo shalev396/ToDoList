@@ -129,8 +129,9 @@ This answers his question "how do you know when the day starts, with windows bet
 6. Items with no place, all-day events, and anchors already in the past (that day) don't create new legs.
 7. **Areas** (_added 2026-11-18_). A painted area ("Studying 8–16 at Braude") anchors like any item, and the items inside it nest:
    - an inner item with a place of its own is there for its own time: leave the area to arrive as it starts, and go back into the area as it ends (in that item's mode; late only matters when an appointment waits there);
-   - an inner item with no place is at the area's place (the innermost area around its start);
+   - a marked area lends its place to an inner item with none (the innermost marked area around its start): that item adds no trips of its own, and marking it says it is inside the area, at that place;
    - the rest of the area is spent at its place: no legs between two inner items there, and none from the area's place to itself;
+   - he goes back into a part of the area with no appointment only when the gap holds the trip back and the trip on, and he gets there before the part ends; otherwise he goes straight on, or home, from the inner item (_fix round 1, 2026-11-18_);
    - legs go to the area at its start, and back (or onward) at its end, by the rules above. An area stays not busy; its legs are busy.
 
 ## Generation and lifecycle (my calls after review)

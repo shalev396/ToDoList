@@ -40,6 +40,7 @@ import {
   type TravelRuleScope,
   type TravelRuleScopeKind,
   type TravelRuleView,
+  type WithinArea,
 } from '../../types/travel.js';
 import { AuditTarget } from '../base/AuditTarget.js';
 import type { Caller } from '../base/Caller.js';
@@ -337,7 +338,9 @@ export class TravelRule
    * legs takes, every time (TravelProfile#setTripLength: every leg of that trip follows, but the
    * ones he timed by hand), and times move the leg itself as a hand edit (his times stand until he
    * resets them). With `every`, a span is a length only. A leg already under way is left as it is.
-   * The answer: the rule, and the item's live legs in the horizon, by start.
+   * The answer: the rule, and the item's live legs in the horizon, by start. With none, `within`
+   * names the marked area the item is spent in at the area's place, when that is why (a marked
+   * area lends its place: the item adds no trips of its own); else null.
    *
    * A moved occurrence of a mirrored series, marked by its own row, is its series' occurrence at its
    * original start (with `every`, its series), as the planner keys its legs.
@@ -358,7 +361,7 @@ export class TravelRule
   static async markItem(
     caller: Caller,
     input: MarkItemInput,
-  ): Promise<{ rule: TravelRule; legs: TravelLeg[] }> {
+  ): Promise<{ rule: TravelRule; legs: TravelLeg[]; within: WithinArea | null }> {
     caller.require('editor');
     const item = await Item.find(caller, input.itemId);
     const scope = await TravelRule.#markScope(caller, item, input);
@@ -383,7 +386,27 @@ export class TravelRule
     // there are (the next change, sync or daily pass makes them).
     await TravelPlanner.afterOwnChange(caller, 'mark');
     const now = new Date();
-    if (spans.length === 0) return { rule, legs: await TravelRule.#legsOf(caller, scope, now) };
+    const answer = async (): Promise<{
+      rule: TravelRule;
+      legs: TravelLeg[];
+      within: WithinArea | null;
+    }> => {
+      const legs = await TravelRule.#legsOf(caller, scope, now);
+      const within =
+        legs.length > 0
+          ? null
+          : await TravelPlanner.areaAround(
+              caller,
+              {
+                itemId: scope.itemId,
+                occurrence:
+                  scope.kind === 'item' && scope.occurrence !== 'single' ? scope.occurrence : null,
+              },
+              now,
+            );
+      return { rule, legs, within };
+    };
+    if (spans.length === 0) return answer();
     // A length is the trip's, set once per trip however many of its legs the mark has.
     const lengths = new Map<TripKey, number>();
     let lengthSet = false;
@@ -411,7 +434,7 @@ export class TravelRule
       // Every leg of those trips takes the length now.
       await TravelPlanner.afterOwnChange(caller, 'length');
     }
-    return { rule, legs: await TravelRule.#legsOf(caller, scope, now) };
+    return answer();
   }
 
   /**

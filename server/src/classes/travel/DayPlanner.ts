@@ -25,7 +25,11 @@
  *   - the leg back into the area after an inner item elsewhere leaves as that item ends, in the
  *     mode it was reached by, keyed as that item's `back`: the area resumes whenever he gets there
  *     (a conflict only when it reaches an appointment there late). Leaving the area for an inner
- *     item arrives as that item starts, and may leave before the area's painted time ends.
+ *     item arrives as that item starts, and may leave before the area's painted time ends;
+ *   - he goes back into a part of an area that holds no appointment only when the gap holds the
+ *     trip back and the trip on, and he gets there before the part ends (ruling of 2026-11-18);
+ *     otherwise he goes straight on, or home, from the item before it;
+ *   - a leg home leaves at the later of its stay's end and the time he can leave it.
  *
  * Titles are English templates (plan Ruling 19) with place names only, never an address.
  */
@@ -151,12 +155,12 @@ interface HomeWindow {
 type Stop = Stay | HomeWindow;
 
 /**
- * When a leg can leave: `departAt`, plus the lengths of `after` (the trips that bring him to the
- * stay it leaves, when he gets back into an area with no appointment there to leave from).
+ * When a leg can leave: the latest of its terms, each a time plus the lengths of some trips (`at`,
+ * then `after`: the trips that bring him back into the area he leaves). A leg home also waits for
+ * its stay to end.
  */
 interface Departure {
-  departAt: Date;
-  after: readonly TripKey[];
+  leaves: readonly { at: Date; after: readonly TripKey[] }[];
 }
 
 /**
@@ -289,6 +293,9 @@ function closing(pieces: readonly Piece[], end: number): Piece | undefined {
   return area ?? pieces.at(-1);
 }
 
+/** A stay that is only an area resumed after an item elsewhere: no appointment of its own. */
+const isResumedOnly = (stay: Stay): boolean => stay.first.softStart && stay.hardStart === null;
+
 function stayOf(pieces: readonly Piece[]): Stay {
   const [first] = pieces;
   if (first === undefined) throw new Error('DayPlanner: an empty stay');
@@ -363,8 +370,9 @@ export class DayPlanner {
   }
 
   /**
-   * Every trip `plan()` may read a length for: the legs' trips, and with going home on, both trips
-   * of each window long enough to go home in (the plan reads them to decide).
+   * Every trip `plan()` may read a length for: the legs' trips, the trips that skip an area part he
+   * may not go back into (straight on, or home), and with going home on, both trips of each window
+   * long enough to go home in (the plan reads them to decide).
    */
   static trips(input: DayPlanInput): TripKey[] {
     const planner = DayPlanner.#of(input);
@@ -373,6 +381,7 @@ export class DayPlanner {
     for (const spec of planner.#legsAlong(planner.#stays)) {
       trips.add(DayPlanner.tripKey(spec.from, spec.to, spec.mode));
     }
+    for (const trip of planner.#shortcuts()) trips.add(trip);
     for (const stay of planner.#stays) {
       for (const window of planner.#windowsIn(stay)) {
         trips.add(window.home);
@@ -394,7 +403,7 @@ export class DayPlanner {
       if (estimate === undefined) throw new Error(`DayPlanner: no estimate for the trip ${trip}`);
       return estimate;
     };
-    const stops = planner.#stays.flatMap((stay) => planner.#homeInWindows(stay, length));
+    const stops = planner.#visited(length).flatMap((stay) => planner.#homeInWindows(stay, length));
     return planner
       .#legsAlong(stops)
       .map((spec) => planner.#timed(spec, length))
@@ -403,6 +412,105 @@ export class DayPlanner {
 
   static #of(input: DayPlanInput): DayPlanner | null {
     return input.homeId === null ? null : new DayPlanner(input, input.homeId);
+  }
+
+  /**
+   * The day's items that sit inside a marked area at its place (their own, or the one they take
+   * from it), each with the innermost such area: they are spent in the area's stay, so they make
+   * no trips of their own. Without a Home, too: it names where an item is, not its legs.
+   */
+  static hosts(input: DayPlanInput): { anchor: Anchor; area: Anchor }[] {
+    const { start, end } = dayBounds(input.day, input.timeZone);
+    const anchors = placed(
+      input.anchors.filter((anchor) => anchor.start >= start && anchor.start < end),
+    );
+    const areas = anchors.filter((anchor) => anchor.area);
+    return anchors.flatMap((anchor) => {
+      if (anchor.area) return [];
+      const area = innermost(
+        areas.filter((one) => one.placeId === anchor.placeId && holds(one, anchor.start)),
+      );
+      return area === undefined ? [] : [{ anchor, area }];
+    });
+  }
+
+  /**
+   * The stays he goes to: all of them, but an area part with no appointment of its own that he'd
+   * go back into from an item elsewhere only when the gap holds the trip back and the trip on (to
+   * the stay after it, arriving by its start), and he gets there before the part ends. Otherwise
+   * he goes straight on (or home) from the stay before it: two items at one place either side of
+   * it are then one visit, with no trip between them.
+   */
+  #visited(length: (trip: TripKey) => Estimate): Stay[] {
+    const minutes = (trip: TripKey): number => length(trip).minutes * MS_PER_MINUTE;
+    const visited: Stay[] = [];
+    // When he gets back into an area part he left an item for: he leaves it no sooner.
+    const arrivals = new Map<Stay, number>();
+    this.#stays.forEach((stay, index) => {
+      const previous = visited.at(-1);
+      if (previous === undefined || previous.placeId === stay.placeId || !stay.first.softStart) {
+        visited.push(stay);
+        return;
+      }
+      // As #leaving: once its appointments are over and he is there.
+      const known = [previous.hardEnd?.getTime(), arrivals.get(previous)].filter(
+        (time): time is number => time !== undefined,
+      );
+      const leaves = known.length === 0 ? previous.start.getTime() : Math.max(...known);
+      const arrives = leaves + minutes(this.#legTrip(previous, stay));
+      const next = this.#stays[index + 1];
+      const deadline =
+        next === undefined ? null : next.first.softStart ? next.hardStart : next.start;
+      const fits =
+        arrives < stay.end.getTime() &&
+        (next === undefined ||
+          deadline === null ||
+          arrives + minutes(this.#legTrip(stay, next)) <= deadline.getTime());
+      if (fits || !isResumedOnly(stay)) {
+        visited.push(stay);
+        arrivals.set(stay, arrives);
+      }
+    });
+    return visited;
+  }
+
+  /**
+   * The trips of the legs the plan takes instead when it skips area parts (#visited): from each
+   * stay straight to a later one when every stay between may be skipped, or home when every stay
+   * after it may.
+   */
+  #shortcuts(): TripKey[] {
+    const stays = this.#stays;
+    const trips: TripKey[] = [];
+    stays.forEach((from, index) => {
+      for (let to = index + 1; to <= stays.length; to += 1) {
+        const target = stays[to];
+        if (to > index + 1) {
+          if (target === undefined) {
+            if (from.placeId !== this.#homeId) {
+              trips.push(DayPlanner.tripKey(from.placeId, this.#homeId, from.last.anchor.mode));
+            }
+          } else if (target.placeId !== from.placeId) {
+            trips.push(this.#legTrip(from, target));
+          }
+        }
+        if (target === undefined || !isResumedOnly(target)) break;
+      }
+    });
+    return trips;
+  }
+
+  /**
+   * The mode of the leg from one stay to another elsewhere: back into an area he resumes, the way
+   * he came (the mode of what closes the stay he leaves); else the destination's.
+   */
+  #legMode(from: Stay, to: Stay): TravelMode {
+    return to.first.softStart ? from.last.anchor.mode : to.first.anchor.mode;
+  }
+
+  /** The trip of the leg from one stay to another elsewhere (#legMode). */
+  #legTrip(from: Stay, to: Stay): TripKey {
+    return DayPlanner.tripKey(from.placeId, to.placeId, this.#legMode(from, to));
   }
 
   /**
@@ -469,7 +577,7 @@ export class DayPlanner {
       if (previous === undefined) return;
       let leg: LegSpec | null = null;
       if (previous.kind === 'stay' && next.kind === 'home') {
-        leg = this.#back(previous.last.anchor, previous.placeId, home, previous.end);
+        leg = this.#home(previous, into);
       } else if (previous.kind === 'home' && next.kind === 'stay') {
         leg = this.#there(next.first.anchor, home, next.placeId, next.start);
       } else if (
@@ -478,6 +586,8 @@ export class DayPlanner {
         previous.placeId !== next.placeId
       ) {
         const leaving = this.#leaving(previous, into);
+        // In #legMode's mode: the trip #visited and trips() read.
+        const mode = this.#legMode(previous, next);
         leg = next.first.softStart
           ? {
               // Back into the area around what he leaves, the way he came: as he can, and late
@@ -486,7 +596,7 @@ export class DayPlanner {
               anchor: previous.last.anchor,
               from: previous.placeId,
               to: next.placeId,
-              mode: previous.last.anchor.mode,
+              mode,
               ...leaving,
               arriveBy: next.hardStart,
             }
@@ -496,7 +606,7 @@ export class DayPlanner {
               anchor: next.first.anchor,
               from: previous.placeId,
               to: next.placeId,
-              mode: next.first.anchor.mode,
+              mode,
               ...leaving,
               arriveBy: next.start,
             };
@@ -506,39 +616,43 @@ export class DayPlanner {
     });
     const last = stops.at(-1);
     if (last?.kind === 'stay' && last.placeId !== home && last.last.anchor.back) {
-      specs.push(this.#back(last.last.anchor, last.placeId, home, last.end));
+      specs.push(this.#home(last, into));
     }
     return specs;
   }
 
   /**
-   * When he can leave a stay: as its last appointment ends; with none (in an area only), once he
-   * is there: at its start, or, back in it from an item elsewhere, once that trip is made.
+   * When he can leave a stay: as its last appointment ends; with none (in an area only), at its
+   * start. Back in an area from an item elsewhere, also not before he is there: once that trip is
+   * made.
    */
   #leaving(stay: Stay, into: LegSpec | null): Departure {
-    if (stay.hardEnd !== null) return { departAt: stay.hardEnd, after: [] };
     if (stay.first.softStart && into !== null && into.direction === 'back') {
+      const trip = DayPlanner.tripKey(into.from, into.to, into.mode);
       return {
-        departAt: into.departAt,
-        after: [...into.after, DayPlanner.tripKey(into.from, into.to, into.mode)],
+        leaves: [
+          ...into.leaves.map(({ at, after }) => ({ at, after: [...after, trip] })),
+          ...(stay.hardEnd === null ? [] : [{ at: stay.hardEnd, after: [] }]),
+        ],
       };
     }
-    return { departAt: stay.start, after: [] };
+    return { leaves: [{ at: stay.hardEnd ?? stay.start, after: [] }] };
   }
 
   #there(anchor: Located, from: string, to: string, arriveBy: Date): LegSpec {
     return { direction: 'there', anchor, from, to, mode: anchor.mode, arriveBy };
   }
 
-  #back(anchor: Located, from: string, to: string, departAt: Date): LegSpec {
+  /** Home from a stay, by what closes it: as it ends, or later if he gets there later. */
+  #home(stay: Stay, into: LegSpec | null): LegSpec {
+    const { anchor } = stay.last;
     return {
       direction: 'back',
       anchor,
-      from,
-      to,
+      from: stay.placeId,
+      to: this.#homeId,
       mode: anchor.mode,
-      departAt,
-      after: [],
+      leaves: [...this.#leaving(stay, into).leaves, { at: stay.end, after: [] }],
       arriveBy: null,
     };
   }
@@ -554,9 +668,10 @@ export class DayPlanner {
     const estimate = length(DayPlanner.tripKey(from, to, mode));
     const span = estimate.minutes * MS_PER_MINUTE;
     const leaves = (departure: Departure): number =>
-      departure.after.reduce(
-        (at, trip) => at + length(trip).minutes * MS_PER_MINUTE,
-        departure.departAt.getTime(),
+      Math.max(
+        ...departure.leaves.map(({ at, after }) =>
+          after.reduce((time, trip) => time + length(trip).minutes * MS_PER_MINUTE, at.getTime()),
+        ),
       );
     let start: number;
     let conflict = false;

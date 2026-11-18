@@ -9,6 +9,7 @@ import type {
   TravelRuleView,
 } from '@api-types/travel.ts';
 import { en } from '../../i18n/translations/en/index.ts';
+import { he } from '../../i18n/translations/he/index.ts';
 import {
   anchorPanel,
   canTravelTo,
@@ -26,6 +27,7 @@ import {
   markRequestOf,
   markTargetOf,
   outcomeOf,
+  outcomeText,
   ownPlaceOf,
   panelPreview,
   panelSpan,
@@ -443,12 +445,30 @@ describe('which items take travel, and their mark', () => {
 
   it('an answer with no trips yet is a calm note, not an error', () => {
     const view = { id: 'r', scope: { kind: 'series', itemId: 'x' } } as unknown as TravelRuleView;
-    assert.deepEqual(outcomeOf({ rule: view, legs: [] }, false), {
+    assert.deepEqual(outcomeOf({ rule: view, legs: [], within: null }, false), {
       kind: 'pending',
       ownPlace: false,
     });
     const legs = [{}, {}] as unknown as Parameters<typeof outcomeOf>[0]['legs'];
-    assert.deepEqual(outcomeOf({ rule: view, legs }, true), { kind: 'added', count: 2 });
+    assert.deepEqual(outcomeOf({ rule: view, legs, within: null }, true), {
+      kind: 'added',
+      count: 2,
+    });
+  });
+
+  it('no trips because it is inside a marked area: says so, never "set its place"', () => {
+    const view = { id: 'r', scope: { kind: 'item', itemId: 'x' } } as unknown as TravelRuleView;
+    const within = { area: 'Studying', place: 'Braude' };
+    const outcome = outcomeOf({ rule: view, legs: [], within }, true);
+    assert.deepEqual(outcome, { kind: 'inside', area: 'Studying', place: 'Braude' });
+    assert.equal(
+      outcomeText(t, outcome),
+      'It’s inside Studying, at Braude, so it needs no trips of its own.',
+    );
+    assert.equal(he.travel.add.inside, 'הוא בתוך {{area}}, ב־{{place}}, ולכן אין לו נסיעות משלו.');
+    // Trips of its own win: "inside" is only why there are none.
+    const legs = [{}] as unknown as Parameters<typeof outcomeOf>[0]['legs'];
+    assert.deepEqual(outcomeOf({ rule: view, legs, within }, true), { kind: 'added', count: 1 });
   });
 });
 

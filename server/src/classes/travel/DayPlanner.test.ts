@@ -713,10 +713,12 @@ describe('DayPlanner: painted areas (the owner’s ruling of 2026-11-18)', () =>
     assert.ok(legs.every((leg) => !leg.conflict));
     // The area's legs follow the area itself, not the part of it the gym leaves.
     assert.deepEqual(legs.at(-1)?.anchorStart, at('08:00'));
+    // Straight home from the gym is listed too: the plan takes it when there's no time to go back.
     assert.deepEqual(DayPlanner.trips(day).sort(), [
       'braude|gym|walk',
       'braude|home|transit',
       'gym|braude|walk',
+      'gym|home|walk',
       'home|braude|transit',
     ]);
   });
@@ -773,8 +775,8 @@ describe('DayPlanner: painted areas (the owner’s ruling of 2026-11-18)', () =>
       `u-1|studying-series|${second}|back`,
     ]);
   });
-
-  it('two items elsewhere inside an area: back into it after each; too short a return is a conflict', () => {
+  it('two items elsewhere inside an area: too short a gap to go back between them goes straight on', () => {
+    // Walking: Braude ↔ gym 20 min, Braude ↔ cafe 15, gym → cafe 10; by bus Home ↔ Braude 50.
     const gym = anchor({
       itemId: 'gym',
       start: at('10:00'),
@@ -782,42 +784,158 @@ describe('DayPlanner: painted areas (the owner’s ruling of 2026-11-18)', () =>
       placeId: GYM,
       mode: 'walk',
     });
-    const coffee = anchor({
-      itemId: 'coffee',
-      start: at('11:30'),
-      end: at('12:00'),
-      placeId: CAFE,
-      mode: 'walk',
-    });
-    const legs = DayPlanner.plan(
-      input([studying(), gym, coffee]),
-      estimates([
-        ...busBoth(50),
-        [BRAUDE, GYM, 'walk', 20],
-        [GYM, BRAUDE, 'walk', 20],
-        [BRAUDE, CAFE, 'walk', 15],
-        [CAFE, BRAUDE, 'walk', 15],
-      ]),
-    );
-    assert.deepEqual(lines(legs), [
+    const coffee = (start: string, end: string): Anchor =>
+      anchor({ itemId: 'coffee', start: at(start), end: at(end), placeId: CAFE, mode: 'walk' });
+    const lengths = estimates([
+      ...busBoth(50),
+      [BRAUDE, GYM, 'walk', 20],
+      [GYM, BRAUDE, 'walk', 20],
+      [BRAUDE, CAFE, 'walk', 15],
+      [CAFE, BRAUDE, 'walk', 15],
+      [GYM, CAFE, 'walk', 10],
+    ]);
+    // The cafe at 11:30: 20 min back to Braude and 15 on to the cafe don't fit in 30.
+    const tight = input([studying(), gym, coffee('11:30', '12:00')]);
+    const straight = DayPlanner.plan(tight, lengths);
+    assert.deepEqual(lines(straight), [
+      'there home→braude transit 07:10–08:00',
+      'between braude→gym walk 09:40–10:00',
+      'between gym→cafe walk 11:20–11:30',
+      'back cafe→braude walk 12:00–12:15',
+      'back braude→home transit 16:00–16:50',
+    ]);
+    assert.deepEqual(keys(straight), [
+      'u-1|studying|single|there',
+      'u-1|gym|single|between',
+      'u-1|coffee|single|between',
+      'u-1|coffee|single|back',
+      'u-1|studying|single|back',
+    ]);
+    // Both ways are listed, so either can have its length set.
+    const trips = DayPlanner.trips(tight);
+    for (const trip of ['gym|braude|walk', 'braude|cafe|walk', 'gym|cafe|walk']) {
+      assert.ok(trips.includes(trip), `${trip} is not listed`);
+    }
+
+    // The cafe at 12:00: the hour holds both trips, so he goes back to Braude in between.
+    const roomy = DayPlanner.plan(input([studying(), gym, coffee('12:00', '12:30')]), lengths);
+    assert.deepEqual(lines(roomy), [
       'there home→braude transit 07:10–08:00',
       'between braude→gym walk 09:40–10:00',
       'back gym→braude walk 11:00–11:20',
-      // Back at Braude at 11:20 at the earliest: the cafe at 11:30 is 15 minutes away.
-      'between braude→cafe walk 11:20–11:35 conflict',
-      'back cafe→braude walk 12:00–12:15',
+      'between braude→cafe walk 11:45–12:00',
+      'back cafe→braude walk 12:30–12:45',
       'back braude→home transit 16:00–16:50',
+    ]);
+    assert.ok(roomy.every((leg) => !leg.conflict));
+  });
+
+  it('the gym ending just before the area does: home from the gym, never back to Braude for it', () => {
+    // The review's case: walking Braude ↔ gym 20 min, by bus Braude ↔ Home 20, walking gym → Home 30.
+    const gym = anchor({
+      itemId: 'gym',
+      start: at('15:00'),
+      end: at('15:50'),
+      placeId: GYM,
+      mode: 'walk',
+    });
+    const day = input([studying(), gym]);
+    const trips = DayPlanner.trips(day);
+    const reads = new RecordingMap(
+      estimates([
+        ...busBoth(20),
+        [BRAUDE, GYM, 'walk', 20],
+        [GYM, BRAUDE, 'walk', 20],
+        [GYM, HOME, 'walk', 30],
+      ]),
+    );
+    const legs = DayPlanner.plan(day, reads);
+    // Back at Braude at 16:10, after the area ended at 16:00: no "Walk to Braude", no "Bus home".
+    assert.deepEqual(lines(legs), [
+      'there home→braude transit 07:40–08:00',
+      'between braude→gym walk 14:40–15:00',
+      'back gym→home walk 15:50–16:20',
     ]);
     assert.deepEqual(keys(legs), [
       'u-1|studying|single|there',
       'u-1|gym|single|between',
       'u-1|gym|single|back',
-      'u-1|coffee|single|between',
-      'u-1|coffee|single|back',
-      'u-1|studying|single|back',
+    ]);
+    for (const [before, after] of legs.slice(0, -1).map((leg, index) => [leg, legs[index + 1]])) {
+      assert.ok(before && after && before.endAt <= after.startAt, 'legs overlap');
+    }
+    for (const trip of reads.read) assert.ok(trips.includes(trip), `${trip} was not listed`);
+
+    // Out at 15:30 instead: back at Braude at 15:50, before it ends, then the bus home at 16:00.
+    const early = DayPlanner.plan(
+      input([studying(), { ...gym, end: at('15:30') }]),
+      estimates([...busBoth(20), [BRAUDE, GYM, 'walk', 20], [GYM, BRAUDE, 'walk', 20]]),
+    );
+    assert.deepEqual(lines(early), [
+      'there home→braude transit 07:40–08:00',
+      'between braude→gym walk 14:40–15:00',
+      'back gym→braude walk 15:30–15:50',
+      'back braude→home transit 16:00–16:20',
     ]);
   });
 
+  it('two gym sessions with a short gap inside an area: one visit, no trip back and forth', () => {
+    // The review's case: walking Braude ↔ gym 20 min each way; by bus Home ↔ Braude 50.
+    const session = (itemId: string, start: string, end: string): Anchor =>
+      anchor({ itemId, start: at(start), end: at(end), placeId: GYM, mode: 'walk' });
+    const day = input([
+      studying(),
+      session('gym-a', '12:00', '12:30'),
+      session('gym-b', '12:45', '13:15'),
+    ]);
+    const trips = DayPlanner.trips(day);
+    const reads = new RecordingMap(
+      estimates([...busBoth(50), [BRAUDE, GYM, 'walk', 20], [GYM, BRAUDE, 'walk', 20]]),
+    );
+    const legs = DayPlanner.plan(day, reads);
+    assert.deepEqual(lines(legs), [
+      'there home→braude transit 07:10–08:00',
+      'between braude→gym walk 11:40–12:00',
+      'back gym→braude walk 13:15–13:35',
+      'back braude→home transit 16:00–16:50',
+    ]);
+    assert.deepEqual(keys(legs), [
+      'u-1|studying|single|there',
+      'u-1|gym-a|single|between',
+      'u-1|gym-b|single|back',
+      'u-1|studying|single|back',
+    ]);
+    assert.ok(legs.every((leg) => !leg.conflict));
+    for (const trip of reads.read) assert.ok(trips.includes(trip), `${trip} was not listed`);
+  });
+
+  it('back in an area too late for an appointment there: home only once he is back', () => {
+    // Walking gym → Braude 40 min; the lecture inside the area (no place: the area's) at 12:05.
+    const gym = anchor({
+      itemId: 'gym',
+      start: at('11:00'),
+      end: at('12:00'),
+      placeId: GYM,
+      mode: 'walk',
+    });
+    const lecture = anchor({
+      itemId: 'lec',
+      start: at('12:05'),
+      end: at('12:20'),
+      placeId: null,
+    });
+    const legs = DayPlanner.plan(
+      input([studying({ end: at('12:30') }), gym, lecture]),
+      estimates([...busBoth(50), [BRAUDE, GYM, 'walk', 20], [GYM, BRAUDE, 'walk', 40]]),
+    );
+    assert.deepEqual(lines(legs), [
+      'there home→braude transit 07:10–08:00',
+      'between braude→gym walk 10:40–11:00',
+      'back gym→braude walk 12:00–12:40 conflict',
+      // Not at 12:30, as the area ends: he is only back at 12:40.
+      'back braude→home transit 12:40–13:30',
+    ]);
+  });
   it('an item inside an area that ends after it goes on from there: home as it ends', () => {
     const gym = anchor({
       itemId: 'gym',
@@ -879,6 +997,23 @@ describe('DayPlanner: painted areas (the owner’s ruling of 2026-11-18)', () =>
       'u-1|training|single|back',
       'u-1|studying|single|back',
     ]);
+  });
+
+  it('hosts: the items a marked area lends its place to, or holds at its place; never one elsewhere', () => {
+    const at9 = anchor({ itemId: 'math', start: at('09:00'), end: at('10:00'), placeId: null });
+    const lab = anchor({ itemId: 'lab', start: at('10:00'), end: at('11:00') });
+    const gym = anchor({ itemId: 'gym', start: at('12:00'), end: at('13:00'), placeId: GYM });
+    const after = anchor({ itemId: 'late', start: at('17:00'), end: at('18:00'), placeId: null });
+    const pairs = (homeId: string | null): string[][] =>
+      DayPlanner.hosts(input([studying(), at9, lab, gym, after], { homeId })).map(
+        ({ anchor: inner, area }) => [inner.itemId, area.itemId, inner.placeId ?? ''],
+      );
+    assert.deepEqual(pairs(HOME), [
+      ['math', 'studying', BRAUDE],
+      ['lab', 'studying', BRAUDE],
+    ]);
+    // It names where an item is, not its legs: no Home needed.
+    assert.deepEqual(pairs(null), pairs(HOME));
   });
 
   it('go home in a window after an area: the area’s mode and key, and trips() lists what plan() reads', () => {

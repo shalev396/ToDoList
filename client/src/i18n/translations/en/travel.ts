@@ -282,6 +282,7 @@ export const travel = {
     added_other: 'Travel added: {{count}} trips.',
     pending: 'Travel is on. Trips appear after the next sync.',
     pendingOwnPlace: 'If none appear, set its place for travel in its details.',
+    inside: 'It’s inside {{area}}, at {{place}}, so it needs no trips of its own.',
     removed: 'Travel removed.',
     failed: 'Travel couldn’t be added.',
     removeFailed: 'Travel couldn’t be removed.',

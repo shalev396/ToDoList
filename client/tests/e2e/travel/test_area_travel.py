@@ -279,6 +279,18 @@ def test_area_sheet_marks_travel_and_a_gym_block_inside_gets_its_own_legs(
     assert _same_instant(gym_legs[0]["endAt"], at("12:00"))
     assert _same_instant(gym_legs[1]["startAt"], at("13:00"))
 
+    # A block inside it with no place: the marked area lends it Braude, so no trips of its own.
+    reading = create_time_block(
+        api_base_url,
+        user,
+        workspace["id"],
+        title="Reading",
+        startAt=at("09:00"),
+        endAt=at("10:00"),
+    )
+    inside = mark_item(api_base_url, user, workspace["id"], reading["id"], mode="walk")
+    assert (inside["legs"], inside["within"]) == ([], {"area": "Studying", "place": "Braude"})
+
     # The day: the area's legs around the gym's, and no other.
     [day] = get_days(api_base_url, user, workspace["id"], tomorrow, tomorrow)
     assert [

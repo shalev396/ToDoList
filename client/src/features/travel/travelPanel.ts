@@ -502,6 +502,8 @@ export function markOf(
 /** What a mark came to, for the member. */
 export type TravelOutcome =
   | { kind: 'added'; count: number }
+  /** Stored, with no trips of its own: it is spent in a marked area, at the area's place. */
+  | { kind: 'inside'; area: string; place: string }
   /** Stored, with no trips yet (its place isn't known yet, or they come with the next sync). */
   | { kind: 'pending'; ownPlace: boolean };
 
@@ -510,6 +512,8 @@ export function outcomeText(t: TFunction, outcome: TravelOutcome): string {
   switch (outcome.kind) {
     case 'added':
       return t('travel.add.added', { count: outcome.count });
+    case 'inside':
+      return t('travel.add.inside', { area: outcome.area, place: outcome.place });
     case 'pending':
       return outcome.ownPlace
         ? `${t('travel.add.pending')} ${t('travel.add.pendingOwnPlace')}`
@@ -517,11 +521,18 @@ export function outcomeText(t: TFunction, outcome: TravelOutcome): string {
   }
 }
 
-/** An answer with no trips is a calm note, never an error. */
+/**
+ * An answer with no trips is a calm note, never an error: inside a marked area at its place, it
+ * says so (the area lends its place, so the item adds no trips); else the trips are still to come.
+ */
 export function outcomeOf(answer: MarkItemResponse, ownPlace: boolean): TravelOutcome {
-  return answer.legs.length > 0
-    ? { kind: 'added', count: answer.legs.length }
-    : { kind: 'pending', ownPlace };
+  if (answer.legs.length > 0) {
+    return { kind: 'added', count: answer.legs.length };
+  }
+  if (answer.within !== null) {
+    return { kind: 'inside', ...answer.within };
+  }
+  return { kind: 'pending', ownPlace };
 }
 
 // ─── A leg's own sheet ──────────────────────────────────────────────────────

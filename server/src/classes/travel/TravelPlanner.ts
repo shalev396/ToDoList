@@ -37,6 +37,7 @@ import {
   TRAVEL_MODES,
   type TravelMode,
   type TravelPreviewResponse,
+  type WithinArea,
 } from '../../types/travel.js';
 import { addLocalDays, startOfZonedDay, wallDate } from '../../types/recurrence/zoned.js';
 import { Actor } from '../base/Actor.js';
@@ -278,9 +279,41 @@ export class TravelPlanner {
     return { done, left };
   }
 
+  /**
+   * The marked area an item of the caller's sits inside, at the area's place, in the horizon from
+   * `now`'s day (`occurrence`: that one; null: any of its occurrences): what it is spent in when it
+   * makes no trips of its own. Null when it isn't in one. Reads like a regeneration and writes
+   * nothing.
+   */
+  static async areaAround(
+    caller: Caller,
+    target: { itemId: string; occurrence: string | null },
+    now: Date = new Date(),
+  ): Promise<WithinArea | null> {
+    const { days, places } = await new TravelPlanner(caller, now).#horizon();
+    for (const day of days) {
+      for (const { anchor, area } of DayPlanner.hosts(day)) {
+        if (anchor.itemId !== target.itemId) continue;
+        if (target.occurrence !== null && anchor.occurrence !== target.occurrence) continue;
+        const place = places.find((one) => one.id === area.placeId);
+        if (place !== undefined) return { area: area.title, place: place.name };
+      }
+    }
+    return null;
+  }
+
   // ─── Inside ───────────────────────────────────────────────────────────────
 
-  async #regenerate(): Promise<AppliedPlan> {
+  /** The member's anchors over the horizon from `now`'s day, as days to plan. */
+  async #horizon(): Promise<{
+    days: DayPlanInput[];
+    places: Place[];
+    profile: TravelProfile;
+    fates: Map<string, AnchorFate>;
+    from: Date;
+    to: Date;
+    homeId: string | null;
+  }> {
     const caller = this.#caller;
     const now = this.#now;
     const timeZone = caller.settings.timezone;
@@ -305,6 +338,14 @@ export class TravelPlanner {
       placeNames: new Map(places.map((place) => [place.id, place.name])),
       settings: profile.settings,
     });
+    return { days, places, profile, fates, from, to, homeId };
+  }
+
+  async #regenerate(): Promise<AppliedPlan> {
+    const caller = this.#caller;
+    const now = this.#now;
+    const timeZone = caller.settings.timezone;
+    const { days, places, profile, fates, from, to, homeId } = await this.#horizon();
     const estimates = TravelPlanner.#lengths(days, profile, places);
     const planned = days.flatMap((day) => DayPlanner.plan(day, estimates));
     // A leg back after midnight of the last day starts past the horizon: read it too. A leg of an

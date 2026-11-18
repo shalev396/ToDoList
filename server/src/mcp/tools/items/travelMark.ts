@@ -10,7 +10,7 @@ import { PRIVACY_NOTE, RuleViewSchema, toRuleView } from './travelViews.js';
 export const travelMarkItem = defineTool({
   name: 'travel_mark_item',
   title: 'Travel to an item',
-  description: `Marks one timed item (an event, a to-do with a start, a time block, or an area such as Studying 8-16; not a travel leg, or one with no start or all day) for travel: legs get the member there from Home (or the place before) and back. Inside a marked area, an item with a place of its own is travelled to for its own time (and back into the area after it), and one with no place is at the area’s place. every: true marks every occurrence of a repeating item; occurrenceStart marks one occurrence (its original start); an item that does not repeat takes neither. place is the name (or an alias) of one of the member’s saved places; left out, the item’s own place. minutes is how long the trip takes, every time: it is set once for the trip each named leg takes (from place, to place, mode; each direction is its own trip), and every repeat of that trip uses it, every occurrence and every day, but legs whose times were set by hand. Without minutes, a trip with no length yet is drawn with a 30-minute placeholder (lengthUnset). Marking the same item again changes its mark. The member must have a Home (travel_home_missing otherwise). Answers the rule and the item’s legs in the next 14 days, as they are now; they are busy time. ${PRIVACY_NOTE}`,
+  description: `Marks one timed item (an event, a to-do with a start, a time block, or an area such as Studying 8-16; not a travel leg, or one with no start or all day) for travel: legs get the member there from Home (or the place before) and back. Inside a marked area, an item with a place of its own is travelled to for its own time (and back into the area after it, when there is time), and a marked area lends its place to one with none: it is spent in the area and adds no trips of its own (within names the area and the place). every: true marks every occurrence of a repeating item; occurrenceStart marks one occurrence (its original start); an item that does not repeat takes neither. place is the name (or an alias) of one of the member’s saved places; left out, the item’s own place. minutes is how long the trip takes, every time: it is set once for the trip each named leg takes (from place, to place, mode; each direction is its own trip), and every repeat of that trip uses it, every occurrence and every day, but legs whose times were set by hand. Without minutes, a trip with no length yet is drawn with a 30-minute placeholder (lengthUnset). Marking the same item again changes its mark. The member must have a Home (travel_home_missing otherwise). Answers the rule and the item’s legs in the next 14 days, as they are now; they are busy time. ${PRIVACY_NOTE}`,
   toolset: 'items',
   inputSchema: z.strictObject({
     itemId: ItemId,
@@ -32,6 +32,12 @@ export const travelMarkItem = defineTool({
   outputSchema: z.object({
     rule: RuleViewSchema,
     legs: z.array(ItemSummaryView).describe('The item’s travel legs, by start'),
+    within: z
+      .object({ area: z.string(), place: z.string() })
+      .nullable()
+      .describe(
+        'With no legs: the marked area the item is spent in, at that place, when that is why; else null',
+      ),
   }),
   annotations: {
     readOnlyHint: false,
@@ -48,7 +54,7 @@ export const travelMarkItem = defineTool({
         ? null
         : (await Place.findNamed(caller, input.place)).id;
     const span = input.minutes === undefined ? undefined : { minutes: input.minutes };
-    const { rule, legs } = await TravelRule.markItem(caller, {
+    const { rule, legs, within } = await TravelRule.markItem(caller, {
       itemId: input.itemId,
       occurrence: optionalTime(input.occurrenceStart),
       every: input.every ?? false,
@@ -65,6 +71,7 @@ export const travelMarkItem = defineTool({
         legs: await Promise.all(
           legs.map(async (leg) => toItemSummaryView(await reads.detail(leg))),
         ),
+        within,
       },
       target: { type: 'travel_rule', id: rule.id },
     };

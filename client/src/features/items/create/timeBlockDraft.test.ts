@@ -311,7 +311,8 @@ describe('blockTopicOf', () => {
 });
 
 describe('travel on the block form', () => {
-  it('both layers offer "Add travel time": an area’s toast names the area, in English and Hebrew', () => {
+  // That the area form shows the switch is checked end to end (e2e travel/test_area_travel.py).
+  it('the toast when travel was not added names what was made: a block or an area, in English and Hebrew', () => {
     assert.equal(travelNotAddedKey('block'), 'travel.add.createdWithoutBlock');
     assert.equal(travelNotAddedKey('area'), 'travel.add.createdWithoutArea');
     assert.equal(
@@ -319,5 +320,10 @@ describe('travel on the block form', () => {
       'The area was created, but its travel wasn’t added.',
     );
     assert.equal(he.travel.add.createdWithoutArea, 'האזור נוצר, אבל הנסיעה שלו לא נוספה.');
+    assert.equal(
+      en.travel.add.createdWithoutBlock,
+      'The time block was created, but its travel wasn’t added.',
+    );
+    assert.equal(he.travel.add.createdWithoutBlock, 'בלוק הזמן נוצר, אבל הנסיעה שלו לא נוספה.');
   });
 });

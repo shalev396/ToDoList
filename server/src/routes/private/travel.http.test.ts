@@ -704,6 +704,35 @@ describe('painted areas carry travel (the owner’s ruling of 2026-11-18)', () =
       ],
     );
 
+    // A block inside it with no place of its own: the marked area lends it Braude, so it adds no
+    // trips, and the answer says where it is spent.
+    const problems = await ok<{ id: string }>(
+      'owner',
+      'POST',
+      '/time-blocks',
+      { title: 'Problem set', startAt: iso(local(6, 9)), endAt: iso(local(6, 10)) },
+      201,
+    );
+    const inside = await ok<Marked & { within: unknown }>(
+      'owner',
+      'POST',
+      `/travel/items/${problems.id}`,
+      { mode: 'walk', direction: 'both' },
+    );
+    assert.deepEqual(inside.legs, []);
+    assert.deepEqual(inside.within, { area: 'Studying', place: 'Braude' });
+    // An item with trips of its own answers none.
+    assert.equal(
+      (
+        await ok<Marked & { within: unknown }>('owner', 'POST', `/travel/items/${gym.id}`, {
+          mode: 'drive',
+          direction: 'both',
+          placeId: gymPlace,
+        })
+      ).within,
+      null,
+    );
+
     // The day: the area's legs around the gym's, nothing else.
     const { days } = await ok<TravelDaysResponse>(
       'owner',
@@ -729,6 +758,7 @@ describe('painted areas carry travel (the owner’s ruling of 2026-11-18)', () =
       ['Drive home', gym.id, 'back'],
     ]);
     assert.equal((await call('owner', 'DELETE', `/travel/items/${gym.id}`)).status, 204);
+    assert.equal((await call('owner', 'DELETE', `/travel/items/${problems.id}`)).status, 204);
   });
 });
 
