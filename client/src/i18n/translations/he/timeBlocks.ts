@@ -19,6 +19,7 @@ export const timeBlocks = {
   },
   clock: {
     summary_one: 'היום, {{date}}: אירוע אחד. {{status}}',
+    summary_two: 'היום, {{date}}: שני אירועים. {{status}}',
     summary_other: 'היום, {{date}}: {{count}} אירועים. {{status}}',
     summaryNone: 'היום, {{date}}: אין אירועים.',
     now: 'עכשיו',

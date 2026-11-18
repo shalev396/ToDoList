@@ -185,6 +185,7 @@ def test_dark_and_hebrew(page: Page, base_url: str, api_base_url: str, fresh_own
     light = _background(event)
 
     page.emulate_media(color_scheme="dark")
+    page.evaluate("() => localStorage.setItem('todolist-ui-theme', 'dark')")
     _open(page, base_url, fresh_owner, lang="he")
     assert page.evaluate("() => document.documentElement.classList.contains('dark')")
     event = _event(page, COLLEGE_TITLE)

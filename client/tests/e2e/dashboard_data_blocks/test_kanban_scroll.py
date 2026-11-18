@@ -10,7 +10,7 @@ import requests
 from playwright.sync_api import Page, expect
 
 from tests.config import APP_REQUEST_TIMEOUT, NORMAL_TIMEOUT
-from tests.helpers.dashboards import apply_ops, get_dashboard, list_dashboards
+from tests.helpers.dashboards import apply_ops, create_dashboard, get_dashboard
 from tests.helpers.items import create_local_item, list_items
 from tests.helpers.users import pooled_user
 from tests.helpers.workspaces import create_workspace, delete_workspace, forget_left_behind, open_as
@@ -38,7 +38,7 @@ def board(api_base_url):
                 timeout=15,
             )
             assert response.status_code < 400, response.text
-    main = list_dashboards(api_base_url, user, workspace["id"], "main")[0]
+    main = create_dashboard(api_base_url, user, workspace["id"])
     draft = get_dashboard(api_base_url, user, workspace["id"], main["id"])
     apply_ops(
         api_base_url,

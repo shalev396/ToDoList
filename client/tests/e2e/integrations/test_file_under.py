@@ -58,7 +58,10 @@ def test_connection_file_under_moves_its_items(page: Page, base_url: str, api_ba
     ) as saved:
         choose(panel.locator("[data-file-under-connection]"), "Work")
     assert saved.value.status == 200
-    items = _items_of(api_base_url, user, workspace["id"])
+    # The demo workspace's wildcard rule `Braude*` files that calendar in College whatever the
+    # connection's topic is, so only the other calendars follow the connection.
+    braude = {c["id"] for c in _calendars(api_base_url, user, workspace["id"]) if c["name"].startswith("Braude")}
+    items = [i for i in _items_of(api_base_url, user, workspace["id"]) if i["containerId"] not in braude]
     assert items, "the demo workspace has Google Calendar items"
     assert {i["topicId"] for i in items} == {work}
 
@@ -67,7 +70,9 @@ def test_calendar_file_under_writes_a_rule_and_back(page: Page, base_url: str, a
     user, workspace = demo
     work = topic_id(api_base_url, user, workspace["id"], "work")
     college = topic_id(api_base_url, user, workspace["id"], "college")
-    calendar = _calendars(api_base_url, user, workspace["id"])[0]
+    calendar = next(
+        c for c in _calendars(api_base_url, user, workspace["id"]) if c["name"] == "Shalev (demo)"
+    )
     page.set_viewport_size(DESKTOP_VIEWPORT)
     panel = _open_panel(page, base_url, user, workspace["id"])
     panel.locator("[data-file-under-containers] summary").click()

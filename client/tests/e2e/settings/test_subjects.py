@@ -8,7 +8,7 @@ from playwright.sync_api import Page, expect
 
 from tests.config import NORMAL_TIMEOUT
 from tests.helpers.items import create_local_item
-from tests.helpers.workspaces import open_as
+from tests.helpers.workspaces import ensure_topics, open_as
 
 TITLES = ("Calculus HW 1", "calculus quiz", "History essay", 'תרגיל חדו"א')
 
@@ -60,6 +60,10 @@ def test_add_subject_with_live_count_and_save(
 ):
     user, workspace = fresh_owner
     _seed(api_base_url, user, workspace)
+    # Amber is the family of the fourth colour slot: with Personal, Work and College all present
+    # (blue, orange, teal taken) the next one is amber. Create the missing topics so it is not
+    # left to what _seed happens to create.
+    ensure_topics(api_base_url, user, workspace["id"], ["work", "college"])
     open_as(page, base_url, user, "/en/settings", h1="Settings")
 
     _add(page, "Calculus", "Add subject", "Subject name")
@@ -120,7 +124,7 @@ def test_hebrew_pattern_counts_in_hebrew_ui(
     open_as(page, base_url, user, "/he/settings", h1="הגדרות")
     assert page.evaluate("document.documentElement.dir") == "rtl"
 
-    _add(page, 'חדו"א', "הוספת נושא", "שם הנושא")
+    _add(page, 'חדו"א', "הוספת מקצוע", "שם המקצוע")
     row = page.locator('[data-subject="חדו\\"א"]')
     expect(row).to_be_visible()
     row.get_by_label("תבניות כותרת").fill('*חדו"א*')
