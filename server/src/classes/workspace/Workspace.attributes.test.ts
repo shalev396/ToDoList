@@ -591,6 +591,48 @@ describe('subjects', () => {
     });
   });
 
+  it('subjects added at once are all kept, whether the select exists yet or not', async () => {
+    const ws = await workspace();
+    const caller = callerOf(ws, EDITOR.userId);
+    const ensure = async (name: string): Promise<{ subject: string; created: boolean }> =>
+      (await Workspace.load(caller)).ensureSubject(caller, name);
+    // (Two spellings of one new subject at once would keep whichever was written first.)
+    const made = await Promise.all(['Calculus', 'Algebra', 'Calculus', 'Physics'].map(ensure));
+    assert.deepEqual(
+      made.map((result) => result.subject),
+      ['Calculus', 'Algebra', 'Calculus', 'Physics'],
+    );
+    // The same new subject at once: one of the two added it.
+    assert.equal(made.filter((result) => result.created).length, 3);
+    // Then any spelling of it finds it.
+    assert.deepEqual(await ensure('calculus'), { subject: 'Calculus', created: false });
+    const stored = (context: WorkspaceContext): string[] =>
+      [...(listAttributes(context).find((def) => def.key === 'subject')?.options ?? [])].sort();
+    assert.deepEqual(stored(await fresh(ws)), ['Algebra', 'Calculus', 'Physics']);
+    // With the select there: new subjects and a restyle (set_subject) at once.
+    const restyle = (await Workspace.load(caller)).upsertSubject(caller, {
+      name: 'Algebra',
+      family: 'pink',
+      patterns: ['*alg*'],
+    });
+    await Promise.all([ensure('Geometry'), ensure('History'), restyle, ensure('Art')]);
+    const after = await fresh(ws);
+    assert.deepEqual(stored(after), [
+      'Algebra',
+      'Art',
+      'Calculus',
+      'Geometry',
+      'History',
+      'Physics',
+    ]);
+    const looks = listAttributes(after).find((def) => def.key === 'subject')?.optionLooks ?? [];
+    assert.deepEqual(
+      looks.find((look) => look.option === 'Algebra'),
+      { option: 'Algebra', colour: 'pink', patterns: ['*alg*'] },
+    );
+    assert.deepEqual(looks.map((look) => look.option).sort(), stored(after));
+  });
+
   it('upsertSubject refuses a 31st subject with 400', async () => {
     const ws = await workspace();
     const options = Array.from({ length: 30 }, (_, i) => `S${String(i)}`);

@@ -74,6 +74,11 @@ const SLUG_BASE_MAX = 40;
 /** "-2" … "-20" are tried before a random suffix. */
 const SLUG_NUMBERED_ATTEMPTS = 20;
 const SLUG_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
+/**
+ * How often a subject write that found the workspace changed since its read reads it again and
+ * retries (agents adding subjects in parallel each win one round) before a 409.
+ */
+const SUBJECT_WRITE_ATTEMPTS = 10;
 
 /** The signed-in user, as the workspace needs them. */
 export interface WorkspaceUser {
@@ -786,15 +791,19 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
 
   /** Appends a new attribute definition (409 when the key exists or the list is full), audited. */
   async #append(caller: Caller, def: AttributeDef): Promise<void> {
+    if ((await this.#tryAppend(caller, def)) === 'exists') {
+      throw new AppError(409, 'An attribute with this key exists', { code: 'attribute_exists' });
+    }
+  }
+
+  /** Appends a new attribute definition, audited; `exists` when the key is taken, 409 when full. */
+  async #tryAppend(caller: Caller, def: AttributeDef): Promise<'added' | 'exists'> {
     const workspaces = await getWorkspaceRepository();
     const result = await workspaces.appendAttribute(
       this.id,
       def,
       PLAN_LIMITS.attributesPerWorkspace,
     );
-    if (result === 'exists') {
-      throw new AppError(409, 'An attribute with this key exists', { code: 'attribute_exists' });
-    }
     if (result === 'full') {
       throw new AppError(
         409,
@@ -802,7 +811,10 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
         { code: 'attribute_limit' },
       );
     }
-    await AuditLog.record(caller, 'attribute.create', AuditTarget.of('attribute', def.key));
+    if (result === 'added') {
+      await AuditLog.record(caller, 'attribute.create', AuditTarget.of('attribute', def.key));
+    }
+    return result;
   }
 
   /** The families the topics hold, for giving subjects theirs. */
@@ -851,6 +863,10 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
    * Adds, renames or restyles one subject (an option of the `subject` select and its look),
    * creating the select on first use. Editors and up. 409 `attribute_exists` when `subject` is
    * not a select, 400 past 30 subjects. Audited as attribute.create or attribute.update.
+   *
+   * Safe when several run at once (agents creating blocks in parallel): each write is made on the
+   * workspace as it read it (guarded by its `updatedAt`; the select's creation by its key), and one
+   * that finds it changed reads it again and makes its change on that, so no subject is lost.
    */
   async upsertSubject(
     caller: Caller,
@@ -858,6 +874,55 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
   ): Promise<{ subject: ColourSubject; created: boolean }> {
     Workspace.#assertEditor(caller, 'change a subject');
     this.#assertCaller(caller);
+    return this.#onFreshRead(caller, (workspace) => workspace.#writeSubject(caller, input));
+  }
+
+  /**
+   * The subject a block names (time-blocks design, "Subject"): the existing option when one has
+   * this name, whatever its case (its family and patterns stay as they are), else a new one added
+   * as upsertSubject adds it (the select too, on first use). Editors and up; audited when added.
+   * Safe when several run at once, as upsertSubject is.
+   */
+  async ensureSubject(
+    caller: Caller,
+    name: string,
+  ): Promise<{ subject: string; created: boolean }> {
+    Workspace.#assertEditor(caller, 'add a subject');
+    this.#assertCaller(caller);
+    return this.#onFreshRead(caller, async (workspace) => {
+      const current = workspace.#settings.attributes.find(SUBJECT_ATTRIBUTE_KEY);
+      const existing = Subjects.of(current?.toJSON()).named(name);
+      if (existing !== undefined) return { subject: existing, created: false };
+      const written = await workspace.#writeSubject(caller, { name });
+      return written === null ? null : { subject: written.subject.name, created: written.created };
+    });
+  }
+
+  /**
+   * Runs `attempt` on this workspace, then, each time it answers null (the workspace changed since
+   * it was read), on the workspace read again; 409 after SUBJECT_WRITE_ATTEMPTS tries.
+   */
+  async #onFreshRead<T>(
+    caller: Caller,
+    attempt: (workspace: Workspace) => Promise<T | null>,
+  ): Promise<T> {
+    let reread: Workspace | undefined;
+    for (let tries = 0; tries < SUBJECT_WRITE_ATTEMPTS; tries += 1) {
+      const outcome = await attempt(reread ?? this);
+      if (outcome !== null) return outcome;
+      reread = await Workspace.load(caller);
+    }
+    throw new AppError(409, 'The subjects changed while they were saved: try again');
+  }
+
+  /**
+   * One try of upsertSubject on the workspace as this instance read it: the subject and whether it
+   * is new, or null when the workspace changed since that read (nothing was written).
+   */
+  async #writeSubject(
+    caller: Caller,
+    input: SubjectInput,
+  ): Promise<{ subject: ColourSubject; created: boolean } | null> {
     const current = this.#settings.attributes.find(SUBJECT_ATTRIBUTE_KEY);
     if (current !== undefined && current.type !== 'select') {
       throw new AppError(409, 'An attribute with this key exists', { code: 'attribute_exists' });
@@ -877,15 +942,21 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
         builtIn: false,
       });
       if (!def.success) throw new AppError(400, 'Invalid subject');
-      await this.#append(caller, def.data);
-      return { subject, created };
+      // Created meanwhile by another write: add to that one instead.
+      return (await this.#tryAppend(caller, def.data)) === 'exists' ? null : { subject, created };
     }
     const workspaces = await getWorkspaceRepository();
-    const updated = await workspaces.updateAttribute(this.id, SUBJECT_ATTRIBUTE_KEY, {
-      ...after.toDefinition(),
-      ...(input.attributeName === undefined ? {} : { name: input.attributeName }),
-    });
-    if (updated === null) throw new AppError(404, 'Not found');
+    const updated = await workspaces.updateAttribute(
+      this.id,
+      SUBJECT_ATTRIBUTE_KEY,
+      {
+        ...after.toDefinition(),
+        ...(input.attributeName === undefined ? {} : { name: input.attributeName }),
+      },
+      { unchangedSince: this.data.updatedAt },
+    );
+    // Changed (or removed) since this read: read again.
+    if (updated === null) return null;
     if (input.rename !== undefined && target !== input.name.trim()) {
       await this.#moveValues(SUBJECT_ATTRIBUTE_KEY, [{ from: input.name.trim(), to: target }]);
     }
@@ -895,24 +966,6 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
       AuditTarget.of('attribute', SUBJECT_ATTRIBUTE_KEY),
     );
     return { subject, created };
-  }
-
-  /**
-   * The subject a block names (time-blocks design, "Subject"): the existing option when one has
-   * this name, whatever its case (its family and patterns stay as they are), else a new one added
-   * as upsertSubject adds it (the select too, on first use). Editors and up; audited when added.
-   */
-  async ensureSubject(
-    caller: Caller,
-    name: string,
-  ): Promise<{ subject: string; created: boolean }> {
-    Workspace.#assertEditor(caller, 'add a subject');
-    this.#assertCaller(caller);
-    const current = this.#settings.attributes.find(SUBJECT_ATTRIBUTE_KEY);
-    const existing = Subjects.of(current?.toJSON()).named(name);
-    if (existing !== undefined) return { subject: existing, created: false };
-    const { subject } = await this.upsertSubject(caller, { name });
-    return { subject: subject.name, created: true };
   }
 
   /** Removes a custom attribute and the values items hold for it. The built-in is a 409. */

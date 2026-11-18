@@ -36,6 +36,7 @@ import { getItemRepository } from '../../models/index.js';
 import { SUBJECT_ATTRIBUTE_KEY } from '../../types/attributes.js';
 import { PLAN_LIMITS } from '../../types/limits.js';
 import {
+  DST_SLACK_MS,
   expandOccurrences,
   isSeriesRow,
   localExceptionsOf,
@@ -286,7 +287,9 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
 
   /**
    * "This one": the occurrence that starts at `originalStart` (its start before any move) happens
-   * at these times instead. 400 `not_an_occurrence` when that is none of the series' occurrences.
+   * at these times instead. At its own times (its slot, the series' length) it has no exception:
+   * one it had (a move, a skip) is removed. 400 `not_an_occurrence` when that is none of the
+   * series' occurrences.
    */
   async editOccurrence(
     caller: Caller,
@@ -295,20 +298,24 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
   ): Promise<TimeBlock> {
     await this.#authorize(caller);
     const span = TimeBlock.#span(change.startAt, change.endAt);
-    return this.#changeOccurrence(caller, originalStart, {
-      originalStart: originalStart.toISOString(),
-      startAt: span.start.toISOString(),
-      endAt: span.end.toISOString(),
-    });
+    return this.#changeOccurrence(caller, originalStart, (series) =>
+      span.start.getTime() === originalStart.getTime() && span.durationMs === series.durationMs
+        ? null
+        : {
+            originalStart: originalStart.toISOString(),
+            startAt: span.start.toISOString(),
+            endAt: span.end.toISOString(),
+          },
+    );
   }
 
   /** One occurrence left out (a move of it is replaced). 400 `not_an_occurrence` as above. */
   async skipOccurrence(caller: Caller, originalStart: Date): Promise<TimeBlock> {
     await this.#authorize(caller);
-    return this.#changeOccurrence(caller, originalStart, {
+    return this.#changeOccurrence(caller, originalStart, () => ({
       originalStart: originalStart.toISOString(),
       skipped: true,
-    });
+    }));
   }
 
   /**
@@ -392,10 +399,14 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
       : saved.#storeSubject(subject);
   }
 
+  /**
+   * The occurrence at `originalStart` changed: its exception replaced by what `exceptionFor` makes
+   * of it given the series' span, or removed when that is null.
+   */
   async #changeOccurrence(
     caller: Caller,
     originalStart: Date,
-    exception: LocalException,
+    exceptionFor: (series: TimeRange) => LocalException | null,
   ): Promise<TimeBlock> {
     const timeZone = caller.settings.timezone;
     const slot = originalStart.getTime();
@@ -408,8 +419,10 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
       const others = current.exceptions.filter(
         (entry) => new Date(entry.originalStart).getTime() !== slot,
       );
+      const exception = exceptionFor(span);
       const max = PLAN_LIMITS.timeBlockExceptionsMax;
-      if (others.length === current.exceptions.length && others.length >= max) {
+      const adds = exception !== null && others.length === current.exceptions.length;
+      if (adds && others.length >= max) {
         throw new ValidationError(
           `exceptions: a series moves or skips at most ${String(max)} occurrences`,
         );
@@ -419,7 +432,7 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
           current.data.props,
           span,
           lines,
-          [...others, exception],
+          exception === null ? others : [...others, exception],
           timeZone,
         ),
       };
@@ -553,7 +566,9 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
 
   /**
    * Whether `slot` starts one of the occurrences of a series with this span and rule: the shared
-   * expansion one millisecond either side of it, with no exception applied.
+   * expansion a few hours either side of it (DST_SLACK_MS: a slot whose wall time the clocks skip,
+   * 02:30 on the spring-forward day, is stored as the instant after the jump), with no exception
+   * applied, and an occurrence whose original start is exactly `slot`.
    */
   static #hasSlot(
     span: TimeRange,
@@ -575,7 +590,7 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
     };
     return expandOccurrences(
       [series],
-      { from: new Date(slot - 1), to: new Date(slot + 1) },
+      { from: new Date(slot - DST_SLACK_MS), to: new Date(slot + DST_SLACK_MS) },
       timeZone,
     ).some((occurrence) => occurrence.originalStart?.getTime() === slot);
   }

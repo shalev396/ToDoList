@@ -365,6 +365,89 @@ describe('one occurrence', () => {
   });
 });
 
+describe('one occurrence, the edge cases', () => {
+  it('back at its own times, an occurrence has no exception (un-skip, un-move)', async () => {
+    const ws = await workspace();
+    const block = await make(ws, { title: 'Study', recurrence: WEEKLY });
+    const skipped = await block.skipOccurrence(ws.editor, week(1));
+    const restored = await skipped.editOccurrence(ws.editor, week(1), {
+      startAt: week(1),
+      endAt: plus(week(1), 4),
+    });
+    assert.deepEqual(exceptionsOf(restored), []);
+    const starts = restored
+      .occurrences({ from: SUNDAY, to: week(2) }, ws.editor.settings.timezone)
+      .map((o) => o.start.toISOString());
+    assert.deepEqual(starts, [SUNDAY.toISOString(), week(1).toISOString()]);
+    const moved = await restored.editOccurrence(ws.editor, week(2), {
+      startAt: plus(week(2), 1),
+      endAt: plus(week(2), 5),
+    });
+    const back = await moved.editOccurrence(ws.editor, week(2), {
+      startAt: week(2),
+      endAt: plus(week(2), 4),
+    });
+    assert.deepEqual(exceptionsOf(back), []);
+    // At its slot but another length, it is a change.
+    const shorter = await back.editOccurrence(ws.editor, week(2), {
+      startAt: week(2),
+      endAt: plus(week(2), 2),
+    });
+    assert.equal(exceptionsOf(shorter).length, 1);
+    // Restoring one at the cap takes no place, it frees one.
+    const day = (n: number): Date => new Date(SUNDAY.getTime() + n * 24 * HOUR);
+    const daily = await make(ws, { title: 'Daily', recurrence: ['RRULE:FREQ=DAILY'] });
+    const full = Array.from({ length: PLAN_LIMITS.timeBlockExceptionsMax }, (_, n) => ({
+      originalStart: day(n + 1).toISOString(),
+      skipped: true,
+    }));
+    await (
+      await models.getItemRepository()
+    ).updateScheduled(ws.id, daily.id, 'block', {
+      props: { ...daily.toJSON().props, exceptions: full },
+    });
+    const capped = await items.TimeBlock.find(ws.editor, daily.id);
+    const freed = await capped.editOccurrence(ws.editor, day(1), {
+      startAt: day(1),
+      endAt: plus(day(1), 4),
+    });
+    assert.equal(exceptionsOf(freed).length, PLAN_LIMITS.timeBlockExceptionsMax - 1);
+  });
+
+  it('an occurrence the spring-forward change moves can be skipped, moved, and is kept by an all edit', async () => {
+    const ws = await workspace();
+    // Daily 02:30–02:50 in Jerusalem from Saturday 20 March 2027; the clocks jump 02:00 → 03:00
+    // on Friday 26 March, so that day's occurrence starts at 03:30 local, 00:30Z.
+    const first = new Date('2027-03-20T00:30:00.000Z');
+    const gap = new Date('2027-03-26T00:30:00.000Z');
+    const block = await make(ws, {
+      title: 'Night shift',
+      startAt: first,
+      endAt: new Date(first.getTime() + 20 * 60_000),
+      recurrence: ['RRULE:FREQ=DAILY'],
+    });
+    const zone = ws.editor.settings.timezone;
+    const listed = block.occurrences({ from: plus(gap, -3), to: plus(gap, 3) }, zone);
+    assert.deepEqual(
+      listed.map((o) => o.originalStart?.toISOString()),
+      [gap.toISOString()],
+    );
+    const skipped = await block.skipOccurrence(ws.editor, gap);
+    assert.deepEqual(exceptionsOf(skipped), [{ originalStart: gap.toISOString(), skipped: true }]);
+    assert.deepEqual(skipped.occurrences({ from: plus(gap, -3), to: plus(gap, 3) }, zone), []);
+    // A rule written another way changes the lines, not the slots: the exception stays.
+    const kept = await skipped.editSeries(ws.editor, {
+      recurrence: ['RRULE:FREQ=DAILY;INTERVAL=1'],
+    });
+    assert.deepEqual(exceptionsOf(kept), [{ originalStart: gap.toISOString(), skipped: true }]);
+    const moved = await kept.editOccurrence(ws.editor, gap, {
+      startAt: plus(gap, 1),
+      endAt: plus(gap, 2),
+    });
+    assert.equal(exceptionsOf(moved)[0]?.startAt, plus(gap, 1).toISOString());
+  });
+});
+
 describe('every occurrence', () => {
   it('edit all at a new time drops stale exceptions', async () => {
     const ws = await workspace();
@@ -471,6 +554,48 @@ describe('every occurrence', () => {
         statusCode: 400,
       });
     }
+  });
+});
+
+describe('blocks made at once', () => {
+  it('each keeps its subject, and every subject is an option (the select made once)', async () => {
+    const ws = await workspace();
+    // No Subject attribute yet: two at once with the same new subject, and two others.
+    const first = await Promise.all(
+      ['Math', 'Math', 'History', 'Physics'].map((subject) => make(ws, { subject })),
+    );
+    assert.deepEqual(
+      first.map((block) => block.subject),
+      ['Math', 'Math', 'History', 'Physics'],
+    );
+    assert.deepEqual([...((await subjectOptions(ws)) ?? [])].sort(), [
+      'History',
+      'Math',
+      'Physics',
+    ]);
+    // The attribute exists now: three new subjects at once.
+    const second = await Promise.all(
+      ['Chemistry', 'Biology', 'Art'].map((subject) => make(ws, { subject })),
+    );
+    assert.deepEqual(
+      second.map((block) => block.subject),
+      ['Chemistry', 'Biology', 'Art'],
+    );
+    const options = (await subjectOptions(ws)) ?? [];
+    assert.deepEqual([...options].sort(), [
+      'Art',
+      'Biology',
+      'Chemistry',
+      'History',
+      'Math',
+      'Physics',
+    ]);
+    // Each got its own look, and its own family (each write saw the others' families).
+    const looks =
+      (await workspaces.Workspace.load(ws.editor)).settings.attributes.find('subject')?.toJSON()
+        .optionLooks ?? [];
+    assert.deepEqual(looks.map((look) => look.option).sort(), [...options].sort());
+    assert.equal(new Set(looks.map((look) => look.colour)).size, looks.length);
   });
 });
 

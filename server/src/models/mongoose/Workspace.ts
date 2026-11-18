@@ -277,16 +277,31 @@ export const WorkspaceRepository: IWorkspaceRepository = {
     return list.some((entry) => entry.key === def.key) ? 'exists' : 'full';
   },
 
-  async updateAttribute(id, key, patch) {
+  async updateAttribute(id, key, patch, options = {}) {
     await ensureBuiltIn(id);
+    const { unchangedSince } = options;
     const set: Record<string, unknown> = {};
     for (const [name, value] of Object.entries(patch)) {
       set[`settings.attributes.$[a].${name}`] = value;
     }
+    // A guarded write stamps a time later than the one it read, so two writes in the same
+    // millisecond still differ and a second guarded write on the first one's read misses.
+    if (unchangedSince !== undefined) {
+      set['updatedAt'] = new Date(Math.max(Date.now(), unchangedSince.getTime() + 1));
+    }
     const doc = await WorkspaceMongoModel.findOneAndUpdate(
-      { _id: id, deletedAt: null, 'settings.attributes.key': key },
+      {
+        _id: id,
+        deletedAt: null,
+        'settings.attributes.key': key,
+        ...(unchangedSince === undefined ? {} : { updatedAt: unchangedSince }),
+      },
       { $set: set },
-      { new: true, arrayFilters: [{ 'a.key': key }] },
+      {
+        new: true,
+        arrayFilters: [{ 'a.key': key }],
+        ...(unchangedSince === undefined ? {} : { timestamps: false }),
+      },
     ).lean<WorkspaceFields>();
     if (doc === null) return null;
     return storedAttributes(doc.settings).find((def) => def.key === key) ?? null;

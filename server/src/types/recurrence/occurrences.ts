@@ -183,7 +183,7 @@ function seriesKey(
 }
 
 /** How far a DST change can move a wall time: wider than any jump a zone makes. */
-const DST_SLACK_MS = 3 * 60 * 60_000;
+export const DST_SLACK_MS = 3 * 60 * 60_000;
 
 const UTC_UNTIL = /\bUNTIL=(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/i;
 
