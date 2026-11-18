@@ -151,7 +151,7 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 | `get_calendar` | Events, dated items, time blocks, areas and travel for `week`\|`month`\|custom (week starts per `settings.weekStart`): one entry per occurrence of a repeating event or block (even one that began before the range), with `occurrence` and `busy` | RO |
 | `get_item` | One item, full `props`, `source`, `openIn` | RO |
 | `list_facets` | Distinct providers, topics and containers (wraps BACKEND.md `/facets`) | RO |
-| `query_items` | Run a query via `POST /workspaces/:wid/query`: a saved query id (`savedQueryId` or `dashboardId`+`blockId`) **or** a draft query, plus optional runtime cross-block filter `vars` (`$page.*`). A draft is task-shaped (no time blocks or travel) unless it names a `kind` or passes a time-shaped `blockType` (`calendar`, `clock`, `timeline`, `agenda`, `workload`) | RO |
+| `query_items` | Run a query via `POST /workspaces/:wid/query`: a saved query id (`savedQueryId` or `dashboardId`+`blockId`) **or** a draft query, plus optional runtime cross-block filter `vars` (`$page.*`). A draft is task-shaped (no time blocks or travel) unless a rule asks for them by name (`kind = block`, `kind in [block, travel]`) or it passes a time-shaped `blockType` (`calendar`, `clock`, `timeline`, `agenda`, `workload`) | RO |
 
 ```json
 // search_items.inputSchema

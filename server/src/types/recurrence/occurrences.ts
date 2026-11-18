@@ -81,6 +81,12 @@ export type WeekStart = 'sun' | 'mon';
 
 export const MAX_OCCURRENCES_PER_SERIES = 400;
 
+/** A series with more slots than this has no worked-out end: it is read as one that never ends. */
+export const MAX_SLOTS_TO_END = 5000;
+
+/** A rule that ends: by a date (UNTIL) or after a number of occurrences (COUNT). */
+const ENDS = /\b(?:UNTIL|COUNT)=/i;
+
 /**
  * rrule ships a CommonJS build (what node loads, with the exports under `default`) and an ES one
  * (what the bundler loads, with named exports): take the parser from whichever this is.
@@ -204,10 +210,12 @@ class SeriesSlots {
   private readonly parsed: ReturnType<typeof rrulestr> | null;
   private readonly first: Date;
   private readonly timeZone: string;
+  private readonly ends: boolean;
 
   constructor(rule: string, first: Date, timeZone: string) {
     this.first = first;
     this.timeZone = timeZone;
+    this.ends = ENDS.test(rule);
     let parsed: ReturnType<typeof rrulestr> | null = null;
     try {
       parsed = rrulestr(withFloatingUntil(rule, timeZone), {
@@ -240,6 +248,24 @@ class SeriesSlots {
   }
 
   /**
+   * Every slot of a series that ends (UNTIL or COUNT), in order; null when it never ends, can't be
+   * read, or has more than MAX_SLOTS_TO_END slots.
+   */
+  all(): Date[] | null {
+    if (this.parsed === null || !this.ends) {
+      return null;
+    }
+    try {
+      const walls = this.parsed.all((_wall, index) => index <= MAX_SLOTS_TO_END);
+      return walls.length > MAX_SLOTS_TO_END
+        ? null
+        : walls.map((wall) => fromFloating(wall, this.timeZone));
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * True when `slot` is one of the series' slots. It searches a few hours either side: a slot
    * whose wall time the clocks skip (02:30 on the spring-forward day) is stored as 03:30, which
    * reads back as a different wall time than the rule's.
@@ -250,6 +276,47 @@ class SeriesSlots {
       new Date(slot.getTime() + DST_SLACK_MS),
     ).some((candidate) => candidate.getTime() === slot.getTime());
   }
+}
+
+/**
+ * When a series is over, for the queries' series branch (stored as `props.recurrenceEnd`): the end
+ * of its last occurrence, ISO 8601, with its slots placed on the wall clock of `timeZone` (the
+ * workspace's) as the expansion places them. A local occurrence moved later counts too. Null when
+ * it never ends (no UNTIL or COUNT), its rule can't be read, it has more than MAX_SLOTS_TO_END
+ * slots, or it is not a series: a query then reads it whatever the range.
+ *
+ * Set when a Google master is synced (sync/providers/google_calendar.ts) and when a time block is
+ * saved, so a series that ended is not read for every later range.
+ */
+export function recurrenceEndOf(
+  series: Pick<TimeRow, 'startAt' | 'endAt' | 'props'>,
+  timeZone: string,
+): string | null {
+  const rule = recurrenceRules(series.props)[0];
+  const start = toDate(series.startAt);
+  if (rule === undefined || start === null) {
+    return null;
+  }
+  const slots = new SeriesSlots(rule, start, timeZone).all();
+  if (slots === null) {
+    return null;
+  }
+  const end = toDate(series.endAt);
+  const length = end !== null && end > start ? end.getTime() - start.getTime() : 0;
+  let last = start.getTime() + length;
+  for (const slot of slots) {
+    last = Math.max(last, slot.getTime() + length);
+  }
+  for (const exception of localExceptionsOf(series.props)) {
+    const moved = toDate(exception.startAt ?? null);
+    const movedEnd =
+      toDate(exception.endAt ?? null) ??
+      (moved === null ? null : new Date(moved.getTime() + length));
+    if (exception.skipped !== true && movedEnd !== null) {
+      last = Math.max(last, movedEnd.getTime());
+    }
+  }
+  return new Date(last).toISOString();
 }
 
 /** The occurrences that overlap `range`, ordered by start. Cancelled items are never listed. */

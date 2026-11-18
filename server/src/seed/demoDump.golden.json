@@ -10755,6 +10755,7 @@
           "meetLink": null,
           "originalStartAt": null,
           "recurrence": ["RRULE:FREQ=WEEKLY;COUNT=12"],
+          "recurrenceEnd": "2027-01-15T10:00:00.000Z",
           "recurringEventId": null,
           "transparency": "opaque"
         },
@@ -25072,6 +25073,7 @@
           "meetLink": null,
           "originalStartAt": null,
           "recurrence": ["RRULE:FREQ=WEEKLY;COUNT=12"],
+          "recurrenceEnd": "2027-01-15T10:00:00.000Z",
           "recurringEventId": null,
           "transparency": "opaque"
         },

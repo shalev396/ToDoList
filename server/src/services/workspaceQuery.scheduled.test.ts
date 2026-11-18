@@ -63,6 +63,37 @@ before(async () => {
     endAt: new Date('2026-09-13T12:00:00Z'),
     props: { recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'] },
   });
+  // Series that end, with the end TodoList stores when a block is saved (recurrenceEndOf).
+  const { recurrenceEndOf } = await import('../types/recurrence/occurrences.js');
+  const series = (title: string, start: string, end: string, rule: string): Promise<unknown> => {
+    const row = { startAt: start, endAt: end, props: { recurrence: [rule] } };
+    return local(title, {
+      kind: 'block',
+      startAt: new Date(start),
+      endAt: new Date(end),
+      props: { ...row.props, recurrenceEnd: recurrenceEndOf(row, ZONE) },
+    });
+  };
+  // Ended in June (UNTIL), six Mondays to 19 October (COUNT): neither is read for this week.
+  await series(
+    'Last semester tutorial',
+    '2026-03-01T08:00:00Z',
+    '2026-03-01T09:00:00Z',
+    'RRULE:FREQ=WEEKLY;UNTIL=20260601T000000Z',
+  );
+  await series(
+    'Six-week course',
+    '2026-09-14T14:00:00Z',
+    '2026-09-14T15:00:00Z',
+    'RRULE:FREQ=WEEKLY;COUNT=6',
+  );
+  // Twenty Wednesdays from 16 September, to late January: still running this week.
+  await series(
+    'Semester seminar',
+    '2026-09-16T11:00:00Z',
+    '2026-09-16T12:00:00Z',
+    'RRULE:FREQ=WEEKLY;COUNT=20',
+  );
   // A one-off block eight weeks ago: not a series, so it stays out of this week. Its stored
   // status is one nothing else has, to show the status facet never offers it.
   await local('Old one-off block', {
@@ -144,9 +175,14 @@ describe('series in date ranges', () => {
       vars: { '$page.range': WEEK },
     });
     const titles = titlesOf(rows);
-    assert.ok(titles.includes('Study: Math'), titles.join(', '));
-    assert.ok(titles.includes('Algorithms lecture'), titles.join(', '));
-    assert.ok(!titles.includes('Old one-off block'), titles.join(', '));
+    // Unbounded (no end stored, or a Google master synced before ends were) and still running.
+    for (const title of ['Study: Math', 'Algorithms lecture', 'Semester seminar']) {
+      assert.ok(titles.includes(title), `${title}: ${titles.join(', ')}`);
+    }
+    // Ended before this week (UNTIL, COUNT), or never a series.
+    for (const title of ['Last semester tutorial', 'Six-week course', 'Old one-off block']) {
+      assert.ok(!titles.includes(title), `${title}: ${titles.join(', ')}`);
+    }
 
     const occurrences = expandOccurrences(
       rows,
@@ -159,8 +195,21 @@ describe('series in date ranges', () => {
         // Sunday 13:00 in winter time (UTC+2): still 13:00 on the wall clock.
         ['Study: Math', '2026-11-08T11:00:00.000Z'],
         ['Algorithms lecture', '2026-11-10T08:00:00.000Z'],
+        ['Semester seminar', '2026-11-11T12:00:00.000Z'],
       ],
     );
+  });
+
+  it('a task-shaped block reads a series by its own start only', async () => {
+    const draft = { source: 'items', dateRange: WEEK, dateField: 'startAt' };
+    assert.deepEqual(titlesOf(await rowsOf({ draft, blockType: 'list' })), []);
+    assert.deepEqual(titlesOf(await rowsOf({ draft, blockType: 'calendar' })), [
+      'Algorithms lecture',
+      'Bus to Braude',
+      'Semester seminar',
+      'Study: Math',
+      'Studying',
+    ]);
   });
 });
 
@@ -185,6 +234,7 @@ describe('task-shaped and time-shaped results', () => {
       'Algorithms lecture',
       'Bus to Braude',
       'Hand in the essay',
+      'Semester seminar',
       'Study: Math',
       'Studying',
     ]);
@@ -201,7 +251,29 @@ describe('task-shaped and time-shaped results', () => {
         blockType: 'list',
       }),
     );
-    assert.deepEqual(named, ['Bus to Braude', 'Old one-off block', 'Study: Math', 'Studying']);
+    assert.deepEqual(named, [
+      'Bus to Braude',
+      'Last semester tutorial',
+      'Old one-off block',
+      'Semester seminar',
+      'Six-week course',
+      'Study: Math',
+      'Studying',
+    ]);
+    // `kind != event` (how a list says "tasks") names no reserved time: it stays out.
+    const tasks = titlesOf(
+      await rowsOf({
+        draft: {
+          source: 'items',
+          where: {
+            combinator: 'and',
+            rules: [{ field: 'kind', operator: '!=', value: 'event' }],
+          },
+        },
+        blockType: 'list',
+      }),
+    );
+    assert.deepEqual(tasks, ['Hand in the essay']);
   });
 
   it('GET-style ItemQuery.list hides blocks unless kind=block', async () => {
@@ -214,7 +286,10 @@ describe('task-shaped and time-shaped results', () => {
       'Hand in the essay',
     ]);
     assert.deepEqual(titlesOf((await reads.list({ kind: 'block' })).items), [
+      'Last semester tutorial',
       'Old one-off block',
+      'Semester seminar',
+      'Six-week course',
       'Study: Math',
       'Studying',
     ]);

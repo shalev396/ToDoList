@@ -72,15 +72,12 @@ export const listToday = defineTool({
       ).slice(0, LIMIT);
     const [events, dueToday, overdue, scheduled] = await Promise.all([
       timed(['event']),
+      // Task-shaped, like overdue: `kind != event` asks for no reserved time, so none comes back.
       findItems(
         ctx,
         {
           source: 'items',
-          ...where([
-            ...filters,
-            { field: 'kind', operator: 'notIn', value: ['event', ...SCHEDULED_KINDS] },
-            open,
-          ]),
+          ...where([...filters, { field: 'kind', operator: '!=', value: 'event' }, open]),
           dateField: 'dueAt',
           dateRange: range(today.from, today.to),
           sort: [{ field: 'dueAt', dir: 'asc' }],

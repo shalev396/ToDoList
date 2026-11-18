@@ -3,9 +3,11 @@ import { describe, it } from 'node:test';
 import { PARITY_CASES, type ParityCase } from './cases.js';
 import {
   MAX_OCCURRENCES_PER_SERIES,
+  MAX_SLOTS_TO_END,
   expandOccurrences,
   isSeriesRow,
   localExceptionsOf,
+  recurrenceEndOf,
   type TimeRow,
 } from './occurrences.js';
 
@@ -218,5 +220,107 @@ describe('isSeriesRow', () => {
     assert.equal(isSeriesRow({ props: { recurrence: [] } }), false);
     assert.equal(isSeriesRow({ props: { recurrence: ['EXDATE:20261108T110000Z'] } }), false);
     assert.equal(isSeriesRow({ props: { recurrence: 'RRULE:FREQ=DAILY' } }), false);
+  });
+});
+
+describe('recurrenceEndOf', () => {
+  const ZONE = 'Asia/Jerusalem';
+  /** Sundays 13:00–15:00 in Jerusalem from 13 September (summer time, UTC+3). */
+  function series(
+    recurrence: unknown,
+    props: Record<string, unknown> = {},
+  ): Pick<TimeRow, 'startAt' | 'endAt' | 'props'> {
+    return {
+      startAt: '2026-09-13T10:00:00.000Z',
+      endAt: '2026-09-13T12:00:00.000Z',
+      props: { recurrence, ...props },
+    };
+  }
+
+  it('a COUNT series ends with its last occurrence, on the wall clock across a DST change', () => {
+    // 13 Sep … 1 Nov; the clocks went back on 25 Oct, so 1 Nov 13:00–15:00 is 11:00–13:00Z.
+    assert.equal(
+      recurrenceEndOf(series(['RRULE:FREQ=WEEKLY;BYDAY=SU;COUNT=8']), ZONE),
+      '2026-11-01T13:00:00.000Z',
+    );
+  });
+
+  it('an UNTIL series ends with its last occurrence on or before UNTIL', () => {
+    assert.equal(
+      recurrenceEndOf(
+        series(['EXDATE:20260920T100000Z', 'RRULE:FREQ=WEEKLY;BYDAY=SU;UNTIL=20261020T000000Z']),
+        ZONE,
+      ),
+      '2026-10-18T12:00:00.000Z',
+    );
+  });
+
+  it('a local occurrence moved past the last slot extends the end; a skipped one does not', () => {
+    const rule = ['RRULE:FREQ=WEEKLY;BYDAY=SU;COUNT=8'];
+    assert.equal(
+      recurrenceEndOf(
+        series(rule, {
+          exceptions: [
+            {
+              originalStart: '2026-11-01T11:00:00.000Z',
+              startAt: '2026-11-03T16:00:00.000Z',
+              endAt: '2026-11-03T18:00:00.000Z',
+            },
+          ],
+        }),
+        ZONE,
+      ),
+      '2026-11-03T18:00:00.000Z',
+    );
+    // A new start alone keeps the series' two hours.
+    assert.equal(
+      recurrenceEndOf(
+        series(rule, {
+          exceptions: [
+            { originalStart: '2026-11-01T11:00:00.000Z', startAt: '2026-11-02T08:00:00.000Z' },
+          ],
+        }),
+        ZONE,
+      ),
+      '2026-11-02T10:00:00.000Z',
+    );
+    assert.equal(
+      recurrenceEndOf(
+        series(rule, {
+          exceptions: [
+            {
+              originalStart: '2026-11-01T11:00:00.000Z',
+              startAt: '2026-12-01T08:00:00.000Z',
+              skipped: true,
+            },
+          ],
+        }),
+        ZONE,
+      ),
+      '2026-11-01T13:00:00.000Z',
+    );
+  });
+
+  it('is null for a series that never ends, a rule it cannot read, or no series at all', () => {
+    assert.equal(recurrenceEndOf(series(['RRULE:FREQ=WEEKLY;BYDAY=SU']), ZONE), null);
+    assert.equal(recurrenceEndOf(series(['RRULE:FREQ=SOMETIMES;COUNT=3']), ZONE), null);
+    assert.equal(recurrenceEndOf(series(null), ZONE), null);
+    assert.equal(recurrenceEndOf(series(['EXDATE:20260920T100000Z']), ZONE), null);
+    assert.equal(
+      recurrenceEndOf({ ...series(['RRULE:FREQ=DAILY;COUNT=3']), startAt: null }, ZONE),
+      null,
+    );
+  });
+
+  it(`works out at most MAX_SLOTS_TO_END slots; a longer series reads as never ending`, () => {
+    assert.equal(MAX_SLOTS_TO_END, 5000);
+    const hourly = (count: number): string | null =>
+      recurrenceEndOf(series([`RRULE:FREQ=HOURLY;COUNT=${String(count)}`]), ZONE);
+    // The 5000th hourly slot starts 4999 hours after the first; it lasts two hours.
+    assert.equal(
+      hourly(MAX_SLOTS_TO_END),
+      new Date(Date.parse('2026-09-13T12:00:00.000Z') + 4999 * 3_600_000).toISOString(),
+    );
+    assert.equal(hourly(MAX_SLOTS_TO_END + 1), null);
   });
 });

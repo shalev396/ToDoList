@@ -188,7 +188,7 @@ To-dos, issues, tasks, events, assignments, deadlines, files and messages all sh
 **`props` per kind or provider (examples):**
 | Provider/kind | `props` |
 |---|---|
-| google_calendar / event | `calendarId, location, meetLink, recurringEventId, attendeesCount, transparency` |
+| google_calendar / event | `calendarId, location, meetLink, recurringEventId, attendeesCount, transparency`; a series master also `recurrence` and `recurrenceEnd` (ISO end of its last occurrence; null: never ends) |
 | jira / issue | `issueType, projectKey, sprint, storyPoints, epicKey` |
 | clickup / task | `listId, folderId, spaceId, timeEstimateMs, customFields{}` |
 | linear / issue | `teamKey, cycle, estimate, projectId, stateType` |
