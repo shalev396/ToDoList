@@ -98,10 +98,40 @@ def test_add_home_and_place_by_coordinates(page: Page, base_url: str, api_base_u
     assert patched.value.request.post_data_json == {"home": True}
     expect(braude.locator("[data-home-badge]")).to_be_visible(timeout=NORMAL_TIMEOUT)
     expect(home.locator("[data-home-badge]")).to_have_count(0)
+    # Its Make Home button went: the keyboard is on its Edit button.
+    expect(braude.get_by_role("button", name="Edit Braude")).to_be_focused()
 
     page.reload()
     expect(page.locator("[data-place]")).to_have_count(2, timeout=NORMAL_TIMEOUT)
     expect(page.locator('[data-place="Braude"] [data-home-badge]')).to_be_visible()
+
+    # The keyboard follows the place: editing starts on its name, and Cancel or Save goes back to
+    # its Edit button.
+    home.get_by_role("button", name="Edit Home").click()
+    name = home.get_by_label("Name", exact=True)
+    expect(name).to_be_focused()
+    home.get_by_role("button", name="Cancel").click()
+    expect(home.get_by_role("button", name="Edit Home")).to_be_focused()
+    home.get_by_role("button", name="Edit Home").press("Enter")
+    expect(name).to_be_focused()
+    name.fill("Old home")
+    with page.expect_response(_travel_call("PATCH", "places/"), timeout=APP_REQUEST_TIMEOUT) as patched:
+        name.press("Enter")
+    assert patched.value.request.post_data_json == {"name": "Old home"}
+    old_home = page.locator('[data-place="Old home"]')
+    expect(old_home.get_by_role("button", name="Edit Old home")).to_be_focused()
+
+    # Removing a place puts the keyboard on the next one, and on adding a place once none is left.
+    old_home.get_by_role("button", name="Remove Old home").click()
+    with page.expect_response(_travel_call("DELETE", "places/"), timeout=APP_REQUEST_TIMEOUT):
+        page.get_by_role("alertdialog").get_by_role("button", name="Remove").click()
+    expect(page.locator('[data-place="Old home"]')).to_have_count(0)
+    expect(braude.get_by_role("button", name="Edit Braude")).to_be_focused()
+    braude.get_by_role("button", name="Remove Braude").click()
+    with page.expect_response(_travel_call("DELETE", "places/"), timeout=APP_REQUEST_TIMEOUT):
+        page.get_by_role("alertdialog").get_by_role("button", name="Remove").click()
+    expect(page.locator("[data-place]")).to_have_count(0)
+    expect(page.locator("[data-place-form=add]").get_by_label("Name", exact=True)).to_be_focused()
 
 
 def test_rule_with_sentence_filter_saves(page: Page, base_url: str, api_base_url: str, fresh_owner):
@@ -111,18 +141,6 @@ def test_rule_with_sentence_filter_saves(page: Page, base_url: str, api_base_url
     braude = create_place(api_base_url, user, wid, "Braude", coords=BRAUDE)
     _open(page, base_url, user)
     tomorrow = _tomorrow_in_jerusalem(page)
-    # A lecture tomorrow 10:00-12:00 (Jerusalem, UTC+2 in November), for the rule to match.
-    response = requests.post(
-        f"{api_base_url}/private/workspaces/{wid}/items",
-        json={
-            "title": "Lecture: Calculus",
-            "startAt": f"{tomorrow}T08:00:00.000Z",
-            "endAt": f"{tomorrow}T10:00:00.000Z",
-        },
-        headers={"Authorization": f"Bearer {user.id_token}"},
-        timeout=30,
-    )
-    assert response.status_code == 201, response.text
 
     new_rule = page.locator("[data-new-travel-rule]")
     add = new_rule.get_by_role("button", name="Add rule")
@@ -175,6 +193,8 @@ def test_rule_with_sentence_filter_saves(page: Page, base_url: str, api_base_url
     assert saved.value.status == 200, saved.value.text()
     assert saved.value.request.post_data_json["direction"] == "both"
     expect(card.get_by_role("button", name="Save rule")).to_have_count(0, timeout=NORMAL_TIMEOUT)
+    # The card shows the saved rule (the PATCH answer), never its old values in between.
+    expect(card.get_by_role("combobox", name="Which trips")).to_contain_text("There and back")
 
     rules = list_rules(api_base_url, user, wid)
     assert [(rule["mode"], rule["direction"], rule["placeId"]) for rule in rules] == [
@@ -191,22 +211,67 @@ def test_rule_with_sentence_filter_saves(page: Page, base_url: str, api_base_url
     day = page.locator(f'[data-travel-day="{tomorrow}"]')
     expect(page.locator("[data-travel-day]")).to_have_count(14, timeout=NORMAL_TIMEOUT)
     expect(day).to_have_attribute("href", f"/en/settings/travel?travelDay={tomorrow}")
-    # DEFERRED until the branch is merged to dev: the dev database's Items validator predates
-    # kind 'travel', so it refuses the legs the rule makes (the server catches and logs that; the
-    # page is unaffected). Once dev accepts travel items, the lecture has a leg there and one back:
-    #     expect(day).to_have_attribute("data-legs", "2", timeout=NORMAL_TIMEOUT)
-    expect(day).to_have_attribute("data-legs", "2" if _legs_stored(api_base_url, user, wid) else "0")
 
 
-def _legs_stored(api_base_url: str, user, workspace_id: str) -> bool:
-    """Whether this stage stores travel legs (see the DEFERRED note above)."""
-    response = requests.get(
-        f"{api_base_url}/private/workspaces/{workspace_id}/items",
-        params={"kind": "travel"},
+# The legs a rule makes are stored items of kind `travel`. The dev database's Items validator
+# predates that kind and refuses them (the server catches and logs it; the page is unaffected)
+# until the branch reaches dev and sync-db runs. strict: once legs are stored, the XPASS fails the
+# run, so the marker is removed then.
+DEFERRED_LEGS = (
+    "DEFERRED until merge to dev: the dev Items validator rejects kind travel until sync-db runs"
+)
+
+
+@pytest.mark.xfail(strict=True, reason=DEFERRED_LEGS)
+def test_next_14_days_counts_stored_legs_and_removals(
+    page: Page, base_url: str, api_base_url: str, fresh_owner
+):
+    user, workspace = fresh_owner
+    wid = workspace["id"]
+    create_place(api_base_url, user, wid, "Home", coords=HOME, home=True)
+    braude = create_place(api_base_url, user, wid, "Braude", coords=BRAUDE)
+    _open(page, base_url, user)
+    tomorrow = _tomorrow_in_jerusalem(page)
+    # A lecture tomorrow 10:00-12:00 (Jerusalem, UTC+2 in November), and a rule that drives there
+    # and back for it.
+    response = requests.post(
+        f"{api_base_url}/private/workspaces/{wid}/items",
+        json={
+            "title": "Lecture: Calculus",
+            "startAt": f"{tomorrow}T08:00:00.000Z",
+            "endAt": f"{tomorrow}T10:00:00.000Z",
+        },
         headers={"Authorization": f"Bearer {user.id_token}"},
         timeout=30,
     )
-    return response.status_code == 200 and len(response.json()["data"]["items"]) > 0
+    assert response.status_code == 201, response.text
+    create_rule(
+        api_base_url,
+        user,
+        wid,
+        {"combinator": "and", "rules": [{"field": "title", "operator": "contains", "value": "Lecture"}]},
+        mode="drive",
+        direction="both",
+        place_id=braude["id"],
+    )
+    page.reload()
+    days = page.locator("[data-travel-day]")
+    expect(days).to_have_count(14, timeout=NORMAL_TIMEOUT)
+    day = page.locator(f'[data-travel-day="{tomorrow}"]')
+    expect(day).to_have_attribute("href", f"/en/settings/travel?travelDay={tomorrow}")
+
+    # The stored legs: Home → Braude before the lecture, Braude → Home after it.
+    expect(day).to_have_attribute("data-legs", "2", timeout=NORMAL_TIMEOUT)
+    expect(day).to_have_attribute("data-removed", "0")
+    expect(day).to_contain_text("2 trips")
+
+    # The rule goes, and with it both legs: the day counts them as removed.
+    page.locator("[data-travel-rule]").get_by_role("button", name="Remove rule").click()
+    with page.expect_response(_travel_call("DELETE", "rules/"), timeout=APP_REQUEST_TIMEOUT):
+        page.get_by_role("alertdialog").get_by_role("button", name="Remove").click()
+    expect(day).to_have_attribute("data-legs", "0", timeout=NORMAL_TIMEOUT)
+    expect(day).to_have_attribute("data-removed", "2")
+    expect(day).to_contain_text("No travel · 2 removed")
 
 
 def test_settings_defaults_shown_and_saved(page: Page, base_url: str, api_base_url: str, fresh_owner):
@@ -256,6 +321,10 @@ def test_settings_defaults_shown_and_saved(page: Page, base_url: str, api_base_u
     with page.expect_response(_travel_call("PATCH", "settings"), timeout=APP_REQUEST_TIMEOUT) as saved:
         save.click()
     assert saved.value.status == 200, saved.value.text()
+    # The new rule, untouched, follows the new default mode at once.
+    expect(
+        page.locator("[data-new-travel-rule]").get_by_role("combobox", name="How you travel")
+    ).to_contain_text("Driving", timeout=NORMAL_TIMEOUT)
     settings = saved.value.json()["data"]["settings"]
     assert settings["factors"] == {"walk": 1, "drive": 3, "transit": 1}
     assert settings["buffers"] == {"walk": 7, "drive": 10, "transit": 5}

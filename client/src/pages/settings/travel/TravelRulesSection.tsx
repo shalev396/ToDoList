@@ -25,7 +25,13 @@ import {
   type TravelRuleView,
 } from '@api-types/travel.ts';
 import { ConfirmRemove } from './PlacesSection';
-import { queryOfScope, ruleScopeOf } from './travelForms';
+import {
+  NEW_RULE,
+  newRuleRequestOf,
+  queryOfScope,
+  ruleScopeOf,
+  type NewRuleDraft,
+} from './travelForms';
 
 /** A rule as edited: its sentence (a where-rule's), mode, trips and place. */
 interface RuleDraft {
@@ -297,16 +303,11 @@ function NewRule({
   const { t } = useTranslation();
   const id = useId();
   const save = useSaveTravelRule(workspaceId);
-  const fresh = (): RuleDraft => ({
-    query: { source: 'items' },
-    mode: defaultMode,
-    direction: 'both',
-    placeId: null,
-  });
-  const [draft, setDraft] = useState<RuleDraft>(fresh);
+  // Its mode stays null until he picks one, so it follows the default mode as Times changes it.
+  const [draft, setDraft] = useState<NewRuleDraft>(NEW_RULE);
   const [generation, setGeneration] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const request = requestOf(draft, null);
+  const request = newRuleRequestOf(draft, defaultMode);
   return (
     <section
       aria-labelledby={`${id}-title`}
@@ -320,7 +321,7 @@ function NewRule({
         key={generation}
         workspaceId={workspaceId}
         scope={null}
-        draft={draft}
+        draft={{ ...draft, mode: draft.mode ?? defaultMode }}
         context={context}
         places={places}
         onChange={(patch) => {
@@ -346,7 +347,7 @@ function NewRule({
               { body: request },
               {
                 onSuccess: () => {
-                  setDraft(fresh());
+                  setDraft(NEW_RULE);
                   setGeneration((value) => value + 1);
                   toast.success(t('travel.rules.added'));
                 },

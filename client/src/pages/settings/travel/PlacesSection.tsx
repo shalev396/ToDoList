@@ -1,4 +1,4 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { House, Info, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
@@ -27,6 +27,7 @@ import {
   placeDraftOf,
   placePatchOf,
   placeRequestOf,
+  neighbourAfterRemoval,
   type PlaceDraft,
 } from './travelForms';
 
@@ -38,6 +39,7 @@ export function ConfirmRemove({
   confirm,
   onConfirm,
   onClose,
+  onCloseAutoFocus,
 }: {
   open: boolean;
   title: string;
@@ -45,6 +47,8 @@ export function ConfirmRemove({
   confirm: string;
   onConfirm: () => void;
   onClose: () => void;
+  /** Where focus goes as it closes (default: back to what opened it). */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -56,7 +60,7 @@ export function ConfirmRemove({
         }
       }}
     >
-      <AlertDialogContent>
+      <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
         <AlertDialogHeader>
           <AlertDialogTitle dir="auto">{title}</AlertDialogTitle>
           <AlertDialogDescription>{body}</AlertDialogDescription>
@@ -78,21 +82,33 @@ function PlaceForm({
   workspaceId,
   place,
   onDone,
+  nameRef,
 }: {
   workspaceId: string;
   /** The place being edited; none: a new one. */
   place?: PlaceView;
+  /** Editing ends: saved, or cancelled. */
   onDone?: () => void;
+  /** The name field, for focus from outside (the add form's, once the last place goes). */
+  nameRef?: RefObject<HTMLInputElement | null>;
 }) {
   const { t } = useTranslation();
   const id = useId();
   const save = useSavePlace(workspaceId);
+  const ownNameRef = useRef<HTMLInputElement>(null);
+  const nameInput = nameRef ?? ownNameRef;
   const [draft, setDraft] = useState<PlaceDraft>(
     place === undefined ? EMPTY_PLACE : placeDraftOf(place),
   );
   const [problem, setProblem] = useState<'name' | 'address' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const editing = place !== undefined;
+  // Opening a place for editing puts the keyboard on its name.
+  useEffect(() => {
+    if (editing) {
+      nameInput.current?.focus();
+    }
+  }, [editing, nameInput]);
   const change = (patch: Partial<PlaceDraft>) => {
     setDraft((current) => ({ ...current, ...patch }));
     setProblem(null);
@@ -147,6 +163,7 @@ function PlaceForm({
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${id}-name`}>{t('travel.places.name')}</Label>
           <Input
+            ref={nameInput}
             id={`${id}-name`}
             value={draft.name}
             maxLength={80}
@@ -229,14 +246,26 @@ function PlaceRow({
   workspaceId,
   place,
   onRemove,
+  editButtonRef,
 }: {
   workspaceId: string;
   place: PlaceView;
   onRemove: (place: PlaceView) => void;
+  /** Its Edit button, for the section to move focus to (after a neighbour is removed). */
+  editButtonRef: (button: HTMLButtonElement | null) => void;
 }) {
   const { t } = useTranslation();
   const save = useSavePlace(workspaceId);
   const [editing, setEditing] = useState(false);
+  const editButton = useRef<HTMLButtonElement | null>(null);
+  const backToEdit = useRef(false);
+  // Cancelled or saved: the keyboard goes back to this place's Edit button.
+  useEffect(() => {
+    if (!editing && backToEdit.current) {
+      backToEdit.current = false;
+      editButton.current?.focus();
+    }
+  }, [editing]);
   if (editing) {
     return (
       <li data-place={place.name}>
@@ -244,6 +273,7 @@ function PlaceRow({
           workspaceId={workspaceId}
           place={place}
           onDone={() => {
+            backToEdit.current = true;
             setEditing(false);
           }}
         />
@@ -302,6 +332,8 @@ function PlaceRow({
                 { id: place.id, body: { home: true } },
                 {
                   onSuccess: () => {
+                    // Its Make Home button goes: the keyboard moves to its Edit button.
+                    editButton.current?.focus();
                     toast.success(t('travel.places.saved', { name: place.name }));
                   },
                   onError: (failure) => {
@@ -320,6 +352,10 @@ function PlaceRow({
           size="icon-sm"
           variant="ghost"
           className="max-md:size-11"
+          ref={(button) => {
+            editButton.current = button;
+            editButtonRef(button);
+          }}
           aria-label={t('travel.places.editLabel', { name: place.name })}
           onClick={() => {
             setEditing(true);
@@ -361,6 +397,14 @@ export function PlacesSection({
   const remove = useRemovePlace(workspaceId);
   const [removing, setRemoving] = useState<PlaceView | null>(null);
   const hasHome = places.some((place) => place.home);
+  const editButtons = useRef(new Map<string, HTMLButtonElement>());
+  const addName = useRef<HTMLInputElement>(null);
+  /** Set when Remove is confirmed: the place whose Edit button gets the keyboard, or none. */
+  const focusAfterRemove = useRef<{ next: string | null } | null>(null);
+  const focusPlace = (placeId: string | null) => {
+    const target = placeId === null ? addName.current : editButtons.current.get(placeId);
+    target?.focus();
+  };
   return (
     <SettingsSection
       id={`${id}-title`}
@@ -379,6 +423,13 @@ export function PlacesSection({
                 workspaceId={workspaceId}
                 place={place}
                 onRemove={setRemoving}
+                editButtonRef={(button) => {
+                  if (button === null) {
+                    editButtons.current.delete(place.id);
+                  } else {
+                    editButtons.current.set(place.id, button);
+                  }
+                }}
               />
             ))}
           </ul>
@@ -392,7 +443,7 @@ export function PlacesSection({
             <span>{t('travel.places.noHome')}</span>
           </p>
         )}
-        <PlaceForm workspaceId={workspaceId} />
+        <PlaceForm workspaceId={workspaceId} nameRef={addName} />
       </div>
       <ConfirmRemove
         open={removing !== null}
@@ -402,16 +453,33 @@ export function PlacesSection({
         onClose={() => {
           setRemoving(null);
         }}
+        onCloseAutoFocus={(event) => {
+          // Removed: the keyboard goes to the next place (or the one before), else to adding one,
+          // at once; it comes back to this place if the removal fails.
+          const after = focusAfterRemove.current;
+          if (after !== null) {
+            event.preventDefault();
+            focusAfterRemove.current = null;
+            focusPlace(after.next);
+          }
+        }}
         onConfirm={() => {
           if (removing === null) {
             return;
           }
           const { id: placeId, name } = removing;
+          focusAfterRemove.current = {
+            next: neighbourAfterRemoval(
+              places.map((place) => place.id),
+              placeId,
+            ),
+          };
           remove.mutate(placeId, {
             onSuccess: () => {
               toast.success(t('travel.places.removed', { name }));
             },
             onError: (failure) => {
+              focusPlace(placeId);
               toast.error(errorMessage(t, failure, 'travel.places.removeFailed'));
             },
           });

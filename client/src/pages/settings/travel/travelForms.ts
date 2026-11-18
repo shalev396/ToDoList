@@ -7,7 +7,10 @@ import type { Query, RuleGroup } from '@api-types/builder.ts';
 import {
   TRAVEL_HORIZON_DAYS,
   type CreatePlaceRequest,
+  type CreateTravelRuleRequest,
   type PlaceView,
+  type RuleDirection,
+  type TravelMode,
   type TravelRuleScope,
   type TravelSettings,
   type UpdatePlaceRequest,
@@ -221,6 +224,55 @@ export function ruleScopeOf(query: Query): TravelRuleScope | null {
 /** The sentence's query for a rule: its where-group, or none for a rule on one item or series. */
 export function queryOfScope(scope: TravelRuleScope): Query {
   return scope.kind === 'where' ? { source: 'items', where: scope.where } : { source: 'items' };
+}
+
+/**
+ * The "New rule" form: its sentence, trips and place, and the mode he picked (null: none yet, so
+ * it follows the default mode, which may change in Times while the form is open).
+ */
+export interface NewRuleDraft {
+  query: Query;
+  mode: TravelMode | null;
+  direction: RuleDirection;
+  placeId: string | null;
+}
+
+export const NEW_RULE: Readonly<NewRuleDraft> = Object.freeze<NewRuleDraft>({
+  query: { source: 'items' },
+  mode: null,
+  direction: 'both',
+  placeId: null,
+});
+
+/** The new rule's request, on his mode or else today's default; null without a condition. */
+export function newRuleRequestOf(
+  draft: Readonly<NewRuleDraft>,
+  defaultMode: TravelMode,
+): CreateTravelRuleRequest | null {
+  const scope = ruleScopeOf(draft.query);
+  if (scope === null) {
+    return null;
+  }
+  return {
+    scope,
+    mode: draft.mode ?? defaultMode,
+    direction: draft.direction,
+    placeId: draft.placeId,
+  };
+}
+
+// ─── Focus ──────────────────────────────────────────────────────────────────
+
+/**
+ * Where focus goes once a place is removed: the next place, else the one before it; null when
+ * none is left (focus goes to the form that adds one).
+ */
+export function neighbourAfterRemoval(ids: readonly string[], removedId: string): string | null {
+  const at = ids.indexOf(removedId);
+  if (at === -1) {
+    return null;
+  }
+  return ids[at + 1] ?? ids[at - 1] ?? null;
 }
 
 // ─── The next 14 days ───────────────────────────────────────────────────────

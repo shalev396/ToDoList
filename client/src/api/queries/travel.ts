@@ -5,6 +5,14 @@ import { queryKeys } from '@/api/queries/keys';
 import { QUERY_STALE_TIME_PRIVATE_MS } from '@/api/queries/queryOptions';
 import { sameWorkspace } from '@/api/queries/sameWorkspace';
 import {
+  refreshAfterChange,
+  storeRemovedPlace,
+  storeRemovedRule,
+  storeSavedPlace,
+  storeSavedRule,
+  travelChangeOptions,
+} from '@/api/queries/travelCache';
+import {
   createPlace,
   createTravelRule,
   getTravelDays,
@@ -37,23 +45,30 @@ import type {
 } from '@api-types/travel.ts';
 
 /**
- * My own travel: places, rules, settings and default places, and the days of legs. Every change
- * makes my legs again on the server before it answers, so after one my travel and every block
- * that shows items (calendar, clock, timeline, agenda) are read again.
+ * My own travel: places, rules, settings and default places, and the days of legs. A change's
+ * answer goes into the cache at once (`store`), then my travel and the blocks are read again
+ * (travelCache.ts).
  */
-function refreshAfterChange(queryClient: QueryClient, workspaceId: string): void {
-  void queryClient.invalidateQueries({ queryKey: queryKeys.travel(workspaceId) });
-  void queryClient.invalidateQueries({ predicate: (query) => query.queryKey[2] === 'block' });
-}
-
-function useTravelChange<V, R>(workspaceId: string, call: (variables: V) => Promise<R>) {
+function useTravelChange<V, R>(
+  workspaceId: string,
+  call: (variables: V) => Promise<R>,
+  store?: (queryClient: QueryClient, data: R, variables: V) => void,
+) {
   const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: call,
-    onSuccess: () => {
-      refreshAfterChange(queryClient, workspaceId);
-    },
-  });
+  const redux = useStore<RootState>();
+  return useMutation(
+    travelChangeOptions(
+      queryClient,
+      () => redux.getState().workspace.generation,
+      workspaceId,
+      call,
+      store === undefined
+        ? undefined
+        : (data: R, variables: V) => {
+            store(queryClient, data, variables);
+          },
+    ),
+  );
 }
 
 // ─── Places ─────────────────────────────────────────────────────────────────
@@ -76,20 +91,32 @@ export type SavePlaceVariables =
   | { id?: undefined; body: CreatePlaceRequest }
   | { id: string; body: UpdatePlaceRequest };
 
+/** The saved place (the server's answer) replaces its old copy in the cache at once. */
 export function useSavePlace(workspaceId: string) {
-  return useTravelChange(workspaceId, async ({ id, body }: SavePlaceVariables) => {
-    const config = { suppressErrorToast: true };
-    const response =
-      id === undefined
-        ? await createPlace(workspaceId, body, config)
-        : await updatePlace(workspaceId, id, body, config);
-    return response.data;
-  });
+  return useTravelChange(
+    workspaceId,
+    async ({ id, body }: SavePlaceVariables) => {
+      const config = { suppressErrorToast: true };
+      const response =
+        id === undefined
+          ? await createPlace(workspaceId, body, config)
+          : await updatePlace(workspaceId, id, body, config);
+      return response.data;
+    },
+    (queryClient, saved) => {
+      storeSavedPlace(queryClient, workspaceId, saved);
+    },
+  );
 }
 
+/** The removed place leaves the cached list at once. */
 export function useRemovePlace(workspaceId: string) {
-  return useTravelChange(workspaceId, (placeId: string) =>
-    removePlace(workspaceId, placeId, { suppressErrorToast: true }),
+  return useTravelChange(
+    workspaceId,
+    (placeId: string) => removePlace(workspaceId, placeId, { suppressErrorToast: true }),
+    (queryClient, _done, placeId) => {
+      storeRemovedPlace(queryClient, workspaceId, placeId);
+    },
   );
 }
 
@@ -111,20 +138,35 @@ export type SaveTravelRuleVariables =
   | { id?: undefined; body: CreateTravelRuleRequest }
   | { id: string; body: UpdateTravelRuleRequest };
 
+/**
+ * The saved rule (the server's answer) replaces its old copy in the cache at once, so a rule card
+ * never shows its old values between Save and the read again.
+ */
 export function useSaveTravelRule(workspaceId: string) {
-  return useTravelChange(workspaceId, async ({ id, body }: SaveTravelRuleVariables) => {
-    const config = { suppressErrorToast: true };
-    const response =
-      id === undefined
-        ? await createTravelRule(workspaceId, body, config)
-        : await updateTravelRule(workspaceId, id, body, config);
-    return response.data;
-  });
+  return useTravelChange(
+    workspaceId,
+    async ({ id, body }: SaveTravelRuleVariables) => {
+      const config = { suppressErrorToast: true };
+      const response =
+        id === undefined
+          ? await createTravelRule(workspaceId, body, config)
+          : await updateTravelRule(workspaceId, id, body, config);
+      return response.data;
+    },
+    (queryClient, saved) => {
+      storeSavedRule(queryClient, workspaceId, saved);
+    },
+  );
 }
 
+/** The removed rule leaves the cached list at once. */
 export function useRemoveTravelRule(workspaceId: string) {
-  return useTravelChange(workspaceId, (ruleId: string) =>
-    removeTravelRule(workspaceId, ruleId, { suppressErrorToast: true }),
+  return useTravelChange(
+    workspaceId,
+    (ruleId: string) => removeTravelRule(workspaceId, ruleId, { suppressErrorToast: true }),
+    (queryClient, _done, ruleId) => {
+      storeRemovedRule(queryClient, workspaceId, ruleId);
+    },
   );
 }
 

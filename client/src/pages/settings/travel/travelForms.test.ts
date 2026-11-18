@@ -9,6 +9,9 @@ import {
   factorFromInput,
   goHomeFromInput,
   horizonOf,
+  neighbourAfterRemoval,
+  newRuleRequestOf,
+  NEW_RULE,
   parseAliases,
   parseCoordinates,
   placeDraftOf,
@@ -189,5 +192,41 @@ describe('next 14 days', () => {
       dayLink('?item=abc&travelDay=2026-11-01', '2026-11-19'),
       '?item=abc&travelDay=2026-11-19',
     );
+  });
+});
+
+describe('the new rule', () => {
+  const lecture: Query = {
+    source: 'items',
+    where: {
+      combinator: 'and',
+      rules: [{ field: 'title', operator: 'contains', value: 'Lecture' }],
+    },
+  };
+
+  it('an untouched new rule follows the default mode as it changes', () => {
+    const draft = { ...NEW_RULE, query: lecture };
+    assert.equal(newRuleRequestOf(draft, 'transit')?.mode, 'transit');
+    // The default changed in Times: the form that still says nothing of its own follows it.
+    assert.equal(newRuleRequestOf(draft, 'drive')?.mode, 'drive');
+    // A mode he picked stays his.
+    assert.equal(newRuleRequestOf({ ...draft, mode: 'walk' }, 'drive')?.mode, 'walk');
+    assert.deepEqual(newRuleRequestOf(draft, 'drive'), {
+      scope: { kind: 'where', where: lecture.where },
+      mode: 'drive',
+      direction: 'both',
+      placeId: null,
+    });
+    // Without a condition there is no rule to add.
+    assert.equal(newRuleRequestOf(NEW_RULE, 'drive'), null);
+  });
+});
+
+describe('focus after removing a place', () => {
+  it('goes to the next place, else the one before, else none is left', () => {
+    assert.equal(neighbourAfterRemoval(['home', 'braude', 'gym'], 'braude'), 'gym');
+    assert.equal(neighbourAfterRemoval(['home', 'braude', 'gym'], 'gym'), 'braude');
+    assert.equal(neighbourAfterRemoval(['home'], 'home'), null);
+    assert.equal(neighbourAfterRemoval(['home', 'braude'], 'missing'), null);
   });
 });
