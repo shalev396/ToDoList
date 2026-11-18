@@ -120,7 +120,7 @@ def test_sheets_clear_the_status_bar_and_the_home_indicator(base_url: str, authe
     page.evaluate(FORCE_INSETS)
     top = SAFE_TOP + HOME_SCREEN_TOP_EXTRA
     expect(sheet).to_have_css("padding-top", f"{top}px")
-    expect(sheet).to_have_css("padding-bottom", f"{SAFE_BOTTOM}px")
+    expect(sheet).to_have_css("padding-bottom", f"{HOME_SCREEN_BOTTOM}px")
     close = page.locator("[data-slot=sheet-close-button]")
     box = close.bounding_box()
     assert box is not None and box["y"] >= top, f"Close starts at {box and box['y']}px, under the status bar"
