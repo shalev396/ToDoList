@@ -1220,6 +1220,9 @@ classDiagram
     +integration(integration)$
     +workspace(workspaceId)$
   }
+  class SubjectMatches {
+    +count(caller, subjects, scanMax)$
+  }
   class ItemQuery {
     +for(caller)$ ItemQuery
     +effectiveStage()$
@@ -1571,6 +1574,15 @@ classDiagram
     +store(value)
     #valueError(value)*
   }
+  class Subjects {
+    <<value object>>
+    +of(def)$
+    +list
+    +complete(topicFamilies)
+    +upsert(input, topicFamilies)
+    +toDefinition()
+  }
+  Workspace ..> Subjects : upsertSubject
   Workspace *-- WorkspaceSettings
   Workspace ..> JoinLink : stores sealed
   WorkspaceSettings *-- TopicRules
@@ -1690,6 +1702,8 @@ classDiagram
   class JoinLink:::built
   class TopicRules:::built
   class AttributeDefinitions:::built
+  class Subjects:::built
+  class SubjectMatches:::built
   class AttributeDefinition:::built
   class RatingAttribute:::built
   class NumberAttribute:::built
@@ -1740,6 +1754,11 @@ How the pieces work, in short:
   validates a request's rules. `Refiling` re-files stored containers and items after a File under
   change (a connection's topic, a container's name rule, the workspace's rules), in place and with
   no provider call: the same rule the sync applies.
+- **Subjects.** `Subjects` is the value object over the `subject` select's options and their looks
+  (colour family, title globs): it completes options with the next free family ("saved when
+  assigned"), and renames, restyles or appends one subject (`Workspace#upsertSubject`, which also
+  moves the stored values of a rename). `SubjectMatches` counts, for Settings → Subjects, what each
+  subject would take of the caller's visible items, through `subjectOf`, the rule the colours use.
 
 ## 6. Dashboards and views (phases 6a and 6b, built)
 

@@ -252,6 +252,12 @@ export const MANIFEST: readonly Entry[] = [
     expect: [2, 4],
     noBadInput: true,
   },
+  {
+    method: 'POST',
+    path: `${W}/attributes/subject/match-counts`,
+    body: () => ({ subjects: [{ name: 'Calculus', patterns: ['*calc*'] }] }),
+    expect: [2],
+  },
 
   // ── items and facets ──────────────────────────────────────────────────────
   { method: 'GET', path: `${W}/items`, query: 'q=lin_api', expect: [2] },

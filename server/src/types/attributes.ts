@@ -8,6 +8,7 @@
  */
 import { z } from 'zod';
 
+import { hasTooManyWildcards } from './glob.js';
 import { TOPIC_COLOURS } from './topics.js';
 
 export const ATTRIBUTE_TYPES = [
@@ -44,13 +45,22 @@ const NameSchema = z.string().trim().min(1).max(40);
 const OptionSchema = z.string().trim().min(1).max(40);
 const OptionsSchema = z.array(OptionSchema).max(MAX_ATTRIBUTE_OPTIONS);
 
+const PatternsSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1)
+      .max(OPTION_PATTERN_LENGTH_MAX)
+      .refine((pattern) => !hasTooManyWildcards(pattern), 'too many wildcards'),
+  )
+  .max(OPTION_PATTERNS_MAX);
+
 /** How one option of a select looks: its colour family and the title globs that pick it. */
 export const OptionLookSchema = z.strictObject({
   option: OptionSchema,
   colour: z.enum(TOPIC_COLOURS),
-  patterns: z
-    .array(z.string().trim().min(1).max(OPTION_PATTERN_LENGTH_MAX))
-    .max(OPTION_PATTERNS_MAX),
+  patterns: PatternsSchema,
 });
 export type OptionLook = z.infer<typeof OptionLookSchema>;
 const OptionLooksSchema = z.array(OptionLookSchema).max(MAX_ATTRIBUTE_OPTIONS);
@@ -157,6 +167,14 @@ export const AttributePatchSchema = z
   })
   .refine((patch) => Object.keys(patch).length > 0, 'the patch changes nothing');
 export type AttributePatch = z.infer<typeof AttributePatchSchema>;
+
+/** `POST …/attributes/subject/match-counts`: the subjects (in order) whose matches to count. */
+export const SubjectMatchCountsSchema = z.strictObject({
+  subjects: z
+    .array(z.strictObject({ name: OptionSchema, patterns: PatternsSchema }))
+    .max(MAX_ATTRIBUTE_OPTIONS),
+});
+export type SubjectMatchCountsInput = z.infer<typeof SubjectMatchCountsSchema>;
 
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 

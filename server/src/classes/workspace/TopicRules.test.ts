@@ -137,3 +137,13 @@ describe('withRule / ruleFor (File under)', () => {
     assert.equal(rules.classify({ matchKey: 'Q2 plan', defaultTopicId: null }), null);
   });
 });
+
+describe('TopicRules.normalize wildcards', () => {
+  it('rejects a match with more than 8 stars', () => {
+    assert.throws(
+      () => TopicRules.normalize([{ match: '*a'.repeat(13), topicId: 't' }]),
+      /wildcards/,
+    );
+    assert.doesNotThrow(() => TopicRules.normalize([{ match: '*a'.repeat(8), topicId: 't' }]));
+  });
+});

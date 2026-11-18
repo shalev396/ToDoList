@@ -422,6 +422,11 @@ export interface IItemRepository {
   /** Clears one attribute's value on every item of the workspace. Returns how many items held it. */
   clearAttribute(workspaceId: string, key: string): Promise<number>;
   /**
+   * Moves the value `from` to `to` of one attribute on every item of the workspace (a renamed
+   * select option). Returns how many items held `from`.
+   */
+  renameAttributeValue(workspaceId: string, key: string, from: string, to: string): Promise<number>;
+  /**
    * GLOBAL, every workspace: the purge job (jobs/purge.ts) only. Hard-deletes items
    * soft-deleted before `date`. Returns how many.
    */

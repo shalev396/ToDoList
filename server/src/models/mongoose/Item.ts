@@ -569,6 +569,16 @@ export const ItemRepository: IItemRepository = {
     return result.modifiedCount;
   },
 
+  async renameAttributeValue(workspaceId, key, from, to) {
+    if (!ATTRIBUTE_KEY_PATTERN.test(key)) throw new Error('Invalid attribute key');
+    const path = `overlay.attrs.${key}`;
+    const result = await ItemMongoModel.updateMany(
+      { workspaceId, [path]: from },
+      { $set: { [path]: to } },
+    );
+    return result.modifiedCount;
+  },
+
   async softDelete(workspaceId, id) {
     const result = await ItemMongoModel.updateOne(
       { _id: id, workspaceId, deletedAt: null },

@@ -416,3 +416,164 @@ describe('migration', () => {
     );
   });
 });
+
+describe('subjects', () => {
+  const select = (options: string[]): NewAttribute => ({
+    key: 'subject',
+    name: 'Subject',
+    type: 'select',
+    options,
+  });
+
+  it('createAttribute saves a family for every subject option and keeps given looks', async () => {
+    const ws = await workspace();
+    const created = await createAttribute(ws, {
+      ...select(['Calculus', 'Algebra']),
+      optionLooks: [{ option: 'Algebra', colour: 'green', patterns: ['*alg*'] }],
+    });
+    assert.deepEqual(created.optionLooks, [
+      { option: 'Calculus', colour: 'blue', patterns: [] },
+      { option: 'Algebra', colour: 'green', patterns: ['*alg*'] },
+    ]);
+    const stored = listAttributes(await fresh(ws)).find((def) => def.key === 'subject');
+    assert.deepEqual(stored?.optionLooks, created.optionLooks);
+  });
+
+  it('an option added through the generic patch gets a family', async () => {
+    const ws = await workspace();
+    await createAttribute(ws, select(['Calculus']));
+    const updated = await updateAttribute(await fresh(ws), 'subject', {
+      options: ['Calculus', 'Physics'],
+    });
+    assert.deepEqual(
+      updated.optionLooks?.map((look) => [look.option, look.colour]),
+      [
+        ['Calculus', 'blue'],
+        ['Physics', 'orange'],
+      ],
+    );
+  });
+
+  it('renames move item values, keep the look, and leave other attributes alone', async () => {
+    const ws = await workspace();
+    await createAttribute(ws, select(['Calc']));
+    await createAttribute(ws, { key: 'other', name: 'Other', type: 'select', options: ['Calc'] });
+    const item = await items.createItem(ws, 'u-editor', { title: 'Mine' });
+    await items.updateOverlay(await fresh(ws), 'u-editor', item.item.id, {
+      attrs: { subject: 'Calc', other: 'Calc' },
+    });
+    const updated = await updateAttribute(await fresh(ws), 'subject', {
+      options: ['Calculus'],
+      renames: [{ from: 'Calc', to: 'Calculus' }],
+    });
+    assert.deepEqual(updated.options, ['Calculus']);
+    assert.deepEqual(updated.optionLooks, [{ option: 'Calculus', colour: 'blue', patterns: [] }]);
+    assert.equal('renames' in updated, false);
+    const read = await items.getItem(await fresh(ws), 'u-editor', item.item.id);
+    assert.equal(read.overlay.attrs['subject'], 'Calculus');
+    assert.equal(read.overlay.attrs['other'], 'Calc');
+  });
+
+  it('refuses a look naming no option, looks on a rating, and a bad rename', async () => {
+    const ws = await workspace();
+    await createAttribute(ws, select(['Calculus']));
+    await assert.rejects(
+      updateAttribute(await fresh(ws), 'subject', {
+        optionLooks: [{ option: 'Nope', colour: 'blue', patterns: [] }],
+      }),
+      { statusCode: 400 },
+    );
+    await assert.rejects(
+      updateAttribute(await fresh(ws), 'importance', {
+        optionLooks: [{ option: 'x', colour: 'blue', patterns: [] }],
+      }),
+      { statusCode: 400 },
+    );
+    await assert.rejects(
+      updateAttribute(await fresh(ws), 'subject', {
+        renames: [{ from: 'Calculus', to: 'Calc' }],
+      }),
+      { statusCode: 400 },
+    );
+  });
+
+  it('upsertSubject creates the select on first use, then appends, renames and restyles', async () => {
+    const ws = await workspace();
+    const caller = callerOf(ws, EDITOR.userId);
+    const first = await (
+      await Workspace.load(caller)
+    ).upsertSubject(caller, {
+      name: 'Calculus',
+      patterns: ['*חדו"א*'],
+    });
+    assert.equal(first.created, true);
+    assert.deepEqual(first.subject, { name: 'Calculus', family: 'blue', patterns: ['*חדו"א*'] });
+    const ws2 = await fresh(ws);
+    const caller2 = callerOf(ws2, EDITOR.userId);
+    const second = await (
+      await Workspace.load(caller2)
+    ).upsertSubject(caller2, {
+      name: 'Algebra',
+    });
+    assert.equal(second.created, true);
+    assert.equal(second.subject.family, 'orange');
+    const ws3 = await fresh(ws);
+    const caller3 = callerOf(ws3, EDITOR.userId);
+    const again = await (
+      await Workspace.load(caller3)
+    ).upsertSubject(caller3, {
+      name: 'Algebra',
+      family: 'pink',
+    });
+    assert.equal(again.created, false);
+    assert.equal(again.subject.family, 'pink');
+    const stored = listAttributes(await fresh(ws)).find((def) => def.key === 'subject');
+    assert.deepEqual(stored?.options, ['Calculus', 'Algebra']);
+  });
+
+  it('upsertSubject rename moves item values', async () => {
+    const ws = await workspace();
+    await createAttribute(ws, select(['Calc']));
+    const item = await items.createItem(ws, 'u-editor', { title: 'Mine' });
+    await items.updateOverlay(await fresh(ws), 'u-editor', item.item.id, {
+      attrs: { subject: 'Calc' },
+    });
+    const ws2 = await fresh(ws);
+    const caller = callerOf(ws2, EDITOR.userId);
+    const renamed = await (
+      await Workspace.load(caller)
+    ).upsertSubject(caller, {
+      name: 'Calc',
+      rename: 'Calculus',
+    });
+    assert.equal(renamed.created, false);
+    assert.equal(renamed.subject.name, 'Calculus');
+    const read = await items.getItem(await fresh(ws), 'u-editor', item.item.id);
+    assert.equal(read.overlay.attrs['subject'], 'Calculus');
+  });
+
+  it('upsertSubject is a 409 when subject is not a select, and a 403 for a viewer', async () => {
+    const ws = await workspace();
+    await createAttribute(ws, { key: 'subject', name: 'Subject', type: 'text' });
+    const caller = callerOf(await fresh(ws), EDITOR.userId);
+    await assert.rejects((await Workspace.load(caller)).upsertSubject(caller, { name: 'X' }), {
+      statusCode: 409,
+      code: 'attribute_exists',
+    });
+    const viewerWs = await workspace('viewer');
+    const viewer = callerOf(viewerWs, EDITOR.userId);
+    await assert.rejects((await Workspace.load(viewer)).upsertSubject(viewer, { name: 'X' }), {
+      statusCode: 403,
+    });
+  });
+
+  it('upsertSubject refuses a 31st subject with 400', async () => {
+    const ws = await workspace();
+    const options = Array.from({ length: 30 }, (_, i) => `S${String(i)}`);
+    await createAttribute(ws, select(options));
+    const caller = callerOf(await fresh(ws), EDITOR.userId);
+    await assert.rejects((await Workspace.load(caller)).upsertSubject(caller, { name: 'More' }), {
+      statusCode: 400,
+    });
+  });
+});

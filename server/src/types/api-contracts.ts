@@ -84,6 +84,8 @@ export type {
   UpdateAttributeRequestBody,
   UpdateAttributeResponseData,
   DeleteAttributeResponseData,
+  SubjectMatchCountsRequestBody,
+  SubjectMatchCountsResponseData,
 } from '../routes/private/attributes.js';
 
 export type {

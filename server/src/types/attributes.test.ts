@@ -37,6 +37,10 @@ describe('option looks', () => {
     const looks = [{ option: 'Calculus', colour: 'blue', patterns: ['a'.repeat(101)] }];
     assert.equal(NewAttributeSchema.safeParse(select({ optionLooks: looks })).success, false);
   });
+  it('rejects a pattern of 13 stars', () => {
+    const looks = [{ option: 'Calculus', colour: 'blue', patterns: ['*a'.repeat(13)] }];
+    assert.equal(NewAttributeSchema.safeParse(select({ optionLooks: looks })).success, false);
+  });
   it('parses renames on a patch', () => {
     const parsed = AttributePatchSchema.safeParse({ renames: [{ from: 'A', to: 'B' }] });
     assert.ok(parsed.success);

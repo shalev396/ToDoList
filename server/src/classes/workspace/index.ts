@@ -1,5 +1,6 @@
 export { AttributeDefinition } from './AttributeDefinition.js';
 export { AttributeDefinitions } from './AttributeDefinitions.js';
+export { Subjects, type SubjectInput } from './Subjects.js';
 export {
   Invite,
   assertInvitableRole,

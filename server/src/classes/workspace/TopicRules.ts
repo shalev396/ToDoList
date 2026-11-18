@@ -14,7 +14,7 @@
 import { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { TopicRule } from '../../models/definitions/Workspace.js';
-import { matchesGlob } from '../../types/glob.js';
+import { hasTooManyWildcards, matchesGlob } from '../../types/glob.js';
 import { exactRuleFor, sameRuleMatch } from '../../types/topicRules.js';
 
 export interface TopicInput {
@@ -53,6 +53,9 @@ export class TopicRules {
         const trimmed = match.trim();
         if (trimmed === '' || trimmed.length > TopicRules.MATCH_MAX || topicId === '') {
           throw new AppError(400, 'Each topic rule needs a match and a topic');
+        }
+        if (hasTooManyWildcards(trimmed)) {
+          throw new AppError(400, 'A topic rule match has too many wildcards');
         }
         return { match: trimmed, topicId };
       }),
