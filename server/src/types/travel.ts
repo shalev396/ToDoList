@@ -6,7 +6,11 @@
  * A leg is a local item of kind `travel`, private to its member. What makes it a leg is kept at
  * `props.travel` (TravelLegProps) and its key at `props.travelKey`. Places are named by id and
  * name only: an address or a coordinate is never stored on a leg.
+ *
+ * Also the member's travel settings (factors, buffers, going home in a window, the default mode)
+ * and the fixed numbers travel runs by.
  */
+import { z } from 'zod';
 
 export const TRAVEL_MODES = ['walk', 'drive', 'transit'] as const;
 export type TravelMode = (typeof TRAVEL_MODES)[number];
@@ -14,6 +18,67 @@ export type TravelMode = (typeof TRAVEL_MODES)[number];
 /** To the anchor from Home, back Home from it, or from one place straight to the next. */
 export const TRAVEL_DIRECTIONS = ['there', 'back', 'between'] as const;
 export type TravelDirection = (typeof TRAVEL_DIRECTIONS)[number];
+
+/** What a rule asks for: the day's first leg (there), its last (back), or both. */
+export const RULE_DIRECTIONS = ['there', 'back', 'both'] as const;
+export type RuleDirection = (typeof RULE_DIRECTIONS)[number];
+
+/** Legs exist for this many days ahead, and are made again as days come into range. */
+export const TRAVEL_HORIZON_DAYS = 14;
+/** OpenRouteService calls a workspace may make a day, on the free key every member shares. */
+export const ROUTING_CALLS_PER_DAY = 100;
+/** A geocoded location is at a saved place when it is at most this far from it. */
+export const PLACE_MATCH_RADIUS_M = 300;
+
+/**
+ * The straight-line estimate, the last fallback: the distance × `detour`, at `kmh`. Public
+ * transport's speed is a rough value of ours (plan Ruling 13); the member corrects it by hand.
+ */
+export const STRAIGHT_LINE: Readonly<
+  Record<TravelMode, Readonly<{ kmh: number; detour: number }>>
+> = Object.freeze({
+  walk: Object.freeze({ kmh: 4.5, detour: 1.3 }),
+  drive: Object.freeze({ kmh: 40, detour: 1 }),
+  transit: Object.freeze({ kmh: 25, detour: 1.3 }),
+});
+
+/** A member's travel settings, the "global variables" of the spec. */
+export interface TravelSettings {
+  /** A computed length (OpenRouteService, straight line) is multiplied by this, per mode. */
+  factors: Record<TravelMode, number>;
+  /** Minutes added to a computed length (parking, the walk to the stop), per mode. */
+  buffers: Record<TravelMode, number>;
+  /**
+   * Go home in a window between two events at one place: only a window of at least
+   * `minWindowMinutes` that leaves at least `minAtHomeMinutes` at home after the trips both ways.
+   */
+  goHome: { enabled: boolean; minWindowMinutes: number; minAtHomeMinutes: number };
+  /** The mode a new rule or manual travel starts on. */
+  defaultMode: TravelMode;
+}
+
+/** The spec's defaults (Concepts, 5). Frozen: copy it to change it. */
+export const DEFAULT_TRAVEL_SETTINGS: Readonly<TravelSettings> = Object.freeze({
+  factors: Object.freeze({ walk: 1, drive: 1.15, transit: 1 }),
+  buffers: Object.freeze({ walk: 0, drive: 10, transit: 5 }),
+  goHome: Object.freeze({ enabled: false, minWindowMinutes: 180, minAtHomeMinutes: 60 }),
+  defaultMode: 'transit',
+});
+
+const FactorSchema = z.number().min(0.5).max(3);
+const BufferSchema = z.number().int().min(0).max(120);
+
+/** Travel settings as given (a whole set): factor 0.5–3, buffer 0–120 minutes. */
+export const TravelSettingsSchema = z.strictObject({
+  factors: z.strictObject({ walk: FactorSchema, drive: FactorSchema, transit: FactorSchema }),
+  buffers: z.strictObject({ walk: BufferSchema, drive: BufferSchema, transit: BufferSchema }),
+  goHome: z.strictObject({
+    enabled: z.boolean(),
+    minWindowMinutes: z.number().int().min(180),
+    minAtHomeMinutes: z.number().int().min(60),
+  }),
+  defaultMode: z.enum(TRAVEL_MODES),
+}) satisfies z.ZodType<TravelSettings>;
 
 /** Where a leg's length came from: OpenRouteService, the member's last entry, by hand, a guess. */
 export const LEG_SOURCES = ['ors', 'remembered', 'manual', 'estimate'] as const;

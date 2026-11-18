@@ -1,0 +1,280 @@
+/**
+ * LegReconciler: what the stored legs need so they match the day's plan. Planned legs are created,
+ * updated or restored by key; stored legs nobody plans are removed with the reason their anchor
+ * gives. Past legs, and a leg the member skipped, are never touched.
+ */
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+
+import type { TravelDirection } from '../../types/travel.js';
+import type { PlannedLeg } from './DayPlanner.js';
+import { LegKey } from './LegKey.js';
+import {
+  LegReconciler,
+  type AnchorFate,
+  type Reconciliation,
+  type StoredLegFacts,
+} from './LegReconciler.js';
+
+const NOW = new Date('2026-11-18T10:00:00.000Z');
+const MINUTE = 60_000;
+
+/** A leg planned for `anchor`, starting at `startAt`; its anchor starts an hour later. */
+function planned(
+  anchor: string,
+  direction: TravelDirection,
+  startAt: string,
+  fields: Partial<PlannedLeg> = {},
+): PlannedLeg {
+  const start = new Date(startAt);
+  return {
+    key: LegKey.of({ ownerUserId: 'u-1', anchorItemId: anchor, occurrence: 'single', direction }),
+    anchorStart: new Date(start.getTime() + 60 * MINUTE),
+    fromPlaceId: 'home',
+    toPlaceId: 'braude',
+    mode: 'transit',
+    startAt: start,
+    endAt: new Date(start.getTime() + 30 * MINUTE),
+    minutes: 30,
+    source: 'estimate',
+    conflict: false,
+    past: start < NOW,
+    topicId: null,
+    title: 'Bus to Braude',
+    ...fields,
+  };
+}
+
+/** The stored leg for `leg`, as the last run left it. */
+function stored(leg: PlannedLeg, fields: Partial<StoredLegFacts> = {}): StoredLegFacts {
+  return {
+    id: `id:${leg.key.toString()}`,
+    key: leg.key.toString(),
+    startAt: leg.startAt,
+    anchorStart: leg.anchorStart,
+    edited: false,
+    removedReason: null,
+    ...fields,
+  };
+}
+
+const NOTHING: Reconciliation = { create: [], update: [], remove: [] };
+
+/**
+ * What storage holds after a reconciliation, as Task 11 is to apply it: a created leg is new and
+ * unedited; an updated one takes the plan's times unless it keeps its own (an edited leg also keeps
+ * the anchor start it was edited against); a restored one is live again; a removed one is a
+ * tombstone with its reason.
+ */
+function apply(store: readonly StoredLegFacts[], recon: Reconciliation): StoredLegFacts[] {
+  const next = new Map(store.map((leg) => [leg.id, { ...leg }]));
+  for (const leg of recon.create) {
+    const created = stored(leg);
+    next.set(created.id, created);
+  }
+  for (const { id, leg, keepTimes, restore } of recon.update) {
+    const was = next.get(id);
+    assert.ok(was, `update of unknown ${id}`);
+    next.set(id, {
+      ...was,
+      startAt: keepTimes ? was.startAt : leg.startAt,
+      anchorStart: keepTimes ? was.anchorStart : leg.anchorStart,
+      removedReason: restore ? null : was.removedReason,
+    });
+  }
+  for (const { id, reason } of recon.remove) {
+    const was = next.get(id);
+    assert.ok(was, `removal of unknown ${id}`);
+    next.set(id, { ...was, removedReason: reason });
+  }
+  return [...next.values()].sort((a, b) => (a.id < b.id ? -1 : 1));
+}
+
+const fatesOf = (entries: [anchor: string, fate: AnchorFate][]): Map<string, AnchorFate> =>
+  new Map(entries.map(([anchor, fate]) => [`${anchor}|single`, fate]));
+
+describe('LegReconciler', () => {
+  it('create', () => {
+    const leg = planned('lec', 'there', '2026-11-18T12:00:00.000Z');
+    assert.deepEqual(LegReconciler.reconcile([], [leg], new Map(), NOW), {
+      create: [leg],
+      update: [],
+      remove: [],
+    });
+  });
+
+  it('update keeps edited times and flags anchorMoved', () => {
+    const moved = planned('moved', 'there', '2026-11-18T12:00:00.000Z');
+    const edited = planned('edited', 'there', '2026-11-18T13:00:00.000Z');
+    const plain = planned('plain', 'back', '2026-11-18T14:00:00.000Z');
+    const store = [
+      // Edited by hand, and its anchor has moved since: keep his times, flag it.
+      stored(moved, {
+        edited: true,
+        startAt: new Date('2026-11-18T11:00:00.000Z'),
+        anchorStart: new Date('2026-11-18T12:00:00.000Z'),
+      }),
+      // Edited by hand, its anchor where it was: keep his times, no flag.
+      stored(edited, { edited: true, startAt: new Date('2026-11-18T13:10:00.000Z') }),
+      // Never edited, its anchor moved: it just follows.
+      stored(plain, { anchorStart: new Date('2026-11-18T16:00:00.000Z') }),
+    ];
+    const recon = LegReconciler.reconcile(store, [moved, edited, plain], new Map(), NOW);
+    assert.deepEqual(recon.create, []);
+    assert.deepEqual(recon.remove, []);
+    assert.deepEqual(
+      recon.update.map(({ id, leg, keepTimes, anchorMoved, restore }) => ({
+        id,
+        key: leg.key.toString(),
+        keepTimes,
+        anchorMoved,
+        restore,
+      })),
+      [
+        {
+          id: store[0]?.id,
+          key: 'u-1|moved|single|there',
+          keepTimes: true,
+          anchorMoved: true,
+          restore: false,
+        },
+        {
+          id: store[1]?.id,
+          key: 'u-1|edited|single|there',
+          keepTimes: true,
+          anchorMoved: false,
+          restore: false,
+        },
+        {
+          id: store[2]?.id,
+          key: 'u-1|plain|single|back',
+          keepTimes: false,
+          anchorMoved: false,
+          restore: false,
+        },
+      ],
+    );
+    assert.equal(recon.update[0]?.leg, moved);
+  });
+
+  it('skipped tombstone is never restored', () => {
+    const skipped = planned('skipped', 'there', '2026-11-18T12:00:00.000Z');
+    const cancelled = planned('back-again', 'there', '2026-11-18T13:00:00.000Z');
+    const store = [
+      stored(skipped, { removedReason: 'skipped' }),
+      stored(cancelled, { removedReason: 'cancelled' }),
+    ];
+    const recon = LegReconciler.reconcile(store, [skipped, cancelled], new Map(), NOW);
+    // The skip stays (only Reset brings it back); a leg removed for any other reason returns.
+    assert.deepEqual(recon, {
+      create: [],
+      update: [
+        { id: store[1]?.id, leg: cancelled, keepTimes: false, anchorMoved: false, restore: true },
+      ],
+      remove: [],
+    });
+  });
+
+  it('cancelled anchor removes with reason cancelled', () => {
+    const leg = planned('lec', 'there', '2026-11-18T12:00:00.000Z');
+    const store = [stored(leg)];
+    assert.deepEqual(LegReconciler.reconcile(store, [], fatesOf([['lec', 'cancelled']]), NOW), {
+      create: [],
+      update: [],
+      remove: [{ id: store[0]?.id, reason: 'cancelled' }],
+    });
+  });
+
+  it('each fate names the removal; a present anchor means replaced, a missing one cancelled', () => {
+    const fates: [string, AnchorFate | null][] = [
+      ['present', 'present'],
+      ['cancelled', 'cancelled'],
+      ['moved', 'moved'],
+      ['no_longer_matches', 'no_longer_matches'],
+      ['no_place', 'no_place'],
+      ['gone', null],
+    ];
+    const store = fates.map(([anchor]) =>
+      stored(planned(anchor, 'back', '2026-11-18T15:00:00.000Z')),
+    );
+    const known = fates.flatMap(([anchor, fate]): [string, AnchorFate][] =>
+      fate === null ? [] : [[anchor, fate]],
+    );
+    const recon = LegReconciler.reconcile(store, [], fatesOf(known), NOW);
+    assert.deepEqual(
+      recon.remove.map(({ reason }) => reason),
+      ['replaced', 'cancelled', 'moved', 'no_longer_matches', 'no_place', 'cancelled'],
+    );
+    // A tombstone nobody plans is already removed: nothing to do.
+    const tombstone = stored(planned('old', 'there', '2026-11-18T15:00:00.000Z'), {
+      removedReason: 'moved',
+    });
+    assert.deepEqual(LegReconciler.reconcile([tombstone], [], new Map(), NOW), NOTHING);
+  });
+
+  it('past legs are left alone', () => {
+    const pastNew = planned('new', 'there', '2026-11-18T08:00:00.000Z');
+    const pastLive = planned('live', 'back', '2026-11-18T09:00:00.000Z');
+    const pastTombstone = planned('tomb', 'there', '2026-11-18T09:30:00.000Z');
+    assert.equal(pastNew.past && pastLive.past && pastTombstone.past, true);
+    const store = [stored(pastLive), stored(pastTombstone, { removedReason: 'cancelled' })];
+    // Planned but past: not created, not restored. Stored, live, past and no longer planned: kept.
+    assert.deepEqual(
+      LegReconciler.reconcile(
+        store,
+        [pastNew, pastTombstone],
+        fatesOf([['live', 'cancelled']]),
+        NOW,
+      ),
+      NOTHING,
+    );
+  });
+
+  it('a leg still planned follows its anchor, even once it has started', () => {
+    // The update rule has no past exception: a stored live leg tracks its anchor's plan.
+    const leg = planned('lec', 'there', '2026-11-18T09:00:00.000Z');
+    const store = [stored(leg, { startAt: new Date('2026-11-18T08:50:00.000Z') })];
+    assert.deepEqual(LegReconciler.reconcile(store, [leg], new Map(), NOW).update, [
+      { id: store[0]?.id, leg, keepTimes: false, anchorMoved: false, restore: false },
+    ]);
+  });
+
+  it('running reconcile twice on its own output changes nothing', () => {
+    const fresh = planned('fresh', 'there', '2026-11-18T12:00:00.000Z');
+    const editedMoved = planned('edited', 'back', '2026-11-18T13:00:00.000Z');
+    const restored = planned('restored', 'there', '2026-11-18T14:00:00.000Z');
+    const skipped = planned('skipped', 'there', '2026-11-18T15:00:00.000Z');
+    const pastNew = planned('past', 'there', '2026-11-18T08:00:00.000Z');
+    const unplanned = planned('cancelled', 'there', '2026-11-18T16:00:00.000Z');
+    const plan = [pastNew, fresh, editedMoved, restored, skipped];
+    const store0 = [
+      stored(editedMoved, {
+        edited: true,
+        startAt: new Date('2026-11-18T12:45:00.000Z'),
+        anchorStart: new Date('2026-11-18T13:30:00.000Z'),
+      }),
+      stored(restored, { removedReason: 'no_place' }),
+      stored(skipped, { removedReason: 'skipped' }),
+      stored(unplanned),
+    ];
+    const fates = fatesOf([['cancelled', 'cancelled']]);
+
+    const first = LegReconciler.reconcile(store0, plan, fates, NOW);
+    assert.deepEqual(first.create, [fresh]);
+    assert.deepEqual(first.remove, [{ id: store0[3]?.id, reason: 'cancelled' }]);
+    assert.equal(first.update.filter((u) => u.restore).length, 1);
+    const store1 = apply(store0, first);
+
+    const second = LegReconciler.reconcile(store1, plan, fates, NOW);
+    assert.deepEqual(second.create, []);
+    assert.deepEqual(second.remove, []);
+    assert.equal(
+      second.update.some((u) => u.restore),
+      false,
+    );
+    // The edited leg is still flagged: its anchor is still away from where he edited it.
+    assert.equal(second.update.find((u) => u.leg === editedMoved)?.anchorMoved, true);
+    assert.deepEqual(apply(store1, second), store1);
+    assert.deepEqual(LegReconciler.reconcile(store1, plan, fates, NOW), second);
+  });
+});
