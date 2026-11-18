@@ -10,6 +10,7 @@ import { confirmField } from '../../middleware/confirm.js';
 
 import { CalendarEvent, Todo } from '../../../classes/item/index.js';
 import { CreateItemBody } from '../../../services/itemSchemas.js';
+import { optionalTime } from '../../../services/timeBlockSchemas.js';
 import { defineTool } from '../../tool.js';
 import {
   ItemDetailView,
@@ -28,9 +29,9 @@ export const createTodo = defineTool({
   name: 'create_todo',
   title: 'Create a to-do',
   description:
-    'Creates a local to-do (an item owned by TodoList, not mirrored from a provider): title, and optionally a note, due date, topic (a slug, as workspace_get lists them; null: Unsorted), container and priority (0–4). With an idempotencyKey, a retry gives back the to-do the first call made instead of a second one. The topic defaults to the workspace’s personal topic when it has one. With `targets` it also creates the to-do in the user’s own providers (Jira, ClickUp, Linear, GitHub, Google Calendar: each target is the integration and its typed choices, as the app’s funnel picks them); that needs `confirm: true` and the providers:create scope, and each target’s result is in `providerCopies`. At most one target per integration. With `recurrence` (an array of 1 to 5 strings; the server takes exactly one `RRULE:` line in it and answers 400 for any other) it is a recurring to-do instead: a recurring event created in the workspace calendar only, by the owner of that calendar integration while it is read & write (needs confirm and providers:create, no targets, no container); the answer is that event item. It only creates: nothing at a provider is ever edited, closed or deleted. A target that failed is retried by calling again with a NEW idempotencyKey (the same key gives back the stored result); one that may exist (`unknown`) should be checked at the provider first.',
+    'Creates a local to-do (an item owned by TodoList, not mirrored from a provider): title, and optionally a note, due date, a start and end (startAt, and endAt not before it: ISO 8601 with an offset; travel can anchor a to-do that has a start; not with recurrence), topic (a slug, as workspace_get lists them; null: Unsorted), container and priority (0–4). With an idempotencyKey, a retry gives back the to-do the first call made instead of a second one. The topic defaults to the workspace’s personal topic when it has one. With `targets` it also creates the to-do in the user’s own providers (Jira, ClickUp, Linear, GitHub, Google Calendar: each target is the integration and its typed choices, as the app’s funnel picks them); that needs `confirm: true` and the providers:create scope, and each target’s result is in `providerCopies`. At most one target per integration. With `recurrence` (an array of 1 to 5 strings; the server takes exactly one `RRULE:` line in it and answers 400 for any other) it is a recurring to-do instead: a recurring event created in the workspace calendar only, by the owner of that calendar integration while it is read & write (needs confirm and providers:create, no targets, no container); the answer is that event item. It only creates: nothing at a provider is ever edited, closed or deleted. A target that failed is retried by calling again with a NEW idempotencyKey (the same key gives back the stored result); one that may exist (`unknown`) should be checked at the provider first.',
   toolset: 'items',
-  inputSchema: CreateItemBody.omit({ topicId: true, startAt: true, endAt: true }).extend({
+  inputSchema: CreateItemBody.omit({ topicId: true }).extend({
     topic: TopicRef.nullable().optional(),
     idempotencyKey: CreateItemBody.shape.idempotencyKey.describe(
       'Makes retries safe: the same key gives back the same to-do',
@@ -67,9 +68,12 @@ export const createTodo = defineTool({
   scopes: ['items:write'],
   minRole: 'editor',
   async handler(ctx, input) {
-    const { topic, targets, confirm, recurrence, ...fields } = input;
+    const { topic, targets, confirm, recurrence, startAt, endAt, ...fields } = input;
     const wanted = targets ?? [];
     if (recurrence !== undefined) {
+      if (startAt !== undefined || endAt !== undefined) {
+        throw new AppError(400, 'startAt: a recurring to-do is timed by its due date');
+      }
       if (wanted.length > 0) {
         throw new AppError(
           400,
@@ -113,6 +117,8 @@ export const createTodo = defineTool({
     const { todo, created } = await Todo.create(itemCaller(ctx), {
       ...fields,
       dueAt: toDate(input.dueAt),
+      startAt: optionalTime(startAt),
+      endAt: optionalTime(endAt),
       topicId: await topicIdOf(ctx.workspace, topic),
     });
     const item = await (await itemReads(ctx)).detail(todo);

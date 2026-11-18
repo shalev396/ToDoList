@@ -140,6 +140,19 @@ export class Place extends WorkspaceEntity<PlaceData> implements Owned, Viewable
     if (row === null) throw new ValidationError('placeId: not one of your places');
   }
 
+  /**
+   * The caller's place that goes by this name (its name or an alias, whatever the case): how an
+   * agent names a place. 400 when none does (the message lists nothing of theirs).
+   */
+  static async findNamed(caller: Caller, name: string): Promise<Place> {
+    const wanted = name.trim().toLocaleLowerCase();
+    const found = (await Place.listOwn(caller)).find((place) =>
+      [place.name, ...place.aliases].some((known) => known.toLocaleLowerCase() === wanted),
+    );
+    if (found === undefined) throw new ValidationError('place: not the name of one of your places');
+    return found;
+  }
+
   /** The caller's Home; null when they have none (no Home, no legs). */
   static async homeOf(caller: Caller): Promise<Place | null> {
     return (await Place.listOwn(caller)).find((place) => place.isHome) ?? null;

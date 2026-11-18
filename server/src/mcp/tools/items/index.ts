@@ -9,6 +9,11 @@ import { listAttributesTool } from './listAttributes.js';
 import { setItemAttributes } from './setItemAttributes.js';
 import { setOverlay } from './setOverlay.js';
 import { setSubject } from './setSubject.js';
+import { travelEditLeg, travelResetLeg, travelSkipLeg } from './travelLegs.js';
+import { travelMarkItem } from './travelMark.js';
+import { travelListPlaces, travelRemovePlace, travelSetPlace } from './travelPlaces.js';
+import { travelListRules, travelRemoveRule, travelSetRule } from './travelRules.js';
+import { travelGetSettings, travelSetSettings } from './travelSettings.js';
 import { updateTodo } from './updateTodo.js';
 
 export const ITEM_TOOLS: readonly ToolDef[] = [
@@ -16,6 +21,18 @@ export const ITEM_TOOLS: readonly ToolDef[] = [
   updateTodo,
   createTimeBlock,
   editTimeBlock,
+  travelListPlaces,
+  travelSetPlace,
+  travelRemovePlace,
+  travelListRules,
+  travelSetRule,
+  travelRemoveRule,
+  travelGetSettings,
+  travelSetSettings,
+  travelMarkItem,
+  travelEditLeg,
+  travelSkipLeg,
+  travelResetLeg,
   completeTodo,
   deleteTodo,
   setOverlay,
