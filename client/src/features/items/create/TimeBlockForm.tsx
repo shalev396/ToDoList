@@ -10,16 +10,20 @@ import { Label } from '@/components/ui/label';
 import { SelectField } from '@/components/ui/select';
 import { subjectOptions } from '@/pages/settings/general/subjectsDraft';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
+import { CreateTravel } from '@/features/travel/TravelPanelForm';
+import { useAddTravel, useTravelSetup } from '@/features/travel/travelHooks';
+import { anchorPanel, type TravelPanelState } from '@/features/travel/travelPanel';
 import { ROUTES } from '@/router/routes';
 import type { BlockLayer } from '@api-types/scheduled.ts';
 import { SpanFields, SubjectField } from './BlockFields';
 import { RepeatControl } from './RepeatControl';
-import { repeatProblem } from './recurrence';
+import { isRepeating, repeatProblem } from './recurrence';
 import {
   BLOCK_REPEAT_PRESETS,
   blockRequestOf,
   blockTopicOf,
   initialBlockState,
+  spanOf,
   spanProblem,
   titleProblem,
   type NewItemPreset,
@@ -36,6 +40,10 @@ const NO_TOPIC = 'none';
  * workspace's or a new one), start, end and length (any two; the third is worked out), Repeat
  * (none, weekly on chosen days, or custom, with an optional end date) and the page. Save creates
  * it with `POST …/time-blocks` and closes the sheet.
+ *
+ * A block (never an area: painted time is not travelled to) can "Add travel time": the same
+ * switch and panel as a to-do. A repeating block's travel is for every occurrence. Travel is
+ * marked once the block is made, and how that went is a toast.
  */
 export function TimeBlockForm({
   layer,
@@ -68,22 +76,38 @@ export function TimeBlockForm({
   const [error, setError] = useState<string | null>(null);
   // One key per request body: a retry of the same block is never a second one.
   const sent = useRef<{ body: string; key: string } | null>(null);
+  // Travel: null while "Add travel time" is off; a block only.
+  const [travel, setTravel] = useState<TravelPanelState | null>(null);
+  const travelSetup = useTravelSetup(travel !== null);
+  const addTravel = useAddTravel();
 
   const form: TimeBlockFormState = { ...state, layer };
   const span = spanProblem(form, timeZone);
   const naming = titleProblem(form);
   const repeat = repeatProblem(form.repeat, form.startDate);
-  const saving = create.isPending;
+  const [travelling, setTravelling] = useState(false);
+  const saving = create.isPending || travelling;
+  const anchor = spanOf(form, timeZone)?.start ?? null;
+  const withTravel = layer === 'block' && travel !== null;
+  const travelUnready = withTravel && (!travelSetup.ready || travelSetup.home === null);
 
   const set = (patch: Partial<TimeBlockFormState>) => {
     setState((previous) => ({ ...previous, ...patch }));
+  };
+  /** A new span: the trip there follows the block's start. */
+  const setSpan = (update: (previous: TimeBlockFormState) => TimeBlockFormState) => {
+    const next = update(state);
+    setState(next);
+    setTravel((previous) =>
+      previous === null ? previous : anchorPanel(previous, spanOf(next, timeZone)?.start ?? null),
+    );
   };
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
     setTried(true);
     const request = blockRequestOf(form, timeZone, weekStart);
-    if (request === null || workspace === null || saving) {
+    if (request === null || workspace === null || saving || travelUnready) {
       return;
     }
     const body = JSON.stringify(request);
@@ -92,7 +116,18 @@ export function TimeBlockForm({
     }
     setError(null);
     try {
-      await create.mutateAsync({ ...request, idempotencyKey: sent.current.key });
+      const block = await create.mutateAsync({ ...request, idempotencyKey: sent.current.key });
+      if (withTravel && anchor !== null) {
+        // The block stands whatever travel answers; the toast says how travel went.
+        setTravelling(true);
+        await addTravel({
+          itemId: block.id,
+          state: travel,
+          start: anchor,
+          every: isRepeating(form.repeat),
+          createdWithout: t('travel.add.createdWithoutBlock'),
+        });
+      }
       onClose();
     } catch (failure) {
       setError(
@@ -150,7 +185,7 @@ export function TimeBlockForm({
             set({ subject });
           }}
         />
-        <SpanFields id={ids} state={state} timeZone={timeZone} onChange={setState} />
+        <SpanFields id={ids} state={state} timeZone={timeZone} onChange={setSpan} />
 
         <RepeatControl
           value={state.repeat}
@@ -165,6 +200,16 @@ export function TimeBlockForm({
             untilBeforeDue: t('scheduled.form.repeat.untilBeforeStart'),
           }}
         />
+
+        {layer === 'block' ? (
+          <CreateTravel
+            value={travel}
+            onChange={setTravel}
+            anchorStart={anchor}
+            needsTime={false}
+            every={isRepeating(state.repeat)}
+          />
+        ) : null}
 
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${ids}-topic`}>{t('scheduled.form.topic')}</Label>
@@ -197,7 +242,7 @@ export function TimeBlockForm({
         </Button>
         <Button
           type="submit"
-          disabled={saving || span !== null || repeat !== null}
+          disabled={saving || span !== null || repeat !== null || travelUnready}
           data-time-block-save=""
         >
           {saving ? t('scheduled.form.saving') : t('scheduled.form.save')}

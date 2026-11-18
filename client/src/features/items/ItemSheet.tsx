@@ -43,6 +43,8 @@ import {
 } from './plannedAt';
 import { MirroredEditor } from './editing/MirroredEditor';
 import { TimeBlockSection } from './scheduled/TimeBlockSection';
+import { ItemTravelSection } from '@/features/travel/ItemTravelSection';
+import { canTravelTo } from '@/features/travel/travelPanel';
 import { dateInZone, noonInZone } from './zonedDate';
 import { ScrollArea } from '@/components/ui/scroll-area';
 
@@ -51,7 +53,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
  * desktop, a full-width drawer on phones. The back button closes it. A local to-do is edited in
  * place; a mirrored item's provider fields are written back by its integration's owner, and the
  * fields its provider lacks are kept in TodoList (MirroredEditor). The overlay (pin, note, hide,
- * topic, planned for) is any editor's.
+ * topic, planned for) is any editor's. A timed item (an event, a to-do with a start, a time block;
+ * never an area) gets "Add travel" (ItemTravelSection), its editor's own travel.
  */
 export function ItemSheet() {
   const { t } = useTranslation();
@@ -263,6 +266,10 @@ function ItemBody({
         ) : (
           <MirroredEditor item={item} timeZone={timeZone} source={sourceName} canEdit={canWrite} />
         )}
+
+        {canWrite && canTravelTo(item) ? (
+          <ItemTravelSection item={item} occurrence={occurrence} />
+        ) : null}
 
         {refused === null ? null : (
           <div

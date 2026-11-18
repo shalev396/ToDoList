@@ -1,0 +1,504 @@
+"""
+"Add travel time" (docs/superpowers/specs/2026-11-17-travel-time-design.md, "Where travel comes
+from"): the New to-do form's switch and panel, a to-do with a due date only asked for a time, and
+"Add travel" in the item sheet of a repeating event, which asks "Every occurrence?".
+
+Home and Braude are seeded by coordinates through the API (tests/helpers/travel.py), so no test
+waits on a geocoder. The forms and the sheet are driven through the UI.
+
+DEFERRED until the branch is merged to dev: the dev database's Items validator predates kind
+`travel`, so the legs a mark makes are refused there (the server catches and logs it; the mark still
+answers, with no legs). Every assertion that needs a stored leg is in its own test below, marked
+`xfail(strict=True)` with the exact leg expected: once dev stores legs those tests pass, the strict
+xfail turns that into a failure, and the marks must come off. Nothing here is gated on a result.
+"""
+import re
+from datetime import datetime
+
+import pytest
+import requests
+from axe_playwright_python.sync_playwright import Axe
+from playwright.sync_api import Locator, Page, expect
+
+from tests.config import APP_REQUEST_TIMEOUT, NORMAL_TIMEOUT
+from tests.helpers.animations import wait_for_fade_in
+from tests.helpers.dashboards import create_dashboard
+from tests.helpers.scheduled import add_days, open_new_sheet, this_sunday, zoned_iso
+from tests.helpers.select import choose
+from tests.helpers.travel import create_place, list_rules
+from tests.helpers.users import pooled_user
+from tests.helpers.workspaces import open_as
+from tests.viewports import DESKTOP_VIEWPORT
+
+HOME = (32.7940, 34.9896)
+BRAUDE = (32.9141, 35.2922)
+DEFERRED = (
+    "DEFERRED until merge to dev: the dev Items validator rejects kind travel, so no leg is stored"
+)
+# U+2066 / U+2069: the times are isolated left to right inside the line (it reads right in Hebrew).
+LTR, END = "\u2066", "\u2069"
+
+
+def _is_create(response) -> bool:
+    return response.request.method == "POST" and response.url.split("?")[0].endswith("/items")
+
+
+def _is_mark(response) -> bool:
+    return response.request.method == "POST" and "/travel/items/" in response.url
+
+
+def _epoch_ms(iso: str) -> int:
+    return round(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp() * 1000)
+
+
+def _same_instant(a: str, b: str) -> bool:
+    return _epoch_ms(a) == _epoch_ms(b)
+
+
+def _tomorrow(page: Page) -> str:
+    today = page.evaluate(
+        "() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(new Date())"
+    )
+    return add_days(today, 1)
+
+
+def _seed_places(api_base_url: str, user, workspace_id: str) -> tuple[dict, dict]:
+    home = create_place(api_base_url, user, workspace_id, "Home", coords=HOME, home=True)
+    braude = create_place(api_base_url, user, workspace_id, "Braude", coords=BRAUDE)
+    return home, braude
+
+
+def _is_preview(mode: str):
+    """`POST …/travel/preview` of a trip by `mode`, for page.expect_request."""
+    return lambda request: (
+        request.method == "POST"
+        and request.url.endswith("/travel/preview")
+        and (request.post_data_json or {}).get("mode") == mode
+    )
+
+
+def _previews(page: Page) -> list:
+    """Every `POST …/travel/preview` body the page sends, as it sends them."""
+    sent: list = []
+    page.on(
+        "request",
+        lambda request: sent.append(request.post_data_json)
+        if request.method == "POST" and request.url.endswith("/travel/preview")
+        else None,
+    )
+    return sent
+
+
+def _todo_with_travel(page: Page, base_url: str, api_base_url: str, fresh_owner):
+    """A to-do tomorrow at 14:00, driving to Braude both ways, the trip there typed as 40 minutes,
+    saved through the New sheet. Returns (created, marked, home, braude, tomorrow, previews)."""
+    user, workspace = fresh_owner
+    home, braude = _seed_places(api_base_url, user, workspace["id"])
+    create_dashboard(api_base_url, user, workspace["id"])
+    page.set_viewport_size(DESKTOP_VIEWPORT)
+    previews = _previews(page)
+    open_as(page, base_url, user, "/en/dashboard")
+    expect(page.locator("[data-calendar-view]")).to_be_visible(timeout=NORMAL_TIMEOUT)
+    tomorrow = _tomorrow(page)
+
+    sheet = open_new_sheet(page)
+    form = sheet.locator("form")
+    form.get_by_label("Title", exact=True).fill("Meet at Braude")
+    form.get_by_label("Due", exact=True).fill(tomorrow)
+    form.get_by_label("Time", exact=True).fill("14:00")
+
+    switch = form.get_by_role("switch", name="Add travel time")
+    expect(switch).to_have_attribute("aria-checked", "false")
+    expect(form.locator("[data-travel-panel]")).to_have_count(0)
+    # The default trip (public transport, Home → Braude) is asked once it stops changing.
+    with page.expect_request(_is_preview("transit"), timeout=APP_REQUEST_TIMEOUT):
+        switch.click()
+    panel = form.locator("[data-travel-panel]")
+    expect(panel).to_be_visible()
+    # Public transport is the default mode; From is Home, To the only other place.
+    expect(panel.get_by_role("radio", name="Public transport")).to_be_checked()
+    expect(panel.get_by_role("combobox", name="From")).to_contain_text("Home")
+    expect(panel.get_by_role("combobox", name="To")).to_contain_text("Braude")
+    expect(panel.get_by_role("checkbox", name="There")).to_be_checked()
+    expect(panel.get_by_role("checkbox", name="Back")).to_be_checked()
+    # Arriving by 14:00; the length is worked out (no stored leg needed for a preview).
+    expect(panel.get_by_label("Arrive", exact=True)).to_have_value("14:00")
+    line = panel.locator("[data-travel-preview]")
+    with page.expect_request(_is_preview("drive"), timeout=APP_REQUEST_TIMEOUT):
+        panel.get_by_text("Drive", exact=True).click()
+    expect(panel.get_by_role("radio", name="Drive")).to_be_checked()
+    expect(line).to_have_text(
+        re.compile(
+            rf"^Leave {LTR}\d\d:\d\d{END} · arrive {LTR}14:00{END} · \d+ min "
+            r"\((OpenRouteService|estimate)\)$"
+        ),
+        timeout=NORMAL_TIMEOUT,
+    )
+    asked = len(previews)
+
+    # The trip there takes 40 minutes: leave at 13:20, his own times.
+    panel.get_by_label("Length, in minutes").fill("40")
+    expect(panel.get_by_label("Leave", exact=True)).to_have_value("13:20")
+    expect(line).to_have_text(f"Leave {LTR}13:20{END} · arrive {LTR}14:00{END} · 40 min (your times)")
+    page.wait_for_timeout(1000)
+    # Typing the times asks for no preview: only a new trip (mode or places) does.
+    assert len(previews) == asked, previews
+
+    with page.expect_response(_is_create, timeout=APP_REQUEST_TIMEOUT) as created:
+        with page.expect_response(_is_mark, timeout=APP_REQUEST_TIMEOUT) as marked:
+            form.locator("[data-new-todo-save]").click()
+    expect(sheet).to_be_hidden(timeout=NORMAL_TIMEOUT)
+    return created.value, marked.value, home, braude, tomorrow, previews
+
+
+def test_new_todo_with_travel_makes_a_leg(page: Page, base_url: str, api_base_url: str, fresh_owner):
+    user, workspace = fresh_owner
+    created, marked, home, braude, tomorrow, previews = _todo_with_travel(
+        page, base_url, api_base_url, fresh_owner
+    )
+    two_pm = zoned_iso(page, tomorrow, "14:00")
+
+    # The to-do starts at its due time: travel needs a start.
+    assert created.status == 201, created.text()[:300]
+    sent = created.request.post_data_json
+    assert sent["title"] == "Meet at Braude"
+    assert sent["allDay"] is False
+    assert _same_instant(sent["dueAt"], two_pm)
+    assert _same_instant(sent["startAt"], two_pm)
+    todo = created.json()["data"]
+
+    # Then it is marked: by car, both ways, to Braude, the trip there 40 minutes from Home.
+    assert marked.url.split("?")[0].endswith(f"/travel/items/{todo['id']}")
+    assert marked.request.post_data_json == {
+        "mode": "drive",
+        "direction": "both",
+        "placeId": braude["id"],
+        "there": {"minutes": 40, "fromPlaceId": home["id"]},
+    }
+    assert marked.status == 200, marked.text()[:300]
+    rule = marked.json()["data"]["rule"]
+    assert rule["scope"] == {"kind": "item", "itemId": todo["id"], "occurrence": "single"}
+    assert (rule["mode"], rule["direction"], rule["placeId"]) == ("drive", "both", braude["id"])
+    assert [(r["id"], r["scope"]) for r in list_rules(api_base_url, user, workspace["id"])] == [
+        (rule["id"], rule["scope"])
+    ]
+    # Previews were asked per trip only (public transport, then driving), each Home → Braude.
+    assert [(p["mode"], p["toPlaceId"]) for p in previews] == [
+        ("transit", braude["id"]),
+        ("drive", braude["id"]),
+    ]
+
+
+@pytest.mark.xfail(strict=True, reason=DEFERRED)
+def test_new_todo_leg_shows_before_it_in_calendar(
+    page: Page, base_url: str, api_base_url: str, fresh_owner
+):
+    created, marked, home, braude, tomorrow, _ = _todo_with_travel(
+        page, base_url, api_base_url, fresh_owner
+    )
+    todo = created.json()["data"]
+    legs = marked.json()["data"]["legs"]
+    # Exactly the drive there (13:20–14:00, his 40 minutes) and the drive home from 14:00.
+    assert [leg["props"]["travel"]["direction"] for leg in legs] == ["there", "back"], legs
+    there, back = legs
+    assert there["title"] == "Drive to Braude"
+    assert _same_instant(there["startAt"], zoned_iso(page, tomorrow, "13:20"))
+    assert _same_instant(there["endAt"], zoned_iso(page, tomorrow, "14:00"))
+    trip = there["props"]["travel"]
+    assert (trip["anchorItemId"], trip["mode"], trip["toPlaceId"], trip["fromHome"]) == (
+        todo["id"],
+        "drive",
+        braude["id"],
+        True,
+    )
+    assert (trip["minutes"], trip["source"]) == (40, "manual")
+    assert back["title"] == "Drive home"
+    assert _same_instant(back["startAt"], zoned_iso(page, tomorrow, "14:00"))
+    assert back["props"]["travel"]["toHome"] is True
+    expect(page.locator("[data-sonner-toast]", has_text="Travel added: 2 trips.")).to_be_visible()
+
+    # The leg shows in the calendar, ending where the to-do starts.
+    calendar = page.locator("[data-calendar-view]")
+    if tomorrow >= add_days(this_sunday(page), 7):
+        calendar.get_by_role("button", name="Next", exact=True).click()
+    leg = calendar.locator(".fc-event.tc-travel", has_text="Drive to Braude")
+    meeting = calendar.locator(".fc-event", has_text="Meet at Braude")
+    expect(leg).to_have_count(1, timeout=NORMAL_TIMEOUT)
+    expect(meeting).to_have_count(1)
+    leg_box, meeting_box = leg.bounding_box(), meeting.bounding_box()
+    assert leg_box is not None and meeting_box is not None
+    assert leg_box["y"] + leg_box["height"] <= meeting_box["y"] + 2, (leg_box, meeting_box)
+
+
+def test_due_only_todo_asks_for_a_time(page: Page, base_url: str, api_base_url: str, fresh_owner):
+    user, workspace = fresh_owner
+    _seed_places(api_base_url, user, workspace["id"])
+    page.set_viewport_size(DESKTOP_VIEWPORT)
+    open_as(page, base_url, user, "/en/settings", h1="Settings")
+    tomorrow = _tomorrow(page)
+
+    sheet = open_new_sheet(page)
+    form = sheet.locator("form")
+    form.get_by_label("Title", exact=True).fill("Hand in the lab report")
+    form.get_by_label("Due", exact=True).fill(tomorrow)
+    time = form.get_by_label("Time", exact=True)
+    expect(time).to_have_value("")
+    save = form.locator("[data-new-todo-save]")
+    expect(save).to_be_enabled()
+
+    form.get_by_role("switch", name="Add travel time").click()
+    panel = form.locator("[data-travel-panel]")
+    expect(panel).to_be_visible()
+    # A due date only: travel needs a time, which the form asks for, and nothing can be saved.
+    asks = form.locator("[data-travel-needs-time]")
+    expect(asks).to_have_text("Travel needs a time: add when it starts.")
+    expect(asks).to_have_attribute("role", "alert")
+    expect(time).to_have_attribute("aria-invalid", "true")
+    expect(save).to_be_disabled()
+    for field in ("Leave", "Arrive"):
+        expect(panel.get_by_label(field, exact=True)).to_be_disabled()
+    expect(panel.get_by_label("Length, in minutes")).to_be_disabled()
+
+    # With a time it can: the trip arrives by it.
+    time.fill("09:30")
+    expect(asks).to_have_count(0)
+    expect(time).to_have_attribute("aria-invalid", "false")
+    expect(panel.get_by_label("Arrive", exact=True)).to_have_value("09:30")
+    expect(panel.get_by_label("Arrive", exact=True)).to_be_enabled()
+    expect(save).to_be_enabled()
+
+    # Without the date the time goes too, and so does the start travel needs.
+    form.get_by_label("Due", exact=True).fill("")
+    expect(asks).to_be_visible()
+    expect(save).to_be_disabled()
+    form.get_by_label("Due", exact=True).fill(tomorrow)
+    time.fill("09:30")
+    expect(save).to_be_enabled()
+
+    # A repeating to-do gets its travel from its event: the switch says so and is off.
+    choose(form.get_by_role("combobox", name="Repeat"), "Daily")
+    switch = form.get_by_role("switch", name="Add travel time")
+    expect(switch).to_be_disabled()
+    expect(switch).to_have_attribute("aria-checked", "false")
+    expect(form.locator("[data-travel-create]")).to_contain_text(
+        "A repeating to-do gets its travel from its event, once it’s created."
+    )
+    expect(form.locator("[data-travel-panel]")).to_have_count(0)
+    choose(form.get_by_role("combobox", name="Repeat"), "Does not repeat")
+    expect(switch).to_be_enabled()
+    expect(form.locator("[data-travel-panel]")).to_be_visible()
+
+    wait_for_fade_in(page)
+    violations = Axe().run(page, context="[data-new-todo]").response.get("violations", [])
+    assert violations == [], f"Accessibility violations: {violations}"
+
+    # Off again: the to-do saves as before, with no start and no travel.
+    switch.click()
+    expect(form.locator("[data-travel-panel]")).to_have_count(0)
+    with page.expect_response(_is_create, timeout=APP_REQUEST_TIMEOUT) as created:
+        save.click()
+    assert created.value.status == 201, created.value.text()[:300]
+    assert "startAt" not in created.value.request.post_data_json
+    expect(sheet).to_be_hidden(timeout=NORMAL_TIMEOUT)
+    assert list_rules(api_base_url, user, workspace["id"]) == []
+
+
+# ─── The item sheet: a repeating event (the demo's weekly Data Structures lecture) ─────────────
+
+
+@pytest.fixture
+def demo_owner(api_base_url, new_workspace):
+    """The worker's owner account, owning a new workspace with the demo data: its Google
+    calendar mirror has "Data Structures lecture", weekly at 10:00 from 13 days ago (the occurrence
+    in 8 days is cancelled), at "Building L, Room 105". Deleted after the test."""
+    user = pooled_user(api_base_url, "owner")
+    return user, new_workspace(
+        user, "Travel demo", timezone="Asia/Jerusalem", loadDemoData=True
+    )
+
+
+def _lecture(api_base_url: str, user, workspace_id: str) -> dict:
+    """The demo's Data Structures series (its master item)."""
+    response = requests.get(
+        f"{api_base_url}/private/workspaces/{workspace_id}/items",
+        params={"provider": "google_calendar", "q": "Data Structures"},
+        headers={"Authorization": f"Bearer {user.id_token}"},
+        timeout=30,
+    )
+    assert response.status_code == 200, response.text[:300]
+    series = [item for item in response.json()["data"]["items"] if item["props"].get("recurrence")]
+    assert len(series) == 1, series
+    return series[0]
+
+
+def _open_lectures_sheet(page: Page, base_url: str, api_base_url: str, demo_owner):
+    """Opens tomorrow's lecture in the item sheet. Returns (sheet, lecture, home, braude, slot)."""
+    user, workspace = demo_owner
+    home, braude = _seed_places(api_base_url, user, workspace["id"])
+    lecture = _lecture(api_base_url, user, workspace["id"])
+    page.set_viewport_size(DESKTOP_VIEWPORT)
+    open_as(page, base_url, user, "/en/settings", h1="Settings")
+    slot = zoned_iso(page, _tomorrow(page), "10:00")
+    page.goto(f"{base_url}/en/dashboard?item={lecture['id']}&occurrence={_epoch_ms(slot)}")
+    sheet = page.locator("[data-item-sheet]")
+    expect(sheet.locator("[data-item-title]")).to_have_text(
+        "Data Structures lecture", timeout=NORMAL_TIMEOUT
+    )
+    return sheet, lecture, home, braude, slot
+
+
+def _mark_through_dialog(page: Page, travel: Locator, choice: str):
+    """Save travel, then answer "Every occurrence?" with `choice` ("every" or "one")."""
+    save = travel.locator("[data-travel-save]")
+    save.click()
+    dialog = page.locator("[data-every-occurrence]")
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_role("heading", name="Every occurrence?")).to_be_visible()
+    with page.expect_response(_is_mark, timeout=APP_REQUEST_TIMEOUT) as marked:
+        dialog.locator(f"[data-every-choice={choice}]").click()
+    expect(dialog).to_be_hidden()
+    return marked.value
+
+
+def test_series_every_occurrence_creates_rule(
+    page: Page, base_url: str, api_base_url: str, demo_owner
+):
+    user, workspace = demo_owner
+    sheet, lecture, home, braude, slot = _open_lectures_sheet(
+        page, base_url, api_base_url, demo_owner
+    )
+    travel = sheet.locator("[data-item-travel]")
+    expect(travel.get_by_role("heading", name="Travel")).to_be_visible()
+    add = travel.get_by_role("button", name="Add travel")
+    add.click()
+    panel = travel.locator("[data-travel-panel]")
+    expect(panel).to_be_visible()
+    # Its location ("Building L, Room 105") names none of his places: it goes to its own place,
+    # worked out once saved.
+    expect(panel.get_by_role("combobox", name="To")).to_contain_text("Its own place")
+    expect(panel.locator("[data-travel-preview]")).to_have_attribute(
+        "data-travel-preview", "own-place"
+    )
+    expect(panel.get_by_label("Arrive", exact=True)).to_have_value("10:00")
+
+    # Cancel asks nothing: Save opens the dialog, and its Cancel goes back to Save.
+    travel.locator("[data-travel-save]").click()
+    dialog = page.locator("[data-every-occurrence]")
+    expect(dialog).to_be_visible()
+    expect(dialog.locator("[data-every-choice]")).to_have_count(2)
+    dialog.get_by_role("button", name="Cancel").click()
+    expect(dialog).to_be_hidden()
+    expect(travel.locator("[data-travel-save]")).to_be_focused()
+
+    # Every occurrence: a series rule, with no occurrence sent.
+    marked = _mark_through_dialog(page, travel, "every")
+    assert marked.url.split("?")[0].endswith(f"/travel/items/{lecture['id']}")
+    assert marked.request.post_data_json == {
+        "mode": "transit",
+        "direction": "both",
+        "placeId": None,
+        "every": True,
+    }
+    assert marked.status == 200, marked.text()[:300]
+    series_rule = marked.json()["data"]["rule"]
+    assert series_rule["scope"] == {"kind": "series", "itemId": lecture["id"]}
+    # Its place isn't known yet: a calm note, not an error, and it has the focus.
+    note = travel.locator("[data-travel-note]")
+    expect(note).to_have_text(
+        "Travel is on. Trips appear after the next sync. "
+        "If none appear, set its place for travel in its details."
+    )
+    expect(note).to_be_focused()
+    expect(travel.locator("[data-travel-error]")).to_have_count(0)
+    status = travel.locator("[data-travel-status]")
+    expect(status).to_contain_text(
+        "Public transport · There and back · to its own place", timeout=NORMAL_TIMEOUT
+    )
+    expect(status).to_contain_text("Every occurrence")
+    rules = list_rules(api_base_url, user, workspace["id"])
+    assert [(r["scope"], r["mode"], r["direction"]) for r in rules] == [
+        ({"kind": "series", "itemId": lecture["id"]}, "transit", "both")
+    ]
+
+    # "Place for travel" pins the lecture to Braude.
+    place = travel.locator("[data-travel-place]")
+    choose(place.get_by_role("combobox", name="Place for travel"), "Braude")
+    with page.expect_response(
+        lambda r: r.request.method == "PUT" and "/travel/item-places/" in r.url,
+        timeout=APP_REQUEST_TIMEOUT,
+    ) as pinned:
+        place.get_by_role("button", name="Set place").click()
+    assert pinned.value.status == 204
+    assert pinned.value.url.endswith(f"/travel/item-places/{lecture['id']}")
+    assert pinned.value.request.post_data_json == {"placeId": braude["id"]}
+    expect(place).to_contain_text("Its place for travel was saved.")
+
+    # This one only: tomorrow's occurrence by its original start, driving there.
+    travel.get_by_role("button", name="Change travel").click()
+    panel.get_by_text("Drive", exact=True).click()
+    travel.get_by_role("checkbox", name="Back").click()
+    marked = _mark_through_dialog(page, travel, "one")
+    body = marked.request.post_data_json
+    assert set(body) == {"mode", "direction", "placeId", "occurrence"}, body
+    assert (body["mode"], body["direction"], body["placeId"]) == ("drive", "there", None)
+    assert _same_instant(body["occurrence"], slot)
+    assert marked.status == 200, marked.text()[:300]
+    scope = marked.json()["data"]["rule"]["scope"]
+    assert (scope["kind"], scope["itemId"]) == ("item", lecture["id"])
+    assert _same_instant(scope["occurrence"], slot)
+    expect(status).to_contain_text("Driving · There · to its own place", timeout=NORMAL_TIMEOUT)
+    expect(status).to_contain_text("This occurrence")
+
+    # Removing this one's leaves every occurrence's; then that goes too.
+    with page.expect_response(
+        lambda r: r.request.method == "DELETE" and "/travel/items/" in r.url,
+        timeout=APP_REQUEST_TIMEOUT,
+    ) as removed:
+        travel.get_by_role("button", name="Remove travel", exact=True).click()
+    assert removed.value.status == 204
+    assert "occurrence=" in removed.value.url and "every=" not in removed.value.url
+    expect(status).to_contain_text("Every occurrence", timeout=NORMAL_TIMEOUT)
+    with page.expect_response(
+        lambda r: r.request.method == "DELETE" and "/travel/items/" in r.url,
+        timeout=APP_REQUEST_TIMEOUT,
+    ) as removed:
+        travel.get_by_role("button", name="Remove travel from every occurrence").click()
+    assert removed.value.status == 204
+    assert removed.value.url.endswith("?every=true")
+    expect(travel.get_by_role("button", name="Add travel")).to_be_visible(timeout=NORMAL_TIMEOUT)
+    expect(travel.locator("[data-travel-note]")).to_have_text("Travel removed.")
+    assert list_rules(api_base_url, user, workspace["id"]) == []
+
+
+@pytest.mark.xfail(strict=True, reason=DEFERRED)
+def test_series_every_occurrence_makes_legs_each_week(
+    page: Page, base_url: str, api_base_url: str, demo_owner
+):
+    sheet, lecture, home, braude, slot = _open_lectures_sheet(
+        page, base_url, api_base_url, demo_owner
+    )
+    travel = sheet.locator("[data-item-travel]")
+    travel.get_by_role("button", name="Add travel").click()
+    panel = travel.locator("[data-travel-panel]")
+    choose(panel.get_by_role("combobox", name="To"), "Braude")
+    marked = _mark_through_dialog(page, travel, "every")
+    assert marked.status == 200, marked.text()[:300]
+    legs = marked.json()["data"]["legs"]
+    tomorrow = _tomorrow(page)
+    in_8_days = add_days(tomorrow, 7)
+    # Tomorrow's lecture (10:00–12:00): the bus there, arriving at 10:00, and the bus home at
+    # 12:00. The occurrence in 8 days is cancelled: no legs. Nothing else in the next 14 days.
+    soon = [leg for leg in legs if leg["props"]["travel"]["occurrence"][:10] <= in_8_days]
+    assert [leg["props"]["travel"]["direction"] for leg in soon] == ["there", "back"], legs
+    there, back = soon
+    for leg in soon:
+        trip = leg["props"]["travel"]
+        assert trip["anchorItemId"] == lecture["id"]
+        assert _same_instant(trip["occurrence"], slot)
+        assert trip["mode"] == "transit"
+    assert there["title"] == "Bus to Braude"
+    assert there["props"]["travel"]["toPlaceId"] == braude["id"]
+    assert _same_instant(there["endAt"], slot)
+    assert back["title"] == "Bus home"
+    assert _same_instant(back["startAt"], zoned_iso(page, tomorrow, "12:00"))
+    expect(travel.locator("[data-travel-note]")).to_have_text(f"Travel added: {len(legs)} trips.")

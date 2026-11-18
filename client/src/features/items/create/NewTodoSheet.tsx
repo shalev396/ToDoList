@@ -12,6 +12,9 @@ import { SelectField } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { dateInZone, instantInZone } from '@/features/items/zonedDate';
+import { CreateTravel } from '@/features/travel/TravelPanelForm';
+import { useAddTravel, useTravelSetup } from '@/features/travel/travelHooks';
+import { anchorPanel, type TravelPanelState } from '@/features/travel/travelPanel';
 import { CopyTargets, type Funnels } from './CopyTargets';
 import { isReady } from './funnel';
 import { KindChoice } from './KindChoice';
@@ -41,6 +44,11 @@ const TODO: NewItemPreset = { kind: 'todo' };
  * "Needs permission" with the re-consent). Saving never waits on a provider. A repeating to-do
  * (plan Addendum A3) is created as a repeating event in the workspace calendar only: no local
  * to-do, the other targets are off.
+ *
+ * "Add travel time" (travel-time design): a switch, off by default, opens the travel panel. Travel
+ * needs a start, so a to-do with a due date only is asked for a time; the to-do is created with
+ * that time as its start, then marked (`POST …/travel/items/:id`), and how that went is a toast.
+ * A repeating to-do gets its travel from its event once it exists.
  */
 export function NewTodoSheet({
   open,
@@ -80,6 +88,10 @@ export function NewTodoSheet({
   // One key per repeating to-do: a retry after a lost answer is the same event, never a second.
   const recurringKey = useRef<string | null>(null);
   const primary = usePrimaryCalendar(workspace?.id ?? '');
+  // Travel: null while "Add travel time" is off.
+  const [travel, setTravel] = useState<TravelPanelState | null>(null);
+  const travelSetup = useTravelSetup(travel !== null);
+  const addTravel = useAddTravel();
 
   const reset = () => {
     setKind(null);
@@ -95,6 +107,7 @@ export function NewTodoSheet({
     setRepeatTarget(true);
     setRecurring(null);
     setUncertain(false);
+    setTravel(null);
     recurringKey.current = null;
     runner.reset();
     todoId.current = null;
@@ -111,9 +124,22 @@ export function NewTodoSheet({
     weekStart: settings?.weekStart ?? 'sun',
   });
   const repeatBlocked = primary.isError ? 'error' : repeatBlockOf(primary.data);
+  // Travel needs a start: the due date and its time.
+  const anchor = day === '' || time === '' ? null : new Date(instantInZone(day, time, timeZone));
+  const withTravel = travel !== null && !repeating;
+  const travelUnready =
+    withTravel && (anchor === null || !travelSetup.ready || travelSetup.home === null);
   const unready = repeating
     ? recurrence === null || !repeatTarget || repeatBlocked !== null
-    : selected.some((funnel) => !isReady(funnel, dueAt !== null));
+    : selected.some((funnel) => !isReady(funnel, dueAt !== null)) || travelUnready;
+  /** The to-do's day or time changed: the trip there follows its new start. */
+  const moveTravel = (nextDay: string, nextTime: string) => {
+    const start =
+      nextDay === '' || nextTime === ''
+        ? null
+        : new Date(instantInZone(nextDay, nextTime, timeZone));
+    setTravel((previous) => (previous === null ? previous : anchorPanel(previous, start)));
+  };
 
   /** A repeating to-do: one event in the workspace calendar, stored at once as its item. */
   const saveRepeating = async (lines: string[]) => {
@@ -184,15 +210,31 @@ export function NewTodoSheet({
       }
       return;
     }
+    if (travelUnready) {
+      setSaving(false);
+      return;
+    }
     try {
       const item = await createItem.mutateAsync({
         title: title.trim(),
         ...(note.trim() === '' ? {} : { note: note.trim() }),
         ...(dueAt === null ? {} : { dueAt, allDay: time === '' }),
         ...(topicId === '' ? {} : { topicId }),
+        // Travel gets him there by its start.
+        ...(withTravel && dueAt !== null ? { startAt: dueAt } : {}),
         idempotencyKey: newRequestId(),
       });
       todoId.current = item.id;
+      if (withTravel && anchor !== null) {
+        // The to-do stands whatever travel answers; the toast says how travel went.
+        await addTravel({
+          itemId: item.id,
+          state: travel,
+          start: anchor,
+          every: false,
+          createdWithout: t('travel.add.createdWithout'),
+        });
+      }
       if (selected.length === 0) {
         onOpenChange(false);
         reset();
@@ -364,6 +406,7 @@ export function NewTodoSheet({
                         if (event.target.value === '') {
                           setTime('');
                         }
+                        moveTravel(event.target.value, event.target.value === '' ? '' : time);
                       }}
                     />
                   </div>
@@ -374,13 +417,22 @@ export function NewTodoSheet({
                       type="time"
                       value={time}
                       disabled={day === ''}
+                      aria-invalid={withTravel && anchor === null}
                       onChange={(event) => {
                         setTime(event.target.value);
+                        moveTravel(day, event.target.value);
                       }}
                     />
                   </div>
                 </div>
                 <RepeatControl value={repeat} onChange={setRepeat} dueDate={day} />
+                <CreateTravel
+                  value={travel}
+                  onChange={setTravel}
+                  anchorStart={anchor}
+                  needsTime={anchor === null}
+                  blocked={repeating ? t('travel.add.repeatNote') : null}
+                />
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor={`${ids}-topic`}>{t('items.newTodo.topic')}</Label>
                   <SelectField

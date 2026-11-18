@@ -1,5 +1,6 @@
 import { useStore } from 'react-redux';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { apiErrorStatus } from '@/api/errors';
 import { queryKeys } from '@/api/queries/keys';
 import { QUERY_STALE_TIME_PRIVATE_MS } from '@/api/queries/queryOptions';
 import { sameWorkspace } from '@/api/queries/sameWorkspace';
@@ -10,18 +11,25 @@ import {
   getTravelSettings,
   listPlaces,
   listTravelRules,
+  markItem,
+  pinItemPlace,
+  previewTravel,
   removePlace,
   removeTravelRule,
   setContainerPlace,
+  unmarkItem,
   updatePlace,
   updateTravelRule,
   updateTravelSettings,
 } from '@/api/services/travelService';
+import { useDebounced } from '@/features/editor/useDebounced';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { RootState } from '@/store';
 import type {
   CreatePlaceRequest,
   CreateTravelRuleRequest,
+  MarkItemRequest,
+  TravelPreviewRequest,
   TravelSettingsResponse,
   UpdatePlaceRequest,
   UpdateTravelRuleRequest,
@@ -50,9 +58,11 @@ function useTravelChange<V, R>(workspaceId: string, call: (variables: V) => Prom
 
 // ─── Places ─────────────────────────────────────────────────────────────────
 
-export function usePlaces(workspaceId: string) {
+/** `enabled: false` reads nothing yet (a form that may never use travel). */
+export function usePlaces(workspaceId: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.travelPlaces(workspaceId),
+    enabled: enabled && workspaceId !== '',
     staleTime: QUERY_STALE_TIME_PRIVATE_MS,
     queryFn: async ({ signal }) => {
       const response = await listPlaces(workspaceId, { signal, suppressErrorToast: true });
@@ -120,9 +130,10 @@ export function useRemoveTravelRule(workspaceId: string) {
 
 // ─── Settings and default places ────────────────────────────────────────────
 
-export function useTravelSettings(workspaceId: string) {
+export function useTravelSettings(workspaceId: string, enabled = true) {
   return useQuery({
     queryKey: queryKeys.travelSettings(workspaceId),
+    enabled: enabled && workspaceId !== '',
     staleTime: QUERY_STALE_TIME_PRIVATE_MS,
     queryFn: async ({ signal }) => {
       const response = await getTravelSettings(workspaceId, { signal, suppressErrorToast: true });
@@ -159,6 +170,83 @@ export function useSetContainerPlace(workspaceId: string) {
     ({ containerId, placeId }: { containerId: string; placeId: string | null }) =>
       setContainerPlace(workspaceId, containerId, { placeId }, { suppressErrorToast: true }),
   );
+}
+
+/** An item's place for travel ("set place"); `placeId: null` finds it from its location again. */
+export function usePinItemPlace(workspaceId: string) {
+  return useTravelChange(
+    workspaceId,
+    ({ itemId, placeId }: { itemId: string; placeId: string | null }) =>
+      pinItemPlace(workspaceId, itemId, { placeId }, { suppressErrorToast: true }),
+  );
+}
+
+// ─── Marking an item, and the preview ───────────────────────────────────────
+
+/** A preview is asked once the trip stops changing for this long (each may spend quota). */
+export const TRAVEL_PREVIEW_DEBOUNCE_MS = 400;
+
+/** How long a trip's preview is kept: the same trip isn't asked again in that time. */
+const TRAVEL_PREVIEW_STALE_MS = 10 * 60_000;
+
+/**
+ * Travel to one timed item (every occurrence, one, or the item): answers the rule and the item's
+ * legs as they are now, which may be none yet.
+ */
+export function useMarkItem(workspaceId: string) {
+  return useTravelChange(
+    workspaceId,
+    async ({ itemId, body }: { itemId: string; body: MarkItemRequest }) => {
+      const response = await markItem(workspaceId, itemId, body, { suppressErrorToast: true });
+      return response.data;
+    },
+  );
+}
+
+/**
+ * Travel to an item no more: every occurrence's marks, one occurrence's, or the item's own. No
+ * such mark (404) is taken as removed already.
+ */
+export function useUnmarkItem(workspaceId: string) {
+  return useTravelChange(
+    workspaceId,
+    async ({ itemId, ...which }: { itemId: string; occurrence?: string; every?: boolean }) => {
+      try {
+        await unmarkItem(workspaceId, itemId, which, { suppressErrorToast: true });
+      } catch (error) {
+        if (apiErrorStatus(error) !== 404) {
+          throw error;
+        }
+      }
+    },
+  );
+}
+
+/**
+ * A trip's length for the travel panel's preview line: asked TRAVEL_PREVIEW_DEBOUNCE_MS after the
+ * trip (mode and places) stops changing, and once per trip for TRAVEL_PREVIEW_STALE_MS, never
+ * per key press: each may spend a call of the routing quota every TodoList user shares. `null`
+ * asks nothing. `settling` is true while a changed trip waits to be asked.
+ */
+export function useTravelPreview(workspaceId: string, request: TravelPreviewRequest | null) {
+  const trip = request === null ? null : JSON.stringify(request);
+  const settled = useDebounced(trip, TRAVEL_PREVIEW_DEBOUNCE_MS);
+  const asked = settled !== null && settled === trip ? settled : null;
+  const query = useQuery({
+    queryKey: queryKeys.travelPreview(workspaceId, asked ?? ''),
+    enabled: asked !== null && workspaceId !== '',
+    staleTime: TRAVEL_PREVIEW_STALE_MS,
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const body = JSON.parse(asked ?? 'null') as TravelPreviewRequest;
+      const response = await previewTravel(workspaceId, body, {
+        signal,
+        suppressErrorToast: true,
+      });
+      return response.data;
+    },
+  });
+  return { ...query, settling: trip !== null && asked === null };
 }
 
 // ─── Days ───────────────────────────────────────────────────────────────────
