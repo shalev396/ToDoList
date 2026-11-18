@@ -15,6 +15,8 @@ export interface Ctx {
   /** A second workspace whose owner is the throwaway user (deleted with the account). */
   throwawayWid: string;
   itemId: string;
+  /** A weekly time block of the workspace owner's (Sundays 13:00–17:00 in Jerusalem). */
+  timeBlockId: string;
   dashboardId: string;
   /** Kept current by the runner from every answer about the dashboard. */
   dashboardVersion: number;
@@ -309,6 +311,38 @@ export const MANIFEST: readonly Entry[] = [
       target: { provider: 'jira', projectId: '10001', issueTypeId: '10002' },
     }),
     expect: [2, 4],
+  },
+  // Time blocks: the seeded block is weekly from Sunday 22 November 2026, 13:00 in Jerusalem.
+  {
+    method: 'POST',
+    path: `${W}/time-blocks`,
+    body: () => ({
+      subject: 'Manifest subject',
+      startAt: '2026-11-23T08:00:00.000Z',
+      endAt: '2026-11-23T09:00:00.000Z',
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'],
+      idempotencyKey: 'manifest-block-1',
+    }),
+    expect: [2],
+  },
+  {
+    method: 'PATCH',
+    path: `${W}/time-blocks/:id`,
+    params: (c) => ({ id: c.timeBlockId }),
+    body: () => ({
+      scope: 'this',
+      originalStart: '2026-11-29T11:00:00.000Z',
+      startAt: '2026-11-29T12:00:00.000Z',
+      endAt: '2026-11-29T14:00:00.000Z',
+    }),
+    expect: [2],
+  },
+  {
+    method: 'POST',
+    path: `${W}/time-blocks/:id/skip`,
+    params: (c) => ({ id: c.timeBlockId }),
+    body: () => ({ originalStart: '2026-12-06T11:00:00.000Z' }),
+    expect: [2],
   },
   { method: 'GET', path: `${W}/facets`, expect: [2] },
   { method: 'POST', path: `${W}/query`, body: () => ({ draft: { source: 'items' } }), expect: [2] },

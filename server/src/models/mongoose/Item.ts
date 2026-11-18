@@ -24,6 +24,7 @@ import {
   type ItemUpsert,
   type LocalItemPatch,
   type MirroredItemPatch,
+  type ScheduledItemPatch,
   type SweepWindow,
 } from '../definitions/Item.js';
 import type { AggregateOptions } from '../definitions/common.js';
@@ -167,7 +168,6 @@ export const ItemMongoModel = mongoose.model<ItemFields>('Item', itemSchema);
 const LOCAL_PATCH_KEYS: readonly (keyof LocalItemPatch)[] = [
   'title',
   'topicId',
-  'kind',
   'bodyPreview',
   'status',
   'priority',
@@ -182,6 +182,15 @@ const LOCAL_PATCH_KEYS: readonly (keyof LocalItemPatch)[] = [
   'props',
   'visibility',
   'closedAt',
+];
+
+const SCHEDULED_PATCH_KEYS: readonly (keyof ScheduledItemPatch)[] = [
+  'title',
+  'topicId',
+  'bodyPreview',
+  'startAt',
+  'endAt',
+  'props',
 ];
 
 const MIRRORED_PATCH_KEYS: readonly (keyof MirroredItemPatch)[] = [
@@ -502,7 +511,14 @@ export const ItemRepository: IItemRepository = {
 
   async updateLocal(workspaceId, id, patch) {
     const doc = await ItemMongoModel.findOneAndUpdate(
-      { _id: id, workspaceId, deletedAt: null, 'source.provider': 'local' },
+      {
+        _id: id,
+        workspaceId,
+        deletedAt: null,
+        'source.provider': 'local',
+        // A to-do's path: reserved time is changed through updateScheduled only.
+        kind: { $nin: [...SCHEDULED_KINDS] },
+      },
       { $set: setFields(withPreview(patch), LOCAL_PATCH_KEYS) },
       { new: true, runValidators: true },
     ).lean<ItemFields>();
@@ -518,13 +534,32 @@ export const ItemRepository: IItemRepository = {
     }
 
     const mirrored = await ItemMongoModel.findOne(
-      { _id: id, workspaceId, deletedAt: null },
+      { _id: id, workspaceId, deletedAt: null, 'source.provider': { $ne: 'local' } },
       { source: 1 },
     ).lean<Pick<ItemFields, '_id' | 'source'>>();
     if (mirrored) {
       throw new MirroredItemError(mirrored._id, mirrored.source.provider, mirrored.source.url);
     }
     return null;
+  },
+  async updateScheduled(workspaceId, id, kind, patch, options = {}) {
+    const { unchangedSince } = options;
+    // A guarded write stamps a time later than the one it read, so two writes in the same
+    // millisecond still differ and a second guarded write on the first one's read misses.
+    const stamp = new Date(Math.max(Date.now(), (unchangedSince?.getTime() ?? 0) + 1));
+    const doc = await ItemMongoModel.findOneAndUpdate(
+      {
+        _id: id,
+        workspaceId,
+        deletedAt: null,
+        'source.provider': 'local',
+        kind,
+        ...(unchangedSince === undefined ? {} : { updatedAt: unchangedSince }),
+      },
+      { $set: { ...setFields(withPreview(patch), SCHEDULED_PATCH_KEYS), updatedAt: stamp } },
+      { new: true, runValidators: true, timestamps: false },
+    ).lean<ItemFields>();
+    return doc ? toItemData(doc) : null;
   },
 
   async updateMirrored(workspaceId, integrationId, id, patch, options) {

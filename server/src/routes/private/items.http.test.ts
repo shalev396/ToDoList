@@ -561,10 +561,10 @@ describe('scheduled items: time blocks, areas and travel legs', () => {
     assert.equal((await call('editor', 'GET', `/items/${areaId}`)).status, 404);
   });
 
-  it('a generic edit of a block or a leg waits for its own route (400)', async () => {
+  it('a generic edit of a block takes only its own fields; a leg waits for its route (400)', async () => {
     const block = await call('editor', 'PATCH', `/items/${blockId}`, { status: 'done' });
     assert.equal(block.status, 400, block.text);
-    assert.match(String(block.body?.['message']), /time-blocks/);
+    assert.match(String(block.body?.['message']), /^status: .*time-blocks/);
     const leg = await call('editor', 'PATCH', `/items/${legId}`, { title: 'Moved' });
     assert.equal(leg.status, 400, leg.text);
     assert.match(String(leg.body?.['message']), /travel\/legs/);

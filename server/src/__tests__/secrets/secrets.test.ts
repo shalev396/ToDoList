@@ -295,6 +295,18 @@ async function seed(): Promise<void> {
     { title: ITEM_TITLE, note: ITEM_NOTE },
     'item with pasted secrets',
   );
+  // The same pasted secrets in a time block's note.
+  const timeBlock = await created(
+    '/time-blocks',
+    {
+      title: ITEM_TITLE,
+      note: ITEM_NOTE,
+      startAt: '2026-11-22T11:00:00.000Z',
+      endAt: '2026-11-22T15:00:00.000Z',
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'],
+    },
+    'time block with pasted secrets',
+  );
   const dashboard = await created('/dashboards', { title: 'Secrets dashboard' }, 'dashboard');
   const topic = await created('/topics', { name: 'Secrets page' }, 'topic');
   const view = await created(
@@ -322,6 +334,7 @@ async function seed(): Promise<void> {
     wid,
     throwawayWid,
     itemId: dataOf(item)['id'] as string,
+    timeBlockId: dataOf(timeBlock)['id'] as string,
     dashboardId: dataOf(dashboard)['id'] as string,
     dashboardVersion: dataOf(dashboard)['version'] as number,
     viewId: dataOf(view)['id'] as string,

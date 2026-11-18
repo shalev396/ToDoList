@@ -244,6 +244,17 @@ before(async () => {
     topicId: null,
     visibility: 'private',
   });
+  // A's private weekly time block (Sundays 13:00–17:00 in Jerusalem).
+  const privateBlock = await items.createLocal(wid, {
+    ownerUserId: userA,
+    title: mark('private time block', `A block ${MARK}`),
+    topicId: null,
+    kind: 'block',
+    visibility: 'private',
+    startAt: new Date('2026-11-22T11:00:00.000Z'),
+    endAt: new Date('2026-11-22T15:00:00.000Z'),
+    props: { layer: 'block', recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'], exceptions: [] },
+  });
 
   // A shares the Jira integration: a block on a dashboard of A's.
   const dashboard = dataOf(await asA('POST', `${base}/dashboards`, { title: 'A board' }));
@@ -286,6 +297,7 @@ before(async () => {
     wid,
     throwawayWid: throwaway['id'] as string,
     itemId: privateTodo.id,
+    timeBlockId: privateBlock.id,
     dashboardId: dashboard['id'] as string,
     dashboardVersion: written['version'] as number,
     viewId: view['id'] as string,
@@ -354,6 +366,17 @@ function toolFixtures(expectedVersion: number): Record<string, Record<string, un
       },
     ],
     update_todo: [{ id: ctx.itemId, title: 'Taken' }],
+    create_time_block: [
+      {
+        subject: 'B subject',
+        startAt: '2026-11-23T08:00:00.000Z',
+        endAt: '2026-11-23T09:00:00.000Z',
+      },
+    ],
+    edit_time_block: [
+      { id: ctx.timeBlockId, scope: 'all', title: 'Taken' },
+      { id: ctx.timeBlockId, scope: 'this', originalStart: '2026-11-29T11:00:00.000Z', skip: true },
+    ],
     complete_todo: [{ id: ctx.itemId }],
     delete_todo: [{ id: ctx.itemId }],
     set_overlay: [{ id: unsharedItemId, pinned: true }],

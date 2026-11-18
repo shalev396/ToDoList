@@ -1,4 +1,4 @@
-import type { ItemKind, ItemStatus, Visibility } from '../../types/domain.js';
+import type { ItemKind, ItemStatus, ScheduledKind, Visibility } from '../../types/domain.js';
 export { OVERRIDABLE_FIELDS, type OverridableField } from '../../types/items.js';
 import type {
   AggregateOptions,
@@ -162,11 +162,10 @@ export interface CreateLocalItemInput {
   visibility?: Visibility;
 }
 
-/** What may change on a local item. */
+/** What may change on a local to-do (its kind never: a to-do stays a to-do). */
 export interface LocalItemPatch {
   title?: string;
   topicId?: string | null;
-  kind?: ItemKind;
   bodyPreview?: string | null;
   status?: ItemStatus;
   priority?: number | null;
@@ -181,6 +180,19 @@ export interface LocalItemPatch {
   props?: Record<string, unknown>;
   visibility?: Visibility;
   closedAt?: Date | null;
+}
+
+/**
+ * What may change on TodoList's own reserved time (a time block, an area, a travel leg): its
+ * title, topic, note, times and `props` (its layer, rule, exceptions, travel), written whole.
+ */
+export interface ScheduledItemPatch {
+  title?: string;
+  topicId?: string | null;
+  bodyPreview?: string | null;
+  startAt?: Date;
+  endAt?: Date;
+  props?: Record<string, unknown>;
 }
 
 /**
@@ -278,8 +290,24 @@ export interface IItemRepository {
     inputs: readonly CreateLocalItemInput[],
     at?: Date,
   ): Promise<ItemData[]>;
-  /** Local items only: a mirrored item throws MirroredItemError (edit it at the source). */
+  /**
+   * Local to-dos only: a mirrored item throws MirroredItemError (edit it at the source); reserved
+   * time (a time block, an area, a travel leg) is not found here (updateScheduled changes it).
+   */
   updateLocal(workspaceId: string, id: string, patch: LocalItemPatch): Promise<ItemData | null>;
+  /**
+   * TodoList's own reserved time of `kind` only (never a to-do, never a mirrored item). With
+   * `unchangedSince`, only while the item's `updatedAt` is still that value: a write made on a
+   * stale read finds nothing (null), so the caller reads again and retries. Null when there is no
+   * such item.
+   */
+  updateScheduled(
+    workspaceId: string,
+    id: string,
+    kind: ScheduledKind,
+    patch: ScheduledItemPatch,
+    options?: { unchangedSince?: Date },
+  ): Promise<ItemData | null>;
   /**
    * A write-back on a live mirrored item of `integrationId` (never a local one): only the fields
    * given change. With `resync`, its `source.hash` is cleared, so the next sync of the record

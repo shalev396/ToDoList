@@ -60,6 +60,19 @@ export class Subjects {
     return this.#options;
   }
 
+  /**
+   * The option a typed name stands for, whatever its case or the spaces around it ("math " is
+   * "Math"); undefined when there is none.
+   */
+  named(name: string): string | undefined {
+    const wanted = Subjects.#folded(name);
+    return this.#options.find((option) => Subjects.#folded(option) === wanted);
+  }
+
+  static #folded(name: string): string {
+    return name.trim().normalize('NFC').toLowerCase();
+  }
+
   /** Every option without a look gets the next family the topics and subjects so far leave. */
   complete(topicFamilies: readonly (TopicColour | null)[]): Subjects {
     const taken: (TopicColour | null)[] = [

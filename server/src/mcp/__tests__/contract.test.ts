@@ -41,6 +41,8 @@ const MCP_TABLE: readonly Spec[] = [
   // §7.2 Local items
   { name: 'create_todo', scopes: ['items:write'], minRole: 'editor', readOnly: false },
   { name: 'update_todo', scopes: ['items:write'], minRole: 'editor', readOnly: false },
+  { name: 'create_time_block', scopes: ['items:write'], minRole: 'editor', readOnly: false },
+  { name: 'edit_time_block', scopes: ['items:write'], minRole: 'editor', readOnly: false },
   { name: 'complete_todo', scopes: ['items:write'], minRole: 'editor', readOnly: false },
   {
     name: 'delete_todo',

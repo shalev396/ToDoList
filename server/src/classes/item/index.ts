@@ -10,7 +10,12 @@ export { PullRequest } from './PullRequest.js';
 export { CalendarEvent, type NewRecurringTodo } from './CalendarEvent.js';
 export { Todo, type NewTodo } from './Todo.js';
 export { ScheduledItem } from './ScheduledItem.js';
-export { TimeBlock } from './TimeBlock.js';
+export {
+  TimeBlock,
+  type NewTimeBlock,
+  type OccurrenceChange,
+  type SeriesChange,
+} from './TimeBlock.js';
 export { TimeArea } from './TimeArea.js';
 export { TravelLeg } from './TravelLeg.js';
 export { TodoCopy, failureFor, isCreatableProvider } from './TodoCopy.js';

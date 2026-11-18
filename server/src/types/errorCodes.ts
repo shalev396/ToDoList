@@ -98,6 +98,8 @@ export const ERROR_CODES = [
   'not_completable',
   /** Deleting a travel leg: legs are skipped, never deleted. */
   'not_deletable',
+  /** Editing or skipping one occurrence of a time block at a start that is none of its series'. */
+  'not_an_occurrence',
   // Google Calendar OAuth (the start route, and `?oauth_error=` on the callback's redirect)
   'oauth_unavailable',
   'oauth_denied',

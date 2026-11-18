@@ -59,6 +59,7 @@ export const ERROR_CODE_KEYS: Readonly<Record<ErrorCode, string>> = {
   integration_not_found: 'errors.codes.integrationNotFound',
   not_completable: 'errors.codes.notCompletable',
   not_deletable: 'errors.codes.notDeletable',
+  not_an_occurrence: 'errors.codes.notAnOccurrence',
   oauth_unavailable: 'errors.codes.oauthUnavailable',
   oauth_denied: 'errors.codes.oauthDenied',
   oauth_state_invalid: 'errors.codes.oauthStateInvalid',

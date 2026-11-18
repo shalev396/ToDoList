@@ -189,6 +189,7 @@ To-dos, issues, tasks, events, assignments, deadlines, files and messages all sh
 | Provider/kind | `props` |
 |---|---|
 | google_calendar / event | `calendarId, location, meetLink, recurringEventId, attendeesCount, transparency`; a series master also `recurrence` and `recurrenceEnd` (ISO end of its last occurrence; null: never ends) |
+| local / block (a time block; an area with `layer: "area"`) | `layer` (`block` \| `area`); a series also `recurrence` (one RRULE line) and `recurrenceEnd` (ISO end of its last occurrence; null: never ends); `exceptions` (`[{originalStart, startAt?, endAt?, skipped?}]`, ISO strings, at most 366); `idempotencyKey` when created with one. Its subject is `overlay.attrs.subject` |
 | jira / issue | `issueType, projectKey, sprint, storyPoints, epicKey` |
 | clickup / task | `listId, folderId, spaceId, timeEstimateMs, customFields{}` |
 | linear / issue | `teamKey, cycle, estimate, projectId, stateType` |

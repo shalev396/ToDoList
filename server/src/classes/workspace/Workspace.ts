@@ -897,6 +897,24 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
     return { subject, created };
   }
 
+  /**
+   * The subject a block names (time-blocks design, "Subject"): the existing option when one has
+   * this name, whatever its case (its family and patterns stay as they are), else a new one added
+   * as upsertSubject adds it (the select too, on first use). Editors and up; audited when added.
+   */
+  async ensureSubject(
+    caller: Caller,
+    name: string,
+  ): Promise<{ subject: string; created: boolean }> {
+    Workspace.#assertEditor(caller, 'add a subject');
+    this.#assertCaller(caller);
+    const current = this.#settings.attributes.find(SUBJECT_ATTRIBUTE_KEY);
+    const existing = Subjects.of(current?.toJSON()).named(name);
+    if (existing !== undefined) return { subject: existing, created: false };
+    const { subject } = await this.upsertSubject(caller, { name });
+    return { subject: subject.name, created: true };
+  }
+
   /** Removes a custom attribute and the values items hold for it. The built-in is a 409. */
   async deleteAttribute(caller: Caller, key: string): Promise<{ items: number }> {
     Workspace.#assertEditor(caller, 'delete an attribute');

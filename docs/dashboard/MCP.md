@@ -178,6 +178,8 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 |---|---|---|
 | `create_todo` | Create a local `kind: "todo"` item; optionally also in the caller's own providers (`targets`), or as a recurring event in the workspace calendar (`recurrence`) | D=false, open-world |
 | `update_todo` | Change an item by id: a local to-do's fields, or a **mirrored** item's provider fields (written back) and local overrides | D=false, I, open-world |
+| `create_time_block` | Reserve time (a time block, `kind: "block"`) or paint it (`layer: "area"`, needs a title): first occurrence (`startAt`, `endAt`; 1 minute to 24 hours), optional `recurrence` (one RRULE line), `subject` (added to the workspace's Subject attribute on first use; the title defaults to it), `topic` (default: the one last used with the subject), `note`, `idempotencyKey` → `{item, created}`; editor+ | D=false |
+| `edit_time_block` | Change one: `scope: "this"` with `originalStart` moves that occurrence (`startAt`, `endAt`) or skips it (`skip: true`); `scope: "all"` changes the series (title, note, subject, topic, times, recurrence; stale exceptions are dropped) → `{item}`; editor+ | D=false, I |
 | `complete_todo` | Set `status: done` or `open` | D=false, I |
 | `delete_todo` | Soft delete (`deletedAt`); needs `confirm` | D |
 | `set_overlay` | Pin, hide or annotate a **mirrored** item via DATA.md `overlay.*` (local-only, never written to the provider) | D=false, I |
@@ -214,6 +216,10 @@ A recurring to-do exists **in Google Calendar only**, never as a local to-do:
 - It needs the `providers:create` scope and `confirm: true`; it takes no `targets` (400) and no `containerId` (400). Only the owner of the integration the primary calendar is on can create it, and only while that integration is read & write (`integration_not_owner` 403, `integration_read_only` 409; 409 `primary_calendar_unset` when the workspace has none; `provider_writes_off` on demo data; 429 `create_rate_limited`).
 - A `topic` files it and a `priority` is kept as a TodoList override; with an `idempotencyKey`, a retry gives back the same event (`created: false`). If Google created the event and saving it here failed: 409 `created_not_stored`.
 - Without `recurrence`, a to-do made with `targets` is copied to those providers (each result in `providerCopies`); it only ever creates, never edits, closes or deletes at a provider.
+
+#### `create_time_block` and `edit_time_block`
+
+Time blocks and areas are TodoList's own reserved time (`docs/superpowers/specs/2026-11-17-time-blocks-design.md`): not tasks (no status, never completed, left out of task-shaped reads), shown by `list_today` (`scheduled[]`) and `get_calendar` (one entry per occurrence, with `occurrence.seriesId` and `originalStart`). A repeating one is one record (`props.recurrence`, `props.exceptions`, `props.recurrenceEnd`). Both tools take the REST routes' schemas (`POST/PATCH …/time-blocks`, strict), with `topic` (a slug) in place of `topicId`; `edit_time_block` adds `id` and `skip`. `scope: "this"` takes only `originalStart` and the new times (or `skip`); an `originalStart` that is none of the series' starts is an error (`not_an_occurrence`). `update_todo` refuses a block and names `edit_time_block`; `delete_todo` deletes one.
 
 #### `update_todo`: local to-dos versus mirrored items
 

@@ -180,7 +180,7 @@ describe('scope × role matrix over every toolset, on both endpoints', () => {
           tools.map((tool) => tool.name),
           expected,
         );
-        if (role === 'owner' && !readonly) assert.equal(expected.length, 51);
+        if (role === 'owner' && !readonly) assert.equal(expected.length, 53);
         if (readonly) {
           assert.ok(tools.every((tool) => tool.annotations?.readOnlyHint === true));
         }

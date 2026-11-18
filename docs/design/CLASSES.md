@@ -1552,7 +1552,10 @@ classDiagram
         subject
         recurrence
         exceptions
+        create(caller, input)$
+        lastTopicForSubject(caller, subject)$
         occurrences(range)
+        editSeries()
         editOccurrence()
         skipOccurrence()
     }
@@ -1616,6 +1619,19 @@ classDiagram
   shared expansion (`types/recurrence/occurrences.ts`) on the workspace's wall clock. `subject` is
   its Subject attribute's value (`overlay.attrs.subject`). `delete` is a soft delete through
   `ItemPolicy` `manage`. **`TimeArea`** is the same record and class with `layer = 'area'`.
+  - Its writes (`POST/PATCH …/time-blocks`, MCP `create_time_block` and `edit_time_block`):
+    `create` (editors; the subject through `Workspace#ensureSubject`, added on first use; title
+    defaults to the subject, an area needs one; topic as given, else `lastTopicForSubject`, else
+    none), `editSeries` ("all": a new start or rule drops the exceptions that are no longer
+    occurrences), `editOccurrence` ("this one": an exception keyed by its original start) and
+    `skipOccurrence`, both 400 `not_an_occurrence` (`NotAnOccurrenceError`) for a start the
+    expansion does not give. The generic `edit` is an "all" edit of title, note, topic, start and
+    end (anything else is 400). It lasts 1 minute to 24 hours, at most
+    `PLAN_LIMITS.timeBlockExceptionsMax` (366) exceptions, and every save of a series stores
+    `props.recurrenceEnd`.
+  - It is stored through the repository's `updateScheduled` (its kind only; `updateLocal` is the
+    to-do's and never finds reserved time), guarded by the `updatedAt` it read: a change made on a
+    stale read reads again and retries.
 - **`TravelLeg`**: neither `Completable` nor `Deletable` (a leg is skipped, not deleted). It takes
   its topic and subject from its event: `setOverlay` and `setAttributes` refuse a topic override
   or a subject of its own (400).
@@ -1743,9 +1759,10 @@ classDiagram
     +list
     +complete(topicFamilies)
     +upsert(input, topicFamilies)
+    +named(name)
     +toDefinition()
   }
-  Workspace ..> Subjects : upsertSubject
+  Workspace ..> Subjects : upsertSubject, ensureSubject
   Workspace *-- WorkspaceSettings
   Workspace ..> JoinLink : stores sealed
   WorkspaceSettings *-- TopicRules
@@ -1920,8 +1937,11 @@ How the pieces work, in short:
 - **Subjects.** `Subjects` is the value object over the `subject` select's options and their looks
   (colour family, title globs): it completes options with the next free family ("saved when
   assigned"), and renames, restyles or appends one subject (`Workspace#upsertSubject`, which also
-  moves the stored values of a rename). `SubjectMatches` counts, for Settings → Subjects, what each
-  subject would take of the caller's visible items, through `subjectOf`, the rule the colours use.
+  moves the stored values of a rename). `Workspace#ensureSubject(caller, name)` is the name-only
+  form a time block uses: the option a typed name stands for whatever its case (`Subjects#named`;
+  its family and patterns untouched), else a new one through `upsertSubject`. `SubjectMatches`
+  counts, for Settings → Subjects, what each subject would take of the caller's visible items,
+  through `subjectOf`, the rule the colours use.
 
 ## 6. Dashboards and views (phases 6a and 6b, built)
 

@@ -540,6 +540,67 @@ describe('ItemRepository', () => {
     assert.equal(await ItemRepository.updateLocal('w-items', 'missing', { title: 'x' }), null);
   });
 
+  it('updateScheduled changes reserved time of its kind only, and misses a stale read', async () => {
+    const block = await ItemRepository.createLocal('w-items', {
+      ownerUserId: 'u-owner',
+      title: 'Study',
+      topicId: null,
+      kind: 'block',
+      props: { layer: 'block', exceptions: [] },
+    });
+    const todo = await ItemRepository.createLocal('w-items', {
+      ownerUserId: 'u-owner',
+      title: 'Chore',
+      topicId: null,
+    });
+    // The to-do path never finds a block (and does not take it for a mirrored item).
+    assert.equal(await ItemRepository.updateLocal('w-items', block.id, { title: 'x' }), null);
+    assert.equal(
+      await ItemRepository.updateScheduled('w-items', todo.id, 'block', { title: 'x' }),
+      null,
+    );
+    assert.equal(
+      await ItemRepository.updateScheduled('w-items', block.id, 'travel', { title: 'x' }),
+      null,
+    );
+    const edited = await ItemRepository.updateScheduled(
+      'w-items',
+      block.id,
+      'block',
+      {
+        title: 'Read',
+        props: {
+          layer: 'area',
+          exceptions: [{ originalStart: '2026-11-29T11:00:00.000Z', skipped: true }],
+        },
+        ...({ kind: 'todo', status: 'done', source: { provider: 'jira' } } as object),
+      },
+      { unchangedSince: block.updatedAt },
+    );
+    assert.ok(edited);
+    assert.deepEqual(
+      [edited.title, edited.kind, edited.status, edited.source.provider, edited.props['layer']],
+      ['Read', 'block', 'open', 'local', 'area'],
+    );
+    assert.ok(edited.updatedAt > block.updatedAt);
+    // A write made on the first read finds the block changed since.
+    assert.equal(
+      await ItemRepository.updateScheduled(
+        'w-items',
+        block.id,
+        'block',
+        { title: 'Stale' },
+        { unchangedSince: block.updatedAt },
+      ),
+      null,
+    );
+    assert.equal((await ItemRepository.findById('w-items', block.id))?.title, 'Read');
+    assert.equal(
+      await ItemRepository.updateScheduled('w-other', block.id, 'block', { title: 'x' }),
+      null,
+    );
+  });
+
   it('setOverlay changes only the overlay fields given, on mirrored items too', async () => {
     await ItemRepository.bulkUpsert('w-items', [jiraIssue('101', 'sha1:a')]);
     const id = await mirroredId('w-items', '101');

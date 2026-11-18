@@ -40,6 +40,7 @@ describe('PLAN_LIMITS (the one source the server and the pricing page share)', (
       attributesPerWorkspace: 20,
       todosPerWorkspace: null,
       providerCreatesPerHour: 30,
+      timeBlockExceptionsMax: 366,
     });
   });
 

@@ -35,6 +35,11 @@ export interface PlanLimits {
   readonly todosPerWorkspace: number | null;
   /** To-dos a user may create in one provider (Jira, ClickUp…) per hour: a guard, not a plan. */
   readonly providerCreatesPerHour: number;
+  /**
+   * Occurrences of one repeating time block that are moved or skipped (its `props.exceptions`): a
+   * year of daily ones. Keeps a series' expansion and its record bounded.
+   */
+  readonly timeBlockExceptionsMax: number;
 }
 
 export const PLAN_LIMITS: PlanLimits = Object.freeze({
@@ -49,4 +54,5 @@ export const PLAN_LIMITS: PlanLimits = Object.freeze({
   attributesPerWorkspace: 20,
   todosPerWorkspace: null,
   providerCreatesPerHour: 30,
+  timeBlockExceptionsMax: 366,
 });

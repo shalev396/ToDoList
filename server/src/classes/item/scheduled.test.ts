@@ -287,12 +287,19 @@ describe('scheduled item classes', () => {
     assert.equal(reread.subject, 'Math');
   });
 
-  it('edits wait for their own routes; a block is soft-deleted, by an editor who sees it', async () => {
+  it('a generic edit of a block takes its own fields; a leg waits for its route; a block is soft-deleted, by an editor who sees it', async () => {
     const { Item, ItemEdit, TimeBlock } = items;
     const ws = await workspace();
     const block = await Item.find(
       ws.editor,
-      (await stored(ws.id, { title: 'Study', kind: 'block' })).id,
+      (
+        await stored(ws.id, {
+          title: 'Study',
+          kind: 'block',
+          startAt: new Date('2026-11-22T11:00:00.000Z'),
+          endAt: new Date('2026-11-22T15:00:00.000Z'),
+        })
+      ).id,
     );
     const leg = await Item.find(
       ws.editor,
@@ -305,10 +312,11 @@ describe('scheduled item classes', () => {
         })
       ).id,
     );
-    await assert.rejects(block.edit(ws.editor, ItemEdit.of({ title: 'x' })), {
+    await assert.rejects(block.edit(ws.editor, ItemEdit.of({ status: 'done' })), {
       statusCode: 400,
-      message: 'edit: use PATCH /time-blocks/:id',
+      message: /^status: a time block takes a title, note, topic, start and end/,
     });
+    assert.equal((await block.edit(ws.editor, ItemEdit.of({ title: 'x' }))).title, 'x');
     await assert.rejects(leg.edit(ws.editor, ItemEdit.of({ title: 'x' })), {
       statusCode: 400,
       message: 'edit: use PATCH /travel/legs/:id',

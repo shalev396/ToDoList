@@ -385,6 +385,193 @@ describe('the to-do tools on time blocks, areas and travel legs', () => {
   });
 });
 
+describe('create_time_block and edit_time_block', () => {
+  /** Sunday 22 November 2026, 13:00 in Jerusalem, and the Sundays after it. */
+  const SUNDAY = '2026-11-22T11:00:00.000Z';
+  /** A team of its own: the subjects these tests add stay out of the other tests' workspace. */
+  let blocksKey: TestKey;
+  let topics: Record<'work' | 'college' | 'personal', string>;
+
+  before(async () => {
+    const blocks = await newTeam('blocks');
+    const { addDefaultTopics } = await import('../../testing/workspaceFixtures.js');
+    topics = await addDefaultTopics(blocks.workspace.id);
+    blocksKey = await insertAgentKey({
+      workspaceId: blocks.workspace.id,
+      userId: blocks.editor.id,
+      scopes: ['read', 'items:write'],
+    });
+  });
+  const week = (n: number, hours = 0): string =>
+    new Date(Date.parse(SUNDAY) + n * 7 * 24 * 3_600_000 + hours * 3_600_000).toISOString();
+
+  interface Block {
+    id: string;
+    kind: string;
+    layer?: string;
+    title: string;
+    topicId: string | null;
+    startAt: string;
+    props: {
+      layer?: string;
+      recurrence?: string[];
+      recurrenceEnd?: string | null;
+      exceptions?: unknown[];
+    };
+    overlay: { attrs: Record<string, unknown> };
+  }
+
+  async function made(args: Record<string, unknown>): Promise<{ item: Block; created: boolean }> {
+    const result = await call(blocksKey, 'create_time_block', args);
+    assert.notEqual(result.isError, true, errorText(result));
+    return structured(result) as { item: Block; created: boolean };
+  }
+
+  async function edited(args: Record<string, unknown>): Promise<Block> {
+    const result = await call(blocksKey, 'edit_time_block', args);
+    assert.notEqual(result.isError, true, errorText(result));
+    return (structured(result) as { item: Block }).item;
+  }
+
+  it('create_time_block with weekly recurrence and subject', async () => {
+    const { item, created } = await made({
+      subject: 'Linear Algebra',
+      topic: 'college',
+      startAt: SUNDAY,
+      endAt: week(0, 4),
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU;UNTIL=20261213T110000Z'],
+      idempotencyKey: 'algebra-sundays',
+    });
+    assert.equal(created, true);
+    assert.deepEqual(
+      [item.kind, item.layer, item.title, item.topicId, item.overlay.attrs['subject']],
+      ['block', 'block', 'Linear Algebra', topics.college, 'Linear Algebra'],
+    );
+    assert.deepEqual(item.props.recurrence, ['RRULE:FREQ=WEEKLY;BYDAY=SU;UNTIL=20261213T110000Z']);
+    // Its last Sunday, 13 December, ends at 17:00.
+    assert.equal(item.props.recurrenceEnd, week(3, 4));
+    const again = await made({
+      subject: 'Linear Algebra',
+      startAt: SUNDAY,
+      endAt: week(0, 4),
+      idempotencyKey: 'algebra-sundays',
+    });
+    assert.deepEqual([again.created, again.item.id], [false, item.id]);
+    // The next block with the subject takes the topic it was last used with.
+    const next = await made({ subject: 'linear algebra', startAt: week(0, 5), endAt: week(0, 6) });
+    assert.deepEqual([next.item.topicId, next.item.title], [topics.college, 'Linear Algebra']);
+    // get_calendar shows each Sunday of the series.
+    const calendar = structured(
+      await call(blocksKey, 'get_calendar', { range: 'custom', from: SUNDAY, to: week(3, 23) }),
+    ) as { items: { id: string; occurrence: { seriesId: string } | null }[] };
+    assert.equal(
+      calendar.items.filter((entry) => entry.occurrence?.seriesId === item.id).length,
+      4,
+    );
+  });
+
+  it('create_time_block layer area', async () => {
+    const { item } = await made({
+      layer: 'area',
+      title: 'Studying',
+      topic: 'college',
+      startAt: SUNDAY,
+      endAt: week(0, 5),
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'],
+    });
+    assert.deepEqual([item.layer, item.props.layer, item.title], ['area', 'area', 'Studying']);
+    const untitled = await call(blocksKey, 'create_time_block', {
+      layer: 'area',
+      startAt: SUNDAY,
+      endAt: week(0, 5),
+    });
+    assert.equal(untitled.isError, true);
+    assert.match(errorText(untitled), /title/);
+  });
+
+  it('refuses what the REST schemas refuse', async () => {
+    for (const args of [
+      { title: 'x', startAt: SUNDAY },
+      { title: 'x', startAt: SUNDAY, endAt: week(0, 1), status: 'open' },
+      { title: 'x', startAt: SUNDAY, endAt: week(0, 1), topicId: 'college' },
+      { title: 'x', startAt: SUNDAY, endAt: week(0, 25) },
+      { title: 'x', startAt: SUNDAY, endAt: week(0, 1), recurrence: ['RRULE:FREQ=HOURLY'] },
+      { subject: 'y'.repeat(41), startAt: SUNDAY, endAt: week(0, 1) },
+    ]) {
+      const result = await call(blocksKey, 'create_time_block', args);
+      assert.equal(result.isError, true, JSON.stringify(args));
+    }
+  });
+
+  it('edit_time_block this, all and skip', async () => {
+    const { item } = await made({
+      title: 'Study',
+      startAt: SUNDAY,
+      endAt: week(0, 4),
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'],
+    });
+    const moved = await edited({
+      id: item.id,
+      scope: 'this',
+      originalStart: week(1),
+      startAt: week(1, 1),
+      endAt: week(1, 3),
+    });
+    assert.deepEqual(moved.props.exceptions, [
+      { originalStart: week(1), startAt: week(1, 1), endAt: week(1, 3) },
+    ]);
+    const skipped = await edited({
+      id: item.id,
+      scope: 'this',
+      originalStart: week(2),
+      skip: true,
+    });
+    assert.equal(skipped.props.exceptions?.length, 2);
+    const renamed = await edited({ id: item.id, scope: 'all', title: 'Study hard', topic: 'work' });
+    assert.deepEqual([renamed.title, renamed.topicId], ['Study hard', topics.work]);
+    assert.equal(renamed.props.exceptions?.length, 2);
+    for (const args of [
+      { id: item.id, scope: 'this', originalStart: week(1), skip: true, startAt: week(1) },
+      { id: item.id, scope: 'this', originalStart: week(1), title: 'x', skip: true },
+      { id: item.id, scope: 'all', skip: true, title: 'x' },
+      { id: item.id, scope: 'all' },
+      { id: otherWorkspaceItemId, scope: 'all', title: 'x' },
+    ]) {
+      const result = await call(blocksKey, 'edit_time_block', args);
+      assert.equal(result.isError, true, JSON.stringify(args));
+    }
+    const notOne = await call(blocksKey, 'edit_time_block', {
+      id: item.id,
+      scope: 'this',
+      originalStart: week(1, 1),
+      skip: true,
+    });
+    assert.equal(notOne.isError, true);
+    assert.match(errorText(notOne), /not an occurrence/);
+    const later = await edited({ id: item.id, scope: 'all', startAt: week(0, 1) });
+    assert.deepEqual([later.startAt, later.props.exceptions], [week(0, 1), []]);
+  });
+
+  it('a viewer key is refused by the role matrix', async () => {
+    const team = await newTeam('blocks-viewer');
+    const key = await insertAgentKey({
+      workspaceId: team.workspace.id,
+      userId: team.viewer.id,
+      scopes: ['read', 'items:write'],
+    });
+    const { tools } = await (await h.connect(key.raw)).listTools();
+    const names = tools.map((tool) => tool.name);
+    assert.equal(names.includes('create_time_block'), false);
+    assert.equal(names.includes('edit_time_block'), false);
+    for (const [name, args] of [
+      ['create_time_block', { title: 'x', startAt: SUNDAY, endAt: week(0, 1) }],
+      ['edit_time_block', { id: 'any', scope: 'all', title: 'x' }],
+    ] as const) {
+      await assert.rejects(call(key, name, args), /needs a scope or role/, name);
+    }
+  });
+});
+
 describe('create_todo with a recurrence (plan Addendum A3)', () => {
   const recurrence = ['RRULE:FREQ=WEEKLY;BYDAY=MO'];
 

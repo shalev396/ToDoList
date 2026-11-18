@@ -567,6 +567,30 @@ describe('subjects', () => {
     });
   });
 
+  it('ensureSubject returns the existing option whatever its case, else adds one', async () => {
+    const ws = await workspace();
+    const caller = callerOf(ws, EDITOR.userId);
+    const first = await (await Workspace.load(caller)).ensureSubject(caller, 'Calculus');
+    assert.deepEqual(first, { subject: 'Calculus', created: true });
+    const restyled = callerOf(await fresh(ws), EDITOR.userId);
+    await (
+      await Workspace.load(restyled)
+    ).upsertSubject(restyled, { name: 'Calculus', family: 'violet', patterns: ['*calc*'] });
+    const again = callerOf(await fresh(ws), EDITOR.userId);
+    const found = await (await Workspace.load(again)).ensureSubject(again, '  calculus ');
+    assert.deepEqual(found, { subject: 'Calculus', created: false });
+    const stored = listAttributes(await fresh(ws)).find((def) => def.key === 'subject');
+    assert.deepEqual(stored?.options, ['Calculus']);
+    // Its look is left as it was.
+    assert.deepEqual(stored.optionLooks, [
+      { option: 'Calculus', colour: 'violet', patterns: ['*calc*'] },
+    ]);
+    const viewer = callerOf(await workspace('viewer'), EDITOR.userId);
+    await assert.rejects((await Workspace.load(viewer)).ensureSubject(viewer, 'Calculus'), {
+      statusCode: 403,
+    });
+  });
+
   it('upsertSubject refuses a 31st subject with 400', async () => {
     const ws = await workspace();
     const options = Array.from({ length: 30 }, (_, i) => `S${String(i)}`);

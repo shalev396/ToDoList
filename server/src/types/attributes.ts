@@ -42,7 +42,8 @@ const DEFAULT_NUMBER_MIN = 0;
 const DEFAULT_NUMBER_MAX = 100;
 
 export const NameSchema = z.string().trim().min(1).max(40);
-const OptionSchema = z.string().trim().min(1).max(40);
+/** One option of a select (a Subject's name too). */
+export const OptionSchema = z.string().trim().min(1).max(40);
 const OptionsSchema = z.array(OptionSchema).max(MAX_ATTRIBUTE_OPTIONS);
 
 export const PatternsSchema = z

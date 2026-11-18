@@ -36,6 +36,15 @@ describe('Subjects', () => {
     assert.equal(calculus.family, 'orange');
   });
 
+  it('finds the option a typed name stands for, whatever its case', () => {
+    const subjects = Subjects.of(def());
+    assert.equal(subjects.named('Calculus'), 'Calculus');
+    assert.equal(subjects.named('  algebra '), 'Algebra');
+    assert.equal(subjects.named('ALGEBRA'), 'Algebra');
+    assert.equal(subjects.named('Physics'), undefined);
+    assert.equal(Subjects.of(undefined).named('Calculus'), undefined);
+  });
+
   it('updates an existing subject', () => {
     const subjects = Subjects.of(def()).upsert({ name: 'Calculus', patterns: ['*calc*'] }, []);
     assert.deepEqual(subjects.list[0]?.patterns, ['*calc*']);

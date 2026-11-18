@@ -78,6 +78,7 @@ export const errors = {
     agentKeyCap: 'You have the maximum number of agents here. Revoke one in Agent keys first.',
     notCompletable: 'A time block or travel has no status to complete.',
     notDeletable: 'Travel can’t be deleted. Skip it instead.',
+    notAnOccurrence: 'That time isn’t one of this block’s repeats. Refresh and try again.',
   },
   generic: 'Something went wrong. Try again in a moment.',
   status: {
