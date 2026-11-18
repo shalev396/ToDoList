@@ -17,7 +17,8 @@
  * - the daily pass (jobs/TravelHorizonPass.ts, from the hourly tick), once a day per member, while
  *   the tick's budget lasts;
  * - rule, place, setting and pin changes, a leg's reset (TravelSetup), and marking or unmarking an
- *   item (TravelRule.markItem, unmarkItem), before they answer.
+ *   item (TravelRule.markItem, unmarkItem), before they answer (`afterOwnChange`: the request's
+ *   budget, cached geocodes only, a failure logged and never the change's).
  *
  * `preview` works out one trip's length through the same chain, without making a leg.
  *
@@ -72,6 +73,11 @@ export const ITEM_CHANGE_BUDGET_MS = 8_000;
 export const AFTER_SYNC_BUDGET_MS = 60_000;
 /** A preview's time: the travel panel waits for it. */
 export const PREVIEW_BUDGET_MS = 8_000;
+/**
+ * The member's own travel change (a place, a rule, a setting, a pin, a mark, a reset): the request
+ * waits for its regeneration, as for an item write.
+ */
+export const OWN_CHANGE_BUDGET_MS = 8_000;
 
 const MINUTE_MS = 60_000;
 
@@ -157,6 +163,32 @@ export class TravelPlanner {
       });
     }
   };
+
+  /**
+   * The member changed their own travel and the change is stored (a place, a rule, a setting, a
+   * pin, a mark, a reset: `change` names which): their legs are made again while the request
+   * waits, within OWN_CHANGE_BUDGET_MS and from cached geocodes only (a place being added was
+   * looked up by its own create; new locations are looked up after syncs and in the daily pass).
+   * A failure is logged with ids only and swallowed: the change stands and answers as stored, and
+   * the next change, sync or daily pass makes the legs. Whether it ran.
+   */
+  static async afterOwnChange(caller: Caller, change: string): Promise<boolean> {
+    try {
+      await TravelPlanner.regenerate(caller, new Date(), {
+        budget: TimeBudget.start(OWN_CHANGE_BUDGET_MS),
+        lookups: 0,
+      });
+      return true;
+    } catch (error) {
+      // Never its message: it may quote what it read.
+      logger.error('travel: regeneration after a travel change failed', {
+        workspaceId: caller.workspaceId,
+        change,
+        reason: error instanceof Error ? error.name : 'unknown',
+      });
+      return false;
+    }
+  }
 
   /**
    * A sync of this integration ran: every member with travel in its workspace gets their legs made

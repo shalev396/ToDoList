@@ -8,6 +8,7 @@ import {
   isSeriesRow,
   localExceptionsOf,
   recurrenceEndOf,
+  seriesHasSlot,
   type TimeRow,
 } from './occurrences.js';
 
@@ -322,5 +323,41 @@ describe('recurrenceEndOf', () => {
       new Date(Date.parse('2026-09-13T12:00:00.000Z') + 4999 * 3_600_000).toISOString(),
     );
     assert.equal(hourly(MAX_SLOTS_TO_END + 1), null);
+  });
+});
+
+describe('seriesHasSlot', () => {
+  const ZONE = 'Asia/Jerusalem';
+  /** Sundays 13:00 in Jerusalem from 13 September (summer time, UTC+3). */
+  const weekly = (recurrence: unknown): Pick<TimeRow, 'startAt' | 'props'> => ({
+    startAt: '2026-09-13T10:00:00.000Z',
+    props: { recurrence },
+  });
+
+  it('is true for an original start of the series, on the wall clock across a DST change', () => {
+    const rule = ['RRULE:FREQ=WEEKLY;BYDAY=SU'];
+    assert.equal(seriesHasSlot(weekly(rule), new Date('2026-09-13T10:00:00.000Z'), ZONE), true);
+    // After the clocks went back on 25 October, 13:00 is 11:00Z.
+    assert.equal(seriesHasSlot(weekly(rule), new Date('2026-11-01T11:00:00.000Z'), ZONE), true);
+    assert.equal(seriesHasSlot(weekly(rule), new Date('2027-03-07T11:00:00.000Z'), ZONE), true);
+  });
+
+  it('is false for another time or day, before the first, after the last, or no series', () => {
+    const rule = ['RRULE:FREQ=WEEKLY;BYDAY=SU;COUNT=3'];
+    for (const instant of [
+      '2026-11-01T10:00:00.000Z',
+      '2026-09-14T10:00:00.000Z',
+      '2026-09-06T10:00:00.000Z',
+      '2026-10-04T10:00:00.000Z',
+    ]) {
+      assert.equal(seriesHasSlot(weekly(rule), new Date(instant), ZONE), false, instant);
+    }
+    assert.equal(seriesHasSlot(weekly(rule), new Date('2026-09-27T10:00:00.000Z'), ZONE), true);
+    assert.equal(seriesHasSlot(weekly(null), new Date('2026-09-13T10:00:00.000Z'), ZONE), false);
+    assert.equal(
+      seriesHasSlot({ ...weekly(rule), startAt: null }, new Date('2026-09-13T10:00:00.000Z'), ZONE),
+      false,
+    );
+    assert.equal(seriesHasSlot(weekly(rule), new Date(NaN), ZONE), false);
   });
 });

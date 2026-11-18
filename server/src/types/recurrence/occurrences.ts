@@ -279,6 +279,25 @@ class SeriesSlots {
 }
 
 /**
+ * True when `slot` is the original start of one of the series' occurrences: its rule from its
+ * first start, on the wall clock of `timeZone`, searched DST_SLACK_MS either side (a slot whose
+ * wall time the clocks skip is stored as the instant after the jump). Exceptions don't matter: a
+ * moved or skipped occurrence keeps its slot. False for a row that doesn't repeat or has no start.
+ */
+export function seriesHasSlot(
+  series: Pick<TimeRow, 'startAt' | 'props'>,
+  slot: Date,
+  timeZone: string,
+): boolean {
+  const rule = recurrenceRules(series.props)[0];
+  const start = toDate(series.startAt);
+  if (rule === undefined || start === null || Number.isNaN(slot.getTime())) {
+    return false;
+  }
+  return new SeriesSlots(rule, start, timeZone).has(slot);
+}
+
+/**
  * When a series is over, for the queries' series branch (stored as `props.recurrenceEnd`): the end
  * of its last occurrence, ISO 8601, with its slots placed on the wall clock of `timeZone` (the
  * workspace's) as the expansion places them. A local occurrence moved later counts too. Null when

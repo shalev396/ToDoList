@@ -9,13 +9,14 @@
  *
  * Anchors are dated from today on Jerusalem's wall clock (a regeneration plans from the real now).
  */
-import { after, afterEach, before, describe, it } from 'node:test';
+import { after, afterEach, before, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { setTravelTransportForTests } from '../../config/testSwitches.js';
 import { startApiHarness, type ApiHarness, type ApiResponse } from '../../testing/apiHarness.js';
 import { findSecrets } from '../../services/secretPatterns.js';
 import type * as AppSecrets from '../../services/appSecrets.js';
+import type { SourceRef } from '../../models/definitions/common.js';
 import type { HttpRequest, HttpResponse, Transport } from '../../sync/http.js';
 import { addLocalDays, wallDate, zonedParts, zonedTime } from '../../types/recurrence/zoned.js';
 import {
@@ -35,6 +36,7 @@ const token = { owner: '', editor: '', editor2: '', viewer: '', stranger: '' };
 let wid = '';
 let homeId = '';
 let braudeId = '';
+let editorId = '';
 
 type Who = keyof typeof token;
 
@@ -170,6 +172,7 @@ before(async () => {
     const user = await users.findByEmail(`travel-http-${who}@example.test`);
     assert.ok(user);
     await memberships.create(wid, { userId: user.id, role });
+    if (who === 'editor') editorId = user.id;
   }
   homeId = (
     await ok<PlaceView>(
@@ -832,5 +835,287 @@ describe('POST /items', () => {
       assert.equal(res.status, 400, `${JSON.stringify(body)}: ${res.text}`);
       assert.match(String(res.body?.['message']), new RegExp(`^${field}:`), res.text);
     }
+  });
+});
+
+describe('marks that can make no leg (fix round 1)', () => {
+  it('a wrong occurrence is 400 not_an_occurrence, and nothing is stored', async () => {
+    const choir = await ok<{ id: string }>(
+      'editor',
+      'POST',
+      '/time-blocks',
+      {
+        title: 'Choir',
+        startAt: iso(local(1, 19)),
+        endAt: iso(local(1, 20)),
+        recurrence: ['RRULE:FREQ=WEEKLY'],
+      },
+      201,
+    );
+    const rules = (await ok<TravelRuleView[]>('editor', 'GET', '/travel/rules')).length;
+    const anchoredOnChoir = async (): Promise<string[]> => {
+      const { days } = await ok<TravelDaysResponse>(
+        'editor',
+        'GET',
+        `/travel/days?from=${dayOf(0)}&to=${dayOf(13)}`,
+      );
+      return days.flatMap((day) => [
+        ...day.legs.flatMap((leg) =>
+          (leg.props['travel'] as TravelLegProps).anchorItemId === choir.id ? [leg.id] : [],
+        ),
+        ...day.removed.map((leg) => leg.id),
+      ]);
+    };
+    const before = await anchoredOnChoir();
+    // An hour off, the next day, a week before the first: none is one of its occurrences.
+    for (const occurrence of [local(1, 20), local(2, 19), local(-6, 19)]) {
+      const res = await call('editor', 'POST', `/travel/items/${choir.id}`, {
+        occurrence: iso(occurrence),
+        mode: 'transit',
+        direction: 'both',
+        placeId: braudeId,
+      });
+      assert.equal(res.status, 400, res.text);
+      assert.equal(res.body?.['code'], 'not_an_occurrence', res.text);
+    }
+    // An occurrence given for an item that doesn't repeat is none of its occurrences either.
+    const once = await todo('editor', 'Recital', 1, 9);
+    const single = await call('editor', 'POST', `/travel/items/${once}`, {
+      occurrence: iso(local(1, 9)),
+      mode: 'transit',
+      direction: 'both',
+    });
+    assert.equal(single.body?.['code'], 'not_an_occurrence', single.text);
+    assert.equal((await ok<TravelRuleView[]>('editor', 'GET', '/travel/rules')).length, rules);
+    assert.deepEqual(await anchoredOnChoir(), before);
+    // Its real second occurrence is marked.
+    const marked = await ok<{ rule: TravelRuleView; legs: Leg[] }>(
+      'editor',
+      'POST',
+      `/travel/items/${choir.id}`,
+      { occurrence: iso(local(8, 19)), mode: 'transit', direction: 'both', placeId: braudeId },
+    );
+    assert.deepEqual(
+      marked.legs.map((leg) => [leg.props.travel.occurrence, leg.props.travel.direction]),
+      [
+        [iso(local(8, 19)), 'there'],
+        [iso(local(8, 19)), 'back'],
+      ],
+    );
+    const unmark = await call(
+      'editor',
+      'DELETE',
+      `/travel/items/${choir.id}?occurrence=${iso(local(8, 19))}`,
+    );
+    assert.equal(unmark.status, 204, unmark.text);
+  });
+
+  it('a moved Google occurrence marked by its own id gets a leg keyed on its master and original start', async () => {
+    const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+    const models = await import('../../models/index.js');
+    const integrationId = 'int-travel-http-gcal';
+    await seedIntegration(wid, {
+      id: integrationId,
+      ownerUserId: editorId,
+      provider: 'google_calendar',
+      accountId: 'g-travel-http',
+    });
+    const slot = local(13, 16);
+    const moved = local(13, 18);
+    const hour = 3_600_000;
+    const source = (externalId: string): SourceRef => ({
+      provider: 'google_calendar',
+      accountId: 'g-travel-http',
+      externalId,
+      key: null,
+      url: `https://example.invalid/${externalId}`,
+      updatedAtSource: null,
+      etag: null,
+      hash: `h-${externalId}`,
+    });
+    await (
+      await models.getItemRepository()
+    ).bulkUpsert(wid, [
+      {
+        integrationId,
+        kind: 'event',
+        topicId: null,
+        title: 'Weekly lecture',
+        status: 'open',
+        startAt: slot,
+        endAt: new Date(slot.getTime() + hour),
+        props: {
+          calendarId: 'cal-lectures',
+          eventId: 'lecture',
+          recurringEventId: null,
+          originalStartAt: null,
+          recurrence: ['RRULE:FREQ=WEEKLY'],
+        },
+        source: source('cal-lectures:lecture'),
+      },
+      {
+        integrationId,
+        kind: 'event',
+        topicId: null,
+        title: 'Weekly lecture (moved)',
+        status: 'open',
+        startAt: moved,
+        endAt: new Date(moved.getTime() + hour),
+        props: {
+          calendarId: 'cal-lectures',
+          eventId: 'lecture_moved',
+          recurringEventId: 'lecture',
+          originalStartAt: iso(slot),
+          recurrence: null,
+        },
+        source: source('cal-lectures:lecture_moved'),
+      },
+    ]);
+    const { items } = await ok<{ items: { id: string; title: string }[] }>(
+      'editor',
+      'GET',
+      '/items?provider=google_calendar',
+    );
+    const idOf = (title: string): string => {
+      const found = items.find((item) => item.title === title);
+      assert.ok(found, title);
+      return found.id;
+    };
+    const masterId = idOf('Weekly lecture');
+    const exceptionId = idOf('Weekly lecture (moved)');
+
+    // Marked by its own row: the mark is its master's, at its original start.
+    const marked = await ok<{ rule: TravelRuleView; legs: Leg[] }>(
+      'editor',
+      'POST',
+      `/travel/items/${exceptionId}`,
+      { mode: 'transit', direction: 'both', placeId: braudeId },
+    );
+    assert.deepEqual(marked.rule.scope, { kind: 'item', itemId: masterId, occurrence: iso(slot) });
+    assert.deepEqual(
+      marked.legs.map((leg) => [
+        leg.props.travel.anchorItemId,
+        leg.props.travel.occurrence,
+        leg.props.travel.direction,
+        leg.props.travel.direction === 'there' ? leg.endAt : leg.startAt,
+      ]),
+      [
+        [masterId, iso(slot), 'there', iso(moved)],
+        [masterId, iso(slot), 'back', iso(new Date(moved.getTime() + hour))],
+      ],
+    );
+    assert.equal(
+      legOf(marked.legs, 'there').props.travelKey,
+      `${editorId}|${masterId}|${iso(slot)}|there`,
+    );
+    // Its original start given again is the same mark; any other start is none of its own.
+    const again = await ok<{ rule: TravelRuleView }>(
+      'editor',
+      'POST',
+      `/travel/items/${exceptionId}`,
+      { occurrence: iso(slot), mode: 'transit', direction: 'both', placeId: braudeId },
+    );
+    assert.equal(again.rule.id, marked.rule.id);
+    const other = await call('editor', 'POST', `/travel/items/${exceptionId}`, {
+      occurrence: iso(moved),
+      mode: 'transit',
+      direction: 'both',
+    });
+    assert.equal(other.body?.['code'], 'not_an_occurrence', other.text);
+    // Unmarked by its own row too: the mark kept under its master goes, and so do its legs.
+    assert.equal((await call('editor', 'DELETE', `/travel/items/${exceptionId}`)).status, 204);
+    const {
+      days: [lastDay],
+    } = await ok<TravelDaysResponse>(
+      'editor',
+      'GET',
+      `/travel/days?from=${dayOf(13)}&to=${dayOf(13)}`,
+    );
+    assert.ok(lastDay);
+    assert.ok(
+      !lastDay.legs.some(
+        (leg) => (leg.props['travel'] as TravelLegProps).anchorItemId === masterId,
+      ),
+    );
+    // Every occurrence, from the moved one: its master's series.
+    const every = await ok<{ rule: TravelRuleView; legs: Leg[] }>(
+      'editor',
+      'POST',
+      `/travel/items/${exceptionId}`,
+      { every: true, mode: 'transit', direction: 'both', placeId: braudeId },
+    );
+    assert.deepEqual(every.rule.scope, { kind: 'series', itemId: masterId });
+    assert.deepEqual(
+      every.legs.map((leg) => [leg.props.travel.anchorItemId, leg.props.travel.occurrence]),
+      [
+        [masterId, iso(slot)],
+        [masterId, iso(slot)],
+      ],
+    );
+    assert.equal(
+      (await call('editor', 'DELETE', `/travel/items/${exceptionId}?every=true`)).status,
+      204,
+    );
+    assert.equal(
+      (await call('editor', 'DELETE', `/travel/items/${masterId}?every=true`)).status,
+      404,
+    );
+  });
+});
+
+describe('a regeneration that fails (fix round 1)', () => {
+  it('a change stored before its regeneration fails answers as stored, and is logged with ids only', async () => {
+    const classes = await import('../../classes/index.js');
+    const { logger } = await import('../../services/logger.js');
+    const yoga = await todo('editor', 'Yoga', 12, 7);
+    const lines: unknown[][] = [];
+    const logged = mock.method(logger, 'error', (...args: unknown[]) => {
+      lines.push(args);
+    });
+    const failing = mock.method(classes.TravelPlanner, 'regenerate', () =>
+      Promise.reject(new Error('Snunit St 51 is unreachable')),
+    );
+    let ruleId = '';
+    try {
+      ruleId = (
+        await ok<TravelRuleView>(
+          'editor',
+          'POST',
+          '/travel/rules',
+          { scope: { kind: 'series', itemId: 'no-such-series' }, mode: 'walk', direction: 'both' },
+          201,
+        )
+      ).id;
+      const marked = await ok<{ rule: TravelRuleView; legs: Leg[] }>(
+        'editor',
+        'POST',
+        `/travel/items/${yoga}`,
+        { mode: 'walk', direction: 'there', placeId: braudeId },
+      );
+      assert.deepEqual(marked.rule.scope, { kind: 'item', itemId: yoga, occurrence: 'single' });
+      assert.deepEqual(marked.legs, []);
+      const settings = await ok<TravelSettingsResponse>('editor', 'PATCH', '/travel/settings', {
+        defaultMode: 'drive',
+      });
+      assert.equal(settings.settings.defaultMode, 'drive');
+      assert.equal((await call('editor', 'DELETE', `/travel/items/${yoga}`)).status, 204);
+      assert.equal((await call('editor', 'DELETE', `/travel/rules/${ruleId}`)).status, 204);
+      assert.equal(failing.mock.callCount(), 5);
+    } finally {
+      failing.mock.restore();
+      logged.mock.restore();
+    }
+    const text = JSON.stringify(lines);
+    assert.equal(text.match(/travel: regeneration after a travel change failed/g)?.length, 5, text);
+    assert.ok(!text.includes('Snunit'), text);
+    // Each change was stored: the rule went with its delete, the settings stayed.
+    assert.ok(
+      !(await ok<TravelRuleView[]>('editor', 'GET', '/travel/rules')).some(
+        (rule) => rule.id === ruleId,
+      ),
+    );
+    await ok<TravelSettingsResponse>('editor', 'PATCH', '/travel/settings', {
+      defaultMode: 'transit',
+    });
   });
 });

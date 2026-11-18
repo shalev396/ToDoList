@@ -19,11 +19,13 @@
 import { parseQuery } from '../../builder/compile.js';
 import { QueryValidationError } from '../../builder/errors.js';
 import { AppError } from '../../errors/AppError.js';
+import { NotAnOccurrenceError } from '../../errors/NotAnOccurrenceError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
 import type { TravelRuleData, TravelRulePatch } from '../../models/definitions/TravelRule.js';
 import { getTravelRuleRepository } from '../../models/index.js';
 import { PLAN_LIMITS } from '../../types/limits.js';
+import { seriesHasSlot } from '../../types/recurrence/occurrences.js';
 import { addLocalDays, startOfZonedDay } from '../../types/recurrence/zoned.js';
 import {
   RULE_DIRECTIONS,
@@ -42,7 +44,14 @@ import type { Caller } from '../base/Caller.js';
 import type { Auditable, Owned, Viewable } from '../base/contracts.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { AuditLog } from '../AuditLog.js';
-import { isRecurring, Item, TimeArea, TravelLeg, type LegTimesChange } from '../item/index.js';
+import {
+  CalendarEvent,
+  isRecurring,
+  Item,
+  TimeArea,
+  TravelLeg,
+  type LegTimesChange,
+} from '../item/index.js';
 import { Place } from './Place.js';
 import { TravelPlanner } from './TravelPlanner.js';
 import { TravelProfile } from './TravelProfile.js';
@@ -98,6 +107,11 @@ interface MarkSpan {
 const ID_MAX = 200;
 /** The longest leg: a day. */
 const DAY_MINUTES = 24 * 60;
+const NOT_ITS_OCCURRENCE = 'occurrence: not an occurrence of this item';
+
+/** An item's rule lines: a repeating item's, else none. */
+const recurrenceOf = (item: Item): readonly string[] =>
+  isRecurring(item) ? item.recurrenceLines : [];
 
 function oneOf<T extends string>(values: readonly T[], value: unknown, field: string): T {
   if (typeof value === 'string' && (values as readonly string[]).includes(value)) return value as T;
@@ -325,11 +339,18 @@ export class TravelRule
    * With `every`, a span is a length only, applied to each occurrence's leg. A leg already under
    * way is left as it is. The answer: the rule, and the item's live legs in the horizon, by start.
    *
+   * A moved occurrence of a mirrored series, marked by its own row, is its series' occurrence at its
+   * original start (with `every`, its series), as the planner keys its legs.
+   *
    * 404: an item the caller can't see. 400: a travel leg, an area (painted time is never travelled
-   * to), an item with no start or all day, a repeating item with neither `every` nor an
-   * occurrence, `every` or an occurrence on one that doesn't repeat, a span that isn't one, a
-   * `fromPlaceId` or `placeId` not of the caller's. 409 `travel_home_missing` without a Home
-   * (Ruling 24). Nothing is stored when it refuses.
+   * to), an item with no start, all day or cancelled, a repeating item with neither `every` nor an
+   * occurrence, `every` on one that doesn't repeat, a span that isn't one, a `fromPlaceId` or
+   * `placeId` not of the caller's; 400 `not_an_occurrence` for an occurrence that is none of the
+   * item's own (no slot of its series, or an item that doesn't repeat). 409 `travel_home_missing`
+   * without a Home (Ruling 24). Nothing is stored when it refuses.
+   *
+   * Once the rule is stored, a regeneration that fails is logged and the mark still answers
+   * (TravelPlanner.afterOwnChange), with the item's legs as they are.
    *
    * `fromPlaceId` is checked to be the caller's own; where a leg starts is the plan's (Home, or
    * the place before), which no per-leg choice changes in this version.
@@ -340,7 +361,7 @@ export class TravelRule
   ): Promise<{ rule: TravelRule; legs: TravelLeg[] }> {
     caller.require('editor');
     const item = await Item.find(caller, input.itemId);
-    const scope = TravelRule.#markScope(item, input);
+    const scope = await TravelRule.#markScope(caller, item, input);
     const places = await Place.listOwn(caller);
     const spans = TravelRule.#spans(input, new Set(places.map((place) => place.id)));
     if (!places.some((place) => place.isHome)) {
@@ -358,8 +379,10 @@ export class TravelRule
       marked === undefined
         ? await TravelRule.create(caller, { scope, ...choice })
         : await marked.update(caller, choice);
+    // The rule is stored: a regeneration that fails is logged, and the mark answers with the legs
+    // there are (the next change, sync or daily pass makes them).
+    await TravelPlanner.afterOwnChange(caller, 'mark');
     const now = new Date();
-    await TravelPlanner.regenerate(caller, now);
     if (spans.length === 0) return { rule, legs: await TravelRule.#legsOf(caller, scope, now) };
     for (const { directions, change } of spans) {
       for (const leg of await TravelRule.#legsOf(caller, scope, now)) {
@@ -376,6 +399,7 @@ export class TravelRule
   /**
    * Editors: travel to an item no more. `every`: the item's series rule and the rules of each of
    * its occurrences; else the rule of one occurrence (`occurrence`) or of the item (`single`).
+   * A moved occurrence of a mirrored series names its series' occurrence, as when it was marked.
    * Then the member's legs are made again: the item's go, as no longer matching. 404 when no such
    * mark of the caller's exists (travel a where-rule gives is changed through that rule).
    */
@@ -384,46 +408,96 @@ export class TravelRule
     if (input.every && input.occurrence !== undefined) {
       throw new ValidationError('occurrence: every occurrence takes none');
     }
-    const slot = input.occurrence?.toISOString() ?? 'single';
+    const target = await TravelRule.#markedItemOf(caller, input.itemId);
+    const slot = input.occurrence?.toISOString() ?? target.occurrence ?? 'single';
     const marks = (await TravelRule.listOwn(caller)).filter(({ scope }) =>
       input.every
-        ? scope.kind !== 'where' && scope.itemId === input.itemId
-        : scope.kind === 'item' && scope.itemId === input.itemId && scope.occurrence === slot,
+        ? scope.kind !== 'where' && scope.itemId === target.itemId
+        : scope.kind === 'item' && scope.itemId === target.itemId && scope.occurrence === slot,
     );
     if (marks.length === 0) throw new NotFoundError();
     for (const rule of marks) await rule.remove(caller);
-    await TravelPlanner.regenerate(caller);
+    await TravelPlanner.afterOwnChange(caller, 'unmark');
   }
 
   // ─── Inside ───────────────────────────────────────────────────────────────
 
-  /** What a mark of this item is: its series, one occurrence of it, or the item itself. */
-  static #markScope(item: Item, input: MarkItemInput): MarkScope {
+  /**
+   * What a mark of this item is, keyed as the planner keys its anchors (plan Ruling 9), so a mark
+   * that is stored can make a leg: its series, one occurrence of it, or the item itself. A moved
+   * occurrence of a mirrored series (Google's exception row) is its series' occurrence at its
+   * original start. An occurrence given must be one of the item's own: a slot of its series (the
+   * shared expansion, within DST_SLACK_MS), or an exception row's original start; else 400
+   * `not_an_occurrence`. A cancelled event gets no travel (400).
+   */
+  static async #markScope(caller: Caller, item: Item, input: MarkItemInput): Promise<MarkScope> {
     if (item instanceof TravelLeg) throw new ValidationError('itemId: travel is not travelled to');
     if (item instanceof TimeArea) {
       throw new ValidationError('itemId: an area is painted time, which gets no travel');
     }
     if (item.startAt === null) throw new ValidationError('itemId: travel needs a start time');
     if (item.allDay) throw new ValidationError('itemId: an all-day item gets no travel');
-    const repeats = isRecurring(item);
-    if (input.every) {
-      if (!repeats) throw new ValidationError('every: the item does not repeat');
-      if (input.occurrence !== undefined) {
-        throw new ValidationError('occurrence: every occurrence takes none');
+    if (item.status === 'cancelled') {
+      throw new ValidationError('itemId: a cancelled event gets no travel');
+    }
+    const given = input.occurrence;
+    if (input.every && given !== undefined) {
+      throw new ValidationError('occurrence: every occurrence takes none');
+    }
+    const exception = item instanceof CalendarEvent ? await item.seriesOccurrence(caller) : null;
+    if (exception !== null) {
+      if (input.every) {
+        if (!exception.master) {
+          throw new ValidationError('every: the series of this occurrence is not one you see');
+        }
+        return { kind: 'series', itemId: exception.seriesId };
       }
+      if (given !== undefined && given.getTime() !== exception.originalStart.getTime()) {
+        throw new NotAnOccurrenceError(NOT_ITS_OCCURRENCE);
+      }
+      return {
+        kind: 'item',
+        itemId: exception.seriesId,
+        occurrence: exception.originalStart.toISOString(),
+      };
+    }
+    if (input.every) {
+      if (!isRecurring(item)) throw new ValidationError('every: the item does not repeat');
       return { kind: 'series', itemId: item.id };
     }
-    if (repeats && input.occurrence === undefined) {
-      throw new ValidationError("occurrence: the occurrence's original start, or every: true");
+    if (given === undefined) {
+      if (isRecurring(item)) {
+        throw new ValidationError("occurrence: the occurrence's original start, or every: true");
+      }
+      return { kind: 'item', itemId: item.id, occurrence: 'single' };
     }
-    if (!repeats && input.occurrence !== undefined) {
-      throw new ValidationError('occurrence: the item does not repeat');
+    const series = { startAt: item.startAt, props: { recurrence: [...recurrenceOf(item)] } };
+    if (!seriesHasSlot(series, given, caller.settings.timezone)) {
+      throw new NotAnOccurrenceError(NOT_ITS_OCCURRENCE);
     }
-    return {
-      kind: 'item',
-      itemId: item.id,
-      occurrence: input.occurrence?.toISOString() ?? 'single',
-    };
+    return { kind: 'item', itemId: item.id, occurrence: given.toISOString() };
+  }
+
+  /**
+   * The item a mark of `itemId` is kept under, and the occurrence it names by itself: a moved
+   * occurrence of a mirrored series is its series' (at its original start); any other item, or one
+   * the caller no longer sees, is its own id.
+   */
+  static async #markedItemOf(
+    caller: Caller,
+    itemId: string,
+  ): Promise<{ itemId: string; occurrence: string | null }> {
+    let item: Item;
+    try {
+      item = await Item.find(caller, itemId);
+    } catch (error) {
+      if (error instanceof NotFoundError) return { itemId, occurrence: null };
+      throw error;
+    }
+    const exception = item instanceof CalendarEvent ? await item.seriesOccurrence(caller) : null;
+    return exception === null
+      ? { itemId, occurrence: null }
+      : { itemId: exception.seriesId, occurrence: exception.originalStart.toISOString() };
   }
 
   /**

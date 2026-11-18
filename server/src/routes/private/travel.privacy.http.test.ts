@@ -370,6 +370,16 @@ describe('travel privacy', () => {
         },
         201,
       );
+      // The rule's own regeneration (the request waits) looks up no new location; a sync of the
+      // calendar, or the daily pass, does: here it fails.
+      const lookedUp = (): boolean =>
+        geocoder.requests
+          .slice(sent)
+          .some((request) => new URL(request.url).searchParams.get('q') === GYM_LOCATION);
+      assert.equal(lookedUp(), false);
+      const { TravelPlanner } = await import('../../classes/travel/index.js');
+      await TravelPlanner.regenerateFor(wid, ids.a);
+      assert.equal(lookedUp(), true);
     } finally {
       geocoder.down = false;
       for (const each of mocks) each.mock.restore();

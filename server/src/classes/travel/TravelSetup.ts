@@ -3,9 +3,9 @@
  * their places, rules, settings, default places and pins, and a leg's reset. Each change is its
  * class's own (Place, TravelRule, TravelProfile, TravelLeg), checked and stored there; what this
  * adds is the spec's trigger "a rule, a place or a setting changes" (plan Ruling 12): the member's
- * legs are made again before the change answers, so the next read agrees with it. A regeneration
- * that fails fails the request (the change itself is stored; the next one, or the daily pass,
- * makes the legs).
+ * legs are made again before the change answers, so the next read agrees with it: within the
+ * request's budget, from cached geocodes only. A regeneration that fails is logged and never fails
+ * the stored change (the next change, a sync or the daily pass makes the legs).
  *
  * Marking an item is TravelRule.markItem, which regenerates itself (its answer holds the legs).
  * Editors and owners only (Ruling 16); everything is the caller's own.
@@ -37,7 +37,7 @@ export class TravelSetup {
   /** A new place (Place.create: 400 `place_not_found`, 503 when no geocoder answers). */
   async addPlace(input: NewPlace): Promise<Place> {
     const place = await Place.create(this.#caller, input);
-    await this.#regenerate();
+    await this.#regenerate('place');
     return place;
   }
 
@@ -45,7 +45,7 @@ export class TravelSetup {
   async changePlace(id: string, patch: PlaceChange): Promise<Place> {
     const caller = this.#caller;
     const place = await (await Place.findOwn(caller, id)).update(caller, patch);
-    await this.#regenerate();
+    await this.#regenerate('place');
     return place;
   }
 
@@ -53,14 +53,14 @@ export class TravelSetup {
   async removePlace(id: string): Promise<void> {
     const caller = this.#caller;
     await (await Place.findOwn(caller, id)).remove(caller);
-    await this.#regenerate();
+    await this.#regenerate('place');
   }
 
   // ─── Rules ────────────────────────────────────────────────────────────────
 
   async addRule(input: NewTravelRule): Promise<TravelRule> {
     const rule = await TravelRule.create(this.#caller, input);
-    await this.#regenerate();
+    await this.#regenerate('rule');
     return rule;
   }
 
@@ -68,7 +68,7 @@ export class TravelSetup {
   async changeRule(id: string, patch: TravelRuleChange): Promise<TravelRule> {
     const caller = this.#caller;
     const rule = await (await TravelRule.findOwn(caller, id)).update(caller, patch);
-    await this.#regenerate();
+    await this.#regenerate('rule');
     return rule;
   }
 
@@ -76,7 +76,7 @@ export class TravelSetup {
   async removeRule(id: string): Promise<void> {
     const caller = this.#caller;
     await (await TravelRule.findOwn(caller, id)).remove(caller);
-    await this.#regenerate();
+    await this.#regenerate('rule');
   }
 
   // ─── Settings, default places and pins ────────────────────────────────────
@@ -90,7 +90,7 @@ export class TravelSetup {
   async changeSettings(patch: TravelSettingsPatch): Promise<TravelSettingsResponse> {
     const caller = this.#caller;
     const profile = await (await TravelProfile.of(caller)).updateSettings(caller, patch);
-    await this.#regenerate();
+    await this.#regenerate('settings');
     return TravelSetup.#view(profile);
   }
 
@@ -98,14 +98,14 @@ export class TravelSetup {
   async setContainerPlace(containerId: string, placeId: string | null): Promise<void> {
     const caller = this.#caller;
     await (await TravelProfile.of(caller)).setContainerPlace(caller, containerId, placeId);
-    await this.#regenerate();
+    await this.#regenerate('pin');
   }
 
   /** An item's place (the spec's "set place"; one of the caller's: 400); null unpins it. */
   async pinItemPlace(itemId: string, placeId: string | null): Promise<void> {
     const caller = this.#caller;
     await (await TravelProfile.of(caller)).pinItemPlace(caller, itemId, placeId);
-    await this.#regenerate();
+    await this.#regenerate('pin');
   }
 
   // ─── Legs ─────────────────────────────────────────────────────────────────
@@ -117,15 +117,18 @@ export class TravelSetup {
   async resetLeg(id: string): Promise<TravelLeg> {
     const caller = this.#caller;
     await (await TravelLeg.findOwn(caller, id)).reset(caller);
-    await this.#regenerate();
+    await this.#regenerate('reset');
     return TravelLeg.findOwn(caller, id);
   }
 
   // ─── Inside ───────────────────────────────────────────────────────────────
 
-  /** The caller's legs over the horizon, made again with what just changed. */
-  async #regenerate(): Promise<void> {
-    await TravelPlanner.regenerate(this.#caller);
+  /**
+   * The caller's legs over the horizon, made again with what just changed, while the request waits
+   * (TravelPlanner.afterOwnChange: a failure is logged, and the stored change still answers).
+   */
+  async #regenerate(change: string): Promise<void> {
+    await TravelPlanner.afterOwnChange(this.#caller, change);
   }
 
   static async #view(profile: TravelProfile): Promise<TravelSettingsResponse> {

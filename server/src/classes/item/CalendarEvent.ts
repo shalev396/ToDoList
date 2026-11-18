@@ -23,6 +23,7 @@ import {
   type WriteResult,
 } from '../integration/index.js';
 import { RecurrenceRule } from '../integration/RecurrenceRule.js';
+import { ItemPolicy } from '../policies/ItemPolicy.js';
 import { Topic } from '../workspace/Topic.js';
 import { WorkspaceSettings } from '../workspace/WorkspaceSettings.js';
 import { AppError } from '../../errors/AppError.js';
@@ -35,10 +36,11 @@ import { ProviderNoAnswerError } from '../../errors/ProviderNoAnswerError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { ItemData } from '../../models/definitions/Item.js';
+import { getItemRepository } from '../../models/index.js';
 import { logger } from '../../services/logger.js';
 import { calendarEventExternalId, mapCalendarEvent } from '../../sync/providers/google_calendar.js';
 import type { MappedItem } from '../../sync/types.js';
-import { isSeriesRow } from '../../types/recurrence/occurrences.js';
+import { isSeriesRow, toDate } from '../../types/recurrence/occurrences.js';
 import type { Recurring, Schedulable } from './contracts.js';
 import { CreateQuota } from './CreateQuota.js';
 import { eventHasGuests } from './guests.js';
@@ -117,6 +119,52 @@ export class CalendarEvent extends MirroredItem implements Schedulable, Recurrin
   /** Its series' rule lines; empty for a single event or one occurrence of a series. */
   get recurrenceLines(): readonly string[] {
     return this.recurrence ?? [];
+  }
+
+  /**
+   * The occurrence of a series this event is, when it is one of Google's exception rows (an
+   * occurrence moved or changed on its own: `recurringEventId` and `originalStartAt`), keyed as
+   * the shared expansion keys it (types/recurrence/occurrences.ts): by its master's id when the
+   * caller sees exactly one master of that series (`master`), else by its own; and by its original
+   * start. Null for any other event.
+   */
+  async seriesOccurrence(
+    caller: Caller,
+  ): Promise<{ seriesId: string; master: boolean; originalStart: Date } | null> {
+    const { props } = this.data;
+    const calendarId = props['calendarId'];
+    const seriesEventId = props['recurringEventId'];
+    const original = props['originalStartAt'];
+    const originalStart = toDate(typeof original === 'string' ? original : null);
+    if (
+      typeof calendarId !== 'string' ||
+      typeof seriesEventId !== 'string' ||
+      originalStart === null ||
+      Number.isNaN(originalStart.getTime())
+    ) {
+      return null;
+    }
+    const policy = await ItemPolicy.for(caller);
+    const masters = (
+      await (
+        await getItemRepository()
+      ).aggregate(caller.workspaceId, [
+        {
+          $match: {
+            ...policy.itemFilterUnabsorbed(caller.context),
+            'source.provider': this.provider,
+            'source.externalId': calendarEventExternalId(calendarId, seriesEventId),
+          },
+        },
+        { $limit: 5 },
+      ])
+    )
+      .map((doc) => Item.fromDoc(doc))
+      .filter((item) => item instanceof CalendarEvent && item.isRecurring);
+    const [master] = masters;
+    return masters.length === 1 && master !== undefined
+      ? { seriesId: master.id, master: true, originalStart }
+      : { seriesId: this.id, master: false, originalStart };
   }
 
   protected override needsGuestNotice(): boolean {

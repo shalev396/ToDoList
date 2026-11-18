@@ -318,12 +318,16 @@ export interface PlacePinRequest {
 
 /**
  * One leg's times as the member typed them when marking an item: any two of start, end and length
- * (or one, which keeps the rest), and the place he starts from (one of his; null: the plan's).
+ * (or one, which keeps the rest).
  */
 export interface SpanInput {
   startAt?: string;
   endAt?: string;
   minutes?: number;
+  /**
+   * The place he picked to start from: checked to be one of his places (400 otherwise), but where
+   * a leg starts comes from the day plan (Home, or the place before), never from this.
+   */
   fromPlaceId?: string | null;
 }
 
