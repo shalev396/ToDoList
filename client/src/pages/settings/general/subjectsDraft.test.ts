@@ -1,0 +1,132 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import type { AttributeDef } from '@api-types/attributes.ts';
+import {
+  addSubject,
+  draftOf,
+  moveSubject,
+  parsePatterns,
+  requestOf,
+  type SubjectDraft,
+} from './subjectsDraft.ts';
+
+const saved: AttributeDef = {
+  key: 'subject',
+  name: 'Subject',
+  type: 'select',
+  options: ['Calculus', 'History'],
+  optionLooks: [
+    { option: 'Calculus', colour: 'blue', patterns: ['*calc*'] },
+    { option: 'History', colour: 'orange', patterns: [] },
+  ],
+  builtIn: false,
+};
+
+function names(draft: SubjectDraft[]): string[] {
+  return draft.map((subject) => subject.name);
+}
+
+describe('parsePatterns', () => {
+  it('splits on lines and commas, trims and drops the empty ones', () => {
+    assert.deepEqual(parsePatterns('*calc*\n, *חדו"א* ,'), ['*calc*', '*חדו"א*']);
+  });
+});
+
+describe('draftOf', () => {
+  it('lists the options in order with their looks, each remembering its saved name', () => {
+    const draft = draftOf(saved);
+    assert.deepEqual(names(draft), ['Calculus', 'History']);
+    assert.deepEqual(
+      draft.map((subject) => [subject.savedName, subject.family, subject.patterns]),
+      [
+        ['Calculus', 'blue', ['*calc*']],
+        ['History', 'orange', []],
+      ],
+    );
+    assert.notEqual(draft[0]?.key, draft[1]?.key);
+  });
+  it('is empty without a subject attribute', () => {
+    assert.deepEqual(draftOf(undefined), []);
+  });
+});
+
+describe('addSubject', () => {
+  it('previews the next family the topics leave free', () => {
+    const added = addSubject([], 'Calculus', ['blue', 'orange', 'teal']).at(0);
+    assert.ok(added);
+    assert.equal(added.family, 'amber');
+    assert.equal(added.savedName, null);
+  });
+  it('counts the subjects already in the draft as taken', () => {
+    const draft = addSubject([], 'A', []);
+    const next = addSubject(draft, 'B', []);
+    assert.deepEqual(
+      next.map((subject) => subject.family),
+      ['blue', 'orange'],
+    );
+    assert.notEqual(next[0]?.key, next[1]?.key);
+  });
+  it('ignores an empty or repeated name', () => {
+    const draft = draftOf(saved);
+    assert.equal(addSubject(draft, '  ', []), draft);
+    assert.equal(addSubject(draft, 'History', []), draft);
+  });
+});
+
+describe('moveSubject', () => {
+  it('swaps with its neighbour', () => {
+    const draft = draftOf(saved);
+    const key = draft[1]?.key ?? '';
+    assert.deepEqual(names(moveSubject(draft, key, -1)), ['History', 'Calculus']);
+  });
+  it('is a no-op at the edges', () => {
+    const draft = draftOf(saved);
+    assert.equal(moveSubject(draft, draft[0]?.key ?? '', -1), draft);
+    assert.equal(moveSubject(draft, draft[1]?.key ?? '', 1), draft);
+  });
+});
+
+describe('requestOf', () => {
+  it('creates the subject attribute when none is saved', () => {
+    const draft = addSubject([], 'Calculus', []);
+    const request = requestOf(undefined, draft, 'Subject');
+    assert.deepEqual(request, {
+      create: {
+        key: 'subject',
+        name: 'Subject',
+        type: 'select',
+        options: ['Calculus'],
+        optionLooks: [{ option: 'Calculus', colour: 'blue', patterns: [] }],
+      },
+    });
+  });
+  it('is null with nothing to save', () => {
+    assert.equal(requestOf(undefined, [], 'Subject'), null);
+    assert.equal(requestOf(saved, draftOf(saved), 'Subject'), null);
+  });
+  it('patches a rename with the old and new name', () => {
+    const draft = draftOf(saved).map((subject) =>
+      subject.name === 'Calculus' ? { ...subject, name: 'Calc' } : subject,
+    );
+    const request = requestOf(saved, draft, 'Subject');
+    assert.ok(request !== null && 'patch' in request);
+    assert.deepEqual(request.patch.renames, [{ from: 'Calculus', to: 'Calc' }]);
+    assert.deepEqual(request.patch.options, ['Calc', 'History']);
+  });
+  it('patches a new order, a new family and new patterns without renames', () => {
+    const draft = moveSubject(draftOf(saved), draftOf(saved)[1]?.key ?? '', -1).map((subject) =>
+      subject.name === 'History'
+        ? { ...subject, family: 'green' as const, patterns: ['*h*'] }
+        : subject,
+    );
+    const request = requestOf(saved, draft, 'Subject');
+    assert.ok(request !== null && 'patch' in request);
+    assert.deepEqual(request.patch.options, ['History', 'Calculus']);
+    assert.deepEqual(request.patch.optionLooks?.[0], {
+      option: 'History',
+      colour: 'green',
+      patterns: ['*h*'],
+    });
+    assert.equal(request.patch.renames, undefined);
+  });
+});

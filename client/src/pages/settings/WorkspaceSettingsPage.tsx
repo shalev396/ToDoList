@@ -6,6 +6,7 @@ import { SettingsFrame } from '@/pages/settings/SettingsLayout';
 import { AttributesSection } from '@/pages/settings/general/AttributesSection';
 import { AgentPublishSection } from '@/pages/settings/general/AgentPublishSection';
 import { DeleteWorkspace } from '@/pages/settings/general/DeleteWorkspace';
+import { SubjectsSection } from '@/pages/settings/general/SubjectsSection';
 import { SettingsForm } from '@/pages/settings/general/SettingsForm';
 
 /**
@@ -23,6 +24,11 @@ export default function WorkspaceSettingsPage() {
       <PageMetadata title={pageTitle(t('settings.title'))} noIndex />
       <SettingsForm key={workspace.id} workspace={workspace} canEdit={isOwner} />
       <AttributesSection
+        workspaceId={workspace.id}
+        canEdit={role === 'owner' || role === 'editor'}
+      />
+      <SubjectsSection
+        key={workspace.id}
         workspaceId={workspace.id}
         canEdit={role === 'owner' || role === 'editor'}
       />
