@@ -3,8 +3,11 @@
  * family and title patterns, edited as a whole and saved with one request.
  */
 import { nextFamily } from '@api-types/colours.ts';
+import { GLOB_WILDCARDS_MAX, hasTooManyWildcards } from '@api-types/glob.ts';
 import {
   MAX_ATTRIBUTE_OPTIONS,
+  OPTION_PATTERN_LENGTH_MAX,
+  OPTION_PATTERNS_MAX,
   SUBJECT_ATTRIBUTE_KEY,
   type AttributeDef,
   type AttributePatch,
@@ -153,4 +156,61 @@ export function requestOf(
     return null;
   }
   return { patch: { options, optionLooks, ...(renames.length === 0 ? {} : { renames }) } };
+}
+
+export type RowIssue =
+  | { field: 'name'; code: 'empty' | 'duplicate' }
+  | { field: 'patterns'; code: 'count' }
+  | { field: 'patterns'; code: 'length' | 'wildcards'; pattern: string };
+
+/** What the server would refuse, per row (by key), found before saving; rows without issues are absent. */
+export function issuesOf(draft: readonly SubjectDraft[]): Map<string, RowIssue[]> {
+  const issues = new Map<string, RowIssue[]>();
+  const seen = new Set<string>();
+  for (const subject of draft) {
+    const found: RowIssue[] = [];
+    const name = subject.name.trim();
+    if (name === '') {
+      found.push({ field: 'name', code: 'empty' });
+    } else if (seen.has(name)) {
+      found.push({ field: 'name', code: 'duplicate' });
+    }
+    seen.add(name);
+    if (subject.patterns.length > OPTION_PATTERNS_MAX) {
+      found.push({ field: 'patterns', code: 'count' });
+    }
+    for (const pattern of subject.patterns) {
+      if (pattern.length > OPTION_PATTERN_LENGTH_MAX) {
+        found.push({ field: 'patterns', code: 'length', pattern });
+      } else if (hasTooManyWildcards(pattern)) {
+        found.push({ field: 'patterns', code: 'wildcards', pattern });
+      }
+    }
+    if (found.length > 0) {
+      issues.set(subject.key, found);
+    }
+  }
+  return issues;
+}
+
+export const SUBJECT_LIMITS = {
+  subjects: MAX_ATTRIBUTE_OPTIONS,
+  patterns: OPTION_PATTERNS_MAX,
+  patternLength: OPTION_PATTERN_LENGTH_MAX,
+  wildcards: GLOB_WILDCARDS_MAX,
+} as const;
+
+/** The server's counts (in the order the subjects were sent) by subject name. */
+export function countsByName(
+  subjects: readonly { name: string }[],
+  counts: readonly number[],
+): Record<string, number> {
+  const byName: Record<string, number> = {};
+  subjects.forEach((subject, index) => {
+    const count = counts[index];
+    if (count !== undefined) {
+      byName[subject.name] = count;
+    }
+  });
+  return byName;
 }

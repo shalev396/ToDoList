@@ -90,6 +90,13 @@ export const settings = {
     saved: 'Subjects saved',
     saveFailed: 'The subjects couldn’t be saved. Try again.',
     empty: 'No subjects yet.',
+    errNameEmpty: 'Give this subject a name.',
+    errNameDuplicate: 'Another subject already has this name.',
+    errLimit: 'A workspace can have up to {{max}} subjects.',
+    errPatternCount: 'Use at most {{max}} patterns per subject.',
+    errPatternLength: 'A pattern can be at most {{max}} characters: {{pattern}}',
+    errWildcards: 'A pattern can have at most {{max}} stars (*): {{pattern}}',
+    countFailed: 'Counting took too long. Use shorter or fewer patterns.',
     attributeName: 'Subject',
   },
   danger: {

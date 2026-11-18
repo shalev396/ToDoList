@@ -89,6 +89,13 @@ export const settings = {
     saved: 'הנושאים נשמרו',
     saveFailed: 'לא הצלחנו לשמור את הנושאים. נסו שוב.',
     empty: 'אין נושאים עדיין.',
+    errNameEmpty: 'צריך לתת שם לנושא.',
+    errNameDuplicate: 'כבר יש נושא אחר עם השם הזה.',
+    errLimit: 'במרחב עבודה אפשר להגדיר עד {{max}} נושאים.',
+    errPatternCount: 'אפשר עד {{max}} תבניות לנושא.',
+    errPatternLength: 'תבנית יכולה להכיל עד {{max}} תווים: {{pattern}}',
+    errWildcards: 'תבנית יכולה להכיל עד {{max}} כוכביות (*): {{pattern}}',
+    countFailed: 'הספירה לקחה יותר מדי זמן. נסו תבניות קצרות או מעטות יותר.',
     attributeName: 'נושא',
   },
   danger: {

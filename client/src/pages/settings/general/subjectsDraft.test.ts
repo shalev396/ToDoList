@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import type { AttributeDef } from '@api-types/attributes.ts';
 import {
   addSubject,
+  countsByName,
+  issuesOf,
   draftOf,
   moveSubject,
   parsePatterns,
@@ -128,5 +130,49 @@ describe('requestOf', () => {
       patterns: ['*h*'],
     });
     assert.equal(request.patch.renames, undefined);
+  });
+});
+
+describe('issuesOf', () => {
+  it('is empty for a valid draft', () => {
+    assert.equal(issuesOf(draftOf(saved)).size, 0);
+  });
+  it('flags an empty and a repeated name on their rows', () => {
+    const [a, b] = draftOf(saved);
+    assert.ok(a && b);
+    const issues = issuesOf([
+      { ...a, name: ' ' },
+      { ...b, name: 'X' },
+      { ...b, key: 'k', name: 'X' },
+    ]);
+    assert.deepEqual(issues.get(a.key), [{ field: 'name', code: 'empty' }]);
+    assert.equal(issues.has(b.key), false);
+    assert.deepEqual(issues.get('k'), [{ field: 'name', code: 'duplicate' }]);
+  });
+  it('flags too many patterns, a long one and a 13-star one, naming the pattern', () => {
+    const [a] = draftOf(saved);
+    assert.ok(a);
+    const many = Array.from({ length: 11 }, (_, i) => `p${String(i)}`);
+    assert.deepEqual(issuesOf([{ ...a, patterns: many }]).get(a.key), [
+      { field: 'patterns', code: 'count' },
+    ]);
+    const long = 'x'.repeat(101);
+    const stars = '*a'.repeat(13);
+    assert.deepEqual(issuesOf([{ ...a, patterns: [long, stars, '*ok*'] }]).get(a.key), [
+      { field: 'patterns', code: 'length', pattern: long },
+      { field: 'patterns', code: 'wildcards', pattern: stars },
+    ]);
+  });
+});
+
+describe('countsByName', () => {
+  it('keeps each count on its subject after a reorder', () => {
+    const sent = [{ name: 'Calculus' }, { name: 'History' }];
+    const counts = countsByName(sent, [2, 1]);
+    const reordered = moveSubject(draftOf(saved), draftOf(saved)[1]?.key ?? '', -1);
+    assert.deepEqual(
+      reordered.map((subject) => counts[subject.name]),
+      [1, 2],
+    );
   });
 });

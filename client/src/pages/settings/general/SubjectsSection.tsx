@@ -20,9 +20,12 @@ import { TOPIC_COLOURS, type TopicColour } from '@api-types/topics';
 import {
   addSubject,
   draftOf,
+  issuesOf,
   moveSubject,
   parsePatterns,
   requestOf,
+  SUBJECT_LIMITS,
+  type RowIssue,
   type SubjectDraft,
 } from './subjectsDraft';
 
@@ -42,15 +45,51 @@ interface RowProps {
   last: boolean;
   canEdit: boolean;
   count: string | null;
+  issues: RowIssue[];
   onChange: (patch: Partial<SubjectDraft>) => void;
   onMove: (by: -1 | 1) => void;
 }
 
-function SubjectRow({ subject, index, last, canEdit, count, onChange, onMove }: RowProps) {
+function SubjectRow({ subject, index, last, canEdit, count, issues, onChange, onMove }: RowProps) {
   const { t } = useTranslation();
   const id = useId();
   // The text as typed: a trailing newline or comma is not a pattern yet, so it is not parsed away.
   const [patternText, setPatternText] = useState(subject.patterns.join('\n'));
+  const nameIssues = issues.filter((issue) => issue.field === 'name');
+  const patternIssues = issues.filter((issue) => issue.field === 'patterns');
+  const messageOf = (issue: RowIssue): string => {
+    if (issue.field === 'name') {
+      return t(
+        issue.code === 'empty'
+          ? 'settings.subjects.errNameEmpty'
+          : 'settings.subjects.errNameDuplicate',
+      );
+    }
+    switch (issue.code) {
+      case 'count':
+        return t('settings.subjects.errPatternCount', { max: SUBJECT_LIMITS.patterns });
+      case 'length':
+        return t('settings.subjects.errPatternLength', {
+          max: SUBJECT_LIMITS.patternLength,
+          pattern: `${issue.pattern.slice(0, 20)}…`,
+        });
+      case 'wildcards':
+        return t('settings.subjects.errWildcards', {
+          max: SUBJECT_LIMITS.wildcards,
+          pattern: issue.pattern,
+        });
+    }
+  };
+  const messages = (list: RowIssue[], at: string) =>
+    list.length === 0 ? null : (
+      <ul id={at} className="flex flex-col gap-0.5 text-[13px] text-destructive">
+        {list.map((issue) => (
+          <li key={`${issue.code}-${'pattern' in issue ? issue.pattern : ''}`} dir="auto">
+            {messageOf(issue)}
+          </li>
+        ))}
+      </ul>
+    );
   const moveButton = (by: -1 | 1) => (
     <Button
       type="button"
@@ -83,10 +122,13 @@ function SubjectRow({ subject, index, last, canEdit, count, onChange, onMove }: 
             maxLength={40}
             dir="auto"
             readOnly={!canEdit}
+            aria-invalid={nameIssues.length > 0}
+            aria-describedby={nameIssues.length > 0 ? `${id}-name-error` : undefined}
             onChange={(event) => {
               onChange({ name: event.target.value });
             }}
           />
+          {messages(nameIssues, `${id}-name-error`)}
         </div>
         <div className="flex min-w-40 flex-col gap-1.5">
           <Label htmlFor={`${id}-family`}>{t('settings.subjects.family')}</Label>
@@ -126,7 +168,8 @@ function SubjectRow({ subject, index, last, canEdit, count, onChange, onMove }: 
           rows={2}
           readOnly={!canEdit}
           placeholder="*Calculus*"
-          aria-describedby={`${id}-hint`}
+          aria-invalid={patternIssues.length > 0}
+          aria-describedby={`${id}-hint${patternIssues.length > 0 ? ` ${id}-patterns-error` : ''}`}
           className={TEXTAREA_CLASS}
           onChange={(event) => {
             setPatternText(event.target.value);
@@ -136,6 +179,7 @@ function SubjectRow({ subject, index, last, canEdit, count, onChange, onMove }: 
         <p id={`${id}-hint`} className="text-[13px] text-muted-foreground">
           {t('settings.subjects.patternsHint')}
         </p>
+        {messages(patternIssues, `${id}-patterns-error`)}
       </div>
       <p
         aria-live="polite"
@@ -179,17 +223,20 @@ export function SubjectsSection({
   const draft = useMemo(() => edited ?? draftOf(saved), [edited, saved]);
   const attributeName = t('settings.subjects.attributeName');
   const request = requestOf(saved, draft, attributeName);
-  const names = draft.map((subject) => subject.name.trim());
-  const valid = names.every((name) => name !== '') && new Set(names).size === names.length;
+  const issues = useMemo(() => issuesOf(draft), [draft]);
+  const valid = issues.size === 0;
+  const atLimit = draft.length >= SUBJECT_LIMITS.subjects;
+  const newTrimmed = newName.trim();
+  const newDuplicate = draft.some((subject) => subject.name.trim() === newTrimmed);
   const saving = create.isPending || update.isPending;
 
-  const probes = draft
+  // Nothing is counted while a row holds something the server would refuse.
+  const probes = (valid ? draft : [])
     .filter((subject) => subject.name.trim() !== '')
     .map((subject) => ({ name: subject.name.trim(), patterns: subject.patterns }));
   const counts = useSubjectMatchCounts(workspaceId, probes);
   const countOf = (subject: SubjectDraft): string | null => {
-    const at = probes.findIndex((probe) => probe.name === subject.name.trim());
-    const value = counts.data?.counts[at];
+    const value = counts.data?.byName[subject.name.trim()];
     if (value === undefined) {
       return null;
     }
@@ -249,6 +296,7 @@ export function SubjectsSection({
                 last={index === draft.length - 1}
                 canEdit={canEdit}
                 count={countOf(subject)}
+                issues={issues.get(subject.key) ?? []}
                 onChange={(patch) => {
                   edit((rows) =>
                     rows.map((row) => (row.key === subject.key ? { ...row, ...patch } : row)),
@@ -287,12 +335,22 @@ export function SubjectsSection({
               variant="outline"
               size="sm"
               className="max-md:h-11"
-              disabled={newName.trim() === ''}
+              disabled={newTrimmed === '' || atLimit || newDuplicate}
             >
               <Plus aria-hidden="true" />
               {t('settings.subjects.add')}
             </Button>
+            {atLimit || (newDuplicate && newTrimmed !== '') ? (
+              <p className="basis-full text-[13px] text-destructive" dir="auto">
+                {atLimit
+                  ? t('settings.subjects.errLimit', { max: SUBJECT_LIMITS.subjects })
+                  : t('settings.subjects.errNameDuplicate')}
+              </p>
+            ) : null}
           </form>
+        ) : null}
+        {counts.isError && probes.length > 0 ? (
+          <FormError>{t('settings.subjects.countFailed')}</FormError>
         ) : null}
         {error === null ? null : <FormError>{error}</FormError>}
         {canEdit ? (
