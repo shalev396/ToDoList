@@ -280,6 +280,8 @@ describe('ItemPolicy: the filter and canRead agree', () => {
                 timeZone: 'UTC',
                 weekStart: caller.settings.weekStart,
                 preview: false,
+                // Time-shaped, so it reads every kind the access lets through (blocks and legs too).
+                blockType: 'calendar',
               },
             );
             // The pipeline up to its facet: the access filter, the prefilter, the projection, the filter.

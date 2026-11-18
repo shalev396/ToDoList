@@ -50,7 +50,7 @@ export const PROMPTS: readonly PromptDef[] = [
     text: (args) =>
       [
         `Give me my morning brief for ${given(args['date'], 'today')}.`,
-        '1. Call list_today for that day, and search_items with status open and dueTo before that day for what is overdue.',
+        '1. Call list_today for that day, and search_items with status open and dueTo before that day for what is overdue. Its scheduled list is the time already kept that day (time blocks, areas, travel): show it with the events, never as tasks.',
         '2. Call list_deadlines for the next 2 days.',
         '3. If you have integrations_list and get_sync_status, check sync health: anything expired, in error, or not synced today.',
         `Leave out: ${given(args['muteSources'], 'nothing')}. Group by topic, most urgent first, short.`,
@@ -73,7 +73,7 @@ export const PROMPTS: readonly PromptDef[] = [
       [
         `Help me plan the week starting ${given(args['weekStart'], 'this week')}, for ${given(args['topics'], 'all my topics')}.`,
         '1. Call get_calendar for the week and list_deadlines for it.',
-        '2. Propose focus blocks around fixed events, deadlines first; say what does not fit.',
+        '2. Propose focus blocks around the busy entries (events, time blocks, travel), deadlines first; areas are not busy, so plan inside them where they fit. Say what does not fit.',
         '3. If I agree and you have sync_to_google_calendar, run it with dryRun: true first and show me the diff; push only when I confirm.',
         OPEN_IN,
       ].join('\n'),

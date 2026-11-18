@@ -9,9 +9,12 @@ Answer "what is on my plate" from TodoList's read tools. Never write anything in
 
 ## Tools
 
-- `list_today`: today's events, items due today, and overdue items (in the workspace time zone). Start here for "today".
+- `list_today`: today's events, items due today, overdue items, and `scheduled[]` (in the workspace time zone). Start here for "today".
+  - `scheduled[]` is the time TodoList keeps today: time blocks (study or focus time), areas (`layer: "area"`, time painted for a part of life, such as "Studying 13:00-17:00") and travel legs. Each repeating block appears once per occurrence.
+  - Blocks and legs are not tasks: they are never due, overdue or completed. Do not list them as to-dos or offer to tick them off.
+  - `busy: true` marks time that is taken (time blocks, travel, events). An area has `busy: false`: it is a plan, so suggest putting blocks inside it.
 - `list_deadlines`: upcoming due dates, grouped by topic, container (project or course) and provider. Use it for "what is coming up".
-- `get_calendar`: events and dated items for a week, a month or a custom range.
+- `get_calendar`: events, dated items, time blocks, areas and travel for a week, a month or a custom range. Each occurrence of a repeating event or block is its own entry, with `occurrence` (`seriesId`, `originalStart`) and `busy`.
 - `get_item`: one item in full, with its source and `openIn` link.
 - `search_items` and `list_facets`: for "find my X" and to learn the topics, providers and containers that exist.
 
@@ -20,7 +23,7 @@ All of them accept a `topic` filter where it makes sense: the slugs of the works
 ## How to present it
 
 1. Respect topics. If the user named one ("my work day"), filter by it. Otherwise group the answer by topic so work and personal never blur together.
-2. Order: overdue first (say how late), then events in time order, then due today.
+2. Order: overdue first (say how late), then events and scheduled time in time order, then due today. Name an area as the frame ("Studying 13:00-17:00") with the blocks inside it under it.
 3. Every item that comes from a provider (Jira, ClickUp, Linear, Moodle, GitHub or Google Calendar) gets its link: write `Open in <provider>` as a Markdown link to `openIn.url`. Local to-dos have no link; say they live in TodoList.
 4. Keep it short: title, topic, due time, link. Offer details only on request.
 5. Times: show them in the workspace time zone that `list_today` returns, not UTC.

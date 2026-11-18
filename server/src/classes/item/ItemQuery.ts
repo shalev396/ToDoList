@@ -20,7 +20,12 @@ import type { CompileContext } from '../../builder/compile.js';
 import { runQuery, type RunQueryDeps } from '../../builder/run.js';
 import { logger } from '../../services/logger.js';
 import { LOCAL_CONNECTOR, type Query, type QueryResult } from '../../types/builder.js';
-import type { ItemKind, ItemStatus, Provider } from '../../types/domain.js';
+import {
+  SCHEDULED_KINDS,
+  type ItemKind,
+  type ItemStatus,
+  type Provider,
+} from '../../types/domain.js';
 import type {
   FacetsResponseData,
   ItemDetail,
@@ -151,14 +156,17 @@ export class ItemQuery {
 
   /**
    * One page of the items the caller may see, sorted by due date (none first), then id; the
-   * status and due-date filters, the sort and the cursor read effective values. 400 for a bad
-   * cursor.
+   * status and due-date filters, the sort and the cursor read effective values. A task-shaped
+   * list: time blocks, areas and travel legs only when `kind` names them. 400 for a bad cursor.
    */
   async list(query: ItemListQuery): Promise<ListItemsResponseData> {
     const caller = this.#caller;
     const limit = query.limit ?? DEFAULT_PAGE_SIZE;
     const sourceFilters: Doc = {
-      ...matchOneOrMany('kind', query.kind),
+      // Task-shaped (Decision 7): reserved time only when a kind is named.
+      ...(query.kind === undefined
+        ? { kind: { $nin: [...SCHEDULED_KINDS] } }
+        : matchOneOrMany('kind', query.kind)),
       ...matchOneOrMany('source.provider', query.provider),
       ...matchOneOrMany('topicId', query.topicId),
       ...(query.containerId === undefined ? {} : { containerId: query.containerId }),
@@ -279,7 +287,11 @@ export class ItemQuery {
           providers: [{ $group: { _id: '$source.provider' } }],
           topics: [{ $group: { _id: '$topicId' } }],
           kinds: [{ $group: { _id: '$kind' } }],
-          statuses: [{ $group: { _id: '$status' } }],
+          // Reserved time has no status to filter by: whatever it stores is not one.
+          statuses: [
+            { $match: { kind: { $nin: [...SCHEDULED_KINDS] } } },
+            { $group: { _id: '$status' } },
+          ],
         },
       },
     ]);

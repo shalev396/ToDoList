@@ -2,9 +2,10 @@ import { z } from 'zod';
 
 import { resolveDatePreset, type DateBounds } from '../../../builder/dates.js';
 import { AppError } from '../../../errors/AppError.js';
+import { CAPS } from '../../../types/builder.js';
 import { defineTool, type ToolContext } from '../../tool.js';
 import { ItemSummaryView, KindList, ProviderList, TopicList, topicIds } from '../itemViews.js';
-import { filterRules, findItems, range, where } from './bridge.js';
+import { filterRules, findItems, occurrencesOf, range, where } from './bridge.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_CUSTOM_DAYS = 92;
@@ -48,7 +49,7 @@ export const getCalendar = defineTool({
   name: 'get_calendar',
   title: 'Get calendar',
   description:
-    'Events and dated items in a week (from the workspace’s week start), a month, or a custom range, in the workspace’s time zone. An item counts on its start time, or on its due date when it has no start. Sorted by that time. Each item has source and openIn. Filter by topic, provider and kind.',
+    'Events, dated items and the time TodoList keeps (time blocks, areas with layer area, travel legs) in a week (from the workspace’s week start), a month, or a custom range, in the workspace’s time zone. One entry per occurrence: a repeating event or time block appears once for each time it happens in the range, even when the series began earlier, with occurrence {seriesId, originalStart}. An item counts on its start time, or on its due date when it has no start. Sorted by that time. busy says whether an entry takes the time: events (unless shown as free), time blocks and travel are busy; areas, to-dos and tasks are not. Cancelled and declined events are left out, as on the calendar. Each item has source and openIn. Filter by topic, provider and kind.',
   toolset: 'read',
   inputSchema: z.strictObject({
     range: z.enum(['week', 'month', 'custom']).default('week'),
@@ -65,8 +66,8 @@ export const getCalendar = defineTool({
     to: z.string().describe('ISO 8601, exclusive'),
     timezone: z.string(),
     weekStart: z.enum(['sun', 'mon']),
-    items: z.array(ItemSummaryView),
-    total: z.number().int().describe('Every matching item, even past the limit'),
+    items: z.array(ItemSummaryView).describe('One entry per occurrence, with occurrence and busy'),
+    total: z.number().int().describe('Every entry found, even past the limit'),
   }),
   annotations: {
     readOnlyHint: true,
@@ -78,27 +79,35 @@ export const getCalendar = defineTool({
   minRole: 'viewer',
   async handler(ctx, input) {
     const bounds = boundsOf(ctx, input);
-    const { items, total } = await findItems(ctx, {
-      source: 'items',
-      ...where(filterRules({ ...input, topic: await topicIds(ctx.workspace, input.topic) })),
-      dateField: 'any',
-      dateRange: range(bounds.from, bounds.to),
-      sort: [
-        { field: 'startAt', dir: 'asc' },
-        { field: 'dueAt', dir: 'asc' },
-      ],
-      limit: input.limit,
-    });
-    const when = (item: { startAt: string | null; dueAt: string | null }): string =>
-      item.startAt ?? item.dueAt ?? '';
+    const { timezone, weekStart } = ctx.workspace.settings;
+    // Time-shaped: blocks, areas and travel are read with everything else. The rows are read up
+    // to the cap (one series row may give many entries), then the entries are cut to the limit.
+    const found = await findItems(
+      ctx,
+      {
+        source: 'items',
+        ...where(filterRules({ ...input, topic: await topicIds(ctx.workspace, input.topic) })),
+        dateField: 'any',
+        dateRange: range(bounds.from, bounds.to),
+        sort: [
+          { field: 'startAt', dir: 'asc' },
+          { field: 'dueAt', dir: 'asc' },
+        ],
+        limit: CAPS.maxLimit,
+      },
+      ctx.now(),
+      { blockType: 'calendar' },
+    );
+    const entries = occurrencesOf(found, bounds, timezone);
     return {
       output: {
         from: bounds.from.toISOString(),
         to: bounds.to.toISOString(),
-        timezone: ctx.workspace.settings.timezone,
-        weekStart: ctx.workspace.settings.weekStart,
-        items: [...items].sort((a, b) => when(a).localeCompare(when(b))),
-        total,
+        timezone,
+        weekStart,
+        items: entries.slice(0, input.limit),
+        // Rows past the cap were not expanded: each counts once.
+        total: entries.length + Math.max(0, found.total - found.rows.length),
       },
       target: { type: 'workspace', id: ctx.workspace.id },
     };

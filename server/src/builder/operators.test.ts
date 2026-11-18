@@ -329,8 +329,8 @@ describe('attribute fields', () => {
       },
       context({ attributes }),
     );
-    // After the base filter and the effective values.
-    assert.deepEqual(compiled.pipeline[2], {
+    // After the base filter, the task-shaped scope and the effective values.
+    assert.deepEqual(compiled.pipeline[3], {
       $addFields: { 'overlay.attrs.importance': { $ifNull: ['$overlay.attrs.importance', 3] } },
     });
   });

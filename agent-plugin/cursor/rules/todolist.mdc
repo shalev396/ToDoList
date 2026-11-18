@@ -9,6 +9,7 @@ Use these rules whenever you read or change TodoList data. Cursor has no hooks f
 
 ## Reading (today, deadlines, calendar)
 - `list_today` for today, `list_deadlines` for what is coming, `get_calendar` for a week or month, `get_item` for one item.
+- `list_today.scheduled[]` and `get_calendar` hold time blocks, areas (`layer: "area"`) and travel legs, one entry per occurrence. Blocks and legs are not tasks: never list them as due or overdue, never complete them. `busy` says whether the time is taken (areas are not).
 - Respect areas (`work`, `college`, `personal`): filter or group by them.
 - For provider items show an "Open in <provider>" link from `openIn.url`.
 

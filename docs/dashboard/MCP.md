@@ -145,13 +145,13 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 ### 7.1 Read (`read`)
 | Tool | Purpose | Ann. |
 |---|---|---|
-| `search_items` | Text and filter search over `Items` (mirrored + local) | RO |
-| `list_today` | Today's events, items due today and overdue items (workspace TZ, `Asia/Jerusalem`) | RO |
-| `list_deadlines` | Upcoming `dueAt`, grouped by topic / container (project or course) / provider | RO |
-| `get_calendar` | Events and dated items for `week`\|`month`\|custom (week starts per `settings.weekStart`) | RO |
+| `search_items` | Text and filter search over `Items` (mirrored + local); time blocks and travel legs only when `kind` names them | RO |
+| `list_today` | Today's events, items due today and overdue items (workspace TZ, `Asia/Jerusalem`), plus `scheduled[]`: today's time blocks, areas (`layer: area`) and travel legs, one entry per occurrence, each with `busy` (false for areas). Scheduled entries are never due or overdue | RO |
+| `list_deadlines` | Upcoming `dueAt`, grouped by topic / container (project or course) / provider; never time blocks or travel | RO |
+| `get_calendar` | Events, dated items, time blocks, areas and travel for `week`\|`month`\|custom (week starts per `settings.weekStart`): one entry per occurrence of a repeating event or block (even one that began before the range), with `occurrence` and `busy` | RO |
 | `get_item` | One item, full `props`, `source`, `openIn` | RO |
 | `list_facets` | Distinct providers, topics and containers (wraps BACKEND.md `/facets`) | RO |
-| `query_items` | Run a query via `POST /workspaces/:wid/query`: a saved query id (`savedQueryId` or `dashboardId`+`blockId`) **or** a draft query, plus optional runtime cross-block filter `vars` (`$page.*`) | RO |
+| `query_items` | Run a query via `POST /workspaces/:wid/query`: a saved query id (`savedQueryId` or `dashboardId`+`blockId`) **or** a draft query, plus optional runtime cross-block filter `vars` (`$page.*`). A draft is task-shaped (no time blocks or travel) unless it names a `kind` or passes a time-shaped `blockType` (`calendar`, `clock`, `timeline`, `agenda`, `workload`) | RO |
 
 ```json
 // search_items.inputSchema
@@ -293,6 +293,8 @@ The target is the workspace's primary calendar (`settings.primaryCalendar`) and 
   "lastSeenAt": "…"
 }
 ```
+
+Optional fields: `layer` (`block` or `area`, on a time block). In the time answers (`get_calendar`, `list_today`'s `events` and `scheduled`) each entry is one occurrence: `startAt`/`endAt` are that occurrence's, `occurrence` is `{ seriesId, originalStart }` for an occurrence of a repeating series (else null), and `busy` says whether the time is taken (events unless shown as free, time blocks and travel; not areas, to-dos or tasks).
 
 ---
 

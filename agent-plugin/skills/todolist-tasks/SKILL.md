@@ -20,6 +20,7 @@ A plugin hook enforces rules 1 to 5 below before `create_todo` runs and tells yo
 
 - `update_todo` patches title, `dueAt`, priority, topic, container, note or status. Re-check the verb-first rule when you retitle.
 - `complete_todo` is how finished work is closed. Use it instead of deleting (`done: false` reopens).
+- **Time blocks, areas and travel legs are not to-dos.** They have kind `block` or `travel` and show in `list_today.scheduled[]` and `get_calendar`. They are never completed, have no status or due date, and `search_items` leaves them out unless you pass `kind`. `complete_todo` and `update_todo` refuse them.
 - **Mirrored items are never edited.** Items with a `source.provider` other than `local` (Jira, ClickUp, Linear, Moodle, GitHub, Google) belong to their provider. Give the user the `openIn.url` as "Open in <provider>". To pin, hide or annotate a mirrored item locally, use `set_overlay`; that never touches the provider.
 
 ## Destructive tools

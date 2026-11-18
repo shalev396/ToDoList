@@ -61,7 +61,8 @@ items|containers   where (AND/OR), dateRange,       groupBy ≤3, aggregate     
 | Primitive | JSON | Examples |
 |---|---|---|
 | Filter rule | `{field, operator, value}` in a `{combinator, rules}` group (the react-querybuilder format, FRONTEND.md §3) | `status in [open,in_progress]`, `source.provider = jira` |
-| Date range | `"dateRange": "this_week" \| "next_7d" \| "overdue" \| "today" \| "this_semester" \| {from,to}` | Presets resolve in the workspace timezone, `Asia/Jerusalem`, with weeks starting Sunday (`settings.weekStart`) |
+| Date range | `"dateRange": "this_week" \| "next_7d" \| "overdue" \| "today" \| "this_semester" \| {from,to}` | Presets resolve in the workspace timezone, `Asia/Jerusalem`, with weeks starting Sunday (`settings.weekStart`). On `startAt` or `any`, a repeating series that began before the range is read too, and the time views expand it into the range's occurrences |
+| Task or time | the block's type | Time-shaped types (`calendar`, `clock`, `timeline`, `agenda`, `workload`) always read time blocks, areas and travel legs. Every other type, and a query with no block type, leaves them out unless a rule on `kind` applies |
 | Dynamic values | `@now`, `@today`, `@me`, `$page.<var>` | `dueAt < @now` |
 | Group / aggregate | `groupBy: ["source.provider"]`, `aggregate: {op:"count"}` | The donut by source |
 | If/then | `rules: [{if:{…}, then:{tone\|badge\|hide}}]` | Overdue shows red, done is hidden |
@@ -76,7 +77,7 @@ items|containers   where (AND/OR), dateRange,       groupBy ≤3, aggregate     
 
 | Type | Purpose | Required query bits | Defaults |
 |---|---|---|---|
-| `clock` | 24h ring of today's events with a **now-needle**, plus "now / next" | `source: items`, `kind: event`, `dateRange: today` | `calendars: from integration`, refreshes every 60 s |
+| `clock` | 24h ring of today's events with a **now-needle**, plus "now / next" | `source: items`, `kind in [event, block, travel]`, `dateRange: today` | `calendars: from integration`, refreshes every 60 s |
 | `chart` | donut, bar, line or number | `groupBy` + `aggregate` | **Donut by `source.provider`** with a total count and area chips |
 | `calendar` | FullCalendar week/month/list | items with `startAt` or `dueAt` | **`view: "week"`** (`timeGridWeek`), with Month as a toggle saved per block |
 | `deadlines` | due-soon list, soonest first | `dueAt` not null, `status` open | `dateRange: next_14d`, overdue items on top |
