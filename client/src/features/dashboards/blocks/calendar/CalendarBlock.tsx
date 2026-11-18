@@ -50,6 +50,7 @@ import {
 } from '../time/occurrences';
 import {
   toAreaEventInput,
+  toAreaPeriodEventInput,
   toEventInput,
   type CalendarAreaProps,
   type CalendarEventProps,
@@ -174,18 +175,25 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       }),
     };
   }, [visible, visibleRows, range, timeZone, colourOf]);
+  const viewName = fcView(view, phone, options.list);
+  // FullCalendar draws no background events in the month grid or a list: there an area is a
+  // plain event, in the area's style, that opens its sheet.
+  const areasAsEvents = viewName !== 'timeGridWeek';
   const events = useMemo(
     () => [
       ...areas.map((occurrence) =>
-        toAreaEventInput(occurrence, colourOf(occurrence.row.id), timeZone),
+        (areasAsEvents ? toAreaPeriodEventInput : toAreaEventInput)(
+          occurrence,
+          colourOf(occurrence.row.id),
+          timeZone,
+        ),
       ),
       ...displayed.map((item) => toEventInput(item, timeZone, colourOf(item.occurrence.row.id))),
     ],
-    [areas, displayed, timeZone, colourOf],
+    [areas, areasAsEvents, displayed, timeZone, colourOf],
   );
 
   const calendar = useRef<FullCalendar>(null);
-  const viewName = fcView(view, phone, options.list);
   useEffect(() => {
     // After the commit: a click's effects run inside it, and FullCalendar renders a new date
     // with flushSync, which React refuses there ("flushSync was called from inside a lifecycle").
@@ -274,6 +282,19 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       );
     }
     const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
+    if ('area' in props && arg.event.display !== 'background') {
+      // A list or month row: the area's title in its tint, like any event.
+      return (
+        <div className="flex min-w-0 items-center gap-1 px-1 text-[11px] leading-4">
+          {arg.timeText === '' || arg.event.allDay ? null : (
+            <span className="shrink-0 font-medium tabular-nums">{arg.timeText}</span>
+          )}
+          <span dir="auto" className="min-w-0 truncate">
+            {arg.event.title}
+          </span>
+        </div>
+      );
+    }
     if ('area' in props) {
       const when = arg.event.allDay
         ? t('timeBlocks.calendar.allDay')
@@ -508,13 +529,11 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             eventClick={(arg) => {
               arg.jsEvent.preventDefault();
               const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
-              // An area is the time behind the events, not one of them.
-              if (!('area' in props)) {
-                openItem(
-                  props.rowId,
-                  props.originalStart === null ? undefined : new Date(props.originalStart),
-                );
-              }
+              // A background area is the time behind the events and never gets here.
+              openItem(
+                props.rowId,
+                props.originalStart === null ? undefined : new Date(props.originalStart),
+              );
             }}
             noEventsContent={() => null}
           />

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { EventInput } from '@fullcalendar/core';
 import { zonedTime } from '../clock/ClockRing.math.ts';
-import { toAreaEventInput, toEventInput } from './calendarEvents.ts';
+import { toAreaEventInput, toAreaPeriodEventInput, toEventInput } from './calendarEvents.ts';
 import type { Occurrence, TimeRow } from '../time/occurrences.ts';
 import type { ColourRole, ItemColour } from '@api-types/colours.ts';
 
@@ -150,6 +150,37 @@ describe('toAreaEventInput', () => {
 
   it('gives an all-day area whole dates', () => {
     const input = toAreaEventInput(
+      occ({ allDay: true, start: at(2026, 11, 12), end: at(2026, 11, 13) }),
+      colour('area'),
+      TZ,
+    );
+    assert.deepEqual([input.allDay, input.start, input.end], [true, '2026-11-12', '2026-11-13']);
+  });
+});
+
+describe('toAreaPeriodEventInput', () => {
+  it('draws an area as a plain event in the area style, for the month grid and a phone list', () => {
+    const slot = at(2026, 11, 12, 10);
+    const input = toAreaPeriodEventInput(
+      occ({ key: 'area-1', row: { ...row('studying'), title: 'Studying' }, originalStart: slot }),
+      { ...colour('area'), family: 'teal' },
+      TZ,
+    );
+    assert.notEqual(input.display, 'background');
+    assert.equal(input.title, 'Studying');
+    assert.equal(input.backgroundColor, 'var(--tc-teal-area)');
+    assert.ok(input.classNames?.toString().includes('tc-area'));
+    assert.equal(input.editable, false);
+    assert.deepEqual([input.start, input.end], ['2026-11-12T10:00:00', '2026-11-12T11:00:00']);
+    assert.deepEqual(pick(input, 'rowId', 'area', 'originalStart'), [
+      'studying',
+      true,
+      slot.toISOString(),
+    ]);
+  });
+
+  it('keeps an all-day area on whole dates', () => {
+    const input = toAreaPeriodEventInput(
       occ({ allDay: true, start: at(2026, 11, 12), end: at(2026, 11, 13) }),
       colour('area'),
       TZ,

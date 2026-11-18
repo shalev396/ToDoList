@@ -67,6 +67,7 @@ function AgendaRow({
  */
 export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
   const { t } = useTranslation();
+  const { openItem } = useItemParam();
   const { language } = useLanguage();
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
   const title = blockTitle(block, t);
@@ -137,6 +138,9 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
                         colour={colourOf(area.row.id)}
                         timeZone={timeZone}
                         locale={locale}
+                        onOpen={() => {
+                          openItem(area.row.id, area.originalStart ?? undefined);
+                        }}
                       />
                       {items.length > 0 ? (
                         <ul className="m-0 list-none p-0">{items.map(row)}</ul>

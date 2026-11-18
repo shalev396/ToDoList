@@ -9,6 +9,7 @@
  * - Later today: the rest of today.
  * - Tomorrow: everything on the next local day.
  */
+import { isScheduledKind } from '@api-types/scheduled.ts';
 import { endOfZonedDay } from '../clock/ClockRing.math.ts';
 import { nestInAreas, type AreaGroup } from '../time/areas.ts';
 import { expandOccurrences, type Occurrence, type TimeRow } from '../time/occurrences.ts';
@@ -42,7 +43,12 @@ function endOf(occurrence: Occurrence): number {
 
 function isOpenTask(occurrence: Occurrence): boolean {
   const { row } = occurrence;
-  return row.kind !== 'event' && row.status !== 'done' && row.status !== 'cancelled';
+  return (
+    row.kind !== 'event' &&
+    !isScheduledKind(row.kind) &&
+    row.status !== 'done' &&
+    row.status !== 'cancelled'
+  );
 }
 
 export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: string): AgendaModel {

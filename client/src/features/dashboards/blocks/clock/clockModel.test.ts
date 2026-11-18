@@ -161,6 +161,41 @@ describe('buildClockModel', () => {
     assert.deepEqual(area.colour, studying);
   });
 
+  it('area goes to areas (with its topic), block to arcs', () => {
+    const colours: Record<string, ItemColour> = {
+      studying: { family: 'teal', role: 'area', from: 'topic', subject: null, topicId: 'college' },
+      focus: { family: 'teal', role: 'work', from: 'topic', subject: null, topicId: 'college' },
+    };
+    const model = buildClockModel(
+      [
+        row('studying', {
+          kind: 'block',
+          startAt: at(2026, 11, 12, 12),
+          endAt: at(2026, 11, 12, 17),
+          props: { layer: 'area' },
+        }),
+        row('focus', {
+          kind: 'block',
+          startAt: at(2026, 11, 12, 14),
+          endAt: at(2026, 11, 12, 15),
+          props: { layer: 'block' },
+        }),
+      ],
+      now,
+      TZ,
+      (rowId) => defined(colours[rowId]),
+    );
+    assert.deepEqual(
+      model.areas.map((a) => [a.title, a.topicId]),
+      [['studying', 'college']],
+    );
+    assert.deepEqual(
+      model.timed.map((e) => [e.title, e.colour?.role]),
+      [['focus', 'work']],
+    );
+    assert.equal(model.next?.row.id, 'focus');
+  });
+
   it('gives each arc its row colour', () => {
     const colours: Record<string, ItemColour> = {
       lecture: {

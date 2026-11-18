@@ -93,6 +93,40 @@ describe('workload per day', () => {
     assert.equal(model.peakHours, 6);
   });
 
+  it('counts blocks and travel legs as busy hours, never areas, and none as task load', () => {
+    const model = build([
+      row('focus', {
+        kind: 'block',
+        startAt: at('10:00', '09'),
+        endAt: at('12:00', '09'),
+        props: { layer: 'block' },
+      }),
+      row('bus', { kind: 'travel', startAt: at('08:00', '09'), endAt: at('08:30', '09') }),
+      row('study', {
+        kind: 'block',
+        startAt: at('13:00', '09'),
+        endAt: at('17:00', '09'),
+        props: { layer: 'area' },
+      }),
+    ]);
+    const monday = model.days[1];
+    assert.equal(monday?.eventHours, 2.5);
+    assert.equal(monday.taskHours, 0);
+    assert.deepEqual(model.unestimated, []);
+  });
+
+  it('workload: area hours are not counted', () => {
+    const model = build([
+      row('study', {
+        kind: 'block',
+        startAt: at('13:00', '09'),
+        endAt: at('17:00', '09'),
+        props: { layer: 'area' },
+      }),
+    ]);
+    assert.equal(model.totalHours, 0);
+  });
+
   it('counts unknown estimates as nothing and lists them as unestimated', () => {
     const model = build([row('vague', { dueAt: at('12:00', '10') })]);
     assert.equal(model.days[2]?.totalHours, 0);

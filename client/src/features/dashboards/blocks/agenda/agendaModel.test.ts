@@ -159,6 +159,42 @@ describe('agenda: areas', () => {
     assert.deepEqual(shape(result.laterToday), [[null, ['dentist']]]);
   });
 
+  it('agenda: a block inside Studying 13–17 is listed under it', () => {
+    const result = place(
+      [
+        row('focus', {
+          kind: 'block',
+          startAt: at('14:00'),
+          endAt: at('15:00'),
+          props: { layer: 'block' },
+        }),
+      ],
+      [
+        row('study', {
+          kind: 'block',
+          startAt: at('13:00'),
+          endAt: at('17:00'),
+          props: { layer: 'area' },
+        }),
+      ],
+    );
+    assert.deepEqual(shape(result.next), [['study', ['focus']]]);
+  });
+
+  it('a block or a travel leg is never an open task: not overdue, not earlier today', () => {
+    const model = buildAgenda(
+      [
+        row('yesterday', { kind: 'block', dueAt: at('09:00', '11') }),
+        row('earlier', { kind: 'travel', dueAt: at('09:00') }),
+        row('todo', { kind: 'task', dueAt: at('09:00') }),
+      ],
+      NOW,
+      TZ,
+    );
+    assert.deepEqual(ids(model.overdue), []);
+    assert.deepEqual(ids(model.earlierToday), ['todo']);
+  });
+
   it('lists an empty area in the part where it starts, by time against the items', () => {
     // Now 12:00; the lecture at 14:00 is Next, the meeting at 16:00 Later today.
     const result = place(

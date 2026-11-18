@@ -40,6 +40,8 @@ export interface ClockArea {
   title: string;
   start: Date;
   end: Date;
+  /** The topic the area is painted for (its colour's), if any. */
+  topicId: string | null;
   colour: ItemColour;
 }
 
@@ -83,6 +85,7 @@ export function buildClockModel(
       title: o.row.title,
       start: o.start,
       end: endOf(o),
+      topicId: colourOf(o.row.id).topicId,
       colour: colourOf(o.row.id),
     }));
   }

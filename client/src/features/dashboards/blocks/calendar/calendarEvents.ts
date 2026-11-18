@@ -41,11 +41,15 @@ export interface CalendarEventProps {
   role: ColourRole;
 }
 
-/** An area's props: it is a band, not an event (no click, no source). */
+/**
+ * An area's props: a band in the week grid (no click, no source), or a plain event in the month
+ * grid and a phone list, where it opens the area's sheet on `originalStart`.
+ */
 export interface CalendarAreaProps {
   rowId: string;
   area: true;
   family: ColourFamily;
+  originalStart: string | null;
 }
 
 function addDay(date: string): string {
@@ -121,6 +125,7 @@ export function toAreaEventInput(
     rowId: occurrence.row.id,
     area: true,
     family: colour.family,
+    originalStart: occurrence.originalStart?.toISOString() ?? null,
   };
   return {
     id: occurrence.key,
@@ -130,5 +135,25 @@ export function toAreaEventInput(
     classNames: ['tc-area'],
     extendedProps,
     ...timing(occurrence, timeZone),
+  };
+}
+
+/**
+ * An area where FullCalendar draws no background (the month grid, a phone's list): a plain event
+ * in the area's tint under the page ink, with its title, covering the period it spans. Not
+ * draggable; a click opens the area's sheet on that occurrence.
+ */
+export function toAreaPeriodEventInput(
+  occurrence: Occurrence,
+  colour: ItemColour,
+  timeZone: string,
+): EventInput {
+  const input = toAreaEventInput(occurrence, colour, timeZone);
+  return {
+    ...input,
+    display: 'auto',
+    editable: false,
+    borderColor: colourVar(colour.family, 'scheduled'),
+    textColor: 'var(--foreground)',
   };
 }
