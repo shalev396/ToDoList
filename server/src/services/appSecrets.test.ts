@@ -35,6 +35,7 @@ const NAMES: AppSecretName[] = [
   'oauth-jira',
   'oauth-linear',
   'openrouter',
+  'openrouteservice',
 ];
 const FAKE_KEY = 'FAKE-openrouter-key-0123456789';
 const FAKE_GOOGLE = { clientId: 'FAKE-id.apps.example', clientSecret: 'FAKE-google-secret-0123' };

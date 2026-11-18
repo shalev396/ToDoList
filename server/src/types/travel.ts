@@ -188,3 +188,10 @@ export function travelPropsOf(props: Readonly<Record<string, unknown>>): TravelL
     removedReason,
   };
 }
+
+/** An app link for one leg (the client opens `url`, or `fallbackUrl` when the app is missing). */
+export interface TravelLink {
+  app: 'google_maps' | 'waze' | 'moovit';
+  url: string;
+  fallbackUrl?: string;
+}

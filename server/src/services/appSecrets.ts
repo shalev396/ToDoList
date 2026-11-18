@@ -53,6 +53,8 @@ export const APP_SECRETS = {
   },
   /** The OpenRouter API key. */
   openrouter: { required: { apiKey: 'OPENROUTER_API_KEY' } },
+  /** The OpenRouteService API key (free tier: directions and geocoding). */
+  openrouteservice: { required: { apiKey: 'OPENROUTESERVICE_API_KEY' } },
   /** Provider OAuth clients (INTEGRATIONS-SETUP.md §3 to §6). */
   'oauth-github': {
     required: { clientId: 'GITHUB_CLIENT_ID', clientSecret: 'GITHUB_CLIENT_SECRET' },
