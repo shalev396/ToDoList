@@ -259,8 +259,12 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         <span dir="auto" className="min-w-0 truncate">
           {arg.event.title}
         </span>
+        {/* A badge has its own surface: the page ink, not the event's fill ink, reads on it. */}
         {props.badges.map((badge) => (
-          <span key={badge} className="shrink-0 rounded-sm bg-sunken px-1 text-[10px]">
+          <span
+            key={badge}
+            className="shrink-0 rounded-sm bg-sunken px-1 text-[10px] text-foreground"
+          >
             {badge}
           </span>
         ))}
