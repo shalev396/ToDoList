@@ -77,7 +77,7 @@ export interface PlannedLeg {
   source: Estimate['source'];
   /** It can't be made in time: it leaves as the stay before it ends, after the next one starts. */
   conflict: boolean;
-  /** It starts before now: never created or restored, only kept in step. */
+  /** It starts before now: history (or under way), never created, changed or restored. */
   past: boolean;
   topicId: string | null;
   title: string;

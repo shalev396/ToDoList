@@ -230,13 +230,21 @@ describe('LegReconciler', () => {
     );
   });
 
-  it('a leg still planned follows its anchor, even once it has started', () => {
-    // The update rule has no past exception: a stored live leg tracks its anchor's plan.
+  it('a past leg still planned is not updated, even when its anchor moved', () => {
+    // Under way or done, it never shifts: not updated, and (still planned) not removed.
     const leg = planned('lec', 'there', '2026-11-18T09:00:00.000Z');
-    const store = [stored(leg, { startAt: new Date('2026-11-18T08:50:00.000Z') })];
-    assert.deepEqual(LegReconciler.reconcile(store, [leg], new Map(), NOW).update, [
-      { id: store[0]?.id, leg, keepTimes: false, anchorMoved: false, restore: false },
-    ]);
+    assert.equal(leg.past, true);
+    // Stored for later: its anchor has since moved into the past.
+    const store = [
+      stored(leg, {
+        startAt: new Date('2026-11-18T11:00:00.000Z'),
+        anchorStart: new Date('2026-11-18T12:00:00.000Z'),
+      }),
+    ];
+    assert.deepEqual(LegReconciler.reconcile(store, [leg], new Map(), NOW), NOTHING);
+    // The same leg not yet past is brought in step.
+    const later = planned('lec', 'there', '2026-11-18T11:00:00.000Z');
+    assert.equal(LegReconciler.reconcile(store, [later], new Map(), NOW).update.length, 1);
   });
 
   it('running reconcile twice on its own output changes nothing', () => {

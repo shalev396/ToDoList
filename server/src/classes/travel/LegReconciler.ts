@@ -5,8 +5,9 @@
  * Legs are matched by key (LegKey), so reconciling a plan with its own result changes nothing.
  *
  * - A planned leg nobody stored is created, unless it is past.
- * - A planned leg stored live is updated. A leg the member edited keeps his times (`keepTimes`),
- *   and is flagged when its anchor moved since (`anchorMoved`): never dropped or silently shifted.
+ * - A planned leg stored live is updated, unless it is past (a leg under way never shifts). A leg
+ *   the member edited keeps his times (`keepTimes`), and is flagged when its anchor moved since
+ *   (`anchorMoved`): never dropped or silently shifted.
  * - A planned leg stored as a tombstone is restored, unless it is past or the member skipped it
  *   (only Reset brings a skip back).
  * - A live leg nobody plans any more is removed, unless it is past, with a reason he can see: its
@@ -89,12 +90,15 @@ export class LegReconciler {
       const key = leg.key.toString();
       if (plannedKeys.has(key)) continue;
       plannedKeys.add(key);
+      // A past leg is history (or under way): never created, changed or restored. Its key counts
+      // as planned, so a stored one is not removed either.
+      if (leg.past) continue;
       const facts = byKey.get(key);
       if (facts === undefined) {
-        if (!leg.past) recon.create.push(leg);
+        recon.create.push(leg);
       } else if (facts.removedReason === null) {
         recon.update.push(LegReconciler.#update(facts, leg, false));
-      } else if (facts.removedReason !== 'skipped' && !leg.past) {
+      } else if (facts.removedReason !== 'skipped') {
         recon.update.push(LegReconciler.#update(facts, leg, true));
       }
     }
