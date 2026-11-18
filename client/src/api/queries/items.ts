@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/api/queries/keys';
 import { QUERY_STALE_TIME_PRIVATE_MS } from '@/api/queries/queryOptions';
 import { sameWorkspace } from '@/api/queries/sameWorkspace';
+import { refreshAfterChange } from '@/api/queries/travelCache';
 import {
   deleteItem,
   getFacets,
@@ -70,7 +71,7 @@ function useItemWrite<V>(
       (updated: ItemDetail) => {
         queryClient.setQueryData(queryKeys.item(workspaceId, itemId), updated);
         // Rows in blocks show the title, status and overlay: refetch them.
-        void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[2] === 'block' });
+        refreshAfterChange(queryClient, workspaceId);
       },
     ),
   });
@@ -105,7 +106,7 @@ export function useDeleteItem(workspaceId: string) {
     ...sameWorkspace(
       () => store.getState().workspace.generation,
       () => {
-        void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[2] === 'block' });
+        refreshAfterChange(queryClient, workspaceId);
       },
     ),
   });

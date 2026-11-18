@@ -78,7 +78,7 @@ function ChartTooltip({
 
 /**
  * Chart (FRONTEND.md §5): donut, bar, line or a single number from a groupBy + count query.
- * Source colours, one axis, thin marks. The legend chips are buttons: one sets the block's
+ * A topic's colour family (the source's colour when grouped by source), one axis, thin marks. The legend chips are buttons: one sets the block's
  * `emits.onSegmentClick` variable and opens the segment's items in a Sheet. A visually hidden
  * table carries the same numbers for screen readers.
  */

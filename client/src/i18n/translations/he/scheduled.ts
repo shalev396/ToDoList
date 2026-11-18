@@ -66,7 +66,7 @@ export const scheduled = {
     skippedHere: 'דילגתם על הפעם הזו.',
     restore: 'להחזיר אותה',
     skippedTitle: 'פעמים שדילגתם עליהן',
-    restoreOn: 'להחזיר את {{date}}',
+    restoreOn: 'להחזיר אותה: {{date}}',
     edit: 'עריכה',
     skip: 'לדלג על הפעם הזו',
     delete: 'מחיקה',

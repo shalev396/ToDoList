@@ -323,6 +323,59 @@ describe('blockSaveOf', () => {
     assert.equal(back.all[0].startAt, '2026-10-31T11:00:00.000Z');
   });
 
+  it('all from an already-moved occurrence measures the day from its slot, not from where it was moved', () => {
+    const item = weekly({
+      exceptions: [
+        {
+          originalStart: NOV_22.toISOString(),
+          startAt: '2026-11-23T11:00:00.000Z',
+          endAt: '2026-11-23T15:00:00.000Z',
+        },
+      ],
+    });
+    const { view, base } = draftAt(item, NOV_22);
+    // Sunday's slot, shown on Monday 23rd, set to Tuesday 24th: two days from the slot.
+    const save = blockSaveOf(
+      item,
+      view,
+      base,
+      {
+        ...base,
+        start: new Date('2026-11-24T11:00:00.000Z'),
+        end: new Date('2026-11-24T15:00:00.000Z'),
+      },
+      ZONE,
+    );
+    assert.deepEqual(save.all, [
+      {
+        scope: 'all',
+        startAt: '2026-11-03T11:00:00.000Z',
+        endAt: '2026-11-03T15:00:00.000Z',
+        recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=TU'],
+      },
+    ]);
+  });
+
+  it('all from an occurrence in its slot moves the series by the days it moved', () => {
+    const item = weekly();
+    const { view, base } = draftAt(item, NOV_22);
+    const save = blockSaveOf(
+      item,
+      view,
+      base,
+      {
+        ...base,
+        start: new Date('2026-11-23T11:00:00.000Z'),
+        end: new Date('2026-11-23T15:00:00.000Z'),
+      },
+      ZONE,
+    );
+    const first = save.all?.[0];
+    assert.ok(first !== undefined);
+    assert.deepEqual(first.recurrence, ['RRULE:FREQ=WEEKLY;BYDAY=MO']);
+    assert.equal(first.startAt, '2026-11-02T11:00:00.000Z');
+  });
+
   it('all cannot move a monthly day out of the month: only this one is offered', () => {
     const item = weekly(
       { recurrence: ['RRULE:FREQ=MONTHLY;BYMONTHDAY=31'] },

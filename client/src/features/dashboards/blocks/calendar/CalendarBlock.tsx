@@ -283,6 +283,7 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         <div
           className="px-1 text-[11px] leading-4 font-medium text-primary-foreground tabular-nums"
           data-select-mirror=""
+          dir="ltr"
         >
           {wallTime(arg.event.start)}–{wallTime(arg.event.end)}
         </div>
@@ -496,7 +497,7 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             {title}
           </p>
         </div>
-        {displayed.length === 0 && data.data !== undefined ? (
+        {displayed.length === 0 && areas.length === 0 && data.data !== undefined ? (
           <p className="shrink-0 text-[13px] text-muted-foreground">
             {t('timeBlocks.calendar.empty', { range: rangeText })}
           </p>

@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { CircleAlert, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { errorMessage } from '@/api/errors';
@@ -19,7 +19,7 @@ import { toDate } from '@api-types/recurrence/occurrences.ts';
 import { travelPropsOf, type RemovedLegView } from '@api-types/travel.ts';
 import { ConflictMark, LegModeIcon } from './LegMark';
 import { CONFLICT_EDGE, isPastLeg, legTitle, removalText, removedLegTitle } from './legView';
-import { TRAVEL_DAY_PARAM, travelDayOf } from './travelDay';
+import { TRAVEL_DAY_PARAM, openedDaySheet, travelDayOf } from './travelDay';
 
 /**
  * The day's travel (travel-time design, "Removal is visible"): `?travelDay=YYYY-MM-DD` opens a
@@ -31,8 +31,16 @@ import { TRAVEL_DAY_PARAM, travelDayOf } from './travelDay';
 export function TravelDaySheet() {
   const { t } = useTranslation();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const day = travelDayOf(params.get(TRAVEL_DAY_PARAM));
+  // A link pushed an entry to open the panel, so closing takes it off (Back closes it too); a
+  // panel opened by typing the address has no entry to go back to, so the parameter is dropped.
   const close = () => {
+    if (openedDaySheet(location.state)) {
+      void navigate(-1);
+      return;
+    }
     setParams(
       (previous) => {
         const next = new URLSearchParams(previous);
@@ -192,7 +200,6 @@ function TripRow({
       <button
         type="button"
         onClick={open}
-        aria-label={t('travel.day.open', { title })}
         className="flex min-h-11 w-full items-center gap-2 rounded-xs px-3 py-1 text-start text-sm hover:bg-sunken focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
       >
         <span className="w-28 shrink-0 text-[13px] text-muted-foreground tabular-nums" dir="ltr">

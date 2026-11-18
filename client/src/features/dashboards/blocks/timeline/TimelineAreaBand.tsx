@@ -49,7 +49,7 @@ export function TimelineAreaBand({
         <button
           type="button"
           onClick={onOpen}
-          className="block max-w-full truncate rounded-sm text-start text-[13px] font-medium text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+          className="block max-w-full truncate rounded-sm text-start text-[13px] pointer-coarse:min-h-11 font-medium text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
         >
           {label}
         </button>

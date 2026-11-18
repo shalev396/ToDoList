@@ -55,7 +55,7 @@ export const legal = {
       },
       processors: {
         title: 'Who processes data for us',
-        body: 'Amazon Web Services hosts the service, holds the encryption keys (KMS) and sends our email (SES).\n\nMongoDB Atlas hosts the database.\n\nThe providers you connect, such as Atlassian, ClickUp, Linear, your school’s Moodle, Google and GitHub, receive the requests we make on your behalf. Their own privacy policies cover what they do with your data.',
+        body: 'Amazon Web Services hosts the service, holds the encryption keys (KMS) and sends our email (SES).\n\nMongoDB Atlas hosts the database.\n\nIf you turn on travel time, OpenRouteService works out routes and finds places from addresses, and OpenStreetMap Nominatim finds places from addresses. They receive the addresses and coordinates described under Places and travel time.\n\nThe providers you connect, such as Atlassian, ClickUp, Linear, your school’s Moodle, Google and GitHub, receive the requests we make on your behalf. Their own privacy policies cover what they do with your data.',
       },
       promises: {
         title: 'What we don’t do',

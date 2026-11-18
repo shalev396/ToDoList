@@ -13,6 +13,7 @@ import { useItemParam } from '@/features/items/useItemParam';
 import { dateInZone, timeInZone } from '@/features/items/zonedDate';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
+import { DAY_SHEET_STATE } from './travelDay';
 import { dayLink } from '@/pages/settings/travel/travelForms';
 import type { ItemDetail } from '@api-types/items.ts';
 import { toDate } from '@api-types/recurrence/occurrences.ts';
@@ -252,6 +253,7 @@ function Leg({
                 pathname: location.pathname,
                 search: dayLink(removeItemParams(location.search), day),
               }}
+              state={DAY_SHEET_STATE}
               data-leg-day-link=""
               className="inline-flex min-h-11 items-center gap-1.5 self-start rounded-xs text-sm font-medium text-primary underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-fine:min-h-8"
             >

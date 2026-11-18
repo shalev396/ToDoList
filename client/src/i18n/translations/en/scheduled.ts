@@ -66,7 +66,7 @@ export const scheduled = {
     skippedHere: 'This one is skipped.',
     restore: 'Bring it back',
     skippedTitle: 'Skipped',
-    restoreOn: 'Bring back {{date}}',
+    restoreOn: 'Bring it back: {{date}}',
     edit: 'Edit',
     skip: 'Skip this one',
     delete: 'Delete',

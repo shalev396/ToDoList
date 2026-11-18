@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type FormEvent, type RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CircleAlert, Pencil, SkipForward, Trash2, Undo2 } from 'lucide-react';
 import { errorMessage } from '@/api/errors';
@@ -104,6 +104,7 @@ export function TimeBlockSection({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const deleteButton = useRef<HTMLButtonElement>(null);
 
   // After an action its button may be gone: focus goes to the one that takes its place.
   const buttons = {
@@ -360,6 +361,7 @@ export function TimeBlockSection({
             </Button>
           ) : null}
           <Button
+            ref={deleteButton}
             type="button"
             variant="ghost"
             size="sm"
@@ -387,6 +389,7 @@ export function TimeBlockSection({
         item={item}
         layer={layer}
         repeating={view.repeating}
+        returnFocus={deleteButton}
         onOpenChange={setConfirming}
         onDeleted={onDeleted}
       />
@@ -400,6 +403,7 @@ function DeleteDialog({
   item,
   layer,
   repeating,
+  returnFocus,
   onOpenChange,
   onDeleted,
 }: {
@@ -407,6 +411,8 @@ function DeleteDialog({
   item: ItemDetail;
   layer: BlockLayer;
   repeating: boolean;
+  /** Where focus goes when it closes (the Delete that opened it): the dialog has no trigger. */
+  returnFocus: RefObject<HTMLElement | null>;
   onOpenChange: (open: boolean) => void;
   onDeleted: () => void;
 }) {
@@ -440,7 +446,16 @@ function DeleteDialog({
         }
       }}
     >
-      <AlertDialogContent data-block-delete="">
+      <AlertDialogContent
+        data-block-delete=""
+        onCloseAutoFocus={(event) => {
+          const target = returnFocus.current;
+          if (target?.isConnected === true) {
+            event.preventDefault();
+            target.focus();
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle className="[overflow-wrap:anywhere]">
             {t('scheduled.sheet.deleteTitle', { title: isolateAuto(item.title) })}
@@ -523,6 +538,7 @@ function BlockEditForm({
   }));
   const [tried, setTried] = useState(false);
   const [asking, setAsking] = useState<{ save: BlockSave; draft: BlockDraft } | null>(null);
+  const saveButton = useRef<HTMLButtonElement>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const span = spanProblem(state, timeZone);
@@ -659,13 +675,20 @@ function BlockEditForm({
         >
           {t('scheduled.form.cancel')}
         </Button>
-        <Button type="submit" size="sm" disabled={saving || span !== null} data-time-block-save="">
+        <Button
+          ref={saveButton}
+          type="submit"
+          size="sm"
+          disabled={saving || span !== null}
+          data-time-block-save=""
+        >
           {saving ? t('scheduled.form.saving') : t('scheduled.form.save')}
         </Button>
       </div>
       <EditScopeDialog
         open={asking !== null}
         layer={layer}
+        returnFocus={saveButton}
         allPossible={asking?.save.all !== null}
         onCancel={() => {
           setAsking(null);

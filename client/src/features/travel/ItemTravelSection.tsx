@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CircleAlert, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
-import { apiErrorCode, errorMessage } from '@/api/errors';
+import { apiErrorCode, errorMessage, geocodeErrorMessage } from '@/api/errors';
 import { useMarkItem, usePinItemPlace, useTravelRules, useUnmarkItem } from '@/api/queries/travel';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -82,12 +82,19 @@ export function ItemTravelSection({
   const saveButton = useRef<HTMLButtonElement>(null);
   const noteRef = useRef<HTMLParagraphElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const focusNext = useRef<'opener' | 'note' | 'error' | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const focusNext = useRef<'opener' | 'panel' | 'note' | 'error' | null>(null);
   useEffect(() => {
     const next = focusNext.current;
     const element =
-      next === 'note' ? noteRef.current : next === 'error' ? errorRef.current : opener.current;
-    if (next !== null && element !== null) {
+      next === 'note'
+        ? noteRef.current
+        : next === 'error'
+          ? errorRef.current
+          : next === 'panel'
+            ? panelRef.current?.querySelector<HTMLElement>('input[type="radio"]')
+            : opener.current;
+    if (next !== null && element !== null && element !== undefined) {
       focusNext.current = null;
       element.focus();
     }
@@ -100,8 +107,9 @@ export function ItemTravelSection({
     [setDraft],
   );
 
-  const open = (from: TravelRuleView | null, button: HTMLButtonElement) => {
-    opener.current = button;
+  const open = (from: TravelRuleView | null) => {
+    // The button unmounts with the panel: focus goes to its first control (the modes).
+    focusNext.current = 'panel';
     setNote(null);
     setError(null);
     const fresh = openPanel(setup, own, anchorStart);
@@ -220,13 +228,14 @@ export function ItemTravelSection({
       {draft === null ? (
         <div className="flex flex-wrap items-center gap-2" data-travel-actions="">
           <Button
+            ref={opener}
             type="button"
             variant="outline"
             size="sm"
             disabled={busy || !setup.ready}
             data-travel-add=""
-            onClick={(event) => {
-              open(current, event.currentTarget);
+            onClick={() => {
+              open(current);
             }}
           >
             {current === null ? <Plus aria-hidden="true" /> : <Pencil aria-hidden="true" />}
@@ -255,14 +264,16 @@ export function ItemTravelSection({
         </div>
       ) : (
         <>
-          <TravelPanel
-            state={draft}
-            onChange={update}
-            anchorStart={anchorStart}
-            anchorItemId={target.itemId}
-            own={own}
-            series={repeating}
-          />
+          <div ref={panelRef} className="contents">
+            <TravelPanel
+              state={draft}
+              onChange={update}
+              anchorStart={anchorStart}
+              anchorItemId={target.itemId}
+              own={own}
+              series={repeating}
+            />
+          </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button
               ref={saveButton}
@@ -373,7 +384,7 @@ function PlaceForTravel({ itemId }: { itemId: string }) {
         failed: false,
       });
     } catch (failure) {
-      setResult({ text: errorMessage(t, failure, 'travel.add.place.failed'), failed: true });
+      setResult({ text: geocodeErrorMessage(t, failure, 'travel.add.place.failed'), failed: true });
     }
   };
   return (

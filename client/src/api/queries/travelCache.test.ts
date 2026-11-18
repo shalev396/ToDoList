@@ -4,6 +4,7 @@ import { MutationObserver, QueryClient } from '@tanstack/react-query';
 import type { PlaceView, TravelRuleView } from '@api-types/travel.ts';
 import { queryKeys } from './keys.ts';
 import {
+  refreshAfterChange,
   storeRemovedPlace,
   storeSavedPlace,
   storeSavedRule,
@@ -102,5 +103,21 @@ describe('travel cache', () => {
     queryClient.setQueryData(key, [place('home', true), place('braude')]);
     storeRemovedPlace(queryClient, 'A', 'home');
     assert.deepEqual(queryClient.getQueryData(key), [place('braude')]);
+  });
+
+  it('an item write reads its own workspace travel and blocks again, and no other', () => {
+    // The item hooks (items.ts, timeBlocks.ts) call this after a write: the server made the
+    // item's legs again, so the day panel and the agenda's "Travel changed" chip are stale.
+    const queryClient = new QueryClient();
+    const days = queryKeys.travelDays('A', '2026-11-19', '2026-11-19');
+    const otherDays = queryKeys.travelDays('B', '2026-11-19', '2026-11-19');
+    const block = queryKeys.block('A', 'd1', 'b1', 'v');
+    queryClient.setQueryData(days, { days: [] });
+    queryClient.setQueryData(otherDays, { days: [] });
+    queryClient.setQueryData(block, { rows: [] });
+    refreshAfterChange(queryClient, 'A');
+    assert.equal(queryClient.getQueryState(days)?.isInvalidated, true);
+    assert.equal(queryClient.getQueryState(block)?.isInvalidated, true);
+    assert.equal(queryClient.getQueryState(otherDays)?.isInvalidated, false);
   });
 });

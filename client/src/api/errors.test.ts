@@ -14,6 +14,7 @@ import {
   cleanupProgressOf,
   errorKey,
   errorMessage,
+  geocodeErrorMessage,
 } from './errors.ts';
 
 /** An axios-shaped error with a response. */
@@ -214,5 +215,35 @@ describe('apiErrorDetails', () => {
     assert.equal(apiErrorDetails(failure(409, { message: 'x' })), null);
     assert.equal(apiErrorDetails(failure(409, { details: ['x'] })), null);
     assert.equal(apiErrorDetails(new Error('x')), null);
+  });
+});
+
+describe('geocodeErrorMessage', () => {
+  const t = ((key: string) => key) as unknown as TFunction;
+
+  it('a geocoder that cannot be reached says so in travel words, not "that tool"', () => {
+    assert.equal(
+      geocodeErrorMessage(
+        t,
+        failed(503, { code: 'provider_unreachable' }),
+        'travel.places.saveFailed',
+      ),
+      'errors.codes.geocoderUnreachable',
+    );
+    assert.equal(
+      errorMessage(t, failed(503, { code: 'provider_unreachable' }), FALLBACK),
+      'errors.codes.providerUnreachable',
+    );
+  });
+
+  it('every other failure reads as it does everywhere', () => {
+    assert.equal(
+      geocodeErrorMessage(t, failed(400, { code: 'place_not_found' }), 'travel.places.saveFailed'),
+      'errors.codes.placeNotFound',
+    );
+    assert.equal(
+      geocodeErrorMessage(t, new Error('Network Error'), 'travel.places.saveFailed'),
+      'travel.places.saveFailed',
+    );
   });
 });

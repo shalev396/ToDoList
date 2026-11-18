@@ -159,11 +159,15 @@ function Column({
       <div
         data-column-viewport={id}
         className={cn(
-          'min-h-0 flex-1 overflow-y-auto overscroll-contain rounded-md bg-sunken/60 transition-colors max-md:max-h-[60dvh]',
+          'min-h-0 flex-1 overflow-y-auto rounded-md md:overscroll-contain bg-sunken/60 transition-colors max-md:max-h-[60dvh]',
           isOver && 'bg-sunken ring-2 ring-ring',
         )}
       >
-        <div ref={setNodeRef} data-column={id} className="flex min-h-full flex-col gap-2 p-1.5">
+        <div
+          ref={setNodeRef}
+          data-column={id}
+          className="flex min-h-[max(100%,4rem)] flex-col gap-2 p-1.5"
+        >
           {entries.length === 0 ? (
             <p className="px-1 py-2 text-xs text-muted-foreground">
               {droppable ? t('dataBlocks.kanban.emptyColumn') : ''}
@@ -220,7 +224,7 @@ const visibleCollisions: CollisionDetection = (args) => {
 
 /**
  * Kanban (FRONTEND.md §5): Trello-style columns by status (or the query's first groupBy field).
- * Only local items are draggable (a drag handle works with the mouse, touch and the keyboard, with
+ * Only to-dos TodoList owns are draggable (not mirrored cards, not time blocks or travel; a drag handle works with the mouse, touch and the keyboard, with
  * announcements in the page language); dropping one on a status column PATCHes its status.
  * Mirrored cards open in their own app.
  */

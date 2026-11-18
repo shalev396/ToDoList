@@ -106,6 +106,7 @@ export function SpanFields({
           />
           <Input
             type="time"
+            dir="ltr"
             aria-label={t('scheduled.form.startTime')}
             value={state.startTime}
             onChange={(event) => {
@@ -131,6 +132,7 @@ export function SpanFields({
           />
           <Input
             type="time"
+            dir="ltr"
             aria-label={t('scheduled.form.endTime')}
             value={state.endTime}
             aria-invalid={span === 'order'}

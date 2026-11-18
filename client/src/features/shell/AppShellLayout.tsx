@@ -1,5 +1,5 @@
 import { Fragment, Suspense, useCallback, useMemo, useState } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { useTranslation } from 'react-i18next';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -86,6 +86,15 @@ export default function AppShellLayout() {
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [newItemOpen, setNewItemOpen] = useState(false);
   const [newItem, setNewItem] = useState<NewItemPreset>({ kind: 'todo' });
+  // A sheet kept in the shell's own state (not in the URL) is covering the page it was opened on:
+  // going to another page (its "Add your Home" link, say) closes it. The sheets the URL holds
+  // (`?item=`, `?travelDay=`) follow their own parameter, which is not the path.
+  const { pathname } = useLocation();
+  const [sheetPath, setSheetPath] = useState(pathname);
+  if (sheetPath !== pathname) {
+    setSheetPath(pathname);
+    setNewItemOpen(false);
+  }
   const [collapsed, setCollapsed] = useState(readCollapsed);
 
   const toggleSidebar = useCallback(() => {

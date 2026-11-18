@@ -106,3 +106,28 @@ def test_auth_header_clears_the_iphone_top_inset(app_url: str, page: Page):
     for control in controls:
         box = control.bounding_box()
         assert box is not None and box["y"] >= SAFE_TOP, f"a control starts at {box and box['y']}px"
+
+
+def test_sheets_clear_the_status_bar_and_the_home_indicator(base_url: str, authenticated_page: Page):
+    """A full-width sheet (the day panel stands for them all: they share SheetContent) starts below
+    the status bar, so its Close button is tappable, and keeps its bottom clear of the indicator."""
+    page = authenticated_page
+    page.add_init_script(FAKE_HOME_SCREEN_APP)
+    page.set_viewport_size(IPHONE)
+    page.goto(f"{base_url}/en/dashboard?travelDay=2026-11-19", wait_until="load")
+    sheet = page.locator("[data-travel-day-sheet]")
+    expect(sheet).to_be_visible(timeout=NORMAL_TIMEOUT)
+    page.evaluate(FORCE_INSETS)
+    top = SAFE_TOP + HOME_SCREEN_TOP_EXTRA
+    expect(sheet).to_have_css("padding-top", f"{top}px")
+    expect(sheet).to_have_css("padding-bottom", f"{SAFE_BOTTOM}px")
+    close = page.locator("[data-slot=sheet-close-button]")
+    box = close.bounding_box()
+    assert box is not None and box["y"] >= top, f"Close starts at {box and box['y']}px, under the status bar"
+    # Nothing but the Close button is at its centre: a tap there reaches it.
+    centre = page.evaluate(
+        "(b) => document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)"
+        "?.closest('[data-slot=sheet-close-button]') !== null",
+        box,
+    )
+    assert centre, "the Close button is covered"

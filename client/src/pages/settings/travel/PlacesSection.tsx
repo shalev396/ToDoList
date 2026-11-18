@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type FormEvent, type RefObject } fr
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { House, Info, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
-import { errorMessage } from '@/api/errors';
+import { errorMessage, geocodeErrorMessage } from '@/api/errors';
 import { useRemovePlace, useSavePlace } from '@/api/queries/travel';
 import { FormError } from '@/components/auth/auth-ui';
 import {
@@ -131,7 +131,7 @@ function PlaceForm({
       }
     };
     const fail = (failure: unknown) => {
-      setError(errorMessage(t, failure, 'travel.places.saveFailed'));
+      setError(geocodeErrorMessage(t, failure, 'travel.places.saveFailed'));
     };
     if (place === undefined) {
       save.mutate({ body: form.request }, { onSuccess: done, onError: fail });

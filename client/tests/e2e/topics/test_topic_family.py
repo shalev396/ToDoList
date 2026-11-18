@@ -50,7 +50,7 @@ def test_default_topics_have_their_families(
         ("College", "teal", "Teal"),
         ("Personal", "blue", "Blue"),
     ):
-        picker = _row(page, name).get_by_role("button", name=f"Colour of {name}: {label}")
+        picker = _row(page, name).get_by_role("button", name=f"Color of {name}: {label}")
         expect(picker).to_have_attribute("data-family", family, timeout=NORMAL_TIMEOUT)
         expect(picker).to_contain_text(label)
         # The preview: the family's four shades, in its own tokens.
@@ -64,7 +64,7 @@ def test_picker_recolours_a_topic(page: Page, base_url: str, api_base_url: str, 
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, "/en/settings", h1="Settings")
 
-    _row(page, "Work").get_by_role("button", name="Colour of Work: Orange").click()
+    _row(page, "Work").get_by_role("button", name="Color of Work: Orange").click()
     menu = page.get_by_role("menu")
     expect(menu.get_by_role("menuitemradio")).to_have_count(9)
     expect(menu.get_by_role("menuitemradio", name="Orange")).to_have_attribute("aria-checked", "true")
@@ -72,7 +72,7 @@ def test_picker_recolours_a_topic(page: Page, base_url: str, api_base_url: str, 
         menu.get_by_role("menuitemradio", name="Violet").click()
     assert saved.value.status == 200, saved.value.text()
 
-    picker = _row(page, "Work").get_by_role("button", name="Colour of Work: Violet")
+    picker = _row(page, "Work").get_by_role("button", name="Color of Work: Violet")
     expect(picker).to_have_attribute("data-family", "violet", timeout=NORMAL_TIMEOUT)
     work = next(t for t in list_topics(api_base_url, user, workspace["id"]) if t["slug"] == "work")
     assert work["colour"] == "violet"
@@ -80,7 +80,7 @@ def test_picker_recolours_a_topic(page: Page, base_url: str, api_base_url: str, 
     # Saved, not only shown: it is still violet after a reload.
     page.reload(wait_until="load")
     expect(page.get_by_role("heading", level=1)).to_have_text("Settings", timeout=NORMAL_TIMEOUT)
-    picker = _row(page, "Work").get_by_role("button", name="Colour of Work: Violet")
+    picker = _row(page, "Work").get_by_role("button", name="Color of Work: Violet")
     expect(picker).to_have_attribute("data-family", "violet", timeout=NORMAL_TIMEOUT)
 
 

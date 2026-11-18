@@ -46,7 +46,7 @@ interface Day {
  * that day, 09:00–10:00. An editor sees every day (a free one is where a block goes); a viewer
  * sees the days that have something.
  */
-export default function TimelineBlock({ dashboard, block }: BlockComponentProps) {
+export default function TimelineBlock({ dashboard, block, editing }: BlockComponentProps) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { openItem } = useItemParam();
@@ -161,7 +161,7 @@ export default function TimelineBlock({ dashboard, block }: BlockComponentProps)
             <li key={day.date} data-timeline-day={day.date} className="flex flex-col gap-1">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold">{dayName}</h3>
-                {canWrite ? (
+                {canWrite && !editing ? (
                   <Button
                     variant="ghost"
                     size="icon-sm"

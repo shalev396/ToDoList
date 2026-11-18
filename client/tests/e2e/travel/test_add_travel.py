@@ -233,6 +233,31 @@ def test_new_todo_leg_shows_before_it_in_calendar(
     assert leg_box["y"] + leg_box["height"] <= meeting_box["y"] + 2, (leg_box, meeting_box)
 
 
+def test_add_your_home_closes_the_new_sheet_on_the_way_to_settings(
+    page: Page, base_url: str, fresh_owner
+):
+    """With travel on and no Home, "Add your Home" lands on Settings → Travel with the New sheet
+    closed (a shell sheet closes when the page changes), not left covering it."""
+    user, _workspace = fresh_owner
+    page.set_viewport_size(DESKTOP_VIEWPORT)
+    open_as(page, base_url, user, "/en/settings", h1="Settings")
+    tomorrow = _tomorrow(page)
+
+    sheet = open_new_sheet(page)
+    form = sheet.locator("form")
+    form.get_by_label("Title", exact=True).fill("Meet at Braude")
+    form.get_by_label("Due", exact=True).fill(tomorrow)
+    form.get_by_label("Time", exact=True).fill("14:00")
+    form.get_by_role("switch", name="Add travel time").click()
+    missing = form.locator("[data-travel-home-missing]")
+    expect(missing).to_be_visible(timeout=NORMAL_TIMEOUT)
+
+    missing.get_by_role("link", name="Add your Home in Settings").click()
+    expect(page).to_have_url(re.compile(r"/en/settings/travel"), timeout=NORMAL_TIMEOUT)
+    expect(sheet).to_be_hidden(timeout=NORMAL_TIMEOUT)
+    expect(page.get_by_role("heading", name="Travel", exact=True).first).to_be_visible()
+
+
 def test_due_only_todo_asks_for_a_time(page: Page, base_url: str, api_base_url: str, fresh_owner):
     user, workspace = fresh_owner
     _seed_places(api_base_url, user, workspace["id"])

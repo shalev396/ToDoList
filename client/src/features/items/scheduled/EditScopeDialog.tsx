@@ -1,3 +1,4 @@
+import type { RefObject } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertDialog,
@@ -24,6 +25,7 @@ export function EditScopeDialog({
   allPossible,
   onChoose,
   onCancel,
+  returnFocus,
 }: {
   open: boolean;
   layer: BlockLayer;
@@ -31,6 +33,8 @@ export function EditScopeDialog({
   allPossible: boolean;
   onChoose: (scope: TimeBlockEditScope) => void;
   onCancel: () => void;
+  /** Where focus goes when it closes (the form's Save that opened it): the dialog has no trigger. */
+  returnFocus: RefObject<HTMLElement | null>;
 }) {
   const { t } = useTranslation();
   return (
@@ -42,7 +46,16 @@ export function EditScopeDialog({
         }
       }}
     >
-      <AlertDialogContent data-edit-scope="">
+      <AlertDialogContent
+        data-edit-scope=""
+        onCloseAutoFocus={(event) => {
+          const target = returnFocus.current;
+          if (target?.isConnected === true) {
+            event.preventDefault();
+            target.focus();
+          }
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{t('scheduled.scope.title')}</AlertDialogTitle>
           <AlertDialogDescription>

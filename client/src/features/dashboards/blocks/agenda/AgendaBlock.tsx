@@ -16,6 +16,7 @@ import { ConflictMark, LegModeIcon } from '@/features/travel/LegMark';
 import { CONFLICT_EDGE, legMarksOf } from '@/features/travel/legView';
 import { useLanguage } from '@/hooks/useLanguage';
 import { cn } from '@/lib/utils';
+import { DAY_SHEET_STATE } from '@/features/travel/travelDay';
 import { dayLink, horizonOf } from '@/pages/settings/travel/travelForms';
 import { BlockFrame } from '../../BlockFrame';
 import { blockTitle } from '../../chrome';
@@ -144,6 +145,7 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
               <li key={day.date}>
                 <Link
                   to={{ pathname: location.pathname, search: dayLink(location.search, day.date) }}
+                  state={DAY_SHEET_STATE}
                   data-travel-changed={day.date}
                   aria-label={t('travel.day.changedOn', { day: day.label })}
                   className="inline-flex min-h-11 items-center gap-1.5 rounded-full border bg-sunken px-3 text-[13px] font-medium hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none pointer-fine:min-h-8"

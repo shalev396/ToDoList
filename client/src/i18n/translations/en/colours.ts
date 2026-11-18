@@ -18,8 +18,8 @@ export const colours = {
     area: 'Area',
   },
   picker: {
-    label: 'Colour',
-    change: 'Colour of {{name}}: {{family}}',
-    failed: 'Couldn’t change the colour. Try again.',
+    label: 'Color',
+    change: 'Color of {{name}}: {{family}}',
+    failed: 'Couldn’t change the color. Try again.',
   },
 };

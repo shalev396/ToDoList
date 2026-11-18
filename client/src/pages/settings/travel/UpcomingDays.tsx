@@ -9,6 +9,7 @@ import { dateLocale, shortDate } from '@/components/items/format';
 import { dateInZone, noonInZone } from '@/features/items/zonedDate';
 import { cn } from '@/lib/utils';
 import { SettingsSection } from '@/pages/settings/SettingsLayout';
+import { DAY_SHEET_STATE } from '@/features/travel/travelDay';
 import { dayLink, horizonOf } from './travelForms';
 
 /**
@@ -48,6 +49,7 @@ export function UpcomingDays({ timeZone }: { timeZone: string }) {
             <li key={day.date} className="border-b">
               <Link
                 to={{ pathname: location.pathname, search: dayLink(location.search, day.date) }}
+                state={DAY_SHEET_STATE}
                 data-travel-day={day.date}
                 data-legs={trips}
                 data-removed={removed}

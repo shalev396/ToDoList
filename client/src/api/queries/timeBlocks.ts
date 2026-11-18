@@ -2,6 +2,7 @@ import { useStore } from 'react-redux';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/api/queries/keys';
 import { sameWorkspace } from '@/api/queries/sameWorkspace';
+import { refreshAfterChange } from '@/api/queries/travelCache';
 import { createTimeBlock, editTimeBlock, skipOccurrence } from '@/api/services/timeBlockService';
 import type { RootState } from '@/store';
 import type {
@@ -30,7 +31,7 @@ function useTimeBlockWrite<V>(
       () => store.getState().workspace.generation,
       (block: TimeBlockResponseData, body: V) => {
         queryClient.setQueryData(queryKeys.item(workspaceId, block.id), block);
-        void queryClient.invalidateQueries({ predicate: (q) => q.queryKey[2] === 'block' });
+        refreshAfterChange(queryClient, workspaceId);
         if (namesSubject(body)) {
           void queryClient.invalidateQueries({ queryKey: queryKeys.attributes(workspaceId) });
           void queryClient.invalidateQueries({ queryKey: queryKeys.catalog(workspaceId) });

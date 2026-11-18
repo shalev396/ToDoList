@@ -365,7 +365,7 @@ export function blockSaveOf(
     originalStart: occurrence.originalStart.toISOString(),
     ...times,
   };
-  const series = seriesTimes(item, base.start, draft, timeZone);
+  const series = seriesTimes(item, occurrence.slot.start, draft, timeZone);
   return {
     asksScope: true,
     this: changed ? [fields, thisOne] : [thisOne],
