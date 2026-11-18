@@ -78,3 +78,8 @@ export function isCompletable(item: Item): item is Item & Completable<Item> {
 export function isDeletable(item: Item): item is Item & Deletable {
   return typeof (item as Partial<Deletable>).delete === 'function';
 }
+
+/** True when the item repeats (a Google series' master, a repeating time block). */
+export function isRecurring(item: Item): item is Item & Recurring {
+  return (item as Partial<Recurring>).isRecurring === true;
+}

@@ -256,6 +256,47 @@ before(async () => {
     props: { layer: 'block', recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'], exceptions: [] },
   });
 
+  // A's travel: places whose names and coordinates are A's alone, every occurrence of the private
+  // block marked (its legs), and a where-rule. B is aimed at each of them.
+  const travelPlace = async (
+    name: string,
+    coords: { lat: number; lon: number },
+    home = false,
+  ): Promise<string> =>
+    dataOf(
+      await asA('POST', `${base}/travel/places`, {
+        name: mark('travel place name', `${name} ${MARK}`),
+        coords,
+        home,
+      }),
+    )['id'] as string;
+  const homeCoords = { lat: 32.91417, lon: 35.29223 };
+  mark('travel coordinate', String(homeCoords.lat));
+  mark('travel coordinate', String(homeCoords.lon));
+  await travelPlace('A home', homeCoords, true);
+  const travelPlaceId = await travelPlace('A campus', { lat: 32.77671, lon: 35.02314 });
+  const marked = dataOf(
+    await asA('POST', `${base}/travel/items/${privateBlock.id}`, {
+      every: true,
+      mode: 'transit',
+      direction: 'both',
+      placeId: travelPlaceId,
+    }),
+  );
+  const legIds = (marked['legs'] as { id: string }[]).map((leg) => mark('travel leg id', leg.id));
+  const [travelLegId] = legIds;
+  assert.ok(travelLegId !== undefined, 'A’s weekly block has no legs');
+  const travelRule = dataOf(
+    await asA('POST', `${base}/travel/rules`, {
+      scope: {
+        kind: 'where',
+        where: { combinator: 'and', rules: [{ field: 'title', operator: 'contains', value: 'A' }] },
+      },
+      mode: 'walk',
+      direction: 'both',
+    }),
+  );
+
   // A shares the Jira integration: a block on a dashboard of A's.
   const dashboard = dataOf(await asA('POST', `${base}/dashboards`, { title: 'A board' }));
   const written = dataOf(
@@ -298,6 +339,7 @@ before(async () => {
     throwawayWid: throwaway['id'] as string,
     itemId: privateTodo.id,
     timeBlockId: privateBlock.id,
+    travel: { placeId: travelPlaceId, ruleId: travelRule['id'] as string, legId: travelLegId },
     dashboardId: dashboard['id'] as string,
     dashboardVersion: written['version'] as number,
     viewId: view['id'] as string,

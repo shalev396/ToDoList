@@ -16,7 +16,10 @@
  * - a sync of an integration (sync/worker.ts), for every member with travel in its workspace;
  * - the daily pass (jobs/TravelHorizonPass.ts, from the hourly tick), once a day per member, while
  *   the tick's budget lasts;
- * - rule, place and setting changes (their routes, Task 13).
+ * - rule, place, setting and pin changes, a leg's reset (TravelSetup), and marking or unmarking an
+ *   item (TravelRule.markItem, unmarkItem), before they answer.
+ *
+ * `preview` works out one trip's length through the same chain, without making a leg.
  *
  * A member who is no longer one (left, removed, or the workspace deleted) gets nothing: their
  * travel is forgotten instead (TravelData.forgetMember), also when they left while it ran.
@@ -27,8 +30,14 @@
  * AFTER_SYNC_BUDGET_MS; the daily pass hands each member what is left of its own budget. New
  * places are geocoded after syncs and in the daily pass.
  */
+import { ValidationError } from '../../errors/ValidationError.js';
 import { logger } from '../../services/logger.js';
-import { TRAVEL_HORIZON_DAYS, TRAVEL_MODES, type TravelMode } from '../../types/travel.js';
+import {
+  TRAVEL_HORIZON_DAYS,
+  TRAVEL_MODES,
+  type TravelMode,
+  type TravelPreviewResponse,
+} from '../../types/travel.js';
 import { addLocalDays, startOfZonedDay, wallDate } from '../../types/recurrence/zoned.js';
 import { Actor } from '../base/Actor.js';
 import { Caller } from '../base/Caller.js';
@@ -61,12 +70,27 @@ export const REGENERATION_BUDGET_MS = 20_000;
 export const ITEM_CHANGE_BUDGET_MS = 8_000;
 /** Every member's regeneration after one sync, together (the rest wait for the daily pass). */
 export const AFTER_SYNC_BUDGET_MS = 60_000;
+/** A preview's time: the travel panel waits for it. */
+export const PREVIEW_BUDGET_MS = 8_000;
+
+const MINUTE_MS = 60_000;
 
 export interface RegenerateOptions {
   /** Its time (default REGENERATION_BUDGET_MS from now). */
   budget?: TimeBudget;
   /** New geocoder lookups (default NEW_GEOCODES_MAX); 0: cached geocodes only. */
   lookups?: number;
+}
+
+/** A trip to preview (`TravelPlanner.preview`). */
+export interface PreviewInput {
+  mode: TravelMode;
+  /** One of the caller's places; absent: their Home. */
+  fromPlaceId?: string | undefined;
+  /** One of the caller's places; absent: no length. */
+  toPlaceId?: string | undefined;
+  arriveBy?: Date | undefined;
+  departAt?: Date | undefined;
 }
 
 /** What a regeneration that wrote nothing did. */
@@ -269,6 +293,58 @@ export class TravelPlanner {
     });
   }
 
+  /**
+   * A trip's length as a leg would get it, without making one (the travel panel's live preview):
+   * from `fromPlaceId` (default: Home) to `toPlaceId`, by `mode`, through the same chain as a
+   * regeneration (OpenRouteService with a key and today's quota, then his last length for the
+   * trip, then the straight line), within PREVIEW_BUDGET_MS. Without both places there is no
+   * length. `arriveBy` ends the trip, `departAt` starts it (not both: 400); the other end follows
+   * from the length. 400 for a place that isn't the caller's. Editors (Ruling 16).
+   */
+  static async preview(
+    caller: Caller,
+    input: PreviewInput,
+    now: Date = new Date(),
+  ): Promise<TravelPreviewResponse> {
+    caller.require('editor');
+    const { arriveBy, departAt } = input;
+    if (arriveBy !== undefined && departAt !== undefined) {
+      throw new ValidationError('departAt: give arriveBy or departAt, not both');
+    }
+    const places = await Place.listOwn(caller);
+    const placeOf = (id: string, field: string): Place => {
+      const place = places.find((one) => one.id === id);
+      if (place === undefined) throw new ValidationError(`${field}: not one of your places`);
+      return place;
+    };
+    const from =
+      input.fromPlaceId === undefined
+        ? (places.find((place) => place.isHome) ?? null)
+        : placeOf(input.fromPlaceId, 'fromPlaceId');
+    const to = input.toPlaceId === undefined ? null : placeOf(input.toPlaceId, 'toPlaceId');
+    let estimate: Estimate | null = null;
+    if (from !== null && to !== null) {
+      const planner = new TravelPlanner(caller, now, {
+        budget: TimeBudget.start(PREVIEW_BUDGET_MS),
+      });
+      const chain = await planner.#chain(await TravelProfile.of(caller));
+      estimate = await chain.estimate({
+        from: { id: from.id, ...from.coords },
+        to: { id: to.id, ...to.coords },
+        mode: input.mode,
+      });
+    }
+    const minutes = estimate?.minutes ?? null;
+    const shifted = (time: Date, sign: 1 | -1): string | null =>
+      minutes === null ? null : new Date(time.getTime() + sign * minutes * MINUTE_MS).toISOString();
+    return {
+      minutes,
+      source: estimate?.source ?? null,
+      startAt: departAt?.toISOString() ?? (arriveBy === undefined ? null : shifted(arriveBy, -1)),
+      endAt: arriveBy?.toISOString() ?? (departAt === undefined ? null : shifted(departAt, 1)),
+    };
+  }
+
   /** The length of every trip the days may take, each asked once. */
   async #estimates(
     days: readonly DayPlanInput[],
@@ -278,20 +354,7 @@ export class TravelPlanner {
     const trips = new Set(days.flatMap((day) => DayPlanner.trips(day)));
     const estimates = new Map<TripKey, Estimate>();
     if (trips.size === 0) return estimates;
-    const chain = RouteChain.standard({
-      apiKey: await openRouteServiceKey(),
-      client: travelClient('openrouteservice'),
-      // The workspace's quota of today, in its zone.
-      budget: RoutingQuota.for(
-        this.#caller.workspaceId,
-        wallDate(this.#now, this.#caller.settings.timezone),
-      ),
-      settings: profile.settings,
-      remembered: (fromId, toId, mode) =>
-        profile.rememberedMinutes(DayPlanner.tripKey(fromId, toId, mode)),
-      // OpenRouteService only within the regeneration's time; past it, the fallbacks.
-      time: this.#time,
-    });
+    const chain = await this.#chain(profile);
     const byId = new Map(places.map((place) => [place.id, place]));
     for (const trip of trips) {
       const [fromId, toId, mode] = trip.split('|');
@@ -310,6 +373,26 @@ export class TravelPlanner {
       estimates.set(trip, estimate);
     }
     return estimates;
+  }
+
+  /**
+   * The lengths' chain: OpenRouteService (with the stage's key, on the workspace's quota of today
+   * in its zone, and only within this run's time), then his last length for the trip, then the
+   * straight line.
+   */
+  async #chain(profile: TravelProfile): Promise<RouteChain> {
+    return RouteChain.standard({
+      apiKey: await openRouteServiceKey(),
+      client: travelClient('openrouteservice'),
+      budget: RoutingQuota.for(
+        this.#caller.workspaceId,
+        wallDate(this.#now, this.#caller.settings.timezone),
+      ),
+      settings: profile.settings,
+      remembered: (fromId, toId, mode) =>
+        profile.rememberedMinutes(DayPlanner.tripKey(fromId, toId, mode)),
+      time: this.#time,
+    });
   }
 
   /** Without a Home there are no legs (Ruling 24): the ones that go, go for want of a place. */

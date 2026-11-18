@@ -53,6 +53,7 @@ export { safeCopyUrl } from './providerCreates.js';
 export {
   isCompletable,
   isDeletable,
+  isRecurring,
   type Completable,
   type Copyable,
   type Deletable,

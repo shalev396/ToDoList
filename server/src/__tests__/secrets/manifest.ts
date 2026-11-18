@@ -17,6 +17,11 @@ export interface Ctx {
   itemId: string;
   /** A weekly time block of the workspace owner's (Sundays 13:00–17:00 in Jerusalem). */
   timeBlockId: string;
+  /**
+   * The owner's travel: a place of theirs (not Home), a where-rule, and a leg of the time block
+   * (every occurrence of it is marked for travel).
+   */
+  travel: { placeId: string; ruleId: string; legId: string };
   dashboardId: string;
   /** Kept current by the runner from every answer about the dashboard. */
   dashboardVersion: number;
@@ -344,6 +349,101 @@ export const MANIFEST: readonly Entry[] = [
     body: () => ({ originalStart: '2026-12-06T11:00:00.000Z' }),
     expect: [2],
   },
+  // Travel: the owner's own. A leg may have gone with the occurrence skipped above (a 409 to edit).
+  { method: 'GET', path: `${W}/travel/places`, expect: [2] },
+  {
+    method: 'POST',
+    path: `${W}/travel/places`,
+    body: () => ({ name: 'Technion', coords: { lat: 32.7767, lon: 35.0231 } }),
+    expect: [2],
+  },
+  {
+    method: 'PATCH',
+    path: `${W}/travel/places/:id`,
+    params: (c) => ({ id: c.travel.placeId }),
+    body: () => ({ aliases: ['ORT Braude'] }),
+    expect: [2],
+  },
+  { method: 'GET', path: `${W}/travel/rules`, expect: [2] },
+  {
+    method: 'POST',
+    path: `${W}/travel/rules`,
+    body: (c) => ({
+      scope: { kind: 'item', itemId: c.itemId, occurrence: 'single' },
+      mode: 'drive',
+      direction: 'there',
+    }),
+    expect: [2],
+  },
+  {
+    method: 'PATCH',
+    path: `${W}/travel/rules/:id`,
+    params: (c) => ({ id: c.travel.ruleId }),
+    body: () => ({ mode: 'drive' }),
+    expect: [2],
+  },
+  { method: 'GET', path: `${W}/travel/settings`, expect: [2] },
+  {
+    method: 'PATCH',
+    path: `${W}/travel/settings`,
+    body: () => ({ buffers: { drive: 15 } }),
+    expect: [2],
+  },
+  {
+    method: 'PUT',
+    path: `${W}/travel/container-places/:containerId`,
+    params: () => ({ containerId: 'cal-braude' }),
+    body: (c) => ({ placeId: c.travel.placeId }),
+    expect: [2],
+  },
+  {
+    method: 'PUT',
+    path: `${W}/travel/item-places/:itemId`,
+    params: (c) => ({ itemId: c.itemId }),
+    body: (c) => ({ placeId: c.travel.placeId }),
+    expect: [2],
+  },
+  {
+    method: 'POST',
+    path: `${W}/travel/items/:itemId`,
+    params: (c) => ({ itemId: c.timeBlockId }),
+    body: (c) => ({ every: true, mode: 'transit', direction: 'both', placeId: c.travel.placeId }),
+    expect: [2],
+  },
+  {
+    method: 'POST',
+    path: `${W}/travel/preview`,
+    body: (c) => ({ mode: 'drive', toPlaceId: c.travel.placeId, arriveBy: '2026-11-29T11:00:00Z' }),
+    expect: [2],
+  },
+  {
+    method: 'PATCH',
+    path: `${W}/travel/legs/:id`,
+    params: (c) => ({ id: c.travel.legId }),
+    body: () => ({ minutes: 30 }),
+    expect: [2, 4],
+  },
+  {
+    method: 'GET',
+    path: `${W}/travel/legs/:id/links`,
+    params: (c) => ({ id: c.travel.legId }),
+    expect: [2],
+  },
+  {
+    method: 'POST',
+    path: `${W}/travel/legs/:id/skip`,
+    params: (c) => ({ id: c.travel.legId }),
+    expect: [2],
+    noBadInput: true,
+  },
+  {
+    method: 'POST',
+    path: `${W}/travel/legs/:id/reset`,
+    params: (c) => ({ id: c.travel.legId }),
+    expect: [2],
+    noBadInput: true,
+  },
+  { method: 'GET', path: `${W}/travel/days`, query: 'from=2026-11-22&to=2026-11-28', expect: [2] },
   { method: 'GET', path: `${W}/facets`, expect: [2] },
   { method: 'POST', path: `${W}/query`, body: () => ({ draft: { source: 'items' } }), expect: [2] },
 
@@ -594,6 +694,28 @@ export const MANIFEST: readonly Entry[] = [
   },
 
   // ── destructive: last, on what the suite created for it ───────────────────
+  {
+    method: 'DELETE',
+    path: `${W}/travel/items/:itemId`,
+    params: (c) => ({ itemId: c.timeBlockId }),
+    query: 'every=true',
+    expect: [2],
+    noBadInput: true,
+  },
+  {
+    method: 'DELETE',
+    path: `${W}/travel/rules/:id`,
+    params: (c) => ({ id: c.travel.ruleId }),
+    expect: [2],
+    noBadInput: true,
+  },
+  {
+    method: 'DELETE',
+    path: `${W}/travel/places/:id`,
+    params: (c) => ({ id: c.travel.placeId }),
+    expect: [2],
+    noBadInput: true,
+  },
   {
     method: 'DELETE',
     path: `${W}/items/:id`,

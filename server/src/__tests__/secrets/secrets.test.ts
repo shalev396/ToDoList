@@ -307,6 +307,44 @@ async function seed(): Promise<void> {
     },
     'time block with pasted secrets',
   );
+  // Travel: the owner's Home and Braude, every occurrence of the block marked (its legs), and a
+  // where-rule the manifest changes and removes.
+  await created(
+    '/travel/places',
+    { name: 'Home', coords: { lat: 32.794, lon: 34.9896 }, home: true },
+    'travel home',
+  );
+  const braude = await created(
+    '/travel/places',
+    { name: 'Braude', coords: { lat: 32.9141, lon: 35.2922 } },
+    'travel place',
+  );
+  const braudeId = dataOf(braude)['id'] as string;
+  const marked = await send(
+    'owner',
+    'POST',
+    `${base}/travel/items/${dataOf(timeBlock)['id'] as string}`,
+    'seed: travel mark',
+    { every: true, mode: 'transit', direction: 'both', placeId: braudeId },
+  );
+  assert.equal(marked.status, 200, marked.text);
+  const [leg] = dataOf(marked)['legs'] as { id: string }[];
+  assert.ok(leg, `the weekly block has no legs: ${marked.text.slice(0, 160)}`);
+  const whereRule = await created(
+    '/travel/rules',
+    {
+      scope: {
+        kind: 'where',
+        where: {
+          combinator: 'and',
+          rules: [{ field: 'title', operator: 'contains', value: 'Gym' }],
+        },
+      },
+      mode: 'walk',
+      direction: 'both',
+    },
+    'travel rule',
+  );
   const dashboard = await created('/dashboards', { title: 'Secrets dashboard' }, 'dashboard');
   const topic = await created('/topics', { name: 'Secrets page' }, 'topic');
   const view = await created(
@@ -335,6 +373,7 @@ async function seed(): Promise<void> {
     throwawayWid,
     itemId: dataOf(item)['id'] as string,
     timeBlockId: dataOf(timeBlock)['id'] as string,
+    travel: { placeId: braudeId, ruleId: dataOf(whereRule)['id'] as string, legId: leg.id },
     dashboardId: dataOf(dashboard)['id'] as string,
     dashboardVersion: dataOf(dashboard)['version'] as number,
     viewId: dataOf(view)['id'] as string,

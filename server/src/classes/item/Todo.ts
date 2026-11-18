@@ -12,6 +12,7 @@ import { Topic } from '../workspace/Topic.js';
 import { AppError } from '../../errors/AppError.js';
 import { MirroredItemError } from '../../errors/MirroredItemError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
+import { ValidationError } from '../../errors/ValidationError.js';
 import type { ItemData, LocalItemPatch } from '../../models/definitions/Item.js';
 import { MirroredItemError as StoredMirroredItemError } from '../../models/errors.js';
 import { getItemRepository } from '../../models/index.js';
@@ -37,6 +38,27 @@ export interface NewTodo {
   containerId?: string | null | undefined;
   priority?: number | null | undefined;
   idempotencyKey?: string | undefined;
+  /** When it happens (a to-do needs a start for travel). */
+  startAt?: Date | undefined;
+  /** Needs `startAt`, and is not before it. */
+  endAt?: Date | undefined;
+}
+
+/** A new to-do's start and end as stored: 400 for an end without a start or before it. */
+function timesOf(input: NewTodo): { startAt?: Date; endAt?: Date } {
+  const { startAt, endAt } = input;
+  for (const [field, time] of [
+    ['startAt', startAt],
+    ['endAt', endAt],
+  ] as const) {
+    if (time !== undefined && Number.isNaN(time.getTime())) {
+      throw new ValidationError(`${field}: Must be a valid date`);
+    }
+  }
+  if (endAt === undefined) return startAt === undefined ? {} : { startAt };
+  if (startAt === undefined) throw new ValidationError('startAt: Required with endAt');
+  if (endAt < startAt) throw new ValidationError('endAt: Must not come before startAt');
+  return { startAt, endAt };
 }
 
 function isDuplicateKey(error: unknown): boolean {
@@ -61,12 +83,14 @@ export class Todo
 
   /**
    * Editors: a new to-do of the caller's. `topicId` defaults to the workspace's `personal` topic
-   * (an unknown topic or a container the caller can't see is 400). `created` is false when the
+   * (an unknown topic or a container the caller can't see is 400). An end needs a start and is
+   * not before it (400 otherwise). `created` is false when the
    * caller already made one with this idempotency key (the unique partial index on (workspace,
    * owner, key) makes that race-free).
    */
   static async create(caller: Caller, input: NewTodo): Promise<{ todo: Todo; created: boolean }> {
     caller.require('editor');
+    const times = timesOf(input);
     if (input.containerId !== undefined && input.containerId !== null) {
       await Container.assertVisible(caller, await ItemPolicy.for(caller), input.containerId);
     }
@@ -90,6 +114,7 @@ export class Todo
         ...(input.allDay === undefined ? {} : { allDay: input.allDay }),
         ...(input.containerId === undefined ? {} : { containerId: input.containerId }),
         ...(input.priority === undefined ? {} : { priority: input.priority }),
+        ...times,
         ...(input.idempotencyKey === undefined
           ? {}
           : { props: { idempotencyKey: input.idempotencyKey } }),
@@ -119,6 +144,7 @@ export class Todo
   static async createAll(caller: Caller, inputs: readonly NewTodo[]): Promise<Todo[]> {
     caller.require('editor');
     if (inputs.length === 0) return [];
+    const times = inputs.map(timesOf);
     const workspaceId = caller.workspaceId;
     const containerIds = inputs.flatMap(({ containerId }) =>
       containerId === undefined || containerId === null ? [] : [containerId],
@@ -143,7 +169,7 @@ export class Todo
       await getItemRepository()
     ).createLocalMany(
       workspaceId,
-      inputs.map((input) => ({
+      inputs.map((input, index) => ({
         ownerUserId: caller.userId,
         title: input.title,
         topicId: input.topicId === undefined ? personal : input.topicId,
@@ -152,6 +178,7 @@ export class Todo
         ...(input.allDay === undefined ? {} : { allDay: input.allDay }),
         ...(input.containerId === undefined ? {} : { containerId: input.containerId }),
         ...(input.priority === undefined ? {} : { priority: input.priority }),
+        ...times[index],
         ...(input.idempotencyKey === undefined
           ? {}
           : { props: { idempotencyKey: input.idempotencyKey } }),

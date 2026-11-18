@@ -1,0 +1,145 @@
+/**
+ * Request shapes of the travel routes (zod 4; types/travel.ts holds the request and response
+ * types). Strict: an unknown key is a 400. These check the shape only; what a value means (a name
+ * of 1–80 characters, an address that is somewhere, a where-group the dashboards' compiler takes,
+ * a factor of 0.5–3, a place of the caller's, a span of more than 0 and at most a day) is the
+ * travel classes' to check, so REST and MCP refuse the same things.
+ */
+import { z } from 'zod';
+
+import { RuleGroupSchema } from '../types/builder.js';
+import { RULE_DIRECTIONS, TRAVEL_MODES } from '../types/travel.js';
+
+const Iso = z.iso.datetime({ offset: true });
+const Id = z.string().min(1).max(200);
+const Mode = z.enum(TRAVEL_MODES);
+const Direction = z.enum(RULE_DIRECTIONS);
+/** A trip's length in minutes: more than none, at most a day. */
+const Minutes = z
+  .number()
+  .positive()
+  .max(24 * 60);
+/** `YYYY-MM-DD` (a real date: the class checks). */
+const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'a date, YYYY-MM-DD');
+
+const atLeastOne = (body: object): boolean => Object.keys(body).length > 0;
+const AT_LEAST_ONE = 'At least one change is required';
+
+// ─── Places ─────────────────────────────────────────────────────────────────
+
+const PlaceFields = z.strictObject({
+  name: z.string().max(200),
+  /** Looked up when no coordinates come with it; `lat, lon` typed here needs no lookup. */
+  address: z.string().max(1000).optional(),
+  coords: z.strictObject({ lat: z.number(), lon: z.number() }).optional(),
+  aliases: z.array(z.string().max(200)).max(20).optional(),
+  home: z.boolean().optional(),
+});
+
+export const CreatePlaceBody = PlaceFields;
+
+export const UpdatePlaceBody = PlaceFields.partial().refine(atLeastOne, AT_LEAST_ONE);
+
+// ─── Rules ──────────────────────────────────────────────────────────────────
+
+const Scope = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('where'), where: RuleGroupSchema }),
+  z.strictObject({ kind: z.literal('series'), itemId: Id }),
+  /** `occurrence`: the occurrence's original start (ISO), or `single`. */
+  z.strictObject({
+    kind: z.literal('item'),
+    itemId: Id,
+    occurrence: z.union([z.literal('single'), Iso]),
+  }),
+]);
+
+const RuleFields = z.strictObject({
+  scope: Scope,
+  mode: Mode,
+  direction: Direction,
+  placeId: Id.nullable().optional(),
+});
+
+export const CreateRuleBody = RuleFields;
+
+export const UpdateRuleBody = RuleFields.partial().refine(atLeastOne, AT_LEAST_ONE);
+
+// ─── Settings, default places and pins ──────────────────────────────────────
+
+const PerMode = z
+  .strictObject({ walk: z.number(), drive: z.number(), transit: z.number() })
+  .partial();
+
+export const UpdateSettingsBody = z
+  .strictObject({
+    factors: PerMode.optional(),
+    buffers: PerMode.optional(),
+    goHome: z
+      .strictObject({
+        enabled: z.boolean(),
+        minWindowMinutes: z.number(),
+        minAtHomeMinutes: z.number(),
+      })
+      .partial()
+      .optional(),
+    defaultMode: Mode.optional(),
+  })
+  .refine(atLeastOne, AT_LEAST_ONE);
+
+/** A container's default place, or an item's: one of the caller's places; null removes it. */
+export const PlacePinBody = z.strictObject({ placeId: Id.nullable() });
+
+// ─── Marking an item ────────────────────────────────────────────────────────
+
+/** A leg's times as typed: any of start, end and length, and where he starts from. */
+const Span = z.strictObject({
+  startAt: Iso.optional(),
+  endAt: Iso.optional(),
+  minutes: Minutes.optional(),
+  fromPlaceId: Id.nullable().optional(),
+});
+
+export const MarkItemBody = z.strictObject({
+  /** One occurrence of a repeating item: its original start. */
+  occurrence: Iso.optional(),
+  /** Every occurrence of a repeating item. */
+  every: z.boolean().optional(),
+  mode: Mode,
+  direction: Direction,
+  placeId: Id.nullable().optional(),
+  there: Span.optional(),
+  back: Span.optional(),
+});
+
+/** `DELETE …/travel/items/:itemId?occurrence=&every=`. */
+export const UnmarkItemQuery = z.strictObject({
+  occurrence: Iso.optional(),
+  every: z.enum(['true', 'false']).optional(),
+});
+
+// ─── The preview, legs and days ─────────────────────────────────────────────
+
+export const PreviewBody = z
+  .strictObject({
+    mode: Mode,
+    fromPlaceId: Id.optional(),
+    toPlaceId: Id.optional(),
+    arriveBy: Iso.optional(),
+    departAt: Iso.optional(),
+  })
+  .refine((body) => body.arriveBy === undefined || body.departAt === undefined, {
+    path: ['departAt'],
+    message: 'give arriveBy or departAt, not both',
+  });
+
+/** One or two of start, end and length (TravelLeg checks how many). */
+export const LegEditBody = z.strictObject({
+  startAt: Iso.optional(),
+  endAt: Iso.optional(),
+  minutes: Minutes.optional(),
+});
+
+/** Skip and reset take no body. */
+export const EmptyBody = z.strictObject({});
+
+export const DaysQuery = z.strictObject({ from: Day, to: Day });

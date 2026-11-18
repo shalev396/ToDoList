@@ -11,6 +11,7 @@ export { BuilderController } from './builder.js';
 export { ViewsController } from './views.js';
 export { ItemsController } from './items.js';
 export { TimeBlocksController } from './timeBlocks.js';
+export { TravelController } from './travel.js';
 export { AgentKeysController } from './agentKeys.js';
 export { IntegrationsController } from './integrations.js';
 export { SyncController } from './sync.js';

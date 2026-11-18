@@ -22,6 +22,7 @@ import {
   TravelSettingsSchema,
   type TravelSettings,
   type TravelSettingsPatch,
+  type TravelSettingsResponse,
 } from '../../types/travel.js';
 import type { Caller } from '../base/Caller.js';
 import type { Owned } from '../base/contracts.js';
@@ -65,6 +66,13 @@ function checkedTrip(key: TripKey): TripKey {
 function checkedId(id: string, field: string): string {
   if (!ID_PATTERN.test(id)) throw new ValidationError(`${field}: an id`);
   return id;
+}
+
+/** The values a partial change gives (one left out or undefined changes nothing). */
+function given<T extends object>(change: T | undefined): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(change ?? {}).filter(([, value]) => value !== undefined),
+  ) as Partial<T>;
 }
 
 /** The stored settings when they are whole and valid; the defaults otherwise. */
@@ -159,6 +167,20 @@ export class TravelProfile extends WorkspaceEntity<TravelProfileData> implements
     return new Map(Object.entries(this.data.containerPlaces));
   }
 
+  /**
+   * As its member's own answers show it: the settings and the default places, never what else it
+   * keeps (geocodes, remembered lengths, pins). `orsAvailable`: the stage has its routing key.
+   */
+  toSettingsView(orsAvailable: boolean): TravelSettingsResponse {
+    return {
+      settings: this.settings,
+      containerPlaces: [...this.containerPlaces]
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([containerId, placeId]) => ({ containerId, placeId })),
+      orsAvailable,
+    };
+  }
+
   /** The length the member last entered for this trip, in minutes; null when none. */
   rememberedMinutes(key: TripKey): number | null {
     const minutes = Object.hasOwn(this.data.remembered, key) ? this.data.remembered[key] : null;
@@ -184,9 +206,9 @@ export class TravelProfile extends WorkspaceEntity<TravelProfileData> implements
     this.#authorize(caller);
     const current = this.settings;
     const merged = {
-      factors: { ...current.factors, ...patch.factors },
-      buffers: { ...current.buffers, ...patch.buffers },
-      goHome: { ...current.goHome, ...patch.goHome },
+      factors: { ...current.factors, ...given(patch.factors) },
+      buffers: { ...current.buffers, ...given(patch.buffers) },
+      goHome: { ...current.goHome, ...given(patch.goHome) },
       defaultMode: patch.defaultMode ?? current.defaultMode,
     };
     const parsed = TravelSettingsSchema.safeParse(merged);

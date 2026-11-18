@@ -8,12 +8,14 @@
  * name only: an address or a coordinate is never stored on a leg.
  *
  * Also the member's travel settings (factors, buffers, going home in a window, the default mode),
- * the fixed numbers travel runs by, what a travel rule applies to, and a place as its member and
- * as an agent see it (an agent: its name only).
+ * the fixed numbers travel runs by, what a travel rule applies to, a place as its member and as an
+ * agent see it (an agent: its name only), and what the travel routes (`…/travel/*`) take and
+ * answer.
  */
 import { z } from 'zod';
 
 import type { RuleGroup } from './builder.js';
+import type { ItemDetail, ItemSummary } from './items.js';
 
 export const TRAVEL_MODES = ['walk', 'drive', 'transit'] as const;
 export type TravelMode = (typeof TRAVEL_MODES)[number];
@@ -28,6 +30,8 @@ export type RuleDirection = (typeof RULE_DIRECTIONS)[number];
 
 /** Legs exist for this many days ahead, and are made again as days come into range. */
 export const TRAVEL_HORIZON_DAYS = 14;
+/** The most days one read of the day panel (`GET …/travel/days`) covers. */
+export const TRAVEL_DAYS_MAX = TRAVEL_HORIZON_DAYS;
 /** OpenRouteService calls a workspace may make a day, on the free key every member shares. */
 export const ROUTING_CALLS_PER_DAY = 100;
 /** A geocoded location is at a saved place when it is at most this far from it. */
@@ -83,11 +87,14 @@ export const TravelSettingsSchema = z.strictObject({
   defaultMode: z.enum(TRAVEL_MODES),
 }) satisfies z.ZodType<TravelSettings>;
 
+/** Any of a record's values; one left out (or undefined) stays as it is. */
+type Some<T> = { [K in keyof T]?: T[K] | undefined };
+
 /** A change to the settings: any part of them; what is left out stays as it is. */
 export interface TravelSettingsPatch {
-  factors?: Partial<Record<TravelMode, number>> | undefined;
-  buffers?: Partial<Record<TravelMode, number>> | undefined;
-  goHome?: Partial<TravelSettings['goHome']> | undefined;
+  factors?: Some<Record<TravelMode, number>> | undefined;
+  buffers?: Some<Record<TravelMode, number>> | undefined;
+  goHome?: Some<TravelSettings['goHome']> | undefined;
   defaultMode?: TravelMode | undefined;
 }
 
@@ -247,4 +254,153 @@ export interface TravelLink {
   app: 'google_maps' | 'waze' | 'moovit';
   url: string;
   fallbackUrl?: string;
+}
+
+// ─── The travel routes (`/api/private/workspaces/:wid/travel/*`) ─────────────
+//
+// Editors and owners only, each about the caller's own travel: another member's place, rule or
+// leg is a 404, as one that never existed. A place's address is in its member's own answers only;
+// a coordinate is in none of them (a leg's app links carry the trip's, to its member only).
+
+/** `POST …/travel/places`: coordinates, or an address to look up (`lat, lon` typed is taken as such). */
+export interface CreatePlaceRequest {
+  name: string;
+  address?: string;
+  coords?: { lat: number; lon: number };
+  aliases?: string[];
+  /** Makes it the member's one Home (the old one becomes a plain place). */
+  home?: boolean;
+}
+
+/** `PATCH …/travel/places/:id`: any of it (an empty `address` clears it and keeps the coordinates). */
+export type UpdatePlaceRequest = Partial<CreatePlaceRequest>;
+
+/** A travel rule as its member's own answers show it. */
+export interface TravelRuleView {
+  id: string;
+  scope: TravelRuleScope;
+  mode: TravelMode;
+  direction: RuleDirection;
+  /** The place it sends the member to; null: the anchor's own place. */
+  placeId: string | null;
+  /** ISO. Where-rules apply oldest first. */
+  createdAt: string;
+}
+
+/** `POST …/travel/rules`. */
+export interface CreateTravelRuleRequest {
+  scope: TravelRuleScope;
+  mode: TravelMode;
+  direction: RuleDirection;
+  placeId?: string | null;
+}
+
+/** `PATCH …/travel/rules/:id`: any of it. */
+export type UpdateTravelRuleRequest = Partial<CreateTravelRuleRequest>;
+
+/** `PATCH …/travel/settings`: any part of the settings; what is left out stays as it is. */
+export type UpdateTravelSettingsRequest = TravelSettingsPatch;
+
+/** `GET` and `PATCH …/travel/settings`. */
+export interface TravelSettingsResponse {
+  settings: TravelSettings;
+  /** The default places of calendars and projects, by container id. */
+  containerPlaces: { containerId: string; placeId: string }[];
+  /** Whether the stage has an OpenRouteService key (else walking and driving are estimates). */
+  orsAvailable: boolean;
+}
+
+/** `PUT …/travel/container-places/:containerId` and `PUT …/travel/item-places/:itemId`. */
+export interface PlacePinRequest {
+  /** One of the member's places; null removes the pin. */
+  placeId: string | null;
+}
+
+/**
+ * One leg's times as the member typed them when marking an item: any two of start, end and length
+ * (or one, which keeps the rest), and the place he starts from (one of his; null: the plan's).
+ */
+export interface SpanInput {
+  startAt?: string;
+  endAt?: string;
+  minutes?: number;
+  fromPlaceId?: string | null;
+}
+
+/**
+ * `POST …/travel/items/:itemId`: travel to (and from) one timed item. Every occurrence of a
+ * repeating item (`every`: a series rule), one occurrence of it (`occurrence`, its original
+ * start), or an item that doesn't repeat (neither). `there` and `back` are applied to its legs as
+ * hand edits (with `every`, a length only: it applies to each occurrence's leg).
+ */
+export interface MarkItemRequest {
+  occurrence?: string;
+  every?: boolean;
+  mode: TravelMode;
+  direction: RuleDirection;
+  /** One of the member's places; null or absent: the item's own place. */
+  placeId?: string | null;
+  there?: SpanInput;
+  back?: SpanInput;
+}
+
+/** The rule the item is marked with, and its legs in the horizon as they are now. */
+export interface MarkItemResponse {
+  rule: TravelRuleView;
+  legs: ItemDetail[];
+}
+
+/**
+ * `POST …/travel/preview`: a trip's length as a leg would get it (no leg is made). From defaults
+ * to Home; without a place to go to there is no length. `arriveBy` or `departAt` (not both) dates
+ * the trip.
+ */
+export interface TravelPreviewRequest {
+  mode: TravelMode;
+  fromPlaceId?: string;
+  toPlaceId?: string;
+  arriveBy?: string;
+  departAt?: string;
+}
+
+/** The trip's length and where it came from; null when it has none. Times ISO. */
+export interface TravelPreviewResponse {
+  minutes: number | null;
+  source: LegSource | null;
+  startAt: string | null;
+  endAt: string | null;
+}
+
+/** `PATCH …/travel/legs/:id`: one or two of start, end and length; the rest is worked out. */
+export interface LegEditRequest {
+  startAt?: string;
+  endAt?: string;
+  minutes?: number;
+}
+
+/** `GET …/travel/legs/:id/links`: the apps that open the trip (its member only). */
+export interface TravelLinksResponse {
+  links: TravelLink[];
+}
+
+/** A removed leg in the day panel: why it went, and when. */
+export interface RemovedLegView {
+  id: string;
+  title: string;
+  reason: RemovalReason;
+  /** ISO. */
+  removedAt: string;
+}
+
+/** One day of the member's travel (a leg is on the day it starts, in the workspace's zone). */
+export interface TravelDayView {
+  /** `YYYY-MM-DD`. */
+  date: string;
+  legs: ItemSummary[];
+  removed: RemovedLegView[];
+}
+
+/** `GET …/travel/days?from=YYYY-MM-DD&to=YYYY-MM-DD`: every day from `from` to `to`, at most 14. */
+export interface TravelDaysResponse {
+  days: TravelDayView[];
 }

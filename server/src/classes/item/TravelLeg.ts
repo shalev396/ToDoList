@@ -23,6 +23,8 @@
  *   is a tombstone with reason `skipped`, which no regeneration brings back; Reset does.
  * - The member's own changes: new times (any two of start, end and length, the third worked out),
  *   a skip, a reset. Each is the owner's only (404 for anyone else) and an editor's (403).
+ * - The member's own reads (plan Task 13): a leg's app links, worked out from the places on each
+ *   read and never stored, and the day panel (each day's legs, and the ones removed, with why).
  *
  * Stored props that aren't a leg's read as none (`travel` is null): reads never throw on them.
  */
@@ -30,6 +32,7 @@ import type { Caller } from '../base/Caller.js';
 import { DayPlanner, type PlannedLeg } from '../travel/DayPlanner.js';
 import type { Reconciliation, StoredLegFacts } from '../travel/LegReconciler.js';
 import { Place } from '../travel/Place.js';
+import { TravelLinks } from '../travel/TravelLinks.js';
 import { TravelProfile } from '../travel/TravelProfile.js';
 import { AppError } from '../../errors/AppError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
@@ -40,9 +43,19 @@ import type {
   TravelLegWrite,
 } from '../../models/definitions/Item.js';
 import { getItemRepository } from '../../models/index.js';
+import { redactString } from '../../services/secretPatterns.js';
 import { SUBJECT_ATTRIBUTE_KEY } from '../../types/attributes.js';
+import { addLocalDays, wallDate, zonedTime } from '../../types/recurrence/zoned.js';
 import { solveSpan, type Span, type SpanField } from '../../types/timeSpan.js';
-import { travelPropsOf, type RemovalReason, type TravelLegProps } from '../../types/travel.js';
+import {
+  TRAVEL_DAYS_MAX,
+  travelPropsOf,
+  type RemovalReason,
+  type TravelDayView,
+  type TravelDaysResponse,
+  type TravelLegProps,
+  type TravelLink,
+} from '../../types/travel.js';
 import { Item } from './Item.js';
 import type { ItemEdit } from './ItemEdit.js';
 import type { OverlayEdit } from './Overlay.js';
@@ -67,6 +80,21 @@ export interface AppliedPlan {
 /** The longest leg: a day. */
 const MAX_MINUTES = 24 * 60;
 const MINUTE_MS = 60_000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+const DAY_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** A calendar date (`YYYY-MM-DD`, a real one) as its UTC midnight; 400 naming `field` else. */
+function calendarDay(text: string, field: string): Date {
+  const match = DAY_PATTERN.exec(text);
+  const day =
+    match === null
+      ? null
+      : new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+  if (day === null || Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== text) {
+    throw new ValidationError(`${field}: a date, YYYY-MM-DD`);
+  }
+  return day;
+}
 /** How often a change made on a stale read is read again and retried before a 409. */
 const SAVE_ATTEMPTS = 5;
 
@@ -224,6 +252,57 @@ export class TravelLeg extends ScheduledItem {
     return leg;
   }
 
+  /**
+   * Editors, their own: the day panel from `from` to `to` (`YYYY-MM-DD`, both included, in the
+   * workspace's zone), at most TRAVEL_DAYS_MAX days: every day with the legs that start in it and
+   * the ones removed from it (why, and when). 400 for a date that isn't one, or a range that runs
+   * backwards or is too long.
+   */
+  static async days(caller: Caller, from: string, to: string): Promise<TravelDaysResponse> {
+    caller.require('editor');
+    const first = calendarDay(from, 'from');
+    const last = calendarDay(to, 'to');
+    const count = Math.round((last.getTime() - first.getTime()) / DAY_MS) + 1;
+    if (count < 1) throw new ValidationError('to: on or after from');
+    if (count > TRAVEL_DAYS_MAX) {
+      throw new ValidationError(`to: at most ${String(TRAVEL_DAYS_MAX)} days from from`);
+    }
+    const zone = caller.settings.timezone;
+    const start = zonedTime(
+      first.getUTCFullYear(),
+      first.getUTCMonth() + 1,
+      first.getUTCDate(),
+      0,
+      0,
+      zone,
+    );
+    const { live, removed } = await TravelLeg.listDays(
+      caller,
+      start,
+      addLocalDays(start, count, zone),
+    );
+    const days = new Map<string, TravelDayView>();
+    for (let index = 0; index < count; index += 1) {
+      const date = new Date(first.getTime() + index * DAY_MS).toISOString().slice(0, 10);
+      days.set(date, { date, legs: [], removed: [] });
+    }
+    const dayOf = (leg: TravelLeg): TravelDayView | undefined =>
+      leg.startAt === null ? undefined : days.get(wallDate(leg.startAt, zone));
+    for (const leg of live) dayOf(leg)?.legs.push(leg.toSummary());
+    for (const leg of removed) {
+      const reason = leg.removedReason;
+      const removedAt = leg.deletedAt;
+      if (reason === null || removedAt === null) continue;
+      dayOf(leg)?.removed.push({
+        id: leg.id,
+        title: redactString(leg.title),
+        reason,
+        removedAt: removedAt.toISOString(),
+      });
+    }
+    return { days: [...days.values()] };
+  }
+
   // ─── The member's changes ─────────────────────────────────────────────────
 
   /**
@@ -313,6 +392,26 @@ export class TravelLeg extends ScheduledItem {
           travel: { ...now, edited: false, anchorMoved: false, anchorStartNow: null },
         },
       };
+    });
+  }
+
+  /**
+   * Its member's only (404 for anyone else), an editor's: the apps that open the trip (Google Maps,
+   * Waze for driving, Moovit for public transport), arriving as it ends. Worked out on each read
+   * from the places' coordinates, never stored, never given to an agent (plan Ruling 10). None
+   * without a place to go to (it went since).
+   */
+  async links(caller: Caller): Promise<TravelLink[]> {
+    this.#authorize(caller);
+    const travel = this.travel;
+    const arriveBy = this.data.endAt ?? this.data.startAt;
+    if (travel === null || arriveBy === null) return [];
+    const places = new Map((await Place.listOwn(caller)).map((place) => [place.id, place.coords]));
+    return TravelLinks.for({
+      mode: travel.mode,
+      from: places.get(travel.fromPlaceId) ?? null,
+      to: places.get(travel.toPlaceId) ?? null,
+      arriveBy,
     });
   }
 

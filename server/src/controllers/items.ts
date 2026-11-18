@@ -25,6 +25,7 @@ import {
   FacetsQuery,
 } from '../services/itemSchemas.js';
 import { redactString } from '../services/secretPatterns.js';
+import { optionalTime } from '../services/timeBlockSchemas.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import type { WriteBackErrorDetails } from '../types/items.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
@@ -116,12 +117,15 @@ const create: RequestHandler = async (req, res): Promise<void> => {
 };
 
 async function createItem(req: Parameters<RequestHandler>[0], res: Response): Promise<void> {
-  const { recurrence, containerId, ...body } = parseOr400(CreateItemBody, req.body);
+  const { recurrence, containerId, startAt, endAt, ...body } = parseOr400(CreateItemBody, req.body);
   const { caller } = req as WorkspaceRequest;
   const reads = await ItemQuery.for(caller);
   if (recurrence !== undefined) {
     if (containerId !== undefined && containerId !== null) {
       throw new AppError(400, 'containerId: a recurring to-do lives in the workspace calendar');
+    }
+    if (startAt !== undefined || endAt !== undefined) {
+      throw new AppError(400, 'startAt: a recurring to-do is timed by its due date');
     }
     const { event, created } = await CalendarEvent.createRecurring(caller, {
       ...body,
@@ -136,6 +140,8 @@ async function createItem(req: Parameters<RequestHandler>[0], res: Response): Pr
     ...body,
     ...(containerId === undefined ? {} : { containerId }),
     dueAt: toDate(body.dueAt),
+    startAt: optionalTime(startAt),
+    endAt: optionalTime(endAt),
   });
   const data: CreateItemResponseData = await reads.detail(todo);
   res.success(data, created ? 201 : 200);

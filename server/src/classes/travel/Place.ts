@@ -39,6 +39,9 @@ export interface NewPlace {
   home?: boolean | undefined;
 }
 
+/** A change to a place: any of it; what is left out stays as it is. */
+export type PlaceChange = { [K in keyof NewPlace]?: NewPlace[K] | undefined };
+
 const NAME_MAX = 80;
 const ADDRESS_MAX = 300;
 const ALIASES_MAX = 10;
@@ -241,7 +244,7 @@ export class Place extends WorkspaceEntity<PlaceData> implements Owned, Viewable
    * Editors, on their own place: a new name, aliases, address (located again unless coordinates
    * come with it; empty clears it and keeps the coordinates), coordinates or Home.
    */
-  async update(caller: Caller, patch: Partial<NewPlace>): Promise<Place> {
+  async update(caller: Caller, patch: PlaceChange): Promise<Place> {
     this.#authorize(caller);
     const change: PlacePatch = {};
     const name = patch.name === undefined ? this.name : label(patch.name, 'name');

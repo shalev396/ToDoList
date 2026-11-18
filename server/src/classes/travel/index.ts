@@ -2,7 +2,8 @@
  * Travel time (docs/superpowers/specs/2026-11-17-travel-time-design.md): the pure core (the day
  * plan, the leg reconciler, lengths, links, place matching, geocoding) and the storage classes (a
  * member's places, rules and profile, a workspace's routing quota, and what a member's leaving or
- * a workspace's deletion removes), and generation (the anchors, the 14-day plan and its triggers).
+ * a workspace's deletion removes), generation (the anchors, the 14-day plan and its triggers), and
+ * the setup as the API changes it (TravelSetup: every change regenerates the member's legs).
  * The legs themselves are items: TravelLeg, in classes/item.
  *
  * Loading this module subscribes travel to item writes (ItemChanges): a member with travel gets
@@ -41,8 +42,16 @@ export { FreeGeocoder } from './geocoding/FreeGeocoder.js';
 export { RouteChain, type StandardChainDeps } from './routing/RouteChain.js';
 export type { RoutePlace, RouteProvider, RoutingBudget, Trip } from './routing/RouteProvider.js';
 export { openRouteServiceKey, travelClient } from './travelHttp.js';
-export { Place, type NewPlace } from './Place.js';
-export { TravelRule, type NewTravelRule } from './TravelRule.js';
+export { Place, type NewPlace, type PlaceChange } from './Place.js';
+export {
+  TravelRule,
+  type MarkItemInput,
+  type NewTravelRule,
+  type SpanChange,
+  type TravelRuleChange,
+  type UnmarkItemInput,
+} from './TravelRule.js';
+export { TravelSetup } from './TravelSetup.js';
 export { TravelProfile } from './TravelProfile.js';
 export { RoutingQuota } from './RoutingQuota.js';
 export { TravelData } from './TravelData.js';
@@ -57,7 +66,9 @@ export { TimeBox, TRAVEL_STEP_MIN_MS, type Boxed } from './TimeBox.js';
 export {
   AFTER_SYNC_BUDGET_MS,
   ITEM_CHANGE_BUDGET_MS,
+  PREVIEW_BUDGET_MS,
   REGENERATION_BUDGET_MS,
   TravelPlanner,
+  type PreviewInput,
   type RegenerateOptions,
 } from './TravelPlanner.js';
