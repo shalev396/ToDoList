@@ -103,6 +103,19 @@ export class TravelProfile extends WorkspaceEntity<TravelProfileData> implements
     return (await getTravelProfileRepository()).listWithTravel();
   }
 
+  /** The members of this workspace with travel (a sync there may have moved their anchors). */
+  static async listWithTravelIn(workspaceId: string): Promise<string[]> {
+    return (await getTravelProfileRepository()).listWithTravelIn(workspaceId);
+  }
+
+  /**
+   * Whether the caller has travel: one read, and no profile is made for a member without one (an
+   * item write asks this of every writer).
+   */
+  static async hasTravelFor(caller: Caller): Promise<boolean> {
+    return (await getTravelProfileRepository()).hasTravel(caller.workspaceId, caller.userId);
+  }
+
   /**
    * The caller's rules changed: whether they have any (the daily pass and item changes regenerate
    * only members with travel). Makes the profile if it is the first.

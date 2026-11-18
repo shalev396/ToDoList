@@ -121,7 +121,8 @@ describe('lambda handler: scheduled tick', () => {
     assert.equal(result.statusCode, 200);
     const body = JSON.parse(result.body) as { dispatch: { dispatched: unknown }; passes: unknown };
     assert.equal(typeof body.dispatch.dispatched, 'number');
-    assert.deepEqual(body.passes, {});
+    // The travel pass ran, with no member to regenerate.
+    assert.deepEqual(body.passes, { 'travel-pass': { done: 0, left: 0 } });
   });
 });
 

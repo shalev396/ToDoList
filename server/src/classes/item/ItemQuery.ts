@@ -14,12 +14,20 @@ import mongoose from 'mongoose';
 
 import type { Caller } from '../base/Caller.js';
 import { ItemPolicy } from '../policies/ItemPolicy.js';
+import { AttributeDefinitions } from '../workspace/AttributeDefinitions.js';
 import { AppError } from '../../errors/AppError.js';
 import { getContainerRepository, getItemRepository } from '../../models/index.js';
 import type { CompileContext } from '../../builder/compile.js';
+import { registryOf } from '../../builder/providerFields.js';
 import { runQuery, type RunQueryDeps } from '../../builder/run.js';
 import { logger } from '../../services/logger.js';
-import { LOCAL_CONNECTOR, type Query, type QueryResult } from '../../types/builder.js';
+import {
+  CAPS,
+  LOCAL_CONNECTOR,
+  type BlockType,
+  type Query,
+  type QueryResult,
+} from '../../types/builder.js';
 import {
   SCHEDULED_KINDS,
   type ItemKind,
@@ -46,8 +54,11 @@ import { Container } from './Container.js';
 import { Copies, type LiveStatuses } from './Copies.js';
 import { Item } from './Item.js';
 import { Overrides } from './Overrides.js';
+import { ProviderFields } from './ProviderFields.js';
 
 export const DEFAULT_PAGE_SIZE = 50;
+/** The most rows a server draft reads (runDraft): past the public cap, still bounded. */
+export const DRAFT_ROWS_MAX = 1000;
 /** MongoDB's MaxTimeMSExpired. */
 const MAX_TIME_MS_EXPIRED = 50;
 
@@ -352,6 +363,45 @@ export class ItemQuery {
       }
       throw error;
     }
+  }
+
+  /**
+   * A query the server drafts itself (travel's anchors and where-rules), run as `runWorkspaceQuery`
+   * runs a request's, minus the request's parts: the caller's access, `ws` from `caller.context`,
+   * the workspace's attributes (and synced fields, when the draft reads `props.*`), no connectors
+   * and no `$page` variables. Its limit may pass the public cap (CAPS.maxLimit), up to
+   * DRAFT_ROWS_MAX: no request ever reaches this. 400-worthy drafts throw QueryValidationError.
+   */
+  async runDraft(
+    draft: Query,
+    options: { now: Date; blockType?: BlockType },
+  ): Promise<QueryResult> {
+    const caller = this.#caller;
+    const ws = caller.context;
+    const { limit, ...capped } = draft;
+    const wide = limit !== undefined && limit > CAPS.maxLimit;
+    const query: Query = wide ? capped : draft;
+    const ctx: CompileContext = {
+      ws,
+      userId: caller.userId,
+      access: this.#policy.access,
+      vars: {},
+      now: options.now,
+      timeZone: ws.settings.timezone,
+      weekStart: ws.settings.weekStart,
+      preview: false,
+      attributes: AttributeDefinitions.of(ws.settings).toJSON(),
+      ...(JSON.stringify(query).includes('props.')
+        ? {
+            fieldRegistry: registryOf(
+              await ProviderFields.of(ws, caller.userId, options.now.getTime()),
+            ),
+          }
+        : {}),
+      ...(options.blockType === undefined ? {} : { blockType: options.blockType }),
+      ...(wide ? { rowLimit: Math.min(limit, DRAFT_ROWS_MAX) } : {}),
+    };
+    return this.run(query, ctx);
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────

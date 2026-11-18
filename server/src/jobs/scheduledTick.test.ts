@@ -1,7 +1,12 @@
 /** The hourly tick: the dispatch, then the after-dispatch passes, a failing pass isolated. */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { runScheduledTick, type AfterDispatchPass } from './scheduledTick.js';
+import { TravelHorizonPass } from './TravelHorizonPass.js';
+import {
+  AFTER_DISPATCH_PASSES,
+  runScheduledTick,
+  type AfterDispatchPass,
+} from './scheduledTick.js';
 
 const NOW = new Date('2026-11-18T10:00:00.000Z');
 
@@ -58,5 +63,34 @@ describe('runScheduledTick', () => {
       passes: [],
     });
     assert.deepEqual(result, { dispatch: { dispatched: 1, failed: 1 }, passes: {} });
+  });
+
+  it('runs the passes even when the dispatch throws, then rethrows its error', async () => {
+    const ran: string[] = [];
+    await assert.rejects(
+      runScheduledTick({
+        now: NOW,
+        dispatch: () => Promise.reject(new Error('dispatch is down')),
+        passes: [
+          {
+            name: 'travel',
+            run: (): Promise<Record<string, number>> => {
+              ran.push('travel');
+              return Promise.resolve({ done: 1 });
+            },
+          },
+        ],
+      }),
+      /dispatch is down/,
+    );
+    assert.deepEqual(ran, ['travel']);
+  });
+
+  it('runs the travel horizon pass after every dispatch', () => {
+    assert.deepEqual(
+      AFTER_DISPATCH_PASSES.map((pass) => pass.name),
+      ['travel-pass'],
+    );
+    assert.ok(AFTER_DISPATCH_PASSES[0] instanceof TravelHorizonPass);
   });
 });

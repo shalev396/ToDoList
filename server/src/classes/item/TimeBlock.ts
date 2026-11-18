@@ -50,6 +50,7 @@ import type { BlockLayer } from '../../types/scheduled.js';
 import { TIME_BLOCK_MAX_MS, TIME_BLOCK_MIN_MS } from '../../types/timeBlocks.js';
 import type { Deletable, Recurring } from './contracts.js';
 import { Item } from './Item.js';
+import { ItemChanges } from './ItemChanges.js';
 import type { EditField, ItemEdit } from './ItemEdit.js';
 import { ScheduledItem } from './ScheduledItem.js';
 import { TimeRange } from './TimeRange.js';
@@ -183,8 +184,10 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
       if (known === null) throw error;
       return { block: known, created: false };
     }
-    const block = TimeBlock.#of(Item.from(stored));
-    return { block: subject === null ? block : await block.#storeSubject(subject), created: true };
+    const made = TimeBlock.#of(Item.from(stored));
+    const block = subject === null ? made : await made.#storeSubject(subject);
+    await block.#changed(caller);
+    return { block, created: true };
   }
 
   /** The block (or area) the caller may see, as stored; 404 for anything else. */
@@ -353,6 +356,7 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
     if (!(await (await getItemRepository()).softDelete(this.workspaceId, this.id))) {
       throw new NotFoundError();
     }
+    await this.#changed(caller);
   }
 
   // ─── Inside ───────────────────────────────────────────────────────────────
@@ -394,9 +398,12 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
         ),
       };
     });
-    return subject === undefined || subject === saved.subject
-      ? saved
-      : saved.#storeSubject(subject);
+    const block =
+      subject === undefined || subject === saved.subject
+        ? saved
+        : await saved.#storeSubject(subject);
+    await block.#changed(caller);
+    return block;
   }
 
   /**
@@ -410,7 +417,7 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
   ): Promise<TimeBlock> {
     const timeZone = caller.settings.timezone;
     const slot = originalStart.getTime();
-    return this.#save((current) => {
+    const saved = await this.#save((current) => {
       const lines = current.recurrenceLines;
       const span = current.timeRange;
       if (span === null || lines.length === 0 || !TimeBlock.#hasSlot(span, lines, slot, timeZone)) {
@@ -437,6 +444,13 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
         ),
       };
     });
+    await saved.#changed(caller);
+    return saved;
+  }
+
+  /** Whoever listens hears the caller wrote it (travel: its legs move); their failure is theirs. */
+  async #changed(caller: Caller): Promise<void> {
+    await ItemChanges.notify(caller, { itemId: this.id, kind: this.kind });
   }
 
   /** The edit permission (404 for a block the caller can't see, 403 for a viewer). */

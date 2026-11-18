@@ -101,6 +101,11 @@ export interface CompileContext {
   fieldRegistry?: ReadonlyMap<string, FieldType>;
   /** The page's importance preset; Weighted with the defaults when absent. */
   importance?: ImportanceConfig;
+  /**
+   * The server's own drafts only (ItemQuery#runDraft), never a request: the rows to read, past
+   * the public cap (CAPS.maxLimit), in place of the query's limit.
+   */
+  rowLimit?: number;
 }
 
 export interface CompiledQuery {
@@ -904,10 +909,12 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
   if (aggregate === undefined) {
     // A time view reads up to the cap when it names no limit: one series row stands for many
     // occurrences, and a week of events should not be cut at 50.
-    const rowLimit = Math.min(
-      parsed.limit ?? (isTimeShaped(ctx.blockType) ? CAPS.maxLimit : DEFAULT_ROW_LIMIT),
-      CAPS.maxLimit,
-    );
+    const rowLimit =
+      ctx.rowLimit ??
+      Math.min(
+        parsed.limit ?? (isTimeShaped(ctx.blockType) ? CAPS.maxLimit : DEFAULT_ROW_LIMIT),
+        CAPS.maxLimit,
+      );
     facet['rows'] = compilation.rowStages(
       parsed.sort ?? DEFAULT_SORT[source] ?? [],
       capForPreview(rowLimit, ctx),

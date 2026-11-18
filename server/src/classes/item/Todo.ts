@@ -20,6 +20,7 @@ import { isScheduledKind } from '../../types/scheduled.js';
 import { Container } from './Container.js';
 import type { Completable, Copyable, Deletable, Editable, HasDueDate } from './contracts.js';
 import { Item } from './Item.js';
+import { ItemChanges } from './ItemChanges.js';
 import type { ItemEdit, ProviderHalf } from './ItemEdit.js';
 import { ItemEditing } from './ItemEditing.js';
 import { TimeRange } from './TimeRange.js';
@@ -78,8 +79,9 @@ export class Todo
         ? ((await Topic.bySlug(workspaceId, 'personal'))?.id ?? null)
         : input.topicId;
     const items = await getItemRepository();
+    let stored: ItemData;
     try {
-      const stored = await items.createLocal(workspaceId, {
+      stored = await items.createLocal(workspaceId, {
         ownerUserId: caller.userId,
         title: input.title,
         topicId,
@@ -92,7 +94,6 @@ export class Todo
           ? {}
           : { props: { idempotencyKey: input.idempotencyKey } }),
       });
-      return { todo: new Todo(stored), created: true };
     } catch (error) {
       if (input.idempotencyKey === undefined || !isDuplicateKey(error)) throw error;
       const [existing] = await items.aggregate(workspaceId, [
@@ -104,6 +105,9 @@ export class Todo
       if (!(found instanceof Todo)) throw error;
       return { todo: found, created: false };
     }
+    const todo = new Todo(stored);
+    await todo.#changed(caller);
+    return { todo, created: true };
   }
 
   /**
@@ -153,7 +157,9 @@ export class Todo
           : { props: { idempotencyKey: input.idempotencyKey } }),
       })),
     );
-    return stored.map((data) => new Todo(data));
+    const todos = stored.map((data) => new Todo(data));
+    for (const todo of todos) await todo.#changed(caller);
+    return todos;
   }
 
   /**
@@ -247,7 +253,9 @@ export class Todo
     const topic = edit.get('topicId');
     if (topic !== undefined && topic !== null) await Topic.assertOf(this.workspaceId, topic);
     this.#assertTimeRange(edit);
-    return this.#store(edit.localPatch());
+    const updated = await this.#store(edit.localPatch());
+    await updated.#changed(caller);
+    return updated;
   }
 
   edit(caller: Caller, edit: ItemEdit): Promise<Todo> {
@@ -276,6 +284,7 @@ export class Todo
       throw new AppError(404, 'Not found');
     }
     await CalendarLinks.in(this.workspaceId).onItemDeleted(this.id, caller);
+    await this.#changed(caller);
   }
 
   /** H5: created in one of the caller's own providers too (TodoCopy). */
@@ -294,6 +303,11 @@ export class Todo
     const end = edit.has('endAt') ? (edit.get('endAt') ?? null) : this.data.endAt;
     if (start === null || end === null) return;
     TimeRange.of(start, end, edit.get('allDay') ?? this.data.allDay);
+  }
+
+  /** Whoever listens hears the caller wrote it (travel: its legs move); their failure is theirs. */
+  async #changed(caller: Caller): Promise<void> {
+    await ItemChanges.notify(caller, { itemId: this.id, kind: this.kind });
   }
 
   /** The policy, once it let the caller edit this to-do (403, 404, or the mirrored 409). */

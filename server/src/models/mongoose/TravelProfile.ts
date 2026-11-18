@@ -232,4 +232,21 @@ export const TravelProfileRepository: ITravelProfileRepository = {
       lastPassDay: doc.lastPassDay ?? null,
     }));
   },
+
+  async listWithTravelIn(workspaceId) {
+    const docs = await TravelProfileMongoModel.find(
+      { workspaceId, hasTravel: true },
+      { ownerUserId: 1 },
+    )
+      .sort({ _id: 1 })
+      .lean<Pick<TravelProfileFields, 'ownerUserId'>[]>();
+    return docs.map((doc) => doc.ownerUserId);
+  },
+
+  async hasTravel(workspaceId, ownerUserId) {
+    const doc = await TravelProfileMongoModel.findOne(ownFilter(workspaceId, ownerUserId), {
+      hasTravel: 1,
+    }).lean<Pick<TravelProfileFields, 'hasTravel'>>();
+    return doc?.hasTravel === true;
+  },
 };
