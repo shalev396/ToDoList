@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { en } from '../../../i18n/translations/en/index.ts';
+import { he } from '../../../i18n/translations/he/index.ts';
 import { NO_REPEAT } from './recurrence.ts';
 import {
   blockRequestOf,
@@ -8,6 +10,7 @@ import {
   initialBlockState,
   spanProblem,
   titleProblem,
+  travelNotAddedKey,
   type TimeBlockFormState,
 } from './timeBlockDraft.ts';
 
@@ -304,5 +307,17 @@ describe('blockTopicOf', () => {
     assert.equal(blockTopicOf(undefined, undefined, topics), undefined);
     assert.equal(blockTopicOf('', undefined, topics), undefined);
     assert.equal(blockTopicOf(undefined, 'gone', topics), undefined);
+  });
+});
+
+describe('travel on the block form', () => {
+  it('both layers offer "Add travel time": an area’s toast names the area, in English and Hebrew', () => {
+    assert.equal(travelNotAddedKey('block'), 'travel.add.createdWithoutBlock');
+    assert.equal(travelNotAddedKey('area'), 'travel.add.createdWithoutArea');
+    assert.equal(
+      en.travel.add.createdWithoutArea,
+      'The area was created, but its travel wasn’t added.',
+    );
+    assert.equal(he.travel.add.createdWithoutArea, 'האזור נוצר, אבל הנסיעה שלו לא נוספה.');
   });
 });

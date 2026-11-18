@@ -7,12 +7,14 @@
  * - Rows: what the member may read, as a calendar reads it (ItemQuery#runDraft, `blockType:
  *   'calendar'`, so a series that began weeks ago is read too): a start, any kind but travel, in
  *   the range, at most ANCHOR_ROWS_MAX. Series are expanded on the workspace's wall clock; all-day
- *   and due-only occurrences never anchor, and neither does a painted area (non-busy time).
+ *   and due-only occurrences never anchor. A painted area anchors like a block (the owner's ruling
+ *   of 2026-11-18), marked `area`: the day plan nests the items inside it (DayPlanner).
  * - Rule (Ruling 11): the item rule of that occurrence, else the series rule of its series, else
  *   the oldest where-rule that matches (each where-rule is its own draft, ANDed with the range).
  * - Place, in order: the member's pin of the item; the rule's place; a place named (or aliased) in
  *   the event's location; the location geocoded to a place within PLACE_MATCH_RADIUS_M; the default
- *   place of its calendar or project. Otherwise none, and no travel.
+ *   place of its calendar or project. Otherwise none of its own: the day plan gives it the place of
+ *   an area around it, if any, else it gets no travel.
  * - Geocodes are cached per member by the text's hash. New lookups: at most `lookups` per gather
  *   (NEW_GEOCODES_MAX; 0 on an item write, which reads the cache only), each within the
  *   regeneration's time (TimeBox). Only "not found" is cached: a geocoder that failed or ran out of
@@ -96,7 +98,7 @@ const ANCHOR_RULES: RuleGroup = {
 
 const anchorKey = (itemId: string, occurrence: string): string => `${itemId}|${occurrence}`;
 
-/** Painted time (an area): it reserves nothing, so it is never travelled to. */
+/** Painted time (an area): travelled to like a block; the items inside it nest. */
 const isArea = (row: ItemQueryRow): boolean =>
   row.kind === 'block' && row.props['layer'] === 'area';
 
@@ -178,7 +180,7 @@ export class TravelAnchors {
     const slot =
       occurrence.originalStart === null ? 'single' : occurrence.originalStart.toISOString();
     const key = anchorKey(itemId, slot);
-    const rule = isArea(row) ? null : this.#ruleFor(row.id, itemId, slot, matches);
+    const rule = this.#ruleFor(row.id, itemId, slot, matches);
     if (rule === null) {
       this.#fate(key, 'no_longer_matches');
       return null;
@@ -196,6 +198,7 @@ export class TravelAnchors {
       mode: rule.mode,
       there: rule.direction !== 'back',
       back: rule.direction !== 'there',
+      area: isArea(row),
     };
   }
 

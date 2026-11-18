@@ -15,6 +15,17 @@
  * - A leg there arrives as its anchor starts; a leg back leaves as its stay ends. A leg between two
  *   stays that can't fit leaves as the first ends and is marked a conflict: the plan never moves
  *   an event.
+ * - A painted area (`area`, "Studying 8–16 at Braude") anchors like any item, and the items inside
+ *   it nest (the owner's ruling of 2026-11-18):
+ *   - an inner item with a place of its own is there for its own time: the area is cut around it
+ *     (an inner area cuts the one around it; of two areas that overlap, the one starting later is
+ *     the inner one);
+ *   - an inner item with no place takes the place of the area around its start (the innermost);
+ *   - the rest of the area is spent at the area's place, so two inner items there are one stay;
+ *   - the leg back into the area after an inner item elsewhere leaves as that item ends, in the
+ *     mode it was reached by, keyed as that item's `back`: the area resumes whenever he gets there
+ *     (a conflict only when it reaches an appointment there late). Leaving the area for an inner
+ *     item arrives as that item starts, and may leave before the area's painted time ends.
  *
  * Titles are English templates (plan Ruling 19) with place names only, never an address.
  */
@@ -33,13 +44,15 @@ export interface Anchor {
   /** Where the occurrence is now (moved or not). */
   start: Date;
   end: Date;
-  /** Null: it has no place, so it gets no travel. */
+  /** Null: it has no place of its own (it takes an area's around it, else it gets no travel). */
   placeId: string | null;
   mode: TravelMode;
   /** Travel there when it opens the day. */
   there: boolean;
   /** Travel back Home when it closes the day. */
   back: boolean;
+  /** A painted area: the items inside it nest (see the top of this file). */
+  area: boolean;
 }
 
 export interface DayPlanInput {
@@ -99,15 +112,34 @@ const VERBS: Readonly<Record<TravelMode, string>> = {
 
 type Located = Anchor & { placeId: string };
 
-/** Time spent at one place: its anchors in order (never none), until the last of them ends. */
+/**
+ * A stretch of the day at one anchor's place: the whole anchor, or a part of an area that the
+ * items inside it, elsewhere, leave. A part starts softly where such an item ends (he gets back
+ * when he can) and ends softly where one starts (he leaves when he must).
+ */
+interface Piece {
+  /** Its anchor: the item itself, or the whole area it is a part of. */
+  readonly anchor: Located;
+  readonly start: Date;
+  readonly end: Date;
+  readonly softStart: boolean;
+  readonly softEnd: boolean;
+}
+
+/** Time spent at one place: its pieces in order (never none), until the last of them ends. */
 interface Stay {
   readonly kind: 'stay';
   readonly placeId: string;
-  readonly anchors: readonly Located[];
-  readonly first: Located;
-  readonly last: Located;
+  readonly pieces: readonly Piece[];
+  readonly first: Piece;
+  /** The piece whose anchor closes it: the last in order, or an area ending as the stay ends. */
+  readonly last: Piece;
   readonly start: Date;
   readonly end: Date;
+  /** The earliest start that is an appointment (not an area resuming); null: none. */
+  readonly hardStart: Date | null;
+  /** When its last appointment ends (not an area cut short); null: none. */
+  readonly hardEnd: Date | null;
 }
 
 /** A trip home in a window at a place (go home in a window): no anchors of its own. */
@@ -117,47 +149,163 @@ interface HomeWindow {
 
 type Stop = Stay | HomeWindow;
 
-/** A leg before its length is known: a there leg arrives by, a back leg departs at, a between both. */
+/**
+ * When a leg can leave: `departAt`, plus the lengths of `after` (the trips that bring him to the
+ * stay it leaves, when he gets back into an area with no appointment there to leave from).
+ */
+interface Departure {
+  departAt: Date;
+  after: readonly TripKey[];
+}
+
+/**
+ * A leg before its length is known: a there leg arrives by; a back leg departs (Home, or back into
+ * the area around the item it leaves, by `arriveBy` when an appointment waits there); a between
+ * leg both.
+ */
 type LegSpec = { anchor: Located; from: string; to: string; mode: TravelMode } & (
   | { direction: Extract<TravelDirection, 'there'>; arriveBy: Date }
-  | { direction: Extract<TravelDirection, 'back'>; departAt: Date }
-  | { direction: Extract<TravelDirection, 'between'>; departAt: Date; arriveBy: Date }
+  | ({ direction: Extract<TravelDirection, 'back'>; arriveBy: Date | null } & Departure)
+  | ({ direction: Extract<TravelDirection, 'between'>; arriveBy: Date } & Departure)
 );
 
-/** A window between two anchors of a stay, long enough to go home in. */
+/** A window between two pieces of a stay, long enough to go home in. */
 interface Window {
-  /** The anchor after the window: the stay splits before it. */
+  /** The piece after the window: the stay splits before it. */
   index: number;
   minutes: number;
-  /** Home in the mode of the anchor before the window, back in the mode of the one after. */
+  /** Home in the mode of what closes the stay before the window, back in that of the one after. */
   home: TripKey;
   back: TripKey;
 }
 
 const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-const byStart = (a: Anchor, b: Anchor): number =>
+const byKey = (a: Anchor, b: Anchor): number =>
+  compareText(a.itemId, b.itemId) || compareText(a.occurrence, b.occurrence);
+
+/**
+ * By start; at one start an appointment before an area resuming, an area before what it holds
+ * (the longer area first), then by end and key (as anchors always sorted).
+ */
+const byStart = (a: Piece, b: Piece): number =>
   a.start.getTime() - b.start.getTime() ||
-  a.end.getTime() - b.end.getTime() ||
-  compareText(a.itemId, b.itemId) ||
-  compareText(a.occurrence, b.occurrence);
+  Number(a.softStart) - Number(b.softStart) ||
+  Number(b.anchor.area) - Number(a.anchor.area) ||
+  (a.anchor.area && b.anchor.area
+    ? b.end.getTime() - a.end.getTime()
+    : a.end.getTime() - b.end.getTime()) ||
+  byKey(a.anchor, b.anchor);
 
 const byTimeThenKey = (a: PlannedLeg, b: PlannedLeg): number =>
   a.startAt.getTime() - b.startAt.getTime() || compareText(a.key.toString(), b.key.toString());
 
-function stayOf(anchors: readonly Located[]): Stay {
-  const [first] = anchors;
-  const last = anchors.at(-1);
-  if (first === undefined || last === undefined) throw new Error('DayPlanner: an empty stay');
-  const end = Math.max(...anchors.map((anchor) => anchor.end.getTime()));
+/** An anchor, or a part of an area, while it lasts; one with no length is there at its start. */
+const holds = (piece: { start: Date; end: Date }, at: Date): boolean =>
+  piece.start <= at && at < piece.end;
+
+/** Whether `a` overlaps `b`; an anchor with no length overlaps when `b` holds its start. */
+function overlaps(a: { start: Date; end: Date }, b: { start: Date; end: Date }): boolean {
+  if (a.end <= a.start) return holds(b, a.start);
+  return a.start < b.end && a.end > b.start;
+}
+
+/** Whether area `inner` sits inside area `outer`: it starts later, or as long ends sooner. */
+const isInner = (inner: Anchor, outer: Anchor): boolean =>
+  inner.start.getTime() - outer.start.getTime() > 0 ||
+  (inner.start.getTime() === outer.start.getTime() &&
+    (outer.end.getTime() - inner.end.getTime() || byKey(outer, inner)) > 0);
+
+/** The innermost of some areas: the one starting latest, then ending soonest. */
+const innermost = (areas: readonly Located[]): Located | undefined =>
+  areas.reduce<Located | undefined>(
+    (inner, area) => (inner === undefined || isInner(area, inner) ? area : inner),
+    undefined,
+  );
+
+/** The whole of an anchor. */
+const whole = (anchor: Located): Piece => ({
+  anchor,
+  start: anchor.start,
+  end: anchor.end,
+  softStart: false,
+  softEnd: false,
+});
+
+/**
+ * The parts of an area the items inside it leave: it minus the times of the anchors that cut it
+ * (elsewhere, overlapping it, and not an area it sits inside).
+ */
+function partsOf(area: Located, anchors: readonly Located[]): Piece[] {
+  const cuts = anchors
+    .filter(
+      (other) =>
+        other !== area &&
+        other.placeId !== area.placeId &&
+        overlaps(other, area) &&
+        (!other.area || isInner(other, area)),
+    )
+    .map((other) => ({
+      start: Math.max(other.start.getTime(), area.start.getTime()),
+      end: Math.min(Math.max(other.end.getTime(), other.start.getTime()), area.end.getTime()),
+    }))
+    .sort((a, b) => a.start - b.start);
+  if (cuts.length === 0) return [whole(area)];
+  const parts: Piece[] = [];
+  const part = (start: number, end: number, softStart: boolean, softEnd: boolean): void => {
+    parts.push({ anchor: area, start: new Date(start), end: new Date(end), softStart, softEnd });
+  };
+  let from = area.start.getTime();
+  let cut = false;
+  for (const { start, end } of cuts) {
+    if (start > from) part(from, start, cut, true);
+    from = Math.max(from, end);
+    cut = true;
+  }
+  if (from < area.end.getTime()) part(from, area.end.getTime(), true, false);
+  return parts;
+}
+
+/** The anchors with a place: their own, or that of the innermost area around their start. */
+function placed(anchors: readonly Anchor[]): Located[] {
+  const own = anchors.filter((anchor): anchor is Located => anchor.placeId !== null);
+  const areas = own.filter((anchor) => anchor.area);
+  return anchors.flatMap((anchor): Located[] => {
+    if (anchor.placeId !== null) return [anchor as Located];
+    const around = innermost(areas.filter((area) => holds(area, anchor.start)));
+    return around === undefined ? [] : [{ ...anchor, placeId: around.placeId }];
+  });
+}
+
+/**
+ * What closes some pieces that end at `end`: the last area among them that ends then and isn't
+ * cut short (an area's legs go at its own end), else the last of them.
+ */
+function closing(pieces: readonly Piece[], end: number): Piece | undefined {
+  const area = [...pieces]
+    .reverse()
+    .find((piece) => piece.anchor.area && !piece.softEnd && piece.end.getTime() === end);
+  return area ?? pieces.at(-1);
+}
+
+function stayOf(pieces: readonly Piece[]): Stay {
+  const [first] = pieces;
+  if (first === undefined) throw new Error('DayPlanner: an empty stay');
+  const end = Math.max(...pieces.map((piece) => piece.end.getTime()));
+  const last = closing(pieces, end);
+  if (last === undefined) throw new Error('DayPlanner: an empty stay');
+  const hardStarts = pieces.filter((piece) => !piece.softStart).map((p) => p.start.getTime());
+  const hardEnds = pieces.filter((piece) => !piece.softEnd).map((p) => p.end.getTime());
   return {
     kind: 'stay',
-    placeId: first.placeId,
-    anchors,
+    placeId: first.anchor.placeId,
+    pieces,
     first,
     last,
     start: first.start,
     end: new Date(end),
+    hardStart: hardStarts.length === 0 ? null : new Date(Math.min(...hardStarts)),
+    hardEnd: hardEnds.length === 0 ? null : new Date(Math.max(...hardEnds)),
   };
 }
 
@@ -194,15 +342,17 @@ export class DayPlanner {
     this.#input = input;
     this.#homeId = homeId;
     const { start, end } = dayBounds(input.day, input.timeZone);
-    const anchors = input.anchors
-      .filter((anchor): anchor is Located => anchor.placeId !== null)
-      .filter((anchor) => anchor.start >= start && anchor.start < end)
+    const anchors = placed(
+      input.anchors.filter((anchor) => anchor.start >= start && anchor.start < end),
+    );
+    const pieces = anchors
+      .flatMap((anchor) => (anchor.area ? partsOf(anchor, anchors) : [whole(anchor)]))
       .sort(byStart);
-    const groups: Located[][] = [];
-    for (const anchor of anchors) {
+    const groups: Piece[][] = [];
+    for (const piece of pieces) {
       const open = groups.at(-1);
-      if (open?.[0]?.placeId === anchor.placeId) open.push(anchor);
-      else groups.push([anchor]);
+      if (open?.[0]?.anchor.placeId === piece.anchor.placeId) open.push(piece);
+      else groups.push([piece]);
     }
     this.#stays = groups.map(stayOf);
   }
@@ -254,24 +404,29 @@ export class DayPlanner {
     return input.homeId === null ? null : new DayPlanner(input, input.homeId);
   }
 
-  /** The windows of a stay long enough to go home in: none unless going home is on, nor at Home. */
+  /**
+   * The windows of a stay long enough to go home in: none unless going home is on, nor at Home,
+   * nor before an area resumes (he is back in it from an item elsewhere).
+   */
   #windowsIn(stay: Stay): Window[] {
     const { enabled, minWindowMinutes } = this.#input.settings.goHome;
     if (!enabled || stay.placeId === this.#homeId) return [];
     const windows: Window[] = [];
-    // A window starts when every anchor before it has ended.
+    // A window starts when every piece before it has ended.
     let freeFrom = stay.first.end.getTime();
-    stay.anchors.forEach((after, index) => {
-      const before = stay.anchors[index - 1];
+    stay.pieces.forEach((after, index) => {
+      const before = stay.pieces[index - 1];
       if (before === undefined) return;
       freeFrom = Math.max(freeFrom, before.end.getTime());
       const minutes = (after.start.getTime() - freeFrom) / MS_PER_MINUTE;
-      if (minutes < minWindowMinutes) return;
+      if (minutes < minWindowMinutes || after.softStart) return;
+      // Home in the mode of what closes the stay before the window (as its leg home goes).
+      const closes = closing(stay.pieces.slice(0, index), freeFrom) ?? before;
       windows.push({
         index,
         minutes,
-        home: DayPlanner.tripKey(stay.placeId, this.#homeId, before.mode),
-        back: DayPlanner.tripKey(this.#homeId, stay.placeId, after.mode),
+        home: DayPlanner.tripKey(stay.placeId, this.#homeId, closes.anchor.mode),
+        back: DayPlanner.tripKey(this.#homeId, stay.placeId, after.anchor.mode),
       });
     });
     return windows;
@@ -289,10 +444,10 @@ export class DayPlanner {
     const stops: Stop[] = [];
     let from = 0;
     for (const cut of cuts) {
-      stops.push(stayOf(stay.anchors.slice(from, cut)), { kind: 'home' });
+      stops.push(stayOf(stay.pieces.slice(from, cut)), { kind: 'home' });
       from = cut;
     }
-    stops.push(stayOf(stay.anchors.slice(from)));
+    stops.push(stayOf(stay.pieces.slice(from)));
     return stops;
   }
 
@@ -300,39 +455,74 @@ export class DayPlanner {
   #legsAlong(stops: readonly Stop[]): LegSpec[] {
     const home = this.#homeId;
     const specs: LegSpec[] = [];
+    // The leg into the stop before the one at hand: when he is back in an area, he leaves it once
+    // he is there.
+    let into: LegSpec | null = null;
     const first = stops[0];
-    if (first?.kind === 'stay' && first.placeId !== home && first.first.there) {
-      specs.push(this.#there(first.first, home, first.placeId, first.start));
+    if (first?.kind === 'stay' && first.placeId !== home && first.first.anchor.there) {
+      into = this.#there(first.first.anchor, home, first.placeId, first.start);
+      specs.push(into);
     }
     stops.forEach((next, index) => {
       const previous = stops[index - 1];
       if (previous === undefined) return;
+      let leg: LegSpec | null = null;
       if (previous.kind === 'stay' && next.kind === 'home') {
-        specs.push(this.#back(previous.last, previous.placeId, home, previous.end));
+        leg = this.#back(previous.last.anchor, previous.placeId, home, previous.end);
       } else if (previous.kind === 'home' && next.kind === 'stay') {
-        specs.push(this.#there(next.first, home, next.placeId, next.start));
+        leg = this.#there(next.first.anchor, home, next.placeId, next.start);
       } else if (
         previous.kind === 'stay' &&
         next.kind === 'stay' &&
         previous.placeId !== next.placeId
       ) {
-        // The destination decides the mode: by bus to Braude, then by car on to TLVTech.
-        specs.push({
-          direction: 'between',
-          anchor: next.first,
-          from: previous.placeId,
-          to: next.placeId,
-          mode: next.first.mode,
-          departAt: previous.end,
-          arriveBy: next.start,
-        });
+        const leaving = this.#leaving(previous, into);
+        leg = next.first.softStart
+          ? {
+              // Back into the area around what he leaves, the way he came: as he can, and late
+              // only for an appointment waiting there.
+              direction: 'back',
+              anchor: previous.last.anchor,
+              from: previous.placeId,
+              to: next.placeId,
+              mode: previous.last.anchor.mode,
+              ...leaving,
+              arriveBy: next.hardStart,
+            }
+          : {
+              // The destination decides the mode: by bus to Braude, then by car on to TLVTech.
+              direction: 'between',
+              anchor: next.first.anchor,
+              from: previous.placeId,
+              to: next.placeId,
+              mode: next.first.anchor.mode,
+              ...leaving,
+              arriveBy: next.start,
+            };
       }
+      if (leg !== null) specs.push(leg);
+      into = leg;
     });
     const last = stops.at(-1);
-    if (last?.kind === 'stay' && last.placeId !== home && last.last.back) {
-      specs.push(this.#back(last.last, last.placeId, home, last.end));
+    if (last?.kind === 'stay' && last.placeId !== home && last.last.anchor.back) {
+      specs.push(this.#back(last.last.anchor, last.placeId, home, last.end));
     }
     return specs;
+  }
+
+  /**
+   * When he can leave a stay: as its last appointment ends; with none (in an area only), once he
+   * is there: at its start, or, back in it from an item elsewhere, once that trip is made.
+   */
+  #leaving(stay: Stay, into: LegSpec | null): Departure {
+    if (stay.hardEnd !== null) return { departAt: stay.hardEnd, after: [] };
+    if (stay.first.softStart && into !== null && into.direction === 'back') {
+      return {
+        departAt: into.departAt,
+        after: [...into.after, DayPlanner.tripKey(into.from, into.to, into.mode)],
+      };
+    }
+    return { departAt: stay.start, after: [] };
   }
 
   #there(anchor: Located, from: string, to: string, arriveBy: Date): LegSpec {
@@ -340,18 +530,33 @@ export class DayPlanner {
   }
 
   #back(anchor: Located, from: string, to: string, departAt: Date): LegSpec {
-    return { direction: 'back', anchor, from, to, mode: anchor.mode, departAt };
+    return {
+      direction: 'back',
+      anchor,
+      from,
+      to,
+      mode: anchor.mode,
+      departAt,
+      after: [],
+      arriveBy: null,
+    };
   }
 
   /**
    * A leg with its length. There: it arrives as its anchor starts. Back: it leaves as its stay
-   * ends. Between: it arrives by the next stay's start when it can, else it leaves as the stay
-   * before ends and is a conflict.
+   * ends (a conflict when it reaches an appointment in the area it returns to late). Between: it
+   * arrives by the next stay's start when it can, else it leaves as the stay before ends and is a
+   * conflict.
    */
   #timed(spec: LegSpec, length: (trip: TripKey) => Estimate): PlannedLeg {
     const { anchor, from, to, mode } = spec;
     const estimate = length(DayPlanner.tripKey(from, to, mode));
     const span = estimate.minutes * MS_PER_MINUTE;
+    const leaves = (departure: Departure): number =>
+      departure.after.reduce(
+        (at, trip) => at + length(trip).minutes * MS_PER_MINUTE,
+        departure.departAt.getTime(),
+      );
     let start: number;
     let conflict = false;
     switch (spec.direction) {
@@ -359,10 +564,11 @@ export class DayPlanner {
         start = spec.arriveBy.getTime() - span;
         break;
       case 'back':
-        start = spec.departAt.getTime();
+        start = leaves(spec);
+        conflict = spec.arriveBy !== null && start + span > spec.arriveBy.getTime();
         break;
       case 'between':
-        start = Math.max(spec.arriveBy.getTime() - span, spec.departAt.getTime());
+        start = Math.max(spec.arriveBy.getTime() - span, leaves(spec));
         conflict = start + span > spec.arriveBy.getTime();
         break;
     }

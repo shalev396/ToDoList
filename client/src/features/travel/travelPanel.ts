@@ -11,7 +11,6 @@
  */
 import type { TFunction } from 'i18next';
 import type { ItemSummary } from '@api-types/items.ts';
-import { layerOf } from '@api-types/scheduled.ts';
 import {
   derivedField,
   solveSpan,
@@ -403,21 +402,17 @@ export function openPanel(
 
 /**
  * A timed item travel can get you to (the server's own rule): a start, not all day, not
- * cancelled, never a travel leg, and never an area (painted time is not travelled to).
+ * cancelled, and never a travel leg. A painted area takes travel too ("Studying" at Braude): the
+ * items inside it with a place of their own get theirs, the rest of it is spent at its place.
  */
 export function canTravelTo(item: {
   kind: string;
   startAt: Date | string | null;
   allDay: boolean;
   status: string;
-  props: Readonly<Record<string, unknown>>;
 }): boolean {
   return (
-    item.startAt !== null &&
-    !item.allDay &&
-    item.status !== 'cancelled' &&
-    item.kind !== 'travel' &&
-    layerOf(item) !== 'area'
+    item.startAt !== null && !item.allDay && item.status !== 'cancelled' && item.kind !== 'travel'
   );
 }
 

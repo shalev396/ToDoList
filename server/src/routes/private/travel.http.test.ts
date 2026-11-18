@@ -633,6 +633,104 @@ describe('marking an item', () => {
   });
 });
 
+describe('painted areas carry travel (the owner’s ruling of 2026-11-18)', () => {
+  it('marking an area succeeds; a block inside it at the gym goes there and back into the area', async () => {
+    // The owner's own places and marks: nobody else's share his day.
+    const place = async (body: Record<string, unknown>): Promise<string> =>
+      (await ok<PlaceView>('owner', 'POST', '/travel/places', body, 201)).id;
+    await place({ name: 'Home', coords: HOME, home: true });
+    const braude = await place({ name: 'Braude', coords: BRAUDE });
+    const gymPlace = await place({ name: 'Gym', coords: GYM });
+    interface Marked {
+      rule: TravelRuleView;
+      legs: Leg[];
+    }
+    const shape = (legs: readonly Leg[]): unknown[] =>
+      legs.map((leg) => [leg.title, leg.props.travel.anchorItemId, leg.props.travel.direction]);
+
+    const area = await ok<{ id: string; props: { layer: string } }>(
+      'owner',
+      'POST',
+      '/time-blocks',
+      { layer: 'area', title: 'Studying', startAt: iso(local(6, 8)), endAt: iso(local(6, 16)) },
+      201,
+    );
+    assert.equal(area.props.layer, 'area');
+    const marked = await ok<Marked>('owner', 'POST', `/travel/items/${area.id}`, {
+      mode: 'transit',
+      direction: 'both',
+      placeId: braude,
+    });
+    assert.deepEqual(marked.rule.scope, { kind: 'item', itemId: area.id, occurrence: 'single' });
+    assert.deepEqual(shape(marked.legs), [
+      ['Bus to Braude', area.id, 'there'],
+      ['Bus home', area.id, 'back'],
+    ]);
+    // There arrives as it starts; back leaves as it ends.
+    assert.equal(legOf(marked.legs, 'there').endAt, iso(local(6, 8)));
+    assert.equal(legOf(marked.legs, 'back').startAt, iso(local(6, 16)));
+
+    // A gym block inside it: there as it starts, back into the area (driving) as it ends.
+    const gym = await ok<{ id: string }>(
+      'owner',
+      'POST',
+      '/time-blocks',
+      { title: 'Gym', startAt: iso(local(6, 12)), endAt: iso(local(6, 13)) },
+      201,
+    );
+    const gymLegs = (
+      await ok<Marked>('owner', 'POST', `/travel/items/${gym.id}`, {
+        mode: 'drive',
+        direction: 'both',
+        placeId: gymPlace,
+      })
+    ).legs;
+    assert.deepEqual(shape(gymLegs), [
+      ['Drive to Gym', gym.id, 'between'],
+      ['Drive to Braude', gym.id, 'back'],
+    ]);
+    assert.equal(legOf(gymLegs, 'between').endAt, iso(local(6, 12)));
+    assert.equal(legOf(gymLegs, 'back').startAt, iso(local(6, 13)));
+    assert.deepEqual(
+      gymLegs.map((leg) => [
+        leg.props.travel.fromHome,
+        leg.props.travel.toHome,
+        leg.props.travel.conflict,
+      ]),
+      [
+        [false, false, false],
+        [false, false, false],
+      ],
+    );
+
+    // The day: the area's legs around the gym's, nothing else.
+    const { days } = await ok<TravelDaysResponse>(
+      'owner',
+      'GET',
+      `/travel/days?from=${dayOf(6)}&to=${dayOf(6)}`,
+    );
+    assert.deepEqual(shape((days[0]?.legs ?? []) as unknown as Leg[]), [
+      ['Bus to Braude', area.id, 'there'],
+      ['Drive to Gym', gym.id, 'between'],
+      ['Drive to Braude', gym.id, 'back'],
+      ['Bus home', area.id, 'back'],
+    ]);
+
+    // Unmarked, the area's legs go as no longer matching; the gym's go home from there.
+    assert.equal((await call('owner', 'DELETE', `/travel/items/${area.id}`)).status, 204);
+    const after = await ok<TravelDaysResponse>(
+      'owner',
+      'GET',
+      `/travel/days?from=${dayOf(6)}&to=${dayOf(6)}`,
+    );
+    assert.deepEqual(shape((after.days[0]?.legs ?? []) as unknown as Leg[]), [
+      ['Drive to Gym', gym.id, 'there'],
+      ['Drive home', gym.id, 'back'],
+    ]);
+    assert.equal((await call('owner', 'DELETE', `/travel/items/${gym.id}`)).status, 204);
+  });
+});
+
 describe('changes regenerate before answering', () => {
   it('a rule, a place, the settings and a pin', async () => {
     const swim = await todo('editor', 'Swim', 7, 10);

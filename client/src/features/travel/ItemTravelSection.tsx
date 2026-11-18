@@ -41,8 +41,8 @@ function anchorStartOf(item: ItemDetail, occurrence: Date | null): Date | null {
 
 /**
  * Travel in the item sheet (travel-time design, "An existing event"): "Add travel" with the same
- * panel as the create forms, on events, to-dos with a start and plain time blocks (never an area,
- * a leg or an all-day item: the caller checks `canTravelTo`). On a repeating item it asks "Every
+ * panel as the create forms, on events, to-dos with a start, time blocks and areas (never a leg or
+ * an all-day item: the caller checks `canTravelTo`). On a repeating item it asks "Every
  * occurrence?": every one is a series rule, this one is the occurrence the sheet is on. A moved
  * occurrence of a Google series (its own row) is marked under its series and original start, as
  * the server keeps it (`markTargetOf`). A marked item says how it travels, with Change and

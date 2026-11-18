@@ -170,7 +170,7 @@ Shalev: "I want to … paint … every time that I'm allocating to work … or t
 - **Blocks inside it:** dragging inside an area in the week view creates a block with the area's topic pre-filled. Nothing links the two records: an area is time, a block is a more specific use of that time. Overlap is expected and fine.
 - **Not work:** like blocks, areas are hidden from task views and counts, have no status, and are never ticked.
 - **Busy time:** areas are not busy time for agents by default (they are a plan, not a commitment); blocks inside them are. MCP `list_today` and `get_calendar` return areas with `layer: 'area'` so an agent can plan inside them ("put the Math block inside Studying").
-- **Travel:** an area can carry travel like any timed item (e.g. "Work 9–17 at TLVTech, by car").
+- **Travel:** an area can carry travel like any timed item (e.g. "Work 9–17 at TLVTech, by car"). _(Confirmed 2026-11-18: "sometimes I'm going to go to study and it will take time.")_ The items inside it nest: an inner item's own place wins for its own time, one with no place is at the area's place, and the rest of the area is spent there (no legs between two inner items at its place). The area stays not busy; its legs are busy. See the travel design, "The day plan", 7.
 - **Create form:** the kind choice becomes three options: "To-do (I'll tick it off)", "Time block (reserve the time)", "Area (paint time for a part of life)".
 - **MCP:** `create_time_block` takes `layer` (`block` by default).
 

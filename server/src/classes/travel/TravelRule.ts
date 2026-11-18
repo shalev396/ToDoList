@@ -44,14 +44,7 @@ import type { Caller } from '../base/Caller.js';
 import type { Auditable, Owned, Viewable } from '../base/contracts.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { AuditLog } from '../AuditLog.js';
-import {
-  CalendarEvent,
-  isRecurring,
-  Item,
-  TimeArea,
-  TravelLeg,
-  type LegTimesChange,
-} from '../item/index.js';
+import { CalendarEvent, isRecurring, Item, TravelLeg, type LegTimesChange } from '../item/index.js';
 import { Place } from './Place.js';
 import { TravelPlanner } from './TravelPlanner.js';
 import { TravelProfile } from './TravelProfile.js';
@@ -84,7 +77,7 @@ export interface MarkItemInput {
   placeId?: string | null | undefined;
   /** The leg that gets him there (from Home, or from the place before), as he typed it. */
   there?: SpanChange | undefined;
-  /** The leg back Home, as he typed it. */
+  /** The leg after it (Home, or back into the area around it), as he typed it. */
   back?: SpanChange | undefined;
 }
 
@@ -328,26 +321,28 @@ export class TravelRule
   // ─── Marking an item ──────────────────────────────────────────────────────
 
   /**
-   * Editors: travel to (and from) one timed item the caller sees, by `mode`, `there`, `back` or
-   * both, to `placeId` (else the item's own place). `every` marks every occurrence of a repeating
-   * item (a series rule); else one occurrence of it (`occurrence`, its original start), or an item
-   * that doesn't repeat (an item rule, `single`). Marking the same again changes that rule.
+   * Editors: travel to (and from) one timed item the caller sees (an event, a to-do with a start, a
+   * time block or a painted area), by `mode`, `there`, `back` or both, to `placeId` (else the
+   * item's own place). `every` marks every occurrence of a repeating item (a series rule); else one
+   * occurrence of it (`occurrence`, its original start), or an item that doesn't repeat (an item
+   * rule, `single`). Marking the same again changes that rule.
    *
    * Then the member's legs are made again, and `there` (the leg that gets him to the item, from
-   * Home or from the place before) and `back` (the leg Home) are applied to the item's legs as
-   * hand edits: his times stand until he resets them, and the length is remembered for the trip.
-   * With `every`, a span is a length only, applied to each occurrence's leg. A leg already under
-   * way is left as it is. The answer: the rule, and the item's live legs in the horizon, by start.
+   * Home or from the place before) and `back` (the leg after it: Home, or back into the area
+   * around it) are applied to the item's legs as hand edits: his times stand until he resets them,
+   * and the length is remembered for the trip. With `every`, a span is a length only, applied to
+   * each occurrence's leg. A leg already under way is left as it is. The answer: the rule, and the
+   * item's live legs in the horizon, by start.
    *
    * A moved occurrence of a mirrored series, marked by its own row, is its series' occurrence at its
    * original start (with `every`, its series), as the planner keys its legs.
    *
-   * 404: an item the caller can't see. 400: a travel leg, an area (painted time is never travelled
-   * to), an item with no start, all day or cancelled, a repeating item with neither `every` nor an
-   * occurrence, `every` on one that doesn't repeat, a span that isn't one, a `fromPlaceId` or
-   * `placeId` not of the caller's; 400 `not_an_occurrence` for an occurrence that is none of the
-   * item's own (no slot of its series, or an item that doesn't repeat). 409 `travel_home_missing`
-   * without a Home (Ruling 24). Nothing is stored when it refuses.
+   * 404: an item the caller can't see. 400: a travel leg, an item with no start, all day or
+   * cancelled, a repeating item with neither `every` nor an occurrence, `every` on one that doesn't
+   * repeat, a span that isn't one, a `fromPlaceId` or `placeId` not of the caller's; 400
+   * `not_an_occurrence` for an occurrence that is none of the item's own (no slot of its series, or
+   * an item that doesn't repeat). 409 `travel_home_missing` without a Home (Ruling 24). Nothing is
+   * stored when it refuses.
    *
    * Once the rule is stored, a regeneration that fails is logged and the mark still answers
    * (TravelPlanner.afterOwnChange), with the item's legs as they are.
@@ -432,9 +427,6 @@ export class TravelRule
    */
   static async #markScope(caller: Caller, item: Item, input: MarkItemInput): Promise<MarkScope> {
     if (item instanceof TravelLeg) throw new ValidationError('itemId: travel is not travelled to');
-    if (item instanceof TimeArea) {
-      throw new ValidationError('itemId: an area is painted time, which gets no travel');
-    }
     if (item.startAt === null) throw new ValidationError('itemId: travel needs a start time');
     if (item.allDay) throw new ValidationError('itemId: an all-day item gets no travel');
     if (item.status === 'cancelled') {
@@ -502,8 +494,8 @@ export class TravelRule
 
   /**
    * The spans typed, checked before anything is stored: each a change of the legs it names
-   * (`there`: the leg there or from the place before; `back`: the leg Home). A span that names no
-   * time changes nothing.
+   * (`there`: the leg there or from the place before; `back`: the leg after it, Home or back into
+   * the area around it). A span that names no time changes nothing.
    */
   static #spans(input: MarkItemInput, placeIds: ReadonlySet<string>): MarkSpan[] {
     const spans: MarkSpan[] = [];

@@ -293,6 +293,7 @@ export const travel = {
     removeFailed: 'Travel couldn’t be removed.',
     createdWithout: 'The to-do was created, but its travel wasn’t added.',
     createdWithoutBlock: 'The time block was created, but its travel wasn’t added.',
+    createdWithoutArea: 'The area was created, but its travel wasn’t added.',
     place: {
       label: 'Place for travel',
       hint: 'Where this happens, when its location doesn’t name one of your places.',

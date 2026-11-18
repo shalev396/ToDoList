@@ -134,9 +134,10 @@ router.put(
 /**
  * MarkItemRequest → MarkItemResponse: the rule (every occurrence: a series rule; one occurrence
  * or an item that doesn't repeat: an item rule; marking the same again changes it) and the
- * item's legs, with `there` and `back` applied as hand edits. 404 for an item the caller can't
- * see; 400 for one that takes no travel (a leg, an area, no start, all day) or a wrong
- * occurrence; 409 `travel_home_missing` without a Home.
+ * item's legs, with `there` and `back` applied as hand edits. Any timed item takes travel, a
+ * painted area too. 404 for an item the caller can't see; 400 for one that takes no travel (a
+ * leg, no start, all day, cancelled) or a wrong occurrence; 409 `travel_home_missing` without a
+ * Home.
  */
 router.post(
   '/workspaces/:wid/travel/items/:itemId',

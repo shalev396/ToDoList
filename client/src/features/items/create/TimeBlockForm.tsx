@@ -26,6 +26,7 @@ import {
   spanOf,
   spanProblem,
   titleProblem,
+  travelNotAddedKey,
   type NewItemPreset,
   type TimeBlockFormState,
 } from './timeBlockDraft';
@@ -41,7 +42,7 @@ const NO_TOPIC = 'none';
  * (none, weekly on chosen days, or custom, with an optional end date) and the page. Save creates
  * it with `POST …/time-blocks` and closes the sheet.
  *
- * A block (never an area: painted time is not travelled to) can "Add travel time": the same
+ * A block or an area can "Add travel time" (an area is where he goes to study or work): the same
  * switch and panel as a to-do. A repeating block's travel is for every occurrence. Travel is
  * marked once the block is made, and how that went is a toast.
  */
@@ -76,7 +77,7 @@ export function TimeBlockForm({
   const [error, setError] = useState<string | null>(null);
   // One key per request body: a retry of the same block is never a second one.
   const sent = useRef<{ body: string; key: string } | null>(null);
-  // Travel: null while "Add travel time" is off; a block only.
+  // Travel: null while "Add travel time" is off.
   const [travel, setTravel] = useState<TravelPanelState | null>(null);
   const travelSetup = useTravelSetup(travel !== null);
   const addTravel = useAddTravel();
@@ -88,7 +89,7 @@ export function TimeBlockForm({
   const [travelling, setTravelling] = useState(false);
   const saving = create.isPending || travelling;
   const anchor = spanOf(form, timeZone)?.start ?? null;
-  const withTravel = layer === 'block' && travel !== null;
+  const withTravel = travel !== null;
   const travelUnready = withTravel && (!travelSetup.ready || travelSetup.home === null);
 
   const set = (patch: Partial<TimeBlockFormState>) => {
@@ -125,7 +126,7 @@ export function TimeBlockForm({
           state: travel,
           start: anchor,
           every: isRepeating(form.repeat),
-          createdWithout: t('travel.add.createdWithoutBlock'),
+          createdWithout: t(travelNotAddedKey(layer)),
         });
       }
       onClose();
@@ -203,15 +204,13 @@ export function TimeBlockForm({
           }}
         />
 
-        {layer === 'block' ? (
-          <CreateTravel
-            value={travel}
-            onChange={setTravel}
-            anchorStart={anchor}
-            needsTime={false}
-            every={isRepeating(state.repeat)}
-          />
-        ) : null}
+        <CreateTravel
+          value={travel}
+          onChange={setTravel}
+          anchorStart={anchor}
+          needsTime={false}
+          every={isRepeating(state.repeat)}
+        />
 
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={`${ids}-topic`}>{t('scheduled.form.topic')}</Label>

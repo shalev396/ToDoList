@@ -117,6 +117,11 @@ This answers his question "how do you know when the day starts, with windows bet
    - **Start, end and length are editable on any leg.** Filling two computes the third. An edited leg keeps his times until he resets it, even when it is regenerated.
 5. **Conflicts.** A leg that doesn't fit is still shown, starting at the earlier stay's end, and is marked as a conflict (red edge, "you can't make it": e.g. A ends 12:00, B starts 12:15, travel takes 40 min). The plan never moves or edits his events.
 6. Items with no place, all-day events, and anchors already in the past (that day) don't create new legs.
+7. **Areas** (_added 2026-11-18_). A painted area ("Studying 8–16 at Braude") anchors like any item, and the items inside it nest:
+   - an inner item with a place of its own is there for its own time: leave the area to arrive as it starts, and go back into the area as it ends (in that item's mode; late only matters when an appointment waits there);
+   - an inner item with no place is at the area's place (the innermost area around its start);
+   - the rest of the area is spent at its place: no legs between two inner items there, and none from the area's place to itself;
+   - legs go to the area at its start, and back (or onward) at its end, by the rules above. An area stays not busy; its legs are busy.
 
 ## Generation and lifecycle (my calls after review)
 

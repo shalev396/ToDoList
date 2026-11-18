@@ -281,11 +281,16 @@ describe('which items take travel, and their mark', () => {
     ...patch,
   });
 
-  it('events, to-dos with a start and plain blocks; never areas, legs or all-day items', () => {
+  it('events, to-dos with a start, blocks and painted areas; never legs or all-day items', () => {
     assert.equal(canTravelTo(item()), true);
     assert.equal(canTravelTo(item({ kind: 'todo' })), true);
     assert.equal(canTravelTo(item({ kind: 'block' })), true);
-    assert.equal(canTravelTo(item({ kind: 'block', props: { layer: 'area' } })), false);
+    // An area ("Studying" at Braude) is travelled to like a block (the owner's ruling, 2026-11-18).
+    assert.equal(canTravelTo(item({ kind: 'block', props: { layer: 'area' } })), true);
+    assert.equal(
+      canTravelTo(item({ kind: 'block', props: { layer: 'area' }, allDay: true })),
+      false,
+    );
     assert.equal(canTravelTo(item({ kind: 'travel' })), false);
     assert.equal(canTravelTo(item({ kind: 'todo', startAt: null })), false);
     assert.equal(canTravelTo(item({ allDay: true })), false);

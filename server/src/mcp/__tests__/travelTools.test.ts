@@ -168,6 +168,56 @@ describe('the travel tools', () => {
     }
   });
 
+  it('travel_mark_item marks an area: legs there and back are busy, the area itself is not', async () => {
+    const client = await h.connect(key);
+    const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.notEqual(result.isError, true, `${name}: ${errorText(result)}`);
+      return structured(result);
+    };
+    const area = (await call('create_time_block', {
+      layer: 'area',
+      title: 'Studying',
+      startAt: at(6, 6).toISOString(),
+      endAt: at(6, 14).toISOString(),
+    })) as { item: { id: string } };
+    const marked = (await call('travel_mark_item', {
+      itemId: area.item.id,
+      mode: 'transit',
+      direction: 'both',
+      place: 'Technion',
+    })) as { rule: { scope: unknown }; legs: Entry[] };
+    assert.deepEqual(marked.rule.scope, {
+      kind: 'item',
+      itemId: area.item.id,
+      occurrence: 'single',
+    });
+    assert.deepEqual(
+      marked.legs.map((leg) => [leg.kind, leg.title]),
+      [
+        ['travel', 'Bus to Technion'],
+        ['travel', 'Bus home'],
+      ],
+    );
+    assert.equal(marked.legs[0]?.endAt, at(6, 6).toISOString());
+    assert.equal(marked.legs[1]?.startAt, at(6, 14).toISOString());
+
+    const calendar = (await call('get_calendar', {
+      range: 'custom',
+      from: at(6, 0).toISOString(),
+      to: at(7, 0).toISOString(),
+      kind: ['block', 'travel'],
+    })) as { items: Entry[] };
+    assert.deepEqual(
+      calendar.items.map((entry) => [entry.title, entry.kind, entry.busy]),
+      [
+        ['Bus to Technion', 'travel', true],
+        ['Studying', 'block', false],
+        ['Bus home', 'travel', true],
+      ],
+    );
+  });
+
   it('refuses an unknown place name without listing the places', async () => {
     const client = await h.connect(key);
     const result = await client.callTool({

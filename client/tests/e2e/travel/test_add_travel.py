@@ -255,7 +255,8 @@ def test_add_your_home_closes_the_new_sheet_on_the_way_to_settings(
     missing.get_by_role("link", name="Add your Home in Settings").click()
     expect(page).to_have_url(re.compile(r"/en/settings/travel"), timeout=NORMAL_TIMEOUT)
     expect(sheet).to_be_hidden(timeout=NORMAL_TIMEOUT)
-    expect(page.get_by_role("heading", name="Travel", exact=True).first).to_be_visible()
+    # Settings → Travel has no heading of its own: its first section is where Home is added.
+    expect(page.get_by_role("heading", name="Places", exact=True)).to_be_visible()
 
 
 def test_due_only_todo_asks_for_a_time(page: Page, base_url: str, api_base_url: str, fresh_owner):

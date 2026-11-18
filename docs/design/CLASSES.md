@@ -1683,8 +1683,8 @@ geocode cache and the routing quota.
   `TravelData` is what a leaving member or a deleted workspace removes. DATA.md §3.22 to §3.25.
   An entity is never serialized as is: only `toView()` / `toAgentView()` leave the class.
 - **Generation:**
-  - `TravelAnchors`: a member's timed occurrences with their rule, place and fate (areas never
-    anchor); `TravelPlanner`: gather, plan, estimate, reconcile and write one member's whole 14-day
+  - `TravelAnchors`: a member's timed occurrences with their rule, place and fate (an area
+    anchors like a block, flagged `area`; `DayPlanner` nests the items inside it); `TravelPlanner`: gather, plan, estimate, reconcile and write one member's whole 14-day
     horizon, within a `TimeBox` budget.
   - Its triggers: an item write (`ItemChanges`, subscribed when `classes/travel/index.ts` loads;
     cached geocodes only, about 8 s at most, a travel failure never fails the item write), a sync of

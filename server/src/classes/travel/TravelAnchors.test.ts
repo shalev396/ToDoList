@@ -5,7 +5,7 @@
  * rule beats a series rule beats the oldest where-rule that matches); where each one is (a pin, the
  * rule's place, a place's name or alias, a geocode within 300 m, the calendar's default place).
  * All-day and due-only items never anchor, and a moved Google occurrence anchors on its master
- * with its original start.
+ * with its original start. A painted area anchors like a block, flagged as an area.
  */
 import { after, afterEach, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -501,7 +501,7 @@ describe('TravelAnchors.gather', () => {
     assert.equal(fates.get(`${lecture}|${TUESDAY_2}`), undefined);
   });
 
-  it('painted areas never anchor', async () => {
+  it('a painted area anchors like a block, marked as an area; a where-rule matches one too', async () => {
     const ws = await workspace();
     const items = await models.getItemRepository();
     const block = (
@@ -522,7 +522,16 @@ describe('TravelAnchors.gather', () => {
     const area = await block('Studying', '2026-11-25T07:00:00.000Z', '2026-11-25T15:00:00.000Z', {
       layer: 'area',
     });
+    // Inside the area, with no place of its own: the day plan gives it the area's.
+    const inner = await block(
+      'Problem set',
+      '2026-11-25T09:00:00.000Z',
+      '2026-11-25T10:00:00.000Z',
+    );
     const lab = await block('Lab', '2026-11-26T07:00:00.000Z', '2026-11-26T09:00:00.000Z');
+    const work = await block('Work', '2026-11-27T07:00:00.000Z', '2026-11-27T15:00:00.000Z', {
+      layer: 'area',
+    });
     for (const itemId of [area.id, lab.id]) {
       await classes.TravelRule.create(ws.a, {
         scope: { kind: 'item', itemId, occurrence: 'single' },
@@ -531,14 +540,69 @@ describe('TravelAnchors.gather', () => {
         placeId: ws.places.braude.id,
       });
     }
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'item', itemId: inner.id, occurrence: 'single' },
+      mode: 'walk',
+      direction: 'both',
+    });
+    await classes.TravelRule.create(ws.a, {
+      scope: {
+        kind: 'where',
+        where: {
+          combinator: 'and',
+          rules: [{ field: 'title', operator: '=', value: 'Work' }],
+        },
+      },
+      mode: 'drive',
+      direction: 'there',
+      placeId: ws.places.tlv.id,
+    });
 
     const { anchors, fates } = await gather(ws);
     assert.deepEqual(
-      anchors.map((anchor) => anchor.itemId),
-      [lab.id],
+      anchors.map((anchor) => [anchor.itemId, anchor.placeId, anchor.mode, anchor.area]),
+      [
+        [area.id, ws.places.braude.id, 'transit', true],
+        [inner.id, null, 'walk', false],
+        [lab.id, ws.places.braude.id, 'transit', false],
+        [work.id, ws.places.tlv.id, 'drive', true],
+      ],
     );
-    // Its legs, had it any, go with a reason: it no longer asks for travel.
-    assert.equal(fates.get(`${area.id}|single`), 'no_longer_matches');
+    const studying = anchors[0];
+    assert.ok(studying);
+    assert.deepEqual(
+      [studying.start.toISOString(), studying.end.toISOString(), studying.there, studying.back],
+      ['2026-11-25T07:00:00.000Z', '2026-11-25T15:00:00.000Z', true, true],
+    );
+    assert.equal(fates.get(`${area.id}|single`), 'present');
+    assert.equal(fates.get(`${work.id}|single`), 'present');
+    assert.equal(fates.get(`${inner.id}|single`), 'no_place');
+  });
+
+  it('a repeating area marked for every occurrence anchors each one, by its original start', async () => {
+    const ws = await workspace();
+    // Wednesdays 09:00–17:00 in Jerusalem, from 25 November: two in the horizon.
+    const { block: studying } = await classes.TimeBlock.create(ws.a, {
+      layer: 'area',
+      title: 'Studying',
+      startAt: new Date('2026-11-25T07:00:00.000Z'),
+      endAt: new Date('2026-11-25T15:00:00.000Z'),
+      recurrence: ['RRULE:FREQ=WEEKLY'],
+    });
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'series', itemId: studying.id },
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.places.braude.id,
+    });
+
+    const { anchors, fates } = await gather(ws);
+    const wednesdays = ['2026-11-25T07:00:00.000Z', '2026-12-02T07:00:00.000Z'];
+    assert.deepEqual(
+      anchors.map((anchor) => [anchor.itemId, anchor.occurrence, anchor.area, anchor.placeId]),
+      wednesdays.map((start) => [studying.id, start, true, ws.places.braude.id]),
+    );
+    for (const start of wednesdays) assert.equal(fates.get(`${studying.id}|${start}`), 'present');
   });
 
   it('a geocoder outage is never cached as not found', async () => {

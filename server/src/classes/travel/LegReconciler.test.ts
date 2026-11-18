@@ -315,6 +315,7 @@ describe('LegReconciler', () => {
             mode: 'transit',
             there: true,
             back: true,
+            area: false,
           },
         ],
       },

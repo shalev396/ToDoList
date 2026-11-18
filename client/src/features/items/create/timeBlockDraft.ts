@@ -2,7 +2,7 @@
  * The time block form (time-blocks design, "Creating and filling the week"), as pure functions:
  * what the member filled in, how start, end and length follow one another (any two set the third,
  * `@api-types/timeSpan`), and the `POST …/time-blocks` request it becomes. An area is the same
- * form with `layer: 'area'`, which needs a title.
+ * form with `layer: 'area'`, which needs a title. Both layers can "Add travel time".
  *
  * Times are wall-clock fields in the workspace's zone (`YYYY-MM-DD` and `HH:MM`, as the date and
  * time inputs hold them); the length is real minutes.
@@ -213,6 +213,17 @@ export function spanProblem(state: TimeBlockFormState, timeZone: string): SpanPr
     return 'missing';
   }
   return kept.includes('minutes') ? 'zero' : 'order';
+}
+
+/**
+ * "Add travel time" is on the block form for both layers: he travels to a block, and to an area
+ * he paints for studying or work (the owner's ruling, 2026-11-18). What the toast says when the
+ * block or area was made but its travel wasn't added.
+ */
+export function travelNotAddedKey(
+  layer: BlockLayer,
+): 'travel.add.createdWithoutBlock' | 'travel.add.createdWithoutArea' {
+  return layer === 'area' ? 'travel.add.createdWithoutArea' : 'travel.add.createdWithoutBlock';
 }
 
 export function titleProblem(state: TimeBlockFormState): TitleProblem | null {
