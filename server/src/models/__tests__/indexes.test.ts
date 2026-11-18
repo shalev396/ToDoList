@@ -14,11 +14,15 @@ import { ItemMongoModel } from '../mongoose/Item.js';
 import { McpAuthRequestMongoModel } from '../mongoose/McpAuthRequest.js';
 import { McpClientMongoModel } from '../mongoose/McpClient.js';
 import { MembershipMongoModel } from '../mongoose/Membership.js';
+import { PlaceMongoModel } from '../mongoose/Place.js';
 import { ReplayNonceMongoModel } from '../mongoose/ReplayNonce.js';
 import { CreateQuotaMongoModel } from '../mongoose/CreateQuota.js';
+import { RoutingQuotaMongoModel } from '../mongoose/RoutingQuota.js';
 import { SyncRunMongoModel } from '../mongoose/SyncRun.js';
 import { SyncStateMongoModel } from '../mongoose/SyncState.js';
 import { TopicMongoModel } from '../mongoose/Topic.js';
+import { TravelProfileMongoModel } from '../mongoose/TravelProfile.js';
+import { TravelRuleMongoModel } from '../mongoose/TravelRule.js';
 import { ViewMongoModel } from '../mongoose/View.js';
 import { WorkspaceMongoModel } from '../mongoose/Workspace.js';
 
@@ -44,6 +48,8 @@ const HAS_DATE = (field: string): Record<string, unknown> => ({ [field]: { $type
  *   key holds the integration (each integration keeps its own copies);
  * - H1 fix round 1: Dashboards { workspaceId: 1, 'blocks.connectors': 1 } and the same for the
  *   published copy, so "shared" (a connector on any block) never reads every dashboard.
+ * - Travel (plan Task 11): a leg's key is unique per workspace (Items), a member has one Home
+ *   (Places), and the routing quota's days expire (RoutingQuotas).
  */
 const EXPECTED: Record<string, IndexSpec[]> = {
   Workspaces: [
@@ -109,6 +115,12 @@ const EXPECTED: Record<string, IndexSpec[]> = {
       key: { workspaceId: 1, ownerUserId: 1, 'props.idempotencyKey': 1 },
       unique: true,
       partialFilterExpression: { 'props.idempotencyKey': { $exists: true } },
+    },
+    // Travel: one leg per key (owner|anchor|occurrence|direction), tombstones included.
+    {
+      key: { workspaceId: 1, 'props.travelKey': 1 },
+      unique: true,
+      partialFilterExpression: { 'props.travelKey': { $type: 'string' } },
     },
   ],
   Containers: [
@@ -182,6 +194,21 @@ const EXPECTED: Record<string, IndexSpec[]> = {
   ],
   ReplayNonces: [{ key: { expireAt: 1 }, expireAfterSeconds: 0 }],
   CreateQuotas: [{ key: { expireAt: 1 }, expireAfterSeconds: 0 }],
+  // Travel: a member's places (one Home), rules and profile; a workspace's routing quota by day.
+  Places: [
+    { key: { workspaceId: 1, ownerUserId: 1, createdAt: 1 } },
+    {
+      key: { workspaceId: 1, ownerUserId: 1 },
+      unique: true,
+      partialFilterExpression: { home: true },
+    },
+  ],
+  TravelRules: [{ key: { workspaceId: 1, ownerUserId: 1, createdAt: 1 } }],
+  TravelProfiles: [
+    { key: { workspaceId: 1 } },
+    { key: { hasTravel: 1 }, partialFilterExpression: { hasTravel: true } },
+  ],
+  RoutingQuotas: [{ key: { expireAt: 1 }, expireAfterSeconds: 0 }],
   // MCP sign-in (global, not per workspace): a client is forgotten 30 days after its last use.
   McpClients: [{ key: { lastUsedAt: 1 }, expireAfterSeconds: 30 * 86400 }],
   // A request lives until it expires (TTL); an approved one is found by its code's hash.
@@ -220,6 +247,10 @@ const MODELS: readonly ModelWithIndexes[] = [
   CalendarLinkMongoModel,
   ReplayNonceMongoModel,
   CreateQuotaMongoModel,
+  PlaceMongoModel,
+  TravelRuleMongoModel,
+  TravelProfileMongoModel,
+  RoutingQuotaMongoModel,
   McpClientMongoModel,
   McpAuthRequestMongoModel,
 ];

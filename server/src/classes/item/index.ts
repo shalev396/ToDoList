@@ -17,7 +17,7 @@ export {
   type SeriesChange,
 } from './TimeBlock.js';
 export { TimeArea } from './TimeArea.js';
-export { TravelLeg } from './TravelLeg.js';
+export { TravelLeg, type AppliedPlan, type LegTimesChange } from './TravelLeg.js';
 export { TodoCopy, failureFor, isCreatableProvider } from './TodoCopy.js';
 export { Container, FACET_CONTAINER_CAP } from './Container.js';
 export { Refiling, type RefileCounts } from './Refiling.js';

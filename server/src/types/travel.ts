@@ -7,10 +7,13 @@
  * `props.travel` (TravelLegProps) and its key at `props.travelKey`. Places are named by id and
  * name only: an address or a coordinate is never stored on a leg.
  *
- * Also the member's travel settings (factors, buffers, going home in a window, the default mode)
- * and the fixed numbers travel runs by.
+ * Also the member's travel settings (factors, buffers, going home in a window, the default mode),
+ * the fixed numbers travel runs by, what a travel rule applies to, and a place as its member and
+ * as an agent see it (an agent: its name only).
  */
 import { z } from 'zod';
+
+import type { RuleGroup } from './builder.js';
 
 export const TRAVEL_MODES = ['walk', 'drive', 'transit'] as const;
 export type TravelMode = (typeof TRAVEL_MODES)[number];
@@ -79,6 +82,44 @@ export const TravelSettingsSchema = z.strictObject({
   }),
   defaultMode: z.enum(TRAVEL_MODES),
 }) satisfies z.ZodType<TravelSettings>;
+
+/** A change to the settings: any part of them; what is left out stays as it is. */
+export interface TravelSettingsPatch {
+  factors?: Partial<Record<TravelMode, number>> | undefined;
+  buffers?: Partial<Record<TravelMode, number>> | undefined;
+  goHome?: Partial<TravelSettings['goHome']> | undefined;
+  defaultMode?: TravelMode | undefined;
+}
+
+/**
+ * What a travel rule applies to (plan Ruling 11): the items a where-group (the dashboards' logic
+ * builder) matches, every occurrence of one series (keyed on its master item), or one item or
+ * occurrence (`occurrence`: its original start as ISO, or `single`). Precedence: item, then
+ * series, then where-rules oldest first.
+ */
+export type TravelRuleScope =
+  | { kind: 'where'; where: RuleGroup }
+  | { kind: 'series'; itemId: string }
+  | { kind: 'item'; itemId: string; occurrence: string };
+
+export type TravelRuleScopeKind = TravelRuleScope['kind'];
+
+/** One of the member's places as their own REST answers show it (never to anyone else). */
+export interface PlaceView {
+  id: string;
+  name: string;
+  aliases: string[];
+  home: boolean;
+  address: string | null;
+}
+
+/** A place as an agent sees it: its name only, never an address or a coordinate. */
+export interface PlaceAgentView {
+  id: string;
+  name: string;
+  aliases: string[];
+  home: boolean;
+}
 
 /** Where a leg's length came from: OpenRouteService, the member's last entry, by hand, a guess. */
 export const LEG_SOURCES = ['ors', 'remembered', 'manual', 'estimate'] as const;

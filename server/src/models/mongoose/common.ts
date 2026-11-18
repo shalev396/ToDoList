@@ -61,6 +61,14 @@ export function setFields<T extends object>(
   return fields;
 }
 
+/** A map key written as a field path segment: ids, hashes and `a|b|c` keys, never `.` or `$`. */
+const FIELD_KEY = /^[A-Za-z0-9_|:-]{1,200}$/;
+
+/** Throws unless `key` can be one segment of a field path (`remembered.<key>`). */
+export function assertFieldKey(key: string): void {
+  if (!FIELD_KEY.test(key)) throw new Error('Invalid map key for a field path');
+}
+
 /** `{code, message}`: Integrations.lastError and SyncRuns.error. */
 export const ErrorInfoSchema = new mongoose.Schema<ErrorInfo>(
   {

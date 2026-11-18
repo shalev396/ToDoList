@@ -40,6 +40,10 @@ export interface PlanLimits {
    * year of daily ones. Keeps a series' expansion and its record bounded.
    */
   readonly timeBlockExceptionsMax: number;
+  /** Places (Home, Braude…) one member keeps in one workspace, for travel. */
+  readonly placesPerMember: number;
+  /** Travel rules one member keeps in one workspace. */
+  readonly travelRulesPerMember: number;
 }
 
 export const PLAN_LIMITS: PlanLimits = Object.freeze({
@@ -55,4 +59,6 @@ export const PLAN_LIMITS: PlanLimits = Object.freeze({
   todosPerWorkspace: null,
   providerCreatesPerHour: 30,
   timeBlockExceptionsMax: 366,
+  placesPerMember: 30,
+  travelRulesPerMember: 50,
 });

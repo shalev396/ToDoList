@@ -196,6 +196,34 @@ export interface ScheduledItemPatch {
 }
 
 /**
+ * A travel leg as travel storage writes it (TravelLeg.applyPlan, its reset): a local item of kind
+ * `travel`, private to `ownerUserId`, keyed by `props.travelKey`. `travel` is its TravelLegProps
+ * (types/travel.ts), written whole.
+ */
+export interface TravelLegWrite {
+  ownerUserId: string;
+  title: string;
+  topicId: string | null;
+  startAt: Date;
+  endAt: Date;
+  travel: Record<string, unknown>;
+}
+
+/** What an upsert of a leg did: made it, changed it (a tombstone made live too), or nothing. */
+export type TravelLegUpsertOutcome = 'created' | 'updated' | 'unchanged';
+
+/** Which of one member's legs (those with a `props.travelKey`) to list. */
+export interface TravelLegFilter {
+  ownerUserId: string;
+  /** Legs that start in [from, to). */
+  from?: Date;
+  to?: Date;
+  ids?: readonly string[];
+  /** Tombstones (removed or skipped legs, soft-deleted) too. Default: live legs only. */
+  includeRemoved?: boolean;
+}
+
+/**
  * What a write-back sets on a mirrored item (plan Addendum A1): the fields its provider confirmed
  * (and, for fields its provider lacks, the values kept here). Never its source, kind, links or
  * overlay.
@@ -308,6 +336,32 @@ export interface IItemRepository {
     patch: ScheduledItemPatch,
     options?: { unchangedSince?: Date },
   ): Promise<ItemData | null>;
+  /**
+   * Travel storage's write of one leg, by its key (`props.travelKey`, unique per workspace): a new
+   * one is created (kind `travel`, visibility `private`, owned by `leg.ownerUserId`); a stored one
+   * (a tombstone too, which is made live again) gets the title, topic, times and `props.travel`
+   * given. Writing what is stored already writes nothing (its `updatedAt` stays), so applying one
+   * plan twice changes nothing.
+   */
+  upsertTravelLeg(
+    workspaceId: string,
+    key: string,
+    leg: TravelLegWrite,
+  ): Promise<{ item: ItemData; outcome: TravelLegUpsertOutcome }>;
+  /** One member's legs, by start then id; live ones only unless `includeRemoved`. */
+  listTravelLegs(workspaceId: string, filter: TravelLegFilter): Promise<ItemData[]>;
+  /**
+   * A live leg becomes a tombstone: `deletedAt` (default now) and `props.travel.removedReason`.
+   * The tombstone, or null when there is no such live leg.
+   */
+  removeTravelLeg(
+    workspaceId: string,
+    id: string,
+    reason: string,
+    at?: Date,
+  ): Promise<ItemData | null>;
+  /** A membership ended: every live leg of the member is soft-deleted. Returns how many. */
+  removeTravelLegsOf(workspaceId: string, ownerUserId: string, at?: Date): Promise<number>;
   /**
    * A write-back on a live mirrored item of `integrationId` (never a local one): only the fields
    * given change. With `resync`, its `source.hash` is cleared, so the next sync of the record
@@ -458,7 +512,9 @@ export interface IItemRepository {
   renameAttributeValue(workspaceId: string, key: string, from: string, to: string): Promise<number>;
   /**
    * GLOBAL, every workspace: the purge job (jobs/purge.ts) only. Hard-deletes items
-   * soft-deleted before `date`. Returns how many.
+   * soft-deleted before `date`, except a travel leg's tombstone whose leg ended at or after
+   * `date`: the day panel shows why a leg went at least through its day, however long the purge
+   * waits. Returns how many.
    */
   purgeDeletedBefore(date: Date): Promise<number>;
   /**

@@ -287,7 +287,7 @@ describe('scheduled item classes', () => {
     assert.equal(reread.subject, 'Math');
   });
 
-  it('a generic edit of a block takes its own fields; a leg waits for its route; a block is soft-deleted, by an editor who sees it', async () => {
+  it('a generic edit of a block takes its own fields; a leg takes only its start and end; a block is soft-deleted, by an editor who sees it', async () => {
     const { Item, ItemEdit, TimeBlock } = items;
     const ws = await workspace();
     const block = await Item.find(
@@ -319,7 +319,7 @@ describe('scheduled item classes', () => {
     assert.equal((await block.edit(ws.editor, ItemEdit.of({ title: 'x' }))).title, 'x');
     await assert.rejects(leg.edit(ws.editor, ItemEdit.of({ title: 'x' })), {
       statusCode: 400,
-      message: 'edit: use PATCH /travel/legs/:id',
+      message: /^title: travel takes a new start and end/,
     });
     assert.ok(block instanceof TimeBlock);
     const viewer = callerOf({ ...ws.editor.context, role: 'viewer' }, OWNER);

@@ -4,8 +4,9 @@
  *
  * Owner rules live here: only an owner changes a role or removes a member; the last owner can be
  * neither demoted, removed nor leave (409 `last_owner`); nobody is made an owner (ownership
- * transfer is not supported). Ending a membership revokes the member's agent keys and disconnects
- * their integrations in the workspace (PERMISSIONS-V2 ruling 6).
+ * transfer is not supported). Ending a membership revokes the member's agent keys, disconnects
+ * their integrations in the workspace (PERMISSIONS-V2 ruling 6) and forgets their travel (plan
+ * Ruling 25).
  */
 import { AppError } from '../../errors/AppError.js';
 import { LIMITS } from '../../config/limits.js';
@@ -25,6 +26,7 @@ import { Role } from '../base/Role.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { AuditLog } from '../AuditLog.js';
 import { Integration } from '../integration/index.js';
+import { TravelData } from '../travel/TravelData.js';
 import { assertOwner } from './ownerOnly.js';
 
 export interface UpdateMemberInput {
@@ -173,13 +175,14 @@ export class Member extends WorkspaceEntity<MembershipData> implements Auditable
   /**
    * Owner only: removes a member (and their agent keys here). The last owner can't be removed.
    * For someone who is no longer a member but still owns integrations here (a leave or removal
-   * whose disconnect stopped part-way), it finishes the disconnect instead (no second audit
-   * entry); otherwise 404.
+   * whose disconnect stopped part-way), it finishes the disconnect, and forgets their travel,
+   * instead (no second audit entry); otherwise 404.
    */
   static async remove(caller: Caller, userId: string): Promise<void> {
     assertOwner(caller);
     const membership = await (await getMembershipRepository()).find(caller.workspaceId, userId);
     if (membership === null) {
+      await TravelData.forgetMember(caller.workspaceId, userId);
       const finished = await Integration.disconnectAllOf(caller.workspaceId, caller.actor, userId);
       if (finished === 0) throw new AppError(404, 'Member not found');
       return;
@@ -213,14 +216,17 @@ export class Member extends WorkspaceEntity<MembershipData> implements Auditable
    * here, so no request of theirs can connect (or attach) an integration while the rest runs. Then
    * their integrations in the workspace are disconnected (PERMISSIONS-V2 ruling 6: credentials
    * hard-deleted, items soft-deleted; blocks they were on show "A source was removed"; their local
-   * to-dos stay). Each step is idempotent. A disconnect that fails part-way is finished by an
-   * owner's `remove` (which resumes it for a former member), and meanwhile the sync dispatcher
-   * skips integrations whose owner is no longer a member. `actor`: who ended it, for the audit.
+   * to-dos stay). Last, their travel is forgotten (TravelData.forgetMember: their legs
+   * soft-deleted, their places, rules and profile hard-deleted). Each step is idempotent. A
+   * disconnect that fails part-way is finished by an owner's `remove` (which resumes it, and the
+   * travel step, for a former member), and meanwhile the sync dispatcher skips integrations whose
+   * owner is no longer a member. `actor`: who ended it, for the audit.
    */
   static async endMembership(workspaceId: string, userId: string, actor: ActorRef): Promise<void> {
     await (await getMembershipRepository()).revoke(workspaceId, userId);
     await (await getAgentKeyRepository()).revokeForUser(workspaceId, userId);
     await Integration.disconnectAllOf(workspaceId, actor, userId);
+    await TravelData.forgetMember(workspaceId, userId);
   }
 
   /** Every active member's membership ends (a workspace is deleted), one by one. */

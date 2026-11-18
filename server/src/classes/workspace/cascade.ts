@@ -10,12 +10,15 @@
  * 4. its containers, soft-deleted;
  * 5. its dashboards with their version histories, and its saved views: hard-deleted (the purge job
  *    removes only items and containers, so nothing else would; the owner's Phase 6 ruling);
- * 6. its topics, hard-deleted, once nothing above points at them any more: topics go with their
+ * 6. its travel: every member's places, rules and profile, and the routing quota's days,
+ *    hard-deleted (TravelData.forgetWorkspace; the legs are items, soft-deleted in step 3);
+ * 7. its topics, hard-deleted, once nothing above points at them any more: topics go with their
  *    workspace (the owner's phase 7 ruling);
- * 7. its members: pending invites are withdrawn, every membership ends (with the member's agent
+ * 8. its members: pending invites are withdrawn, every membership ends (with the member's agent
  *    keys);
- * 8. the audit entry, `workspace.delete`;
- * 9. an email to every member who had integrations in it (PERMISSIONS-V2 ruling 11; best effort).
+ * 9. the audit entry, `workspace.delete`;
+ * 10. an email to every member who had integrations in it (PERMISSIONS-V2 ruling 11; best
+ *    effort).
  *
  * Every step is idempotent, so an interrupted run completes on the next one. What workspaces
  * deleted before steps 5 and 6 existed left is removed once by the orphaned-dashboards and
@@ -32,6 +35,7 @@ import type { Actor } from '../base/Actor.js';
 import { AuditTarget } from '../base/AuditTarget.js';
 import { AuditLog } from '../AuditLog.js';
 import { Integration } from '../integration/index.js';
+import { TravelData } from '../travel/TravelData.js';
 import { Invite } from './Invite.js';
 import { Member } from './Member.js';
 import { Topic } from './Topic.js';
@@ -69,6 +73,7 @@ export abstract class WorkspaceTeardown {
     await this.removeItems();
     await this.removeContainers();
     await this.removeDashboards();
+    await this.removeTravel();
     await this.removeTopics();
     await this.endMemberships();
     await this.recordAudit();
@@ -120,6 +125,11 @@ export abstract class WorkspaceTeardown {
   protected async removeDashboards(): Promise<void> {
     const removal = this.#dashboardRemoval ?? (await WorkspaceTeardown.#loadDashboardRemoval());
     await removal(this.#workspaceId);
+  }
+
+  /** Every member's travel documents (places, rules, profile) and the routing quota's days. */
+  protected async removeTravel(): Promise<void> {
+    await TravelData.forgetWorkspace(this.#workspaceId);
   }
 
   /** The topics, hard-deleted: the integrations, items, containers and dashboards are gone. */

@@ -4,9 +4,13 @@
  * (DATA.md §3.6). Every validated collection also requires `workspaceId`.
  */
 import { CONTAINER_TYPES, ITEM_KINDS, ITEM_STATUSES, PROVIDERS } from '../types/domain.js';
+import { RULE_DIRECTIONS, TRAVEL_MODES } from '../types/travel.js';
 import { CONTAINER_TABLE_NAME } from './definitions/Container.js';
 import { CREDENTIAL_TABLE_NAME } from './definitions/Credential.js';
 import { ITEM_TABLE_NAME } from './definitions/Item.js';
+import { PLACE_TABLE_NAME } from './definitions/Place.js';
+import { TRAVEL_PROFILE_TABLE_NAME } from './definitions/TravelProfile.js';
+import { TRAVEL_RULE_TABLE_NAME } from './definitions/TravelRule.js';
 
 /** `source` names its provider, external id and link (Items and Containers alike). */
 const SOURCE = {
@@ -65,9 +69,60 @@ export const CREDENTIALS_VALIDATOR = {
   },
 };
 
+/** A member's place: private to them, always with its coordinates. */
+export const PLACES_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: 'object',
+    required: ['workspaceId', 'ownerUserId', 'name', 'lat', 'lon', 'home'],
+    properties: {
+      workspaceId: { bsonType: 'string' },
+      ownerUserId: { bsonType: 'string' },
+      name: { bsonType: 'string' },
+      lat: { bsonType: ['double', 'int', 'long', 'decimal'], minimum: -90, maximum: 90 },
+      lon: { bsonType: ['double', 'int', 'long', 'decimal'], minimum: -180, maximum: 180 },
+      home: { bsonType: 'bool' },
+    },
+  },
+};
+
+/** A member's travel rule: what it applies to, how and which way. */
+export const TRAVEL_RULES_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: 'object',
+    required: ['workspaceId', 'ownerUserId', 'scope', 'mode', 'direction'],
+    properties: {
+      workspaceId: { bsonType: 'string' },
+      ownerUserId: { bsonType: 'string' },
+      scope: {
+        bsonType: 'object',
+        required: ['kind'],
+        properties: { kind: { enum: ['where', 'series', 'item'] } },
+      },
+      mode: { enum: [...TRAVEL_MODES] },
+      direction: { enum: [...RULE_DIRECTIONS] },
+    },
+  },
+};
+
+/** A member's travel profile (`_id`: `<workspaceId>|<userId>`). */
+export const TRAVEL_PROFILES_VALIDATOR = {
+  $jsonSchema: {
+    bsonType: 'object',
+    required: ['workspaceId', 'ownerUserId', 'settings'],
+    properties: {
+      workspaceId: { bsonType: 'string' },
+      ownerUserId: { bsonType: 'string' },
+      settings: { bsonType: 'object' },
+    },
+  },
+};
+
 /** Validators by collection name. Collections not listed have none. */
 export const COLLECTION_VALIDATORS: Readonly<Partial<Record<string, Record<string, unknown>>>> = {
   [ITEM_TABLE_NAME]: ITEMS_VALIDATOR,
   [CONTAINER_TABLE_NAME]: CONTAINERS_VALIDATOR,
   [CREDENTIAL_TABLE_NAME]: CREDENTIALS_VALIDATOR,
+  [PLACE_TABLE_NAME]: PLACES_VALIDATOR,
+  [TRAVEL_RULE_TABLE_NAME]: TRAVEL_RULES_VALIDATOR,
+  [TRAVEL_PROFILE_TABLE_NAME]: TRAVEL_PROFILES_VALIDATOR,
 };

@@ -44,6 +44,8 @@ const GLOBAL_METHODS = new Set([
   'DashboardVersionRepository.listWorkspaceIds',
   'ViewRepository.listWorkspaceIds',
   'TopicRepository.listWorkspaceIds',
+  // The daily travel pass runs over every workspace's members with travel.
+  'TravelProfileRepository.listWithTravel',
 ]);
 
 /** Per-user collections from the Elytra template; DATA.md §3: every collection but Users has a workspaceId. */
@@ -100,9 +102,9 @@ after(async () => {
 });
 
 describe('workspace scope: static scan of the repositories', () => {
-  it('finds a repository for each of the 18 workspace collections', () => {
+  it('finds a repository for each of the 22 workspace collections', () => {
     const scoped = [...repositories.keys()].filter((name) => !NOT_WORKSPACE_SCOPED.has(name));
-    assert.equal(scoped.length, 18, scoped.join(', '));
+    assert.equal(scoped.length, 22, scoped.join(', '));
   });
 
   it('every method takes workspaceId first, except the listed global lookups', () => {
