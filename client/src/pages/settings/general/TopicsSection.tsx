@@ -12,6 +12,7 @@ import { useShellUi } from '@/features/shell/shellUi';
 import { TopicIcon } from '@/features/workspaces/TopicIcon';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { TopicView } from '@api-types/api-contracts';
+import { TopicFamilyPicker } from './TopicFamilyPicker';
 
 function TopicRow({ topic, canManage }: { topic: TopicView; canManage: boolean }) {
   const { language } = useLanguage();
@@ -38,6 +39,7 @@ function TopicRow({ topic, canManage }: { topic: TopicView; canManage: boolean }
       <span className="hidden shrink-0 text-[13px] text-muted-foreground sm:inline" dir="ltr">
         /t/{topic.slug}
       </span>
+      <TopicFamilyPicker topic={topic} canManage={canManage} />
       {canManage && !renaming ? (
         <TopicRowMenu
           topic={topic}
