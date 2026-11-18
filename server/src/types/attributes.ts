@@ -41,11 +41,11 @@ export const ATTRIBUTE_TEXT_MAX = 500;
 const DEFAULT_NUMBER_MIN = 0;
 const DEFAULT_NUMBER_MAX = 100;
 
-const NameSchema = z.string().trim().min(1).max(40);
+export const NameSchema = z.string().trim().min(1).max(40);
 const OptionSchema = z.string().trim().min(1).max(40);
 const OptionsSchema = z.array(OptionSchema).max(MAX_ATTRIBUTE_OPTIONS);
 
-const PatternsSchema = z
+export const PatternsSchema = z
   .array(
     z
       .string()

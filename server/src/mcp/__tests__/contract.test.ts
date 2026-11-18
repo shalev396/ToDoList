@@ -52,6 +52,7 @@ const MCP_TABLE: readonly Spec[] = [
   { name: 'set_overlay', scopes: ['items:write'], minRole: 'editor', readOnly: false },
   { name: 'list_attributes', scopes: ['read'], minRole: 'viewer', readOnly: true },
   { name: 'set_item_attributes', scopes: ['items:write'], minRole: 'editor', readOnly: false },
+  { name: 'set_subject', scopes: ['items:write'], minRole: 'editor', readOnly: false },
   // §7.3 Sync
   { name: 'sync_now', scopes: ['sync'], minRole: 'editor', readOnly: false },
   { name: 'get_sync_status', scopes: ['read'], minRole: 'viewer', readOnly: true },
@@ -90,6 +91,8 @@ const MCP_TABLE: readonly Spec[] = [
     readOnly: false,
     destructive: true,
   },
+  { name: 'set_topic_colour', scopes: ['workspace:share'], minRole: 'owner', readOnly: false },
+  { name: 'set_file_under', scopes: ['workspace:share'], minRole: 'owner', readOnly: false },
   { name: 'audit_log_query', scopes: ['workspace:read'], minRole: 'viewer', readOnly: true },
   // §8.2 Builder
   { name: 'builder_list_dashboards', scopes: ['read'], minRole: 'viewer', readOnly: true },

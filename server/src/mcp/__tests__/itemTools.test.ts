@@ -467,3 +467,87 @@ describe('list_attributes and set_item_attributes (H4)', () => {
     }
   });
 });
+
+describe('set_subject', () => {
+  interface SubjectOut {
+    subject: { name: string; family: string; patterns: string[] };
+    created: boolean;
+  }
+
+  it('an editor creates the Subject attribute on first use, then updates, then renames', async () => {
+    const team = await newTeam('subject');
+    const key = await insertAgentKey({
+      workspaceId: team.workspace.id,
+      userId: team.editor.id,
+      scopes: ['read', 'items:write'],
+    });
+    const created = structured(
+      await call(key, 'set_subject', { name: 'Calculus', family: 'violet' }),
+    ) as SubjectOut;
+    assert.deepEqual(
+      [created.subject.name, created.subject.family, created.created],
+      ['Calculus', 'violet', true],
+    );
+    const updated = structured(
+      await call(key, 'set_subject', { name: 'Calculus', patterns: ['*calc*', '*חדו"א*'] }),
+    ) as SubjectOut;
+    assert.deepEqual(
+      [updated.created, updated.subject.family, updated.subject.patterns],
+      [false, 'violet', ['*calc*', '*חדו"א*']],
+    );
+    const item = await (
+      await models.getItemRepository()
+    ).createLocal(team.workspace.id, {
+      ownerUserId: team.editor.id,
+      title: 'Lecture',
+      topicId: 'work',
+    });
+    await call(key, 'set_item_attributes', { id: item.id, attrs: { subject: 'Calculus' } });
+    const renamed = structured(
+      await call(key, 'set_subject', { name: 'Calculus', rename: 'Calculus I' }),
+    ) as SubjectOut;
+    assert.equal(renamed.subject.name, 'Calculus I');
+    const listed = structured(await call(key, 'list_attributes', {})) as {
+      attributes: { key: string; name: string }[];
+    };
+    assert.equal(listed.attributes.find((def) => def.key === 'subject')?.name, 'Subject');
+    const after = await (await models.getItemRepository()).findById(team.workspace.id, item.id);
+    assert.equal(after?.overlay.attrs['subject'], 'Calculus I');
+  });
+
+  it('refuses what the REST schemas refuse: long names, too many wildcards, too many patterns', async () => {
+    const team = await newTeam('subject-bad');
+    const key = await insertAgentKey({
+      workspaceId: team.workspace.id,
+      userId: team.owner.id,
+      scopes: ['read', 'items:write'],
+    });
+    const bad: Record<string, unknown>[] = [
+      { name: '' },
+      { name: 'x'.repeat(41) },
+      { name: 'Ok', attributeName: 'y'.repeat(41) },
+      { name: 'Ok', attributeName: '   ' },
+      { name: 'Ok', patterns: ['*a*b*c*d*e*f*g*h*i*'] },
+      { name: 'Ok', patterns: Array.from({ length: 11 }, (_, i) => `p${String(i)}`) },
+      { name: 'Ok', patterns: ['z'.repeat(101)] },
+      { name: 'Ok', family: 'mauve' },
+    ];
+    for (const args of bad) {
+      assert.equal((await call(key, 'set_subject', args)).isError, true, JSON.stringify(args));
+    }
+  });
+
+  it('a viewer key is not offered the tool', async () => {
+    const team = await newTeam('subject-viewer');
+    const key = await insertAgentKey({
+      workspaceId: team.workspace.id,
+      userId: team.viewer.id,
+      scopes: ['read', 'items:write'],
+    });
+    const { tools } = await (await h.connect(key.raw)).listTools();
+    assert.equal(
+      tools.some((tool) => tool.name === 'set_subject'),
+      false,
+    );
+  });
+});

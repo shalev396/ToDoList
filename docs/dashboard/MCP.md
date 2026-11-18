@@ -181,6 +181,7 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 | `complete_todo` | Set `status: done` or `open` | D=false, I |
 | `delete_todo` | Soft delete (`deletedAt`); needs `confirm` | D |
 | `set_overlay` | Pin, hide or annotate a **mirrored** item via DATA.md `overlay.*` (local-only, never written to the provider) | D=false, I |
+| `set_subject` | Create or change a Subject (a lesson): its colour family, title patterns and, with `rename`, its name; `{name, rename?, family?, patterns?}` → `{subject, created}`; editor+ | D=false, I |
 
 ```json
 // create_todo.inputSchema (strict)
@@ -275,6 +276,8 @@ The target is the workspace's primary calendar (`settings.primaryCalendar`) and 
 | `workspace_invite` | `{email, role, message?, language?}` → a pending invite; the invitee accepts in the UI (DATA.md `Invites`) | `workspace:share` + owner | D=false |
 | `workspace_update_member` | Change a member's role; needs `confirm` | `workspace:share` + owner | D |
 | `workspace_remove_member` | Revoke a membership; needs `confirm` | `workspace:share` + owner | D |
+| `set_topic_colour` | Give a topic its colour family: `{topic, family}` | `workspace:share` + owner | D=false, I |
+| `set_file_under` | File an own integration, or one of its calendars/projects (`containerId`), under a topic (`topic` null: Unsorted, or back to the connection's topic); stored items move at once, hand-set item topics are kept | `workspace:share` + owner | D=false, I |
 | `audit_log_query` | Recent actions, filterable by agent | `workspace:read` | RO |
 
 ### 7.6 Shared output: `ItemSummary`

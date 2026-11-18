@@ -359,6 +359,7 @@ function toolFixtures(expectedVersion: number): Record<string, Record<string, un
     set_overlay: [{ id: unsharedItemId, pinned: true }],
     list_attributes: [{}],
     set_item_attributes: [{ id: unsharedItemId, attrs: { importance: 5 } }],
+    set_subject: [{ name: 'Algebra', family: 'teal', patterns: ['*algebra*'] }],
     sync_now: [{}, { integrationIds: [foreign] }],
     get_sync_status: [{}, { integrationId: foreign }, { runId: 'x' }],
     sync_to_google_calendar: [{ dryRun: true }],

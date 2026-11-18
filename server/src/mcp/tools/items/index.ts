@@ -6,6 +6,7 @@ import { deleteTodo } from './deleteTodo.js';
 import { listAttributesTool } from './listAttributes.js';
 import { setItemAttributes } from './setItemAttributes.js';
 import { setOverlay } from './setOverlay.js';
+import { setSubject } from './setSubject.js';
 import { updateTodo } from './updateTodo.js';
 
 export const ITEM_TOOLS: readonly ToolDef[] = [
@@ -16,4 +17,5 @@ export const ITEM_TOOLS: readonly ToolDef[] = [
   setOverlay,
   listAttributesTool,
   setItemAttributes,
+  setSubject,
 ];
