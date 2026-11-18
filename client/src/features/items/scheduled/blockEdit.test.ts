@@ -370,6 +370,58 @@ describe('blockSaveOf', () => {
     ]);
   });
 
+  it('a new page also clears a page set by hand (overlay), so the page shown is the one saved', () => {
+    // Its own page is College; someone filed it under Side projects (overlay.topicOverride).
+    const filed = weekly(
+      {},
+      { overlay: { topicOverride: 't-side', attrs: { subject: 'Calculus' } } },
+    );
+    const { view, base } = draftAt(filed, NOV_22);
+    assert.equal(base.topicId, 't-side');
+    // Another page: sent to the series, and the override goes.
+    const work = blockSaveOf(filed, view, base, { ...base, topicId: 't-work' }, ZONE);
+    assert.deepEqual(work.all, [{ scope: 'all', topicId: 't-work' }]);
+    assert.equal(work.clearTopicOverride, true);
+    // Its own page: nothing to send to the series, only the override goes.
+    const own = blockSaveOf(filed, view, base, { ...base, topicId: 't-college' }, ZONE);
+    assert.deepEqual(own.all, []);
+    assert.equal(own.clearTopicOverride, true);
+    // A new time on this one with a new page: the override goes whichever is chosen.
+    const moved = blockSaveOf(
+      filed,
+      view,
+      base,
+      {
+        ...base,
+        topicId: 't-work',
+        start: new Date('2026-11-22T12:00:00.000Z'),
+        end: new Date('2026-11-22T16:00:00.000Z'),
+      },
+      ZONE,
+    );
+    assert.deepEqual(
+      [moved.asksScope, moved.this[0], moved.clearTopicOverride],
+      [true, { scope: 'all', topicId: 't-work' }, true],
+    );
+    // The page unchanged: the override stays; without one there is nothing to clear.
+    assert.equal(
+      blockSaveOf(filed, view, base, { ...base, title: 'x' }, ZONE).clearTopicOverride,
+      false,
+    );
+    const plain = draftAt(weekly(), NOV_22);
+    const moveOwn = blockSaveOf(
+      weekly(),
+      plain.view,
+      plain.base,
+      { ...plain.base, topicId: 't-work' },
+      ZONE,
+    );
+    assert.deepEqual(
+      [moveOwn.all, moveOwn.clearTopicOverride],
+      [[{ scope: 'all', topicId: 't-work' }], false],
+    );
+  });
+
   it('a blank title is the subject; an area needs a title', () => {
     const item = weekly();
     const { view, base } = draftAt(item, null);

@@ -222,6 +222,11 @@ export interface BlockSave {
    * changed. Null when every occurrence can't move that way (a day of the month pushed out of it).
    */
   all: EditTimeBlockRequest[] | null;
+  /**
+   * The page changed while one set by hand (`overlay.topicOverride`) is on it: that override is
+   * cleared too (an overlay PATCH after the edits), or it would keep winning over the saved page.
+   */
+  clearTopicOverride: boolean;
 }
 
 /** Whole days from one `YYYY-MM-DD` to another. */
@@ -319,7 +324,8 @@ function seriesTimes(
  * What a save sends. The title (a blank one is the subject), the subject (blank clears it) and the
  * page go to the whole series; a new time on one occurrence of a repeating block asks "This one"
  * (an exception) or "All" (the series). A block that doesn't repeat, or a series opened as a
- * whole, saves all of it at once.
+ * whole, saves all of it at once. The page shown is the one saved: a new page also clears a page
+ * set by hand, and the block's own page is sent only when it differs from it.
  */
 export function blockSaveOf(
   item: BlockItem,
@@ -337,9 +343,11 @@ export function blockSaveOf(
   if (subject !== base.subject.trim()) {
     fields.subject = subject === '' ? null : subject;
   }
-  if (draft.topicId !== base.topicId) {
+  const pageChanged = draft.topicId !== base.topicId;
+  if (pageChanged && draft.topicId !== item.topicId) {
     fields.topicId = draft.topicId;
   }
+  const clearTopicOverride = pageChanged && item.overlay.topicOverride !== null;
   const changed = Object.keys(fields).length > 1;
   const timeChanged =
     draft.start.getTime() !== base.start.getTime() || draft.end.getTime() !== base.end.getTime();
@@ -347,10 +355,10 @@ export function blockSaveOf(
   const occurrence = view.occurrence;
 
   if (!timeChanged) {
-    return { asksScope: false, this: [], all: changed ? [fields] : [] };
+    return { asksScope: false, this: [], all: changed ? [fields] : [], clearTopicOverride };
   }
   if (occurrence === null) {
-    return { asksScope: false, this: [], all: [{ ...fields, ...times }] };
+    return { asksScope: false, this: [], all: [{ ...fields, ...times }], clearTopicOverride };
   }
   const thisOne: EditTimeBlockRequest = {
     scope: 'this' satisfies TimeBlockEditScope,
@@ -362,6 +370,7 @@ export function blockSaveOf(
     asksScope: true,
     this: changed ? [fields, thisOne] : [thisOne],
     all: series === null ? null : [{ ...fields, ...series }],
+    clearTopicOverride,
   };
 }
 

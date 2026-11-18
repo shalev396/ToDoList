@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { CircleAlert, Pencil, SkipForward, Trash2, Undo2 } from 'lucide-react';
 import { errorMessage } from '@/api/errors';
 import { useAttributes } from '@/api/queries/attributes';
-import { useDeleteItem } from '@/api/queries/items';
+import { useDeleteItem, useUpdateOverlay } from '@/api/queries/items';
 import { useEditTimeBlock, useSkipOccurrence } from '@/api/queries/timeBlocks';
 import { dateLocale, shortDate, timeOfDay } from '@/components/items/format';
 import {
@@ -508,6 +508,7 @@ function BlockEditForm({
   const attributes = useAttributes(workspace?.id ?? null);
   const subjects = useMemo(() => subjectOptions(attributes.data), [attributes.data]);
   const edit = useEditTimeBlock(workspace?.id ?? '', item.id);
+  const overlay = useUpdateOverlay(workspace?.id ?? '', item.id);
   // What the form compares with: the block as the form opened on it.
   const [base] = useState<BlockDraft>(() => blockDraftOf(item, view));
   const [state, setState] = useState<TimeBlockFormState>(() => ({
@@ -531,13 +532,22 @@ function BlockEditForm({
   const set = (patch: Partial<TimeBlockFormState>) => {
     setState((previous) => ({ ...previous, ...patch }));
   };
-  const send = async (requests: readonly EditTimeBlockRequest[], movedTo: Date | null) => {
+  const send = async (
+    requests: readonly EditTimeBlockRequest[],
+    movedTo: Date | null,
+    clearTopicOverride: boolean,
+  ) => {
     setSaving(true);
     setError(null);
     try {
       let updated: ItemDetail | null = null;
       for (const request of requests) {
         updated = await edit.mutateAsync(request);
+      }
+      // A page set by hand would keep winning over the page just saved: it goes last, once the
+      // block's own edits are in.
+      if (clearTopicOverride) {
+        updated = await overlay.mutateAsync({ topicOverride: null });
       }
       onDone(updated !== null && movedTo !== null ? { item: updated, at: movedTo } : undefined);
     } catch (failure) {
@@ -571,7 +581,7 @@ function BlockEditForm({
       setAsking({ save, draft });
       return;
     }
-    void send(save.all ?? [], null);
+    void send(save.all ?? [], null, save.clearTopicOverride);
   };
 
   return (
@@ -669,6 +679,7 @@ function BlockEditForm({
           void send(
             scope === 'this' ? chosen.save.this : (chosen.save.all ?? []),
             scope === 'all' ? chosen.draft.start : null,
+            chosen.save.clearTopicOverride,
           );
         }}
       />
