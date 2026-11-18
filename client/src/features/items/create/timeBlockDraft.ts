@@ -7,6 +7,7 @@
  * Times are wall-clock fields in the workspace's zone (`YYYY-MM-DD` and `HH:MM`, as the date and
  * time inputs hold them); the length is real minutes.
  */
+import type { WeekStart } from '@api-types/recurrence/occurrences.ts';
 import type { BlockLayer } from '@api-types/scheduled.ts';
 import {
   TIME_BLOCK_MAX_MS,
@@ -20,6 +21,7 @@ import {
   type Span,
   type SpanField,
 } from '@api-types/timeSpan.ts';
+import { topicBySlug } from '../../workspaces/topics.ts';
 import { dateInZone, instantInZone, timeInZone } from '../zonedDate.ts';
 import {
   NO_REPEAT,
@@ -37,7 +39,7 @@ export type NewItemKind = (typeof NEW_ITEM_KINDS)[number];
 export interface NewItemPreset {
   kind: NewItemKind;
   /** A topic id; '' or absent: none chosen. */
-  topicId?: string;
+  topicId?: string | undefined;
   start?: Date;
   end?: Date;
 }
@@ -134,8 +136,25 @@ function nextHour(now: Date, timeZone: string): Date {
 }
 
 /**
- * The form as it opens: the preset's times (the length computed), else the next whole hour for an
- * hour (the end computed); the preset's page; no repeat.
+ * The page a new block or area starts on (time-blocks design, Decision 5): the preset's, else the
+ * topic page it is created from (`t/<slug>`), else none chosen (the server then takes the page last
+ * used with the subject). A to-do keeps its own preset.
+ */
+export function blockTopicOf(
+  presetTopicId: string | undefined,
+  pageSlug: string | undefined,
+  topics: readonly { id: string; slug: string }[],
+): string | undefined {
+  if (presetTopicId !== undefined && presetTopicId !== '') {
+    return presetTopicId;
+  }
+  return pageSlug === undefined ? undefined : topicBySlug(topics, pageSlug)?.id;
+}
+
+/**
+ * The form as it opens: the preset's times, else the next whole hour for an hour; the preset's
+ * page; no repeat. Start and length stand (the end is computed), so the first edit of the end
+ * moves the length and the first edit of the length moves the end, never the start.
  */
 export function initialBlockState(
   preset: NewItemPreset,
@@ -153,8 +172,8 @@ export function initialBlockState(
     startTime: timeInZone(start, timeZone),
     endDate: dateInZone(end, timeZone),
     endTime: timeInZone(end, timeZone),
-    minutes: 60,
-    edited: preset.end === undefined ? ['minutes', 'start'] : ['end', 'start'],
+    minutes: (end.getTime() - start.getTime()) / 60_000,
+    edited: ['start', 'minutes'],
     repeat: NO_REPEAT,
   };
   return withDerived(state, timeZone);
@@ -209,10 +228,12 @@ export function titleProblem(state: TimeBlockFormState): TitleProblem | null {
  * The request to send; null while something can't be sent (titleProblem, spanProblem, or the
  * Repeat control's own problem). A blank title is left out when there is a subject: the server
  * titles the block with the subject as it is stored. The page is sent only once one is chosen.
+ * `weekStart` is the workspace's: a rule every N weeks names it (WKST).
  */
 export function blockRequestOf(
   state: TimeBlockFormState,
   timeZone: string,
+  weekStart: WeekStart = 'sun',
 ): CreateTimeBlockRequest | null {
   const span = spanOf(state, timeZone);
   if (titleProblem(state) !== null || span === null || spanProblem(state, timeZone) !== null) {
@@ -224,6 +245,7 @@ export function blockRequestOf(
       dueDate: dateInZone(span.start, timeZone),
       allDay: false,
       timeZone,
+      weekStart,
     });
     if (recurrence === null) {
       return null;

@@ -104,7 +104,12 @@ export function NewTodoSheet({
   const dueAt = day === '' ? null : instantInZone(day, time === '' ? '12:00' : time, timeZone);
   const selected = Object.values(funnels);
   const repeating = isRepeating(repeat);
-  const recurrence = buildRecurrence(repeat, { dueDate: day, allDay: time === '', timeZone });
+  const recurrence = buildRecurrence(repeat, {
+    dueDate: day,
+    allDay: time === '',
+    timeZone,
+    weekStart: settings?.weekStart ?? 'sun',
+  });
   const repeatBlocked = primary.isError ? 'error' : repeatBlockOf(primary.data);
   const unready = repeating
     ? recurrence === null || !repeatTarget || repeatBlocked !== null

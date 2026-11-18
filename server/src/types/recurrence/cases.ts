@@ -219,6 +219,47 @@ export const PARITY_CASES: readonly ParityCase[] = [
     ],
   },
   {
+    // Every 2 weeks on Sunday and Tuesday 13:00–17:00 from Sun 22 Nov 2026, weeks starting on
+    // Sunday (WKST=SU, the workspace's week): each Sunday with the Tuesday after it.
+    // Sun 22 Nov 2026 00:00 to Sun 20 Dec 2026 00:00, local.
+    name: 'biweekly-sun-tue-week-starts-sunday',
+    rows: [
+      weeklyBlock(
+        '2026-11-22T11:00:00.000Z',
+        '2026-11-22T15:00:00.000Z',
+        {},
+        'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=SU',
+      ),
+    ],
+    range: { from: '2026-11-21T22:00:00.000Z', to: '2026-12-19T22:00:00.000Z' },
+    timeZone: TZ,
+    expected: ['2026-11-22', '2026-11-24', '2026-12-06', '2026-12-08'].map((day) => ({
+      key: slot('block', `${day}T11:00:00.000Z`),
+      start: `${day}T11:00:00.000Z`,
+      end: `${day}T15:00:00.000Z`,
+    })),
+  },
+  {
+    // The same rule with weeks starting on Monday (WKST=MO, RFC 5545's default): the Tuesday is
+    // the one before the next Sunday, a week off from the Sunday-start series.
+    name: 'biweekly-sun-tue-week-starts-monday',
+    rows: [
+      weeklyBlock(
+        '2026-11-22T11:00:00.000Z',
+        '2026-11-22T15:00:00.000Z',
+        {},
+        'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=MO',
+      ),
+    ],
+    range: { from: '2026-11-21T22:00:00.000Z', to: '2026-12-19T22:00:00.000Z' },
+    timeZone: TZ,
+    expected: ['2026-11-22', '2026-12-01', '2026-12-06', '2026-12-15'].map((day) => ({
+      key: slot('block', `${day}T11:00:00.000Z`),
+      start: `${day}T11:00:00.000Z`,
+      end: `${day}T15:00:00.000Z`,
+    })),
+  },
+  {
     // Sun 18 Oct 2026 00:00 (summer time) to Mon 2 Nov 2026 00:00 (winter time), local.
     name: 'dst-end-weekly-block',
     rows: [weeklyBlock('2026-10-18T10:00:00.000Z', '2026-10-18T14:00:00.000Z')],

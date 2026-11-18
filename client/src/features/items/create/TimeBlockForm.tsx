@@ -1,5 +1,6 @@
 import { useId, useMemo, useRef, useState, type FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useMatch } from 'react-router-dom';
 import { errorMessage } from '@/api/errors';
 import { useAttributes } from '@/api/queries/attributes';
 import { useCreateTimeBlock } from '@/api/queries/timeBlocks';
@@ -9,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { SelectField } from '@/components/ui/select';
 import { subjectOptions } from '@/pages/settings/general/subjectsDraft';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
+import { ROUTES } from '@/router/routes';
 import type { BlockLayer } from '@api-types/scheduled.ts';
 import type { SpanField } from '@api-types/timeSpan.ts';
 import { RepeatControl } from './RepeatControl';
@@ -16,6 +18,7 @@ import { repeatProblem } from './recurrence';
 import {
   BLOCK_REPEAT_PRESETS,
   blockRequestOf,
+  blockTopicOf,
   editSpan,
   initialBlockState,
   spanProblem,
@@ -45,7 +48,7 @@ export function TimeBlockForm({
   onClose,
 }: {
   layer: BlockLayer;
-  /** The times and page the sheet opened with. */
+  /** The times and page the sheet opened with (no page: the topic page it opens on, if any). */
   preset: NewItemPreset;
   onClose: () => void;
 }) {
@@ -53,10 +56,19 @@ export function TimeBlockForm({
   const ids = useId();
   const { workspace, topics, settings } = useCurrentWorkspace();
   const timeZone = settings?.timezone ?? 'UTC';
+  const weekStart = settings?.weekStart ?? 'sun';
+  // The topic page under the sheet (`/:lng/t/:topic`, a group in it too).
+  const page = useMatch(`/:lng/${ROUTES.TOPIC}/*`);
   const attributes = useAttributes(workspace?.id ?? null);
   const subjects = useMemo(() => subjectOptions(attributes.data), [attributes.data]);
   const create = useCreateTimeBlock(workspace?.id ?? '');
-  const [state, setState] = useState(() => initialBlockState(preset, new Date(), timeZone));
+  const [state, setState] = useState(() =>
+    initialBlockState(
+      { ...preset, topicId: blockTopicOf(preset.topicId, page?.params.topic, topics) },
+      new Date(),
+      timeZone,
+    ),
+  );
   const [tried, setTried] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // One key per request body: a retry of the same block is never a second one.
@@ -89,7 +101,7 @@ export function TimeBlockForm({
   const save = async (event: FormEvent) => {
     event.preventDefault();
     setTried(true);
-    const request = blockRequestOf(form, timeZone);
+    const request = blockRequestOf(form, timeZone, weekStart);
     if (request === null || workspace === null || saving) {
       return;
     }

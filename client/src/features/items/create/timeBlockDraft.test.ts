@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { NO_REPEAT } from './recurrence.ts';
 import {
   blockRequestOf,
+  blockTopicOf,
   editSpan,
   initialBlockState,
   spanProblem,
@@ -40,7 +41,8 @@ describe('initialBlockState', () => {
       [state.startDate, state.startTime, state.endDate, state.endTime, state.minutes],
       ['2026-11-18', '11:00', '2026-11-18', '12:00', 60],
     );
-    assert.deepEqual(state.edited, ['minutes', 'start']);
+    // Start and length stand: the first edit of the end moves the length, not the start.
+    assert.deepEqual(state.edited, ['start', 'minutes']);
     assert.equal(state.topicId, undefined);
     assert.deepEqual(state.repeat, NO_REPEAT);
   });
@@ -66,7 +68,7 @@ describe('initialBlockState', () => {
       [state.startDate, state.startTime, state.endDate, state.endTime, state.minutes],
       ['2026-11-22', '13:00', '2026-11-22', '17:30', 270],
     );
-    assert.deepEqual(state.edited, ['end', 'start']);
+    assert.deepEqual(state.edited, ['start', 'minutes']);
     assert.equal(state.topicId, 'topic-1');
   });
 
@@ -76,6 +78,37 @@ describe('initialBlockState', () => {
 });
 
 describe('editSpan', () => {
+  it('first End edit computes the length', () => {
+    // Opens 11:00–12:00; End 15:00 keeps the start: 11:00–15:00, four hours.
+    const state = editSpan(
+      initialBlockState({ kind: 'block' }, NOW, ZONE),
+      'end',
+      { endTime: '15:00' },
+      ZONE,
+    );
+    assert.deepEqual([state.startDate, state.startTime], ['2026-11-18', '11:00']);
+    assert.equal(state.minutes, 240);
+  });
+
+  it('a preset’s new length moves the end', () => {
+    // A dragged 13:00–15:00 given 3 hours: 13:00–16:00.
+    const dragged = initialBlockState(
+      {
+        kind: 'block',
+        start: new Date('2026-11-22T11:00:00Z'),
+        end: new Date('2026-11-22T13:00:00Z'),
+      },
+      NOW,
+      ZONE,
+    );
+    assert.equal(dragged.minutes, 120);
+    const longer = editSpan(dragged, 'minutes', { minutes: 180 }, ZONE);
+    assert.deepEqual(
+      [longer.startDate, longer.startTime, longer.endDate, longer.endTime],
+      ['2026-11-22', '13:00', '2026-11-22', '16:00'],
+    );
+  });
+
   it('start, then end: the length follows; then the length moves the start', () => {
     let state = initialBlockState({ kind: 'block' }, NOW, ZONE);
     state = editSpan(state, 'start', { startDate: '2026-11-22', startTime: '13:00' }, ZONE);
@@ -224,8 +257,52 @@ describe('blockRequestOf', () => {
     });
   });
 
+  it('every 2 weeks names the workspace’s week start', () => {
+    const biweekly = sunday({
+      repeat: { ...NO_REPEAT, preset: 'custom', interval: 2, frequency: 'WEEKLY', days: ['TU'] },
+    });
+    assert.deepEqual(blockRequestOf(biweekly, ZONE, 'sun')?.recurrence, [
+      'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=SU',
+    ]);
+    assert.deepEqual(blockRequestOf(biweekly, ZONE, 'mon')?.recurrence, [
+      'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=MO',
+    ]);
+  });
+
   it('no span, no request', () => {
     assert.equal(blockRequestOf(sunday({ startTime: '' }), ZONE), null);
     assert.equal(blockRequestOf(sunday({ endDate: '2026-11-21' }), ZONE), null);
+  });
+});
+
+describe('blockTopicOf', () => {
+  const topics = [
+    { id: 'topic-work', slug: 'work' },
+    { id: 'topic-college', slug: 'college' },
+  ];
+
+  it('the preset’s page wins', () => {
+    assert.equal(blockTopicOf('topic-work', 'college', topics), 'topic-work');
+  });
+
+  it('else the topic page it is created from (time-blocks design, Decision 5)', () => {
+    assert.equal(blockTopicOf(undefined, 'college', topics), 'topic-college');
+    assert.equal(blockTopicOf('', 'college', topics), 'topic-college');
+    // On that page, New → Time block sends its topic.
+    const state = initialBlockState(
+      { kind: 'block', topicId: blockTopicOf(undefined, 'college', topics) },
+      NOW,
+      ZONE,
+    );
+    assert.equal(
+      blockRequestOf({ ...sunday(), topicId: state.topicId }, ZONE)?.topicId,
+      'topic-college',
+    );
+  });
+
+  it('else none chosen: off a topic page, or a page the workspace has no topic for', () => {
+    assert.equal(blockTopicOf(undefined, undefined, topics), undefined);
+    assert.equal(blockTopicOf('', undefined, topics), undefined);
+    assert.equal(blockTopicOf(undefined, 'gone', topics), undefined);
   });
 });
