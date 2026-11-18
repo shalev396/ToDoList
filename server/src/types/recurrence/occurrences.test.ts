@@ -74,6 +74,28 @@ describe('expandOccurrences: occurrence identity', () => {
     assert.equal(moved.key, `x2@${String(Date.parse('2026-11-12T08:00:00.000Z'))}`);
   });
 
+  it('a series mirrored through two accounts has no single master: moved rows name none', () => {
+    const out = expand(parityCase('google-series-mirrored-twice'));
+    const moved = out.filter((o) => o.row.id.startsWith('moved'));
+    assert.equal(moved.length, 2);
+    for (const o of moved) {
+      assert.equal(o.seriesRowId, null);
+      assert.equal(o.originalStart?.toISOString(), '2026-11-12T08:00:00.000Z');
+    }
+    // Each master still names itself on its own occurrences.
+    assert.deepEqual(
+      out.filter((o) => o.row.id.startsWith('mirror')).map((o) => o.seriesRowId),
+      ['mirrorA', 'mirrorB', 'mirrorA', 'mirrorB'],
+    );
+  });
+
+  it('every parity case gives unique keys', () => {
+    for (const c of PARITY_CASES) {
+      const keys = expand(c).map((o) => o.key);
+      assert.equal(new Set(keys).size, keys.length, c.name);
+    }
+  });
+
   it('a moved local occurrence keeps its original slot', () => {
     const [moved] = expand(parityCase('local-moved'));
     assert.ok(moved);

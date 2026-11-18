@@ -18,7 +18,7 @@
  */
 import * as rruleModule from 'rrule';
 import type { QueryRowSource } from '../builder.js';
-import { zonedParts, zonedTime, addLocalDays } from './zoned.js';
+import { addLocalDays, wallString, zonedParts, zonedTime } from './zoned.js';
 
 export { wallDate, wallString } from './zoned.js';
 
@@ -176,6 +176,29 @@ function seriesKey(
   return typeof calendar === 'string' && typeof id === 'string' ? `${calendar}|${id}` : null;
 }
 
+/** How far a DST change can move a wall time: wider than any jump a zone makes. */
+const DST_SLACK_MS = 3 * 60 * 60_000;
+
+const UTC_UNTIL = /\bUNTIL=(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/i;
+
+/**
+ * The rule with a UTC `UNTIL` (`UNTIL=20261108T110000Z`, an instant per RFC 5545) restated as the
+ * wall time that instant reads in `timeZone`. The expansion runs on floating wall times, so a UTC
+ * value left as it is would be read as a wall time and cut the series off up to the zone's offset
+ * early or late. A date-only or floating `UNTIL` is already a wall value and is left alone.
+ */
+function withFloatingUntil(rule: string, timeZone: string): string {
+  return rule.replace(
+    UTC_UNTIL,
+    (_match: string, y: string, mo: string, d: string, h: string, mi: string, s: string) => {
+      const instant = new Date(
+        Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)),
+      );
+      return `UNTIL=${wallString(instant, timeZone).replace(/[-:]/g, '')}`;
+    },
+  );
+}
+
 /** A series' slots on the wall clock of one zone, from its first occurrence. */
 class SeriesSlots {
   private readonly parsed: ReturnType<typeof rrulestr> | null;
@@ -187,7 +210,9 @@ class SeriesSlots {
     this.timeZone = timeZone;
     let parsed: ReturnType<typeof rrulestr> | null = null;
     try {
-      parsed = rrulestr(rule, { dtstart: floating(first, timeZone) });
+      parsed = rrulestr(withFloatingUntil(rule, timeZone), {
+        dtstart: floating(first, timeZone),
+      });
     } catch {
       parsed = null;
     }
@@ -214,9 +239,16 @@ class SeriesSlots {
     }
   }
 
-  /** True when `slot` is one of the series' slots. */
+  /**
+   * True when `slot` is one of the series' slots. It searches a few hours either side: a slot
+   * whose wall time the clocks skip (02:30 on the spring-forward day) is stored as 03:30, which
+   * reads back as a different wall time than the rule's.
+   */
   has(slot: Date): boolean {
-    return this.between(slot, slot).some((candidate) => candidate.getTime() === slot.getTime());
+    return this.between(
+      new Date(slot.getTime() - DST_SLACK_MS),
+      new Date(slot.getTime() + DST_SLACK_MS),
+    ).some((candidate) => candidate.getTime() === slot.getTime());
   }
 }
 
@@ -228,8 +260,9 @@ export function expandOccurrences(
 ): Occurrence[] {
   // The slots a Google series no longer has: cancelled occurrences and the old slot of moved ones.
   const exdates = new Map<string, Set<number>>();
-  // A Google master's row id by its `calendarId|eventId`.
-  const masters = new Map<string, string>();
+  // A Google master's row id by its `calendarId|eventId`; null when more than one row is that
+  // master (one series mirrored through two accounts), so no exception row picks the wrong copy.
+  const masters = new Map<string, string | null>();
   for (const row of rows) {
     const key = seriesKey(row.props, 'recurringEventId');
     const originalText = row.props['originalStartAt'];
@@ -240,8 +273,9 @@ export function expandOccurrences(
       exdates.set(key, slots);
     }
     const own = seriesKey(row.props, 'eventId');
-    if (own !== null && isSeriesRow(row) && !masters.has(own)) {
-      masters.set(own, row.id);
+    if (own !== null && isSeriesRow(row)) {
+      const known = masters.get(own);
+      masters.set(own, known === undefined || known === row.id ? row.id : null);
     }
   }
 

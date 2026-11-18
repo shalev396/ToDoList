@@ -389,6 +389,146 @@ export const PARITY_CASES: readonly ParityCase[] = [
     expected: [],
   },
   {
+    // A UTC UNTIL is an instant: exactly the Sun 8 Nov 13:00 slot's instant keeps that slot.
+    name: 'until-at-last-slot',
+    rows: [
+      weeklyBlock(
+        '2026-11-01T11:00:00.000Z',
+        '2026-11-01T15:00:00.000Z',
+        {},
+        'RRULE:FREQ=WEEKLY;BYDAY=SU;UNTIL=20261108T110000Z',
+      ),
+    ],
+    range: TWO_WEEKS,
+    timeZone: TZ,
+    expected: [
+      {
+        key: slot('block', '2026-11-01T11:00:00.000Z'),
+        start: '2026-11-01T11:00:00.000Z',
+        end: '2026-11-01T15:00:00.000Z',
+      },
+      {
+        key: slot('block', '2026-11-08T11:00:00.000Z'),
+        start: '2026-11-08T11:00:00.000Z',
+        end: '2026-11-08T15:00:00.000Z',
+      },
+    ],
+  },
+  {
+    // One second before the Sun 8 Nov 13:00 slot's instant: that slot is gone.
+    name: 'until-one-second-before-last-slot',
+    rows: [
+      weeklyBlock(
+        '2026-11-01T11:00:00.000Z',
+        '2026-11-01T15:00:00.000Z',
+        {},
+        'RRULE:FREQ=WEEKLY;BYDAY=SU;UNTIL=20261108T105959Z',
+      ),
+    ],
+    range: TWO_WEEKS,
+    timeZone: TZ,
+    expected: [
+      {
+        key: slot('block', '2026-11-01T11:00:00.000Z'),
+        start: '2026-11-01T11:00:00.000Z',
+        end: '2026-11-01T15:00:00.000Z',
+      },
+    ],
+  },
+  {
+    // Every Friday 02:30–03:30 local. On Fri 26 Mar 2027 02:30 never happens (the clocks jump
+    // to 03:00), so that slot is 03:30 summer time; it is moved to Thu 25 Mar 10:00–11:00, inside
+    // the range, while its slot is outside it.
+    name: 'dst-gap-slot-moved-into-range',
+    rows: [
+      weeklyBlock(
+        '2027-03-19T00:30:00.000Z',
+        '2027-03-19T01:30:00.000Z',
+        {
+          exceptions: [
+            {
+              originalStart: '2027-03-26T00:30:00.000Z',
+              startAt: '2027-03-25T08:00:00.000Z',
+              endAt: '2027-03-25T09:00:00.000Z',
+            },
+          ],
+        },
+        'RRULE:FREQ=WEEKLY;BYDAY=FR',
+      ),
+    ],
+    range: { from: '2027-03-24T22:00:00.000Z', to: '2027-03-25T22:00:00.000Z' },
+    timeZone: TZ,
+    expected: [
+      {
+        key: slot('block', '2027-03-26T00:30:00.000Z'),
+        start: '2027-03-25T08:00:00.000Z',
+        end: '2027-03-25T09:00:00.000Z',
+      },
+    ],
+  },
+  {
+    // One Google series mirrored through two accounts (one item copy per integration): two
+    // masters share `calendarId|eventId`, so a moved row can't tell which is its master. Each
+    // moved row keys on itself, and every key stays unique.
+    name: 'google-series-mirrored-twice',
+    rows: [
+      { ...googleMaster, id: 'mirrorA', source: googleSource('mirrorA') },
+      { ...googleMaster, id: 'mirrorB', source: googleSource('mirrorB') },
+      ...['movedA', 'movedB'].map(
+        (id): TimeRow => ({
+          id,
+          kind: 'event',
+          title: 'Lecture',
+          status: 'open',
+          startAt: '2026-11-12T12:00:00.000Z',
+          endAt: '2026-11-12T13:00:00.000Z',
+          dueAt: null,
+          allDay: false,
+          source: googleSource(id),
+          props: {
+            calendarId: 'c',
+            recurringEventId: 'e1',
+            originalStartAt: '2026-11-12T08:00:00.000Z',
+          },
+        }),
+      ),
+    ],
+    range: WEEK,
+    timeZone: TZ,
+    expected: [
+      {
+        key: slot('mirrorA', '2026-11-08T08:00:00.000Z'),
+        start: '2026-11-08T08:00:00.000Z',
+        end: '2026-11-08T09:00:00.000Z',
+      },
+      {
+        key: slot('mirrorB', '2026-11-08T08:00:00.000Z'),
+        start: '2026-11-08T08:00:00.000Z',
+        end: '2026-11-08T09:00:00.000Z',
+      },
+      {
+        key: slot('mirrorA', '2026-11-10T08:00:00.000Z'),
+        start: '2026-11-10T08:00:00.000Z',
+        end: '2026-11-10T09:00:00.000Z',
+      },
+      {
+        key: slot('mirrorB', '2026-11-10T08:00:00.000Z'),
+        start: '2026-11-10T08:00:00.000Z',
+        end: '2026-11-10T09:00:00.000Z',
+      },
+      {
+        key: slot('movedA', '2026-11-12T08:00:00.000Z'),
+        start: '2026-11-12T12:00:00.000Z',
+        end: '2026-11-12T13:00:00.000Z',
+      },
+      {
+        key: slot('movedB', '2026-11-12T08:00:00.000Z'),
+        start: '2026-11-12T12:00:00.000Z',
+        end: '2026-11-12T13:00:00.000Z',
+      },
+    ],
+  },
+  {
     // A rule that can't be read: the series' first occurrence alone.
     name: 'unreadable-rule',
     rows: [
