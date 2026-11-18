@@ -65,6 +65,13 @@ export const queryKeys = {
   /** The workspace's primary calendar (where dated to-dos are pushed). */
   primaryCalendar: (workspaceId: string) => workspaceKey(workspaceId, 'primaryCalendar'),
   agentKeys: (workspaceId: string) => workspaceKey(workspaceId, 'agentKeys'),
+  /** Everything of my own travel (places, rules, settings, days): one invalidation refreshes it. */
+  travel: (workspaceId: string) => workspaceKey(workspaceId, 'travel'),
+  travelPlaces: (workspaceId: string) => workspaceKey(workspaceId, 'travel', 'places'),
+  travelRules: (workspaceId: string) => workspaceKey(workspaceId, 'travel', 'rules'),
+  travelSettings: (workspaceId: string) => workspaceKey(workspaceId, 'travel', 'settings'),
+  travelDays: (workspaceId: string, from: string, to: string) =>
+    workspaceKey(workspaceId, 'travel', 'days', from, to),
   views: (workspaceId: string) => workspaceKey(workspaceId, 'views'),
   view: (workspaceId: string, viewId: string) => workspaceKey(workspaceId, 'view', viewId),
 };

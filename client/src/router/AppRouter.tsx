@@ -17,6 +17,7 @@ const ItemLinkPage = lazy(() => import('@/pages/app/ItemLinkPage'));
 const WorkspaceSettingsPage = lazy(() => import('@/pages/settings/WorkspaceSettingsPage'));
 const MembersPage = lazy(() => import('@/pages/settings/MembersPage'));
 const AgentKeysPage = lazy(() => import('@/pages/settings/AgentKeysPage'));
+const TravelPage = lazy(() => import('@/pages/settings/TravelPage'));
 const ProfilePage = lazy(() => import('@/pages/ProfilePage'));
 const EditProfilePage = lazy(() => import('@/pages/EditProfilePage'));
 const OnboardingPage = lazy(() => import('@/pages/onboarding/OnboardingPage'));
@@ -43,6 +44,7 @@ export const appRoutes = (
         <Route path={ROUTES.SETTINGS} element={<WorkspaceSettingsPage />} />
         <Route path={ROUTES.MEMBERS} element={<MembersPage />} />
         <Route path={ROUTES.AGENT_KEYS} element={<AgentKeysPage />} />
+        <Route path={ROUTES.TRAVEL} element={<TravelPage />} />
         <Route path={ROUTES.ITEM_LINK} element={<ItemLinkPage />} />
       </Route>
       <Route path={ROUTES.PROFILE} element={<ProfilePage />} />
