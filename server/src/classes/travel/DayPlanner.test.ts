@@ -356,6 +356,84 @@ describe('DayPlanner', () => {
     assert.equal(legs[0]?.startAt.toISOString(), '2026-10-25T10:20:00.000Z');
   });
 
+  it('the DST start day is 23 hours: its last anchor is in it, the next day’s first is not', () => {
+    // 2026-03-27: Israel's clocks spring forward at 02:00 (UTC+2 → UTC+3), a 23-hour day.
+    const day = '2026-03-27';
+    const dayStart = at('00:00', day);
+    const dayEnd = at('00:00', '2026-03-28');
+    assert.equal(dayEnd.getTime() - dayStart.getTime(), 23 * 60 * 60_000);
+    const anchors = [
+      // 03:30 local is 00:30Z: a leg of 40 min leaves at 01:50 local, before the jump.
+      anchor({ itemId: 'early', start: at('03:30', day), end: at('04:00', day), back: false }),
+      anchor({ itemId: 'late', start: at('23:30', day), end: at('23:50', day), there: false }),
+      // 00:30 local the next day is 21:30Z: inside a naive 24-hour day that starts at 22:00Z.
+      anchor({ itemId: 'next', start: at('00:30', '2026-03-28'), end: at('01:00', '2026-03-28') }),
+    ];
+    assert.ok((anchors[2]?.start.getTime() ?? 0) < dayStart.getTime() + 24 * 60 * 60_000);
+    const est = estimates([
+      [HOME, BRAUDE, 'transit', 40],
+      [BRAUDE, HOME, 'transit', 40],
+    ]);
+    const legs = DayPlanner.plan(input(anchors, { day }), est);
+    assert.deepEqual(
+      legs.map((leg) => [
+        leg.key.anchorItemId,
+        leg.key.direction,
+        wallString(leg.startAt, TZ),
+        wallString(leg.endAt, TZ),
+      ]),
+      [
+        ['early', 'there', '2026-03-27T01:50:00', '2026-03-27T03:30:00'],
+        ['late', 'back', '2026-03-27T23:50:00', '2026-03-28T00:30:00'],
+      ],
+    );
+    // Across the jump the leg still lasts its 40 minutes.
+    assert.equal((legs[0]?.endAt.getTime() ?? 0) - (legs[0]?.startAt.getTime() ?? 0), 40 * 60_000);
+    // The next day's plan has its own anchor, and not the day before's.
+    assert.deepEqual(
+      DayPlanner.plan(input(anchors, { day: '2026-03-28' }), est).map(
+        (leg) => `${leg.key.anchorItemId} ${leg.key.direction}`,
+      ),
+      ['next there', 'next back'],
+    );
+  });
+
+  it('go-home: an anchor overlapping another keeps the window shut until the last of them ends', () => {
+    const fifty = estimates([
+      [HOME, BRAUDE, 'transit', 50],
+      [BRAUDE, HOME, 'transit', 50],
+    ]);
+    // A 10:00–14:00 holds B 11:00–12:00 inside it: the window before C (17:00) opens at 14:00,
+    // not at B's end. 180 min − 2 × 50 leaves 80 at home: home at 14:00, back for 17:00.
+    const open = [
+      anchor({ itemId: 'a', start: at('10:00'), end: at('14:00') }),
+      anchor({ itemId: 'b', start: at('11:00'), end: at('12:00') }),
+      anchor({ itemId: 'c', start: at('17:00'), end: at('18:00') }),
+    ];
+    assert.deepEqual(lines(DayPlanner.plan(input(open, { settings: goHomeOn }), fifty)), [
+      'there home→braude transit 09:10–10:00',
+      'back braude→home transit 14:00–14:50',
+      'there home→braude transit 16:10–17:00',
+      'back braude→home transit 18:00–18:50',
+    ]);
+    // A 10:00–15:30 holds B: the window to C (17:30) is 120 min, under three hours, though B's
+    // own end leaves 330. No trip home.
+    const shut = [
+      anchor({ itemId: 'a', start: at('10:00'), end: at('15:30') }),
+      anchor({ itemId: 'b', start: at('11:00'), end: at('12:00') }),
+      anchor({ itemId: 'c', start: at('17:30'), end: at('18:00') }),
+    ];
+    const planned = DayPlanner.plan(input(shut, { settings: goHomeOn }), fifty);
+    assert.deepEqual(lines(planned), [
+      'there home→braude transit 09:10–10:00',
+      'back braude→home transit 18:00–18:50',
+    ]);
+    assert.deepEqual(DayPlanner.trips(input(shut, { settings: goHomeOn })).sort(), [
+      DayPlanner.tripKey(BRAUDE, HOME, 'transit'),
+      DayPlanner.tripKey(HOME, BRAUDE, 'transit'),
+    ]);
+  });
+
   it('repeating occurrences carry their originalStart in the key', () => {
     // A weekly-ish series with two occurrences today: the first moved from 10:00 to 11:00.
     const first = '2026-11-18T08:00:00.000Z';

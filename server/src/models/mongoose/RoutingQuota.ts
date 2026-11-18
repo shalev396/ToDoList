@@ -10,7 +10,10 @@ interface RoutingQuotaFields {
   /** `<workspaceId>|<YYYY-MM-DD>` */
   _id: string;
   count: number;
-  /** Seconds, by trip (`from|to|mode`, place ids): what was fetched that day. */
+  /**
+   * Seconds, by trip and its ends (`from|to|mode|lat:lon|lat:lon`, place ids and 1e-5°): what was
+   * fetched that day.
+   */
   routes: Record<string, number>;
   expireAt: Date;
 }

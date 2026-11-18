@@ -5,9 +5,11 @@
  * Deletable (it is skipped instead: 409 `not_deletable`).
  *
  * A leg is private to its member: stored `visibility: 'private'` and owned by them, and ItemPolicy
- * reads a leg for its owner only, whatever its visibility says (Ruling 8). It takes its topic and
- * subject from the event it serves, so neither is set on the leg itself. What makes it a leg is at
- * `props.travel` (types/travel.ts), and its key (LegKey) at `props.travelKey`: one leg per key.
+ * reads a leg for its owner only, whatever its visibility says (Ruling 8). It has no subject, and
+ * its topic is the one its anchor (the event it serves) has, written by each regeneration, so its
+ * colour is the anchor's topic family; neither can be set on the leg by hand (400). What makes it
+ * a leg is at `props.travel` (types/travel.ts), and its key (LegKey) at `props.travelKey`: one
+ * leg per key.
  *
  * Storage (travel storage, plan Task 11):
  * - `applyPlan` writes what LegReconciler worked out, by key, and only the caller's own legs: a

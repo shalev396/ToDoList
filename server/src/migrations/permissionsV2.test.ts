@@ -85,6 +85,10 @@ describe('in the migrations list', () => {
         '2026-11-16-orphaned-topics',
         // Every topic a colour family.
         '2026-11-17-topic-colours',
+        // Every stored series its end, so an ended one is read for no later range.
+        '2026-11-18-series-ends',
+        // Clocks with the old default filter show blocks, areas and travel too.
+        '2026-11-18-clock-timed-kinds',
       ],
     );
   });

@@ -78,6 +78,16 @@ describe('classifyTopic', () => {
     );
   });
 
+  it('reads the key trimmed, as File under stores its rule (A-149)', () => {
+    // A calendar named "Braude " (Google keeps the space): File under stores the rule trimmed.
+    const filed = TopicRules.of([]).withRule('  Braude  ', COLLEGE);
+    assert.deepEqual(filed.toJSON(), [{ match: 'Braude', topicId: COLLEGE }]);
+    for (const matchKey of ['Braude ', '  Braude', '\tBraude\n', 'Braude']) {
+      assert.equal(filed.classify({ matchKey, defaultTopicId: WORK }), COLLEGE, matchKey);
+    }
+    assert.equal(filed.classify({ matchKey: 'Braude 2', defaultTopicId: WORK }), WORK);
+  });
+
   it('falls back to the default topic when nothing matches, which may be none (Unsorted)', () => {
     assert.equal(
       TopicRules.of(rules).classify({ matchKey: 'AutoDS/orders', defaultTopicId: WORK }),

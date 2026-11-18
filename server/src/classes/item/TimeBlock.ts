@@ -186,7 +186,7 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
     }
     const made = TimeBlock.#of(Item.from(stored));
     const block = subject === null ? made : await made.#storeSubject(subject);
-    await block.#changed(caller);
+    await block.#changed(caller, null, block.data);
     return { block, created: true };
   }
 
@@ -356,7 +356,7 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
     if (!(await (await getItemRepository()).softDelete(this.workspaceId, this.id))) {
       throw new NotFoundError();
     }
-    await this.#changed(caller);
+    await this.#changed(caller, this.data, null);
   }
 
   // ─── Inside ───────────────────────────────────────────────────────────────
@@ -402,7 +402,7 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
       subject === undefined || subject === saved.subject
         ? saved
         : await saved.#storeSubject(subject);
-    await block.#changed(caller);
+    await block.#changed(caller, this.data, block.data);
     return block;
   }
 
@@ -444,13 +444,16 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
         ),
       };
     });
-    await saved.#changed(caller);
+    await saved.#changed(caller, this.data, saved.data);
     return saved;
   }
 
-  /** Whoever listens hears the caller wrote it (travel: its legs move); their failure is theirs. */
-  async #changed(caller: Caller): Promise<void> {
-    await ItemChanges.notify(caller, { itemId: this.id, kind: this.kind });
+  /**
+   * Whoever listens hears the caller wrote it, as it was and is (travel: its legs move when its
+   * time did); their failure is theirs.
+   */
+  async #changed(caller: Caller, before: ItemData | null, after: ItemData | null): Promise<void> {
+    await ItemChanges.notify(caller, { itemId: this.id, kind: this.kind, before, after });
   }
 
   /** The edit permission (404 for a block the caller can't see, 403 for a viewer). */

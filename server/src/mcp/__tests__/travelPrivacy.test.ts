@@ -1,13 +1,22 @@
 /**
  * Travel privacy over MCP (the travel spec, "Privacy and safety"): an agent sees a place by its
- * name only, never an address or a coordinate, in any answer; and a key is its member's alone.
+ * name only, never an address or a coordinate, in any answer; and a key is its member's alone:
+ * another member's key never sees their legs, on any path that lists time (get_calendar,
+ * list_today's scheduled, search_items by kind).
  */
+import { wallDate } from '../../types/recurrence/zoned.js';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { insertAgentKey } from './helpers/agentKeys.js';
 import { errorText, startMcpHarness, structured, type McpHarness } from './helpers/mcpHarness.js';
 import { newTeam, type Team } from './helpers/team.js';
+
+/** An entry of a tool's list, as far as these checks read it. */
+interface Entry {
+  id: string;
+  kind: string;
+}
 
 let h: McpHarness;
 let team: Team;
@@ -166,5 +175,74 @@ describe('travel privacy over MCP', () => {
       places: unknown[];
     };
     assert.equal(still.places.length, places.length);
+  });
+
+  it("B's calendar, today and search never show A's legs", async () => {
+    const a = await h.connect(keyA);
+    const b = await h.connect(keyB);
+    const call = async (
+      client: typeof a,
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<unknown> => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.notEqual(result.isError, true, `${name}: ${errorText(result)}`);
+      return structured(result);
+    };
+    const travel = (entries: readonly Entry[]): Entry[] =>
+      entries.filter((entry) => entry.kind === 'travel');
+
+    // A coffee a short walk from A's Home, two hours from now: its legs are today unless today is
+    // nearly over in the workspace's zone.
+    await call(a, 'travel_set_place', { name: 'Cafe', lat: 32.915, lon: 35.293 });
+    const start = new Date(Date.now() + 2 * 3_600_000);
+    const end = new Date(start.getTime() + 30 * 60_000);
+    const coffee = (await call(a, 'create_todo', {
+      title: 'Coffee',
+      startAt: start.toISOString(),
+      endAt: end.toISOString(),
+    })) as { item: { id: string } };
+    const marked = (await call(a, 'travel_mark_item', {
+      itemId: coffee.item.id,
+      mode: 'walk',
+      direction: 'both',
+      place: 'Cafe',
+    })) as { legs: { id: string }[] };
+    assert.ok(marked.legs.length > 0);
+
+    const range = {
+      range: 'custom',
+      from: new Date().toISOString(),
+      to: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+    };
+    const aCalendar = (await call(a, 'get_calendar', range)) as { items: Entry[] };
+    const aLegIds = new Set(travel(aCalendar.items).map((entry) => entry.id));
+    // A sees their own legs (the coffee's and the lecture's left from the first test).
+    assert.ok(aLegIds.size >= 2, `A's calendar holds ${String(aLegIds.size)} legs`);
+    const aSearch = (await call(a, 'search_items', { kind: ['travel'] })) as { items: Entry[] };
+    assert.ok(aSearch.items.length >= 2);
+
+    // B: none of them, on any path.
+    const bCalendar = (await call(b, 'get_calendar', range)) as { items: Entry[] };
+    assert.deepEqual(travel(bCalendar.items), []);
+    assert.ok(bCalendar.items.every((entry) => !aLegIds.has(entry.id)));
+    const bToday = (await call(b, 'list_today', {})) as {
+      timezone: string;
+      scheduled: Entry[];
+      events: Entry[];
+    };
+    assert.deepEqual(travel(bToday.scheduled), []);
+    assert.ok([...bToday.scheduled, ...bToday.events].every((entry) => !aLegIds.has(entry.id)));
+    const bSearch = (await call(b, 'search_items', { kind: ['travel'] })) as { items: Entry[] };
+    assert.deepEqual(bSearch.items, []);
+    const bSearchAll = (await call(b, 'search_items', { q: 'Walk' })) as { items: Entry[] };
+    assert.ok(bSearchAll.items.every((entry) => entry.kind !== 'travel' && !aLegIds.has(entry.id)));
+
+    // The control: when the coffee is today, A's own today lists its legs, so B's empty list is
+    // the privacy rule and not an empty day.
+    const aToday = (await call(a, 'list_today', {})) as { timezone: string; scheduled: Entry[] };
+    if (wallDate(end, aToday.timezone) === wallDate(new Date(), aToday.timezone)) {
+      assert.ok(travel(aToday.scheduled).length > 0, "A's today lists A's legs");
+    }
   });
 });

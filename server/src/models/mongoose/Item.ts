@@ -727,11 +727,30 @@ export const ItemRepository: IItemRepository = {
   },
 
   async removeTravelLegsOf(workspaceId, ownerUserId, at = new Date()) {
-    const result = await ItemMongoModel.updateMany(
-      { workspaceId, ownerUserId, kind: 'travel', 'source.provider': 'local', deletedAt: null },
-      { $set: { deletedAt: at } },
+    const legs = { workspaceId, ownerUserId, kind: 'travel', 'source.provider': 'local' };
+    // `skipped`: the one reason no regeneration writes over (guardFilter's `notSkipped`), so one
+    // that raced the leave never brings a leg back. A pipeline write, as in removeTravelLeg.
+    const skipped = {
+      'props.travel': {
+        $mergeObjects: [
+          { $cond: [{ $eq: [{ $type: '$props.travel' }, 'object'] }, '$props.travel', {}] },
+          { removedReason: { $literal: 'skipped' } },
+        ],
+      },
+      updatedAt: '$$NOW',
+    };
+    const live = await ItemMongoModel.updateMany(
+      { ...legs, deletedAt: null },
+      [{ $set: { deletedAt: { $literal: at }, ...skipped } }],
+      { timestamps: false },
     );
-    return result.modifiedCount;
+    // Its tombstones too: a restore that raced the leave would bring one back otherwise.
+    await ItemMongoModel.updateMany(
+      { ...legs, deletedAt: { $type: 'date' }, 'props.travel.removedReason': { $ne: 'skipped' } },
+      [{ $set: skipped }],
+      { timestamps: false },
+    );
+    return live.modifiedCount;
   },
 
   async updateMirrored(workspaceId, integrationId, id, patch, options) {

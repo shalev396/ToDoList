@@ -6,8 +6,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { TravelDirection } from '../../types/travel.js';
-import type { PlannedLeg } from './DayPlanner.js';
+import { DEFAULT_TRAVEL_SETTINGS, type TravelDirection } from '../../types/travel.js';
+import { DayPlanner, type PlannedLeg } from './DayPlanner.js';
 import { LegKey } from './LegKey.js';
 import {
   LegReconciler,
@@ -237,33 +237,145 @@ describe('LegReconciler', () => {
     );
   });
 
-  it('an anchor moved earlier, into the past, removes its leg that hasn’t started, as moved', () => {
+  it('an anchor moved earlier, into the past, removes its unedited leg that hasn’t started, as moved', () => {
     // At 10:00 a meeting moves from 12:00 to 10:15: the leg there would have left at 09:25.
     const leg = planned('meeting', 'there', '2026-11-18T09:25:00.000Z', {
       anchorStart: new Date('2026-11-18T10:15:00.000Z'),
     });
-    const edited = planned('edited', 'there', '2026-11-18T09:25:00.000Z');
-    assert.equal(leg.past && edited.past, true);
+    assert.equal(leg.past, true);
     // Stored for 11:25–12:15, still ahead: a busy "Bus to …" nobody can take any more.
-    const ahead = { startAt: new Date('2026-11-18T11:25:00.000Z') };
     const store = [
-      stored(leg, { ...ahead, anchorStart: new Date('2026-11-18T12:00:00.000Z') }),
-      stored(edited, { ...ahead, edited: true }),
+      stored(leg, {
+        startAt: new Date('2026-11-18T11:25:00.000Z'),
+        anchorStart: new Date('2026-11-18T12:00:00.000Z'),
+      }),
     ];
-    const recon = LegReconciler.reconcile(store, [leg, edited], new Map(), NOW);
+    const recon = LegReconciler.reconcile(store, [leg], new Map(), NOW);
     assert.deepEqual(recon, {
       create: [],
       update: [],
-      remove: [
-        { id: store[0]?.id, reason: 'moved' },
-        { id: store[1]?.id, reason: 'moved' },
-      ],
+      remove: [{ id: store[0]?.id, reason: 'moved' }],
     });
     // Its tombstone stays: a past leg is never restored.
+    assert.deepEqual(LegReconciler.reconcile(apply(store, recon), [leg], new Map(), NOW), NOTHING);
+  });
+
+  it('an edited leg is judged by its own start: kept, flagged when its anchor moved, never removed as moved', () => {
+    // At 10:00 a meeting moves from 12:00 to 10:15. He had edited the leg to 11:25–12:15, still
+    // ahead: his times stand, flagged ("the event moved; check this trip").
+    const leg = planned('meeting', 'there', '2026-11-18T09:25:00.000Z', {
+      anchorStart: new Date('2026-11-18T10:15:00.000Z'),
+    });
+    assert.equal(leg.past, true);
+    const store = [
+      stored(leg, {
+        edited: true,
+        startAt: new Date('2026-11-18T11:25:00.000Z'),
+        anchorStart: new Date('2026-11-18T12:00:00.000Z'),
+      }),
+    ];
+    const recon = LegReconciler.reconcile(store, [leg], new Map(), NOW);
+    assert.deepEqual(recon, {
+      create: [],
+      update: [{ id: store[0]?.id, leg, keepTimes: true, anchorMoved: true, restore: false }],
+      remove: [],
+    });
+    // Applied, it is as it was (his times, the start he edited against): run again, the same.
+    const after = apply(store, recon);
+    assert.deepEqual(after, store);
+    assert.deepEqual(LegReconciler.reconcile(after, [leg], new Map(), NOW), recon);
+  });
+
+  it('an edited back leg is kept across a regeneration between the computed and the edited start', () => {
+    // A lecture at Braude 14:00–16:00 (Jerusalem, 12:00–14:00Z), by bus both ways, 50 min. The
+    // back leg is computed for 16:00; he edited it to leave at 16:30. A regeneration runs at 16:05.
+    const now = new Date('2026-11-18T14:05:00.000Z');
+    const minutes = { minutes: 50, source: 'remembered' } as const;
+    const legs = DayPlanner.plan(
+      {
+        ownerUserId: 'u-1',
+        day: '2026-11-18',
+        timeZone: 'Asia/Jerusalem',
+        now,
+        homeId: 'home',
+        placeNames: new Map([
+          ['home', 'Home'],
+          ['braude', 'Braude'],
+        ]),
+        settings: DEFAULT_TRAVEL_SETTINGS,
+        anchors: [
+          {
+            itemId: 'lec',
+            occurrence: 'single',
+            title: 'Lecture',
+            topicId: null,
+            start: new Date('2026-11-18T12:00:00.000Z'),
+            end: new Date('2026-11-18T14:00:00.000Z'),
+            placeId: 'braude',
+            mode: 'transit',
+            there: true,
+            back: true,
+          },
+        ],
+      },
+      new Map([
+        [DayPlanner.tripKey('home', 'braude', 'transit'), minutes],
+        [DayPlanner.tripKey('braude', 'home', 'transit'), minutes],
+      ]),
+    );
+    const back = legs.find((leg) => leg.key.direction === 'back');
+    assert.ok(back);
+    assert.equal(back.startAt.toISOString(), '2026-11-18T14:00:00.000Z');
+    assert.equal(back.past, true);
+    const store = [
+      stored(back, {
+        id: 'leg-back',
+        edited: true,
+        startAt: new Date('2026-11-18T14:30:00.000Z'),
+      }),
+    ];
+    const recon = LegReconciler.reconcile(store, legs, new Map([['lec|single', 'present']]), now);
+    assert.deepEqual(recon.remove, []);
+    assert.deepEqual(recon.create, []);
+    assert.deepEqual(recon.update, [
+      { id: 'leg-back', leg: back, keepTimes: true, anchorMoved: false, restore: false },
+    ]);
+    // Once his 16:30 has come, it is under way: left alone.
     assert.deepEqual(
-      LegReconciler.reconcile(apply(store, recon), [leg, edited], new Map(), NOW),
+      LegReconciler.reconcile(
+        store,
+        legs,
+        new Map([['lec|single', 'present']]),
+        new Date('2026-11-18T14:31:00.000Z'),
+      ),
       NOTHING,
     );
+  });
+
+  it('a trip that got longer past now, its anchor where it was, is updated as a conflict, never removed', () => {
+    // A lecture at 11:00 (anchor unchanged). The leg was 10:15–11:00 (45 min); at 10:00 the trip
+    // is 70 min (a bigger buffer, or the straight line while the router is down): 09:50, past.
+    const leg = planned('lec', 'there', '2026-11-18T09:50:00.000Z', {
+      anchorStart: new Date('2026-11-18T11:00:00.000Z'),
+      endAt: new Date('2026-11-18T11:00:00.000Z'),
+      minutes: 70,
+    });
+    assert.equal(leg.past, true);
+    const store = [stored(leg, { startAt: new Date('2026-11-18T10:15:00.000Z') })];
+    const recon = LegReconciler.reconcile(store, [leg], new Map(), NOW);
+    assert.deepEqual(recon.remove, []);
+    assert.deepEqual(recon.create, []);
+    assert.deepEqual(recon.update, [
+      {
+        id: store[0]?.id,
+        leg: { ...leg, conflict: true },
+        keepTimes: false,
+        anchorMoved: false,
+        restore: false,
+      },
+    ]);
+    // Applied, it has started (09:50): the next run leaves it alone.
+    assert.deepEqual(LegReconciler.reconcile(apply(store, recon), [leg], new Map(), NOW), NOTHING);
   });
 
   it('a leg under way never shifts, even when its anchor moves later', () => {

@@ -328,6 +328,96 @@ describe('TravelPlanner.regenerate', () => {
     assert.equal(iso(leg(live, 'back').startAt), iso(local(4, 15)));
   });
 
+  it('a rename regenerates nothing; a time change does (ItemChanges)', async (t) => {
+    const ws = await workspace();
+    const { todo } = await classes.Todo.create(ws.a.caller, {
+      title: 'Dentist',
+      startAt: local(4, 9),
+      endAt: local(4, 10),
+    });
+    await travelTo(ws.a, { kind: 'item', itemId: todo.id, occurrence: 'single' }, 'drive');
+    const regenerate = classes.TravelPlanner.regenerate.bind(classes.TravelPlanner);
+    const runs = t.mock.method(classes.TravelPlanner, 'regenerate', regenerate);
+
+    const renamed = await todo.update(ws.a.caller, classes.ItemEdit.of({ title: 'Dentist 2' }));
+    const noted = await renamed.update(ws.a.caller, classes.ItemEdit.of({ note: 'bring x-rays' }));
+    // The same start again changes nothing either.
+    const same = await noted.update(ws.a.caller, classes.ItemEdit.of({ startAt: local(4, 9) }));
+    assert.equal(runs.mock.callCount(), 0);
+
+    const moved = await same.update(
+      ws.a.caller,
+      classes.ItemEdit.of({ startAt: local(4, 14), endAt: local(4, 15) }),
+    );
+    assert.equal(runs.mock.callCount(), 1);
+    assert.equal(iso(leg((await legsOf(ws.a)).live, 'there').endAt), iso(local(4, 14)));
+    await moved.update(ws.a.caller, classes.ItemEdit.of({ status: 'cancelled' }));
+    assert.equal(runs.mock.callCount(), 2);
+    // A to-do with no time can be no anchor: making or deleting one regenerates nothing.
+    const { todo: untimed } = await classes.Todo.create(ws.a.caller, { title: 'Milk' });
+    await untimed.delete(ws.a.caller);
+    assert.equal(runs.mock.callCount(), 2);
+  });
+
+  it('an OpenRouteService outage is waited for once, not on every write', async () => {
+    const ws = await workspace();
+    appSecrets.setAppSecretsForTests({ openrouteservice: { apiKey: 'test-ors-key' } });
+    const lab = await block(ws.a, local(3, 10), 2);
+    await travelTo(ws.a, { kind: 'item', itemId: lab.id, occurrence: 'single' }, 'drive');
+    const orsCalls = (): number =>
+      transport.requests.filter(
+        (request) => new URL(request.url).host === 'api.openrouteservice.org',
+      ).length;
+
+    // The first regeneration asks and finds it down (503): the legs fall back to the line.
+    assert.equal((await classes.TravelPlanner.regenerate(ws.a.caller)).created, 2);
+    assert.equal(orsCalls(), 1);
+    // The writes after it don't ask again while it is down, and no quota is spent on them.
+    await classes.TravelPlanner.regenerate(ws.a.caller);
+    await lab.editSeries(ws.a.caller, { startAt: local(3, 11), endAt: local(3, 13) });
+    assert.equal(orsCalls(), 1);
+    assert.deepEqual(
+      (await legsOf(ws.a)).live.map((one) => one.travel?.source),
+      ['estimate', 'estimate'],
+    );
+  });
+
+  it('after a sync, travel takes at most what the function has left, less a margin', () => {
+    const { TravelPlanner } = classes;
+    const now = 1_000_000;
+    const clock = (): number => now;
+    const left = (deadline: number | null): number | null =>
+      TravelPlanner.afterSyncBudget(deadline, clock)?.remainingMs ?? null;
+    // No deadline (a job run where it was queued): the whole minute.
+    assert.equal(left(null), 60_000);
+    // Four minutes left: still the minute.
+    assert.equal(left(now + 240_000), 60_000);
+    // A long sync left 50 s: 30 s for travel, 20 s kept for the rest of the job.
+    assert.equal(left(now + 50_000), 30_000);
+    // Under 20 s + one step (8 s): no travel at all, never a negative budget.
+    assert.equal(left(now + 27_999), null);
+    assert.equal(left(now + 28_000), 8_000);
+    assert.equal(left(now + 5_000), null);
+    assert.equal(left(now - 5_000), null);
+  });
+
+  it('after a sync with no time left, nothing is regenerated (the next sync or pass will)', async () => {
+    const ws = await workspace();
+    const gcal = `int-late-${String(count)}`;
+    await seedIntegration(ws.id, {
+      id: gcal,
+      ownerUserId: A,
+      provider: 'google_calendar',
+      accountId: `g-${gcal}`,
+    });
+    const lab = await block(ws.a, local(3, 10), 2);
+    await travelTo(ws.a, { kind: 'item', itemId: lab.id, occurrence: 'single' });
+    await classes.TravelPlanner.afterSync(gcal, new Date(), { deadline: Date.now() + 15_000 });
+    assert.deepEqual((await legsOf(ws.a)).live, []);
+    await classes.TravelPlanner.afterSync(gcal, new Date(), { deadline: Date.now() + 240_000 });
+    assert.equal((await legsOf(ws.a)).live.length, 2);
+  });
+
   it('a member who left while it ran gets no legs back', async (t) => {
     const ws = await workspace();
     const lab = await block(ws.b, local(3, 10), 2);
@@ -351,6 +441,43 @@ describe('TravelPlanner.regenerate', () => {
     assert.deepEqual((await legsOf(ws.b)).live, []);
     assert.deepEqual(await classes.Place.listOwn(ws.b.caller), []);
     assert.deepEqual(await classes.TravelRule.listOwn(ws.b.caller), []);
+  });
+
+  it("a regeneration that raced the leave can't bring a former member's leg back", async (t) => {
+    const ws = await workspace();
+    const lab = await block(ws.b, local(3, 10), 2);
+    const later = await block(ws.b, local(5, 10), 2);
+    await travelTo(ws.b, { kind: 'item', itemId: lab.id, occurrence: 'single' });
+    await travelTo(ws.b, { kind: 'item', itemId: later.id, occurrence: 'single' });
+    assert.equal((await classes.TravelPlanner.regenerate(ws.b.caller)).created, 4);
+    // One of B's legs went before (its event was cancelled, say): a tombstone a plan may restore.
+    const [gone] = (await legsOf(ws.b)).live;
+    assert.ok(gone);
+    await (await models.getItemRepository()).removeTravelLeg(ws.id, gone.id, 'cancelled');
+
+    // The race: a regeneration read B's legs before another one made them (it plans to create
+    // them all), passed its membership check, and B left before it wrote.
+    t.mock.method(classes.TravelLeg, 'storedFacts', () => Promise.resolve([]));
+    const applyPlan = classes.TravelLeg.applyPlan.bind(classes.TravelLeg);
+    t.mock.method(
+      classes.TravelLeg,
+      'applyPlan',
+      async (caller: Caller, recon: Classes.Reconciliation, now: Date) => {
+        assert.equal(recon.create.length, 4);
+        await (await models.getMembershipRepository()).revoke(ws.id, B);
+        await classes.TravelData.forgetMember(ws.id, B);
+        return applyPlan(caller, recon, now);
+      },
+    );
+    const result = await classes.TravelPlanner.regenerate(ws.b.caller);
+    assert.deepEqual(result, { created: 0, updated: 0, removed: 0 });
+    const { live, removed } = await legsOf(ws.b);
+    assert.deepEqual(live, []);
+    // Every one is a skip now, the tombstone from before too: nothing brings them back.
+    assert.deepEqual(
+      removed.map((one) => one.removedReason),
+      ['skipped', 'skipped', 'skipped', 'skipped'],
+    );
   });
 
   it('an overnight anchor keeps its leg home after midnight', async () => {

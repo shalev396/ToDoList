@@ -1,6 +1,6 @@
 /** A source of trip lengths. The chain asks each in turn; null means "I can't tell". */
 import type { TravelMode } from '../../../types/travel.js';
-import type { TripKey, Estimate } from '../DayPlanner.js';
+import type { Estimate } from '../DayPlanner.js';
 import type { LatLon } from '../geo.js';
 
 export type { LatLon };
@@ -20,11 +20,15 @@ export interface RouteProvider {
   estimate(trip: Trip): Promise<Estimate | null>;
 }
 
-/** The shared free quota and its cache (implemented by the workspace's routing quota). */
+/**
+ * The shared free quota and its cache (implemented by the workspace's routing quota). A cache key
+ * names the trip and where its ends are (OpenRouteService.cacheKey), so a moved place is fetched
+ * again.
+ */
 export interface RoutingBudget {
   /** The length already fetched today for this trip, in seconds. */
-  cachedSeconds(key: TripKey): Promise<number | null>;
-  rememberSeconds(key: TripKey, seconds: number): Promise<void>;
+  cachedSeconds(key: string): Promise<number | null>;
+  rememberSeconds(key: string, seconds: number): Promise<void>;
   /** Takes one call from today's quota; false when it is spent. */
   reserve(): Promise<boolean>;
 }

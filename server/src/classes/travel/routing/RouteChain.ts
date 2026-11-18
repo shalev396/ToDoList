@@ -4,6 +4,7 @@ import type { TravelMode, TravelSettings } from '../../../types/travel.js';
 import type { Estimate } from '../DayPlanner.js';
 import type { TimeBox } from '../TimeBox.js';
 import { OpenRouteService } from './OpenRouteService.js';
+import type { Reachability } from './Reachability.js';
 import { RememberedLength } from './RememberedLength.js';
 import type { RouteProvider, RoutingBudget, Trip } from './RouteProvider.js';
 import { StraightLine } from './StraightLine.js';
@@ -18,6 +19,8 @@ export interface StandardChainDeps {
   remembered: (fromId: string, toId: string, mode: TravelMode) => number | null;
   /** The regeneration's time: OpenRouteService is asked only within it. Absent: no limit. */
   time?: TimeBox;
+  /** Whether OpenRouteService answered lately (the process's own); absent: always asked. */
+  reachability?: Reachability;
 }
 
 export class RouteChain implements RouteProvider {
@@ -41,6 +44,7 @@ export class RouteChain implements RouteProvider {
         client: deps.client,
         budget: deps.budget,
         settings: deps.settings,
+        reachability: deps.reachability,
       });
       providers.push(deps.time === undefined ? ors : new TimeBoxedRoute(ors, deps.time));
     }

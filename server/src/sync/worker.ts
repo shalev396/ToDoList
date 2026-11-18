@@ -17,7 +17,9 @@
  *
  * After a run that didn't fail, and after a calendar run, the members with travel in the
  * integration's workspace get their legs made again (TravelPlanner.afterSync: its events may have
- * moved, been cancelled or added). Travel failing is logged and never fails or retries the job.
+ * moved, been cancelled or added), within what the function has left (`deadline`, from Lambda's
+ * context), so travel never runs the job into Lambda's timeout and a retry. Travel failing is
+ * logged and never fails or retries the job.
  *
  * A failed run counts once toward the integration's failed runs in a row, however often it is
  * tried (the `__run__` state remembers the runs it counted). What is logged is ids and a code;
@@ -56,15 +58,23 @@ export type SyncRunner = (
 const runIntegrationSync: SyncRunner = (integrationId, options) =>
   Integration.runSync(integrationId, options);
 
-/** What travel does after a sync of one integration (TravelPlanner.afterSync; a test's stand-in). */
-export type AfterSync = (integrationId: string) => Promise<void>;
+/**
+ * What travel does after a sync of one integration (TravelPlanner.afterSync; a test's stand-in),
+ * by `deadline` (epoch ms; null: no limit but its own).
+ */
+export type AfterSync = (integrationId: string, deadline: number | null) => Promise<void>;
 
-const travelAfterSync: AfterSync = (integrationId) => TravelPlanner.afterSync(integrationId);
+const travelAfterSync: AfterSync = (integrationId, deadline) =>
+  TravelPlanner.afterSync(integrationId, new Date(), { deadline });
 
 /** Travel after a sync: its failure is logged, never the job's. */
-async function refreshTravel(job: SyncJob, afterSync: AfterSync): Promise<void> {
+async function refreshTravel(
+  job: SyncJob,
+  afterSync: AfterSync,
+  deadline: number | null,
+): Promise<void> {
   try {
-    await afterSync(job.integrationId);
+    await afterSync(job.integrationId, deadline);
   } catch (error) {
     logger.error('sync worker: travel after the sync failed', {
       action: job.action,
@@ -74,11 +84,26 @@ async function refreshTravel(job: SyncJob, afterSync: AfterSync): Promise<void> 
   }
 }
 
+/**
+ * The job on Lambda, with the time the function has left (`context.getRemainingTimeInMillis()`;
+ * null when there is no such context): travel after it stops in time.
+ */
+export function runSyncJobWithin(
+  job: SyncJob,
+  remainingMs: number | null,
+  clock: () => number = Date.now,
+): Promise<void> {
+  const deadline = remainingMs === null ? null : clock() + remainingMs;
+  return runSyncJob(job, runIntegrationSync, runScheduledGcalSync, travelAfterSync, deadline);
+}
+
+/** The job; `deadline` (epoch ms): when the function is stopped, null when nothing stops it. */
 export async function runSyncJob(
   job: SyncJob,
   run: SyncRunner = runIntegrationSync,
   runGcal: typeof runScheduledGcalSync = runScheduledGcalSync,
   afterSync: AfterSync = travelAfterSync,
+  deadline: number | null = null,
 ): Promise<void> {
   const ids = { action: job.action, integrationId: job.integrationId };
   if (job.action === GCAL_RUN_ACTION) {
@@ -88,7 +113,7 @@ export async function runSyncJob(
       logger.error('sync worker: calendar run threw', { ...ids, error });
       throw new RetrySyncJob(job, 'threw');
     }
-    await refreshTravel(job, afterSync);
+    await refreshTravel(job, afterSync, deadline);
     return;
   }
   let code: string | undefined;
@@ -102,7 +127,7 @@ export async function runSyncJob(
     logger.error('sync worker: run threw', { ...ids, runId: job.runId, error });
     throw new RetrySyncJob(job, 'threw');
   }
-  if (!failed) await refreshTravel(job, afterSync);
+  if (!failed) await refreshTravel(job, afterSync, deadline);
   if (code !== undefined && RETRYABLE.has(code)) {
     logger.warn('sync worker: run failed, retrying', { ...ids, runId: job.runId, code });
     throw new RetrySyncJob(job, `failed with ${code}`);

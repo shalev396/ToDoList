@@ -18,6 +18,7 @@
     "synth:composer": "tsx scripts/composer-template.ts",
     "deploy:backend": "tsx scripts/deploy-backend.ts",
     "reset:db": "tsx scripts/reset-db.ts",
+    "sync:schema:local": "tsx scripts/sync-schema-local.ts",
     "deploy:frontend": "tsx scripts/deploy-frontend.ts",
     "test:local": "cd .. && postman collection run \"postman/collections/TodoList API\" --environment \"postman/environments/TodoList Local.environment.yaml\" --working-dir .",
     "test:qa": "cd .. && postman collection run \"postman/collections/TodoList API\" --environment \"postman/environments/TodoList QA.environment.yaml\" --working-dir . --delay-request 600",

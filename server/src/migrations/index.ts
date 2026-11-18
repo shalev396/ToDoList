@@ -9,6 +9,7 @@
 import { addImportanceAttribute } from './addImportanceAttribute.js';
 import { blockConnectors } from './blockConnectors.js';
 import { calendarLinkDeleteAnswered } from './calendarLinkDeleteAnswered.js';
+import { clockTimedKinds } from './clockTimedKinds.js';
 import { dropAreaScope } from './dropAreaScope.js';
 import { integrationOwners } from './integrationOwners.js';
 import { introduceTopics } from './introduceTopics.js';
@@ -18,6 +19,7 @@ import { orphanedTopics } from './orphanedTopics.js';
 import { primaryCalendar } from './primaryCalendar.js';
 import { primaryCalendarRead } from './primaryCalendarRead.js';
 import { removeGoogleDrive } from './removeGoogleDrive.js';
+import { seriesEnds } from './seriesEnds.js';
 import { topicColours } from './topicColours.js';
 import type { Db, Migration } from './types.js';
 
@@ -40,6 +42,8 @@ export const MIGRATIONS: readonly Migration[] = [
   orphanedDashboards,
   orphanedTopics,
   topicColours,
+  seriesEnds,
+  clockTimedKinds,
 ];
 
 interface MigrationRecord {

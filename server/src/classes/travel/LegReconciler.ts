@@ -5,13 +5,17 @@
  * Legs are matched by key (LegKey), so reconciling a plan with its own result changes nothing.
  *
  * - A planned leg nobody stored is created, unless it is past.
- * - A planned leg stored live:
- *   - once the stored leg has started (under way or done), it is left alone: never shifted, never
- *     removed;
- *   - else, when the plan for it is past (its anchor moved earlier, into now or the past), it is
- *     removed as `moved`, since nobody can take it any more;
- *   - else it is updated. A leg the member edited keeps his times (`keepTimes`), and is flagged
- *     when its anchor moved since (`anchorMoved`): never silently shifted.
+ * - A planned leg stored live is judged by its STORED start:
+ *   - once it has started (under way or done), it is left alone: never shifted, never removed;
+ *   - a leg the member edited is updated, keeping his times (`keepTimes`) until he resets it, and
+ *     flagged when its anchor moved since (`anchorMoved`): never silently shifted, and never
+ *     removed while it is planned, even when the plan's own times are past (he left later);
+ *   - an unedited leg whose plan is past because its anchor moved (earlier, into now or the past)
+ *     is removed as `moved`, since nobody can take it any more;
+ *   - an unedited leg whose plan is past while its anchor stayed (the trip got longer: a factor or
+ *     buffer change, a fallback length) is updated to the plan and flagged a conflict: it can't be
+ *     made in time from now, and nothing about its event moved;
+ *   - else it is updated.
  * - A planned leg stored as a tombstone is restored, unless it is past or the member skipped it
  *   (only Reset brings a skip back).
  * - A live leg nobody plans any more is removed, unless it has started, with a reason he can see:
@@ -102,9 +106,16 @@ export class LegReconciler {
       } else if (facts.removedReason === null) {
         // A leg under way (or done) is history: it never shifts and never goes.
         if (facts.startAt < this.#now) continue;
-        // Its anchor moved earlier, into now or the past: this leg can't be taken any more.
-        if (leg.past) recon.remove.push({ id: facts.id, reason: 'moved' });
-        else recon.update.push(LegReconciler.#update(facts, leg, false));
+        if (facts.edited || !leg.past) {
+          // His times stand (they are still ahead), whatever the plan's own times say.
+          recon.update.push(LegReconciler.#update(facts, leg, false));
+        } else if (facts.anchorStart.getTime() !== leg.anchorStart.getTime()) {
+          // Its anchor moved earlier, into now or the past: this leg can't be taken any more.
+          recon.remove.push({ id: facts.id, reason: 'moved' });
+        } else {
+          // Its anchor stayed and the trip got longer: too late to make it as planned.
+          recon.update.push(LegReconciler.#update(facts, { ...leg, conflict: true }, false));
+        }
       } else if (facts.removedReason !== 'skipped' && !leg.past) {
         recon.update.push(LegReconciler.#update(facts, leg, true));
       }

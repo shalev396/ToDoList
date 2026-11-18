@@ -7,6 +7,9 @@
  * - A series (an RRULE line in `props.recurrence`) is expanded here on the wall clock of the
  *   workspace's zone, so "every Tuesday at 10:00" stays 10:00 across a DST change. That holds for a
  *   Google master and for a local series (a time block) alike.
+ * - Google: EXDATE lines in `props.recurrence` remove their slots from the series (a holiday the
+ *   organiser took out): a UTC value (`…Z`), a wall time in its TZID (or, floating, in the
+ *   workspace's zone), or a date (`VALUE=DATE`: the slot on that day).
  * - Google: a cancelled occurrence arrives as a live item with `status: 'cancelled'` and
  *   `props.recurringEventId` + `props.originalStartAt`: that occurrence is excluded from its series
  *   (an exdate) and the item itself is never listed. A moved occurrence is a normal item with the
@@ -132,6 +135,80 @@ function recurrenceRules(props: Readonly<Record<string, unknown>>): string[] {
 /** True when the row repeats: an RRULE line in `props.recurrence` (a Google master or a local series). */
 export function isSeriesRow(row: Pick<TimeRow, 'props'>): boolean {
   return recurrenceRules(row.props).length > 0;
+}
+
+/** The slots a series' EXDATE lines take out: instants (ms), and whole days (`YYYY-MM-DD`). */
+interface ExcludedSlots {
+  instants: ReadonlySet<number>;
+  days: ReadonlySet<string>;
+}
+
+const EXDATE_VALUE = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?$/i;
+
+/** A zone name rrule's wall clock can read; null for one Intl doesn't know. */
+function knownZone(name: string | undefined): string | null {
+  if (name === undefined || name === '') {
+    return null;
+  }
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: name });
+    return name;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The slots `EXDATE` lines in `props.recurrence` take out of a series (RFC 5545; Google writes
+ * them): `EXDATE:20261125T080000Z` (UTC), `EXDATE;TZID=Asia/Jerusalem:20261125T100000` (a wall
+ * time in that zone; without a TZID, or with one Intl doesn't know, in `timeZone`),
+ * `EXDATE;VALUE=DATE:20261125` (the day), each with any number of comma-separated values. A value
+ * that can't be read is ignored.
+ */
+function excludedSlotsOf(
+  props: Readonly<Record<string, unknown>>,
+  timeZone: string,
+): ExcludedSlots {
+  const instants = new Set<number>();
+  const days = new Set<string>();
+  const raw = props['recurrence'];
+  if (!Array.isArray(raw)) {
+    return { instants, days };
+  }
+  for (const line of raw as unknown[]) {
+    if (typeof line !== 'string' || !/^EXDATE[;:]/i.test(line.trim())) {
+      continue;
+    }
+    const text = line.trim();
+    const colon = text.indexOf(':');
+    if (colon < 0) {
+      continue;
+    }
+    const params = text.slice('EXDATE'.length, colon).split(';');
+    const tzid = params.find((param) => /^TZID=/i.test(param))?.slice('TZID='.length);
+    const zone = knownZone(tzid) ?? timeZone;
+    for (const value of text.slice(colon + 1).split(',')) {
+      const match = EXDATE_VALUE.exec(value.trim());
+      if (match === null) {
+        continue;
+      }
+      const [, y, mo, d, h, mi, sec, utc] = match;
+      if (h === undefined || mi === undefined) {
+        days.add(`${String(y)}-${String(mo)}-${String(d)}`);
+        continue;
+      }
+      const instant =
+        utc === undefined
+          ? zonedTime(Number(y), Number(mo), Number(d), Number(h), Number(mi), zone)
+          : new Date(
+              Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec)),
+            );
+      if (!Number.isNaN(instant.getTime())) {
+        instants.add(instant.getTime());
+      }
+    }
+  }
+  return { instants, days };
 }
 
 const isInstantText = (value: unknown): value is string =>
@@ -387,6 +464,10 @@ export function expandOccurrences(
     if (!dueOnly && rule !== undefined) {
       const own = seriesKey(row.props, 'eventId');
       const gone = own === null ? undefined : exdates.get(own);
+      const excluded = excludedSlotsOf(row.props, timeZone);
+      const isExcluded = (slot: Date): boolean =>
+        excluded.instants.has(slot.getTime()) ||
+        (excluded.days.size > 0 && excluded.days.has(wallString(slot, timeZone).slice(0, 10)));
       const exceptions = new Map<number, LocalException>();
       if (row.source.provider === 'local') {
         for (const exception of localExceptionsOf(row.props)) {
@@ -397,7 +478,7 @@ export function expandOccurrences(
       // the slot is skipped, cancelled, or lands outside the range.
       const occurrenceOf = (slot: Date): Occurrence | null => {
         const exception = exceptions.get(slot.getTime());
-        if (exception?.skipped === true || gone?.has(slot.getTime()) === true) {
+        if (exception?.skipped === true || gone?.has(slot.getTime()) === true || isExcluded(slot)) {
           return null;
         }
         const occurrenceStart = toDate(exception?.startAt ?? null) ?? slot;

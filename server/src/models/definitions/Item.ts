@@ -378,7 +378,12 @@ export interface IItemRepository {
     reason: string,
     at?: Date,
   ): Promise<ItemData | null>;
-  /** A membership ended: every live leg of the member is soft-deleted. Returns how many. */
+  /**
+   * A membership ended: every live leg of the member is soft-deleted, and every one of its legs
+   * (its tombstones too) is marked `skipped`, the reason a guarded write (`notSkipped`) never
+   * writes over, so a regeneration that raced the leave brings none back. Returns how many live
+   * legs it removed.
+   */
   removeTravelLegsOf(workspaceId: string, ownerUserId: string, at?: Date): Promise<number>;
   /**
    * A write-back on a live mirrored item of `integrationId` (never a local one): only the fields

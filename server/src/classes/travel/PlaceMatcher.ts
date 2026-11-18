@@ -16,7 +16,7 @@ export class PlaceMatcher<T extends NamedPlace> {
     return normalizePlaceName(text);
   }
 
-  /** The place whose normalized name or alias the location contains; the longest match wins. */
+  /** The place the location names, by name or alias as whole words (`placeByName`). */
   static byName<T extends NamedPlace>(location: string, places: readonly T[]): T | null {
     return new PlaceMatcher(places).#find(location);
   }

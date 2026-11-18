@@ -46,9 +46,20 @@ function where(...rules: unknown[]): Query['where'] {
 }
 
 /**
- * The series branch a time view's `startAt`/`any` range gets: a series that began before the range
- * ends and has not ended before it starts (no `recurrenceEnd`: it never ends).
+ * The branches a time view's `startAt`/`any` range gets: a series that began before the range
+ * ends and has not ended before it starts (no `recurrenceEnd`: it never ends), and a Google
+ * occurrence whose original slot is in the range (moved out of it: its slot must not stay).
  */
+function timeBranches(range: { $gte: Date; $lt: Date }): Record<string, unknown>[] {
+  return [
+    seriesBranch(range),
+    {
+      'props.originalStartAt': { $gte: range.$gte.toISOString(), $lt: range.$lt.toISOString() },
+    },
+  ];
+}
+
+/** The series branch alone (see timeBranches). */
 function seriesBranch(range: { $gte: Date; $lt: Date }): Record<string, unknown> {
   return {
     'props.recurrence.0': { $type: 'string' },
@@ -665,7 +676,7 @@ describe('compileQuery: filters', () => {
   it('applies dateRange to dateField: dueAt by default, any for calendars, startAt for clocks', () => {
     const today = { $gte: new Date('2026-11-10T22:00:00Z'), $lt: new Date('2026-11-11T22:00:00Z') };
     // A time view reads a series that began before the range too (the expansion places it).
-    const series = seriesBranch(today);
+    const series = timeBranches(today);
     assert.deepEqual(filterOf(compileQuery({ source: 'items', dateRange: 'today' }, context())), {
       dueAt: today,
     });
@@ -673,13 +684,13 @@ describe('compileQuery: filters', () => {
       filterOf(
         compileQuery({ source: 'items', dateRange: 'today' }, context({ blockType: 'calendar' })),
       ),
-      { $or: [{ startAt: today }, { startAt: null, dueAt: today }, series] },
+      { $or: [{ startAt: today }, { startAt: null, dueAt: today }, ...series] },
     );
     assert.deepEqual(
       filterOf(
         compileQuery({ source: 'items', dateRange: 'today' }, context({ blockType: 'clock' })),
       ),
-      { $or: [{ startAt: today }, series] },
+      { $or: [{ startAt: today }, ...series] },
     );
     assert.deepEqual(
       filterOf(
@@ -715,7 +726,7 @@ describe('compileQuery: filters', () => {
     }
     for (const blockType of ['calendar', 'clock'] as const) {
       assert.deepEqual(filterOf(compileQuery(query, context({ blockType }))), {
-        $or: [...anyInWeek.$or, seriesBranch(week)],
+        $or: [...anyInWeek.$or, ...timeBranches(week)],
       });
     }
     // With other filters it joins the $and; a variable range resolves the same way.
@@ -1256,7 +1267,7 @@ describe('compileQuery: task-shaped and time-shaped results (time blocks, areas,
   it('startAt range also matches a series row that started before it', () => {
     const week = { $gte: new Date('2026-11-07T22:00:00Z'), $lt: new Date('2026-11-14T22:00:00Z') };
     // Unless it ended before the range: `props.recurrenceEnd` before its start.
-    const series = seriesBranch(week);
+    const series = timeBranches(week);
     const range = (
       dateField: 'startAt' | 'any' | 'dueAt',
       blockType?: (typeof BLOCK_TYPES)[number],
@@ -1268,10 +1279,10 @@ describe('compileQuery: task-shaped and time-shaped results (time blocks, areas,
         ),
       );
     for (const type of TIME_SHAPED) {
-      assert.deepEqual(range('startAt', type), { $or: [{ startAt: week }, series] }, type);
+      assert.deepEqual(range('startAt', type), { $or: [{ startAt: week }, ...series] }, type);
       assert.deepEqual(
         range('any', type),
-        { $or: [{ startAt: week }, { startAt: null, dueAt: week }, series] },
+        { $or: [{ startAt: week }, { startAt: null, dueAt: week }, ...series] },
         type,
       );
       // A due date never repeats: no series branch.
@@ -1285,7 +1296,9 @@ describe('compileQuery: task-shaped and time-shaped results (time blocks, areas,
         vars: { range: { from: '2026-11-07T22:00:00Z', to: '2026-11-14T22:00:00Z' } },
       }),
     );
-    assert.ok(JSON.stringify(filterOf(calendar)).includes(JSON.stringify(series)));
+    for (const branch of series) {
+      assert.ok(JSON.stringify(filterOf(calendar)).includes(JSON.stringify(branch)));
+    }
   });
 
   it('a task-shaped block reads rows by their own dates only: no series branch', () => {

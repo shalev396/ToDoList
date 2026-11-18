@@ -131,7 +131,7 @@ export class Todo
       return { todo: found, created: false };
     }
     const todo = new Todo(stored);
-    await todo.#changed(caller);
+    await todo.#changed(caller, null, todo.data);
     return { todo, created: true };
   }
 
@@ -185,7 +185,7 @@ export class Todo
       })),
     );
     const todos = stored.map((data) => new Todo(data));
-    for (const todo of todos) await todo.#changed(caller);
+    for (const todo of todos) await todo.#changed(caller, null, todo.data);
     return todos;
   }
 
@@ -281,7 +281,7 @@ export class Todo
     if (topic !== undefined && topic !== null) await Topic.assertOf(this.workspaceId, topic);
     this.#assertTimeRange(edit);
     const updated = await this.#store(edit.localPatch());
-    await updated.#changed(caller);
+    await updated.#changed(caller, this.data, updated.data);
     return updated;
   }
 
@@ -311,7 +311,7 @@ export class Todo
       throw new AppError(404, 'Not found');
     }
     await CalendarLinks.in(this.workspaceId).onItemDeleted(this.id, caller);
-    await this.#changed(caller);
+    await this.#changed(caller, this.data, null);
   }
 
   /** H5: created in one of the caller's own providers too (TodoCopy). */
@@ -332,9 +332,12 @@ export class Todo
     TimeRange.of(start, end, edit.get('allDay') ?? this.data.allDay);
   }
 
-  /** Whoever listens hears the caller wrote it (travel: its legs move); their failure is theirs. */
-  async #changed(caller: Caller): Promise<void> {
-    await ItemChanges.notify(caller, { itemId: this.id, kind: this.kind });
+  /**
+   * Whoever listens hears the caller wrote it, as it was and is (travel: its legs move when its
+   * time did); their failure is theirs.
+   */
+  async #changed(caller: Caller, before: ItemData | null, after: ItemData | null): Promise<void> {
+    await ItemChanges.notify(caller, { itemId: this.id, kind: this.kind, before, after });
   }
 
   /** The policy, once it let the caller edit this to-do (403, 404, or the mirrored 409). */

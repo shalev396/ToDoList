@@ -2,12 +2,12 @@
  * The daily budget of OpenRouteService calls of one workspace (the free key every member shares;
  * spec "Shared free quota"): at most ROUTING_CALLS_PER_DAY a day, reserved BEFORE a call is made,
  * atomically, so parallel regenerations cannot pass it together; past it, legs use the remembered
- * length or the straight line. It also keeps the day's lengths by trip, so a trip asked again that
- * day is not fetched twice. One document per workspace and day, removed two days later (TTL).
+ * length or the straight line. It also keeps the day's lengths by trip and where its ends are, so a
+ * trip asked again that day is not fetched twice, and one whose place was corrected is fetched
+ * again. One document per workspace and day, removed two days later (TTL).
  */
 import { getRoutingQuotaRepository } from '../../models/index.js';
 import { ROUTING_CALLS_PER_DAY } from '../../types/travel.js';
-import type { TripKey } from './DayPlanner.js';
 import type { RoutingBudget } from './routing/RouteProvider.js';
 
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
@@ -27,11 +27,11 @@ export class RoutingQuota implements RoutingBudget {
     return new RoutingQuota(workspaceId, day);
   }
 
-  async cachedSeconds(key: TripKey): Promise<number | null> {
+  async cachedSeconds(key: string): Promise<number | null> {
     return (await getRoutingQuotaRepository()).cachedSeconds(this.#workspaceId, this.#day, key);
   }
 
-  async rememberSeconds(key: TripKey, seconds: number): Promise<void> {
+  async rememberSeconds(key: string, seconds: number): Promise<void> {
     await (
       await getRoutingQuotaRepository()
     ).rememberSeconds(this.#workspaceId, this.#day, key, seconds);

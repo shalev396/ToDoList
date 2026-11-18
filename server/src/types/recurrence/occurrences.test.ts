@@ -46,6 +46,108 @@ describe('expandOccurrences: parity cases', () => {
   }
 });
 
+describe('expandOccurrences: EXDATE on a Google master', () => {
+  const ZONE = 'Asia/Jerusalem';
+  // Sun 8 Nov – Sat 14 Nov 2026, Jerusalem (UTC+2).
+  const WEEK = {
+    from: new Date('2026-11-07T22:00:00.000Z'),
+    to: new Date('2026-11-14T22:00:00.000Z'),
+  };
+  /** Every Sunday, Tuesday and Thursday at 10:00–11:00 local, from Sun 1 Nov 2026. */
+  const master = (exdates: string[], fields: Partial<TimeRow> = {}): TimeRow => ({
+    id: 'master',
+    kind: 'event',
+    title: 'Lecture',
+    status: 'open',
+    startAt: '2026-11-01T08:00:00.000Z',
+    endAt: '2026-11-01T09:00:00.000Z',
+    dueAt: null,
+    allDay: false,
+    source: {
+      provider: 'google_calendar',
+      key: null,
+      url: 'https://calendar.google.com/x',
+      externalId: 'master',
+    },
+    props: {
+      calendarId: 'c',
+      eventId: 'e1',
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU,TU,TH', ...exdates],
+    },
+    ...fields,
+  });
+  const starts = (row: TimeRow, zone = ZONE): string[] =>
+    expandOccurrences([row], WEEK, zone).map((o) => o.start.toISOString());
+
+  it('without one, every slot of the week', () => {
+    assert.deepEqual(starts(master([])), [
+      '2026-11-08T08:00:00.000Z',
+      '2026-11-10T08:00:00.000Z',
+      '2026-11-12T08:00:00.000Z',
+    ]);
+  });
+
+  it('a TZID wall time, as Google writes it, takes its slot out', () => {
+    assert.deepEqual(starts(master(['EXDATE;TZID=Asia/Jerusalem:20261110T100000'])), [
+      '2026-11-08T08:00:00.000Z',
+      '2026-11-12T08:00:00.000Z',
+    ]);
+  });
+
+  it('a UTC value, and several values on one line', () => {
+    assert.deepEqual(starts(master(['EXDATE:20261108T080000Z,20261112T080000Z'])), [
+      '2026-11-10T08:00:00.000Z',
+    ]);
+  });
+
+  it('a TZID other than the workspace zone is read in its own zone', () => {
+    // 03:00 in New York on 10 Nov (UTC−5) is 08:00Z: the 10:00 Jerusalem slot.
+    assert.deepEqual(starts(master(['EXDATE;TZID=America/New_York:20261110T030000'])), [
+      '2026-11-08T08:00:00.000Z',
+      '2026-11-12T08:00:00.000Z',
+    ]);
+  });
+
+  it('a floating value is read in the workspace zone; a date takes that day out', () => {
+    assert.deepEqual(starts(master(['EXDATE:20261112T100000'])), [
+      '2026-11-08T08:00:00.000Z',
+      '2026-11-10T08:00:00.000Z',
+    ]);
+    assert.deepEqual(starts(master(['EXDATE;VALUE=DATE:20261108'])), [
+      '2026-11-10T08:00:00.000Z',
+      '2026-11-12T08:00:00.000Z',
+    ]);
+  });
+
+  it('a value that names no slot, or can not be read, takes nothing out', () => {
+    assert.deepEqual(
+      starts(master(['EXDATE;TZID=Asia/Jerusalem:20261110T110000', 'EXDATE:garbage', 'EXDATE'])),
+      ['2026-11-08T08:00:00.000Z', '2026-11-10T08:00:00.000Z', '2026-11-12T08:00:00.000Z'],
+    );
+  });
+
+  it('holds across a DST change: the slot keeps its wall time', () => {
+    // Sunday 25 Oct 2026, the clocks fall back that night: 10:00 local is 08:00Z after, 07:00Z before.
+    const range = {
+      from: new Date('2026-10-17T21:00:00.000Z'),
+      to: new Date('2026-10-31T22:00:00.000Z'),
+    };
+    const row = master(['EXDATE;TZID=Asia/Jerusalem:20261020T100000,20261027T100000'], {
+      startAt: '2026-10-18T07:00:00.000Z',
+      endAt: '2026-10-18T08:00:00.000Z',
+    });
+    assert.deepEqual(
+      expandOccurrences([row], range, ZONE).map((o) => o.start.toISOString()),
+      [
+        '2026-10-18T07:00:00.000Z',
+        '2026-10-22T07:00:00.000Z',
+        '2026-10-25T08:00:00.000Z',
+        '2026-10-29T08:00:00.000Z',
+      ],
+    );
+  });
+});
+
 describe('expandOccurrences: occurrence identity', () => {
   it('a moved Google occurrence carries its original slot and its master', () => {
     const moved = expand(parityCase('google-moved-occurrence')).find((o) => o.row.id === 'x2');

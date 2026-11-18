@@ -61,6 +61,17 @@ export async function migrateDB(now: Date = new Date()): Promise<string[]> {
   return runMigrations(db, now);
 }
 
+/** Closes the connection: the end of a one-off script (a server keeps it open). */
+export async function closeDB(): Promise<void> {
+  if (environment.databaseProvider === 'mongoose') {
+    const mongoose = (await import('mongoose')).default;
+    await mongoose.disconnect();
+  } else {
+    const { getSequelize } = await import('./providers/sequelize.js');
+    await getSequelize().close();
+  }
+}
+
 export async function resetDatabase(): Promise<void> {
   if (environment.env !== 'qa' && environment.env !== 'dev') {
     throw new Error(

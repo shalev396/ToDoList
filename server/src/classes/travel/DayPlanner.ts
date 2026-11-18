@@ -79,7 +79,8 @@ export interface PlannedLeg {
   conflict: boolean;
   /**
    * It starts before now: never created or restored. A stored leg for it that hasn't started yet
-   * goes, as `moved` (its anchor moved earlier).
+   * goes as `moved` only when its anchor moved; one the member edited, or whose trip just got
+   * longer, stays (LegReconciler).
    */
   past: boolean;
   topicId: string | null;

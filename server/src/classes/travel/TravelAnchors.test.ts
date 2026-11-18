@@ -16,7 +16,8 @@ import type * as AppSecrets from '../../services/appSecrets.js';
 import { seedIntegration } from '../../testing/integrationFixtures.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
 import { callerOf } from '../../testing/workspaceFixtures.js';
-import type { RuleGroup } from '../../types/builder.js';
+import type { ItemQueryRow, RuleGroup } from '../../types/builder.js';
+import { expandOccurrences } from '../../types/recurrence/occurrences.js';
 import { addLocalDays, startOfZonedDay } from '../../types/recurrence/zoned.js';
 import type * as Classes from '../index.js';
 import type { Caller } from '../base/Caller.js';
@@ -454,6 +455,50 @@ describe('TravelAnchors.gather', () => {
     );
     assert.ok(anchors.every((anchor) => anchor.itemId !== moved));
     assert.equal(fates.get(`${lecture}|${TUESDAY_2}`), 'present');
+  });
+
+  it('an occurrence moved out of the range leaves no ghost at its slot: not on the calendar, no anchor', async () => {
+    const ws = await workspace();
+    const lecture = await lectureSeries(ws);
+    // The second Tuesday's lecture moved to 20 December, past the horizon (B-161, B-154).
+    await event(ws, 'lecture-later', {
+      title: 'Algorithms lecture (moved)',
+      startAt: '2026-12-20T12:00:00.000Z',
+      endAt: '2026-12-20T14:00:00.000Z',
+      containerId: 'cal-braude',
+      props: { recurringEventId: 'lecture', originalStartAt: TUESDAY_2 },
+    });
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'series', itemId: lecture },
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.places.braude.id,
+    });
+
+    // The calendar of the horizon: the first Tuesday only; the second's slot is empty.
+    const reads = await classes.ItemQuery.for(ws.a);
+    const result = await reads.runDraft(
+      {
+        source: 'items',
+        dateRange: { from: RANGE.from.toISOString(), to: RANGE.to.toISOString() },
+        dateField: 'startAt',
+        sort: [{ field: 'startAt', dir: 'asc' }],
+      },
+      { now: NOW, blockType: 'calendar' },
+    );
+    const rows = (result.rows ?? []).filter((row): row is ItemQueryRow => 'kind' in row);
+    assert.deepEqual(
+      expandOccurrences(rows, RANGE, ZONE).map((occurrence) => occurrence.start.toISOString()),
+      [TUESDAY_1],
+    );
+
+    // Travel reads the same: no anchor (so no leg) at the ghost slot.
+    const { anchors, fates } = await gather(ws);
+    assert.deepEqual(
+      anchors.map((anchor) => [anchor.itemId, anchor.occurrence, anchor.start.toISOString()]),
+      [[lecture, TUESDAY_1, TUESDAY_1]],
+    );
+    assert.equal(fates.get(`${lecture}|${TUESDAY_2}`), undefined);
   });
 
   it('painted areas never anchor', async () => {

@@ -6,6 +6,7 @@ import { createReadOnlyClient, type HttpRequest, type Transport } from '../../..
 import { DEFAULT_TRAVEL_SETTINGS, type TravelSettings } from '../../../types/travel.js';
 import type { TripKey } from '../DayPlanner.js';
 import { OpenRouteService } from './OpenRouteService.js';
+import { Reachability, UNREACHABLE_QUIET_MS } from './Reachability.js';
 import { RouteChain } from './RouteChain.js';
 import type { RoutingBudget, Trip } from './RouteProvider.js';
 
@@ -118,6 +119,74 @@ describe('routing', () => {
     const second = await chain.estimate(TRIP);
     assert.deepEqual(second, first);
     assert.equal(transport.requests.length, 1);
+  });
+
+  it('a place moved or corrected is fetched again the same day (the cache key holds its ends)', async () => {
+    const transport = new FakeTransport(() => ors(600));
+    const budget = new FakeBudget(5);
+    const chain = build(transport, budget, 'k', null);
+    await chain.estimate(TRIP);
+    await chain.estimate(TRIP);
+    assert.equal(transport.requests.length, 1);
+    // The same two place ids, Work's address corrected: asked again, not the stale length.
+    const corrected: Trip = { ...TRIP, to: { id: 'work', lat: 32.81, lon: 35.21 } };
+    await chain.estimate(corrected);
+    assert.equal(transport.requests.length, 2);
+    // A change under a metre (the key's precision) is the same place.
+    await chain.estimate({ ...corrected, to: { id: 'work', lat: 32.810001, lon: 35.210001 } });
+    assert.equal(transport.requests.length, 2);
+    assert.deepEqual(
+      [...budget.cache.keys()],
+      [
+        'home|work|drive|3290000:3530000|3280000:3520000',
+        'home|work|drive|3290000:3530000|3281000:3521000',
+      ],
+    );
+    // Negative coordinates are field-key safe too (no dot, only digits, colons and dashes).
+    assert.equal(
+      OpenRouteService.cacheKey({
+        mode: 'walk',
+        from: { id: 'a', lat: -33.86882, lon: 151.20929 },
+        to: { id: 'b', lat: 40.7, lon: -74.00597 },
+      }),
+      'a|b|walk|-3386882:15120929|4070000:-7400597',
+    );
+  });
+
+  it('unreachable: not asked again for a minute, and no quota spent on it', async () => {
+    let now = 1_000_000;
+    const reachability = new Reachability(UNREACHABLE_QUIET_MS, () => now);
+    let status = 503;
+    const transport = new FakeTransport(() => (status === 200 ? ors(600) : { status, body: '{}' }));
+    const budget = new FakeBudget(10);
+    const provider = new OpenRouteService({
+      apiKey: 'k',
+      client: createReadOnlyClient({ provider: 'openrouteservice', transport, maxRetries: 0 }),
+      budget,
+      settings: SETTINGS,
+      reachability,
+    });
+    const other: Trip = { ...TRIP, to: { id: 'gym', lat: 32.7, lon: 35.1 } };
+    assert.equal(await provider.estimate(TRIP), null);
+    assert.equal(reachability.down, true);
+    assert.equal(await provider.estimate(other), null);
+    assert.equal(transport.requests.length, 1);
+    assert.equal(budget.reserves, 1);
+    // A minute later it is asked again.
+    now += UNREACHABLE_QUIET_MS;
+    status = 200;
+    // 10 min × 1.15 → 12, + 10.
+    assert.deepEqual(await provider.estimate(other), { minutes: 22, source: 'ors' });
+    assert.equal(transport.requests.length, 2);
+    // A trip it can't route (404) is the trip's failure, not an outage.
+    status = 404;
+    assert.equal(await provider.estimate({ ...TRIP, to: { id: 'sea', lat: 33, lon: 34 } }), null);
+    assert.equal(reachability.down, false);
+    // A rate limit and a lost connection count as unreachable.
+    status = 429;
+    assert.equal(await provider.estimate({ ...TRIP, to: { id: 'x', lat: 31, lon: 34 } }), null);
+    assert.equal(reachability.down, true);
+    assert.equal(new Reachability().failed(new Error('socket hang up')), true);
   });
 
   it('transit never calls ORS', async () => {

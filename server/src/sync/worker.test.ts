@@ -215,6 +215,17 @@ describe('runSyncJob: travel', () => {
     await runSyncJob({ action: 'gcal-run', integrationId: 'i-calendar' }, runner, gcal, travel);
     assert.deepEqual(refreshed, ['i-changed', 'i-calendar']);
 
+    // Travel gets the function's deadline (Lambda's time left), for both kinds of job.
+    const deadlines: (number | null)[] = [];
+    const timed = (_id: string, deadline: number | null): Promise<void> => {
+      deadlines.push(deadline);
+      return Promise.resolve();
+    };
+    await runSyncJob(job('i-changed'), runner, gcal, timed, 1_700_000_000_000);
+    await runSyncJob({ action: 'gcal-run', integrationId: 'i-calendar' }, runner, gcal, timed, 42);
+    await runSyncJob(job('i-changed'), runner, gcal, timed);
+    assert.deepEqual(deadlines, [1_700_000_000_000, 42, null]);
+
     // Travel failing is logged; the job still succeeds (and is never retried for it).
     const broken = (): Promise<void> => Promise.reject(new Error('travel is down'));
     await runSyncJob(job('i-changed'), runner, gcal, broken);

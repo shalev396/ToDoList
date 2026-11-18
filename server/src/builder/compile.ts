@@ -682,7 +682,10 @@ class Compilation {
     // `props.recurrence`) that began before the range and has not ended before it
     // (`props.recurrenceEnd`, ISO; none: it never ends). The expansion (types/recurrence) keeps
     // the occurrences that fall in the range, so a weekly lecture or study block that started
-    // weeks ago shows every week (plan ruling 4). A task view reads rows by their own dates only.
+    // weeks ago shows every week (plan ruling 4). And a Google occurrence moved out of the range
+    // whose original slot is in it (`props.originalStartAt`, ISO): the expansion takes that slot
+    // out of its series, so no ghost of it stays where it was (B-161; travel reads through this
+    // too, so no leg is made for it either). A task view reads rows by their own dates only.
     const series = isTimeShaped(this.ctx.blockType)
       ? [
           {
@@ -693,6 +696,7 @@ class Compilation {
               { 'props.recurrenceEnd': { $gte: from.toISOString() } },
             ],
           },
+          { 'props.originalStartAt': { $gte: from.toISOString(), $lt: to.toISOString() } },
         ]
       : [];
     return combine([...dated, ...series], '$or');

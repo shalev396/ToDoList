@@ -32,7 +32,9 @@
  * places are geocoded after syncs and in the daily pass.
  */
 import { ValidationError } from '../../errors/ValidationError.js';
+import type { ItemData } from '../../models/definitions/Item.js';
 import { logger } from '../../services/logger.js';
+import { stableStringify } from '../../utils/stableStringify.js';
 import {
   TRAVEL_HORIZON_DAYS,
   TRAVEL_MODES,
@@ -42,7 +44,7 @@ import {
 import { addLocalDays, startOfZonedDay, wallDate } from '../../types/recurrence/zoned.js';
 import { Actor } from '../base/Actor.js';
 import { Caller } from '../base/Caller.js';
-import { TimeBudget } from '../integration/calendar/TimeBudget.js';
+import { STEP_CEILING_MS, TimeBudget } from '../integration/calendar/TimeBudget.js';
 import { Integration } from '../integration/index.js';
 import type { ItemChange } from '../item/ItemChanges.js';
 import { TravelLeg, type AppliedPlan } from '../item/TravelLeg.js';
@@ -60,7 +62,7 @@ import { RouteChain } from './routing/RouteChain.js';
 import { RoutingQuota } from './RoutingQuota.js';
 import { NEW_GEOCODES_MAX, TravelAnchors } from './TravelAnchors.js';
 import { TravelData } from './TravelData.js';
-import { openRouteServiceKey, travelClient } from './travelHttp.js';
+import { openRouteServiceKey, sharedRoutingReachability, travelClient } from './travelHttp.js';
 import { TravelProfile } from './TravelProfile.js';
 import { TravelRule } from './TravelRule.js';
 import { TimeBox } from './TimeBox.js';
@@ -71,6 +73,12 @@ export const REGENERATION_BUDGET_MS = 20_000;
 export const ITEM_CHANGE_BUDGET_MS = 8_000;
 /** Every member's regeneration after one sync, together (the rest wait for the daily pass). */
 export const AFTER_SYNC_BUDGET_MS = 60_000;
+/**
+ * What a sync job keeps of the function's time after its travel: the writes a regeneration makes
+ * after its last call out, and the job's own end. Lambda stops the function at 5 minutes, and a
+ * job stopped there is run again.
+ */
+export const AFTER_SYNC_MARGIN_MS = 20_000;
 /** A preview's time: the travel panel waits for it. */
 export const PREVIEW_BUDGET_MS = 8_000;
 /**
@@ -80,6 +88,17 @@ export const PREVIEW_BUDGET_MS = 8_000;
 export const OWN_CHANGE_BUDGET_MS = 8_000;
 
 const MINUTE_MS = 60_000;
+
+/** The item fields a leg follows (`movesTravel`; props are compared whole). */
+const TRAVEL_FIELDS = [
+  'startAt',
+  'endAt',
+  'allDay',
+  'status',
+  'topicId',
+  'containerId',
+  'deletedAt',
+] as const satisfies readonly (keyof ItemData)[];
 
 export interface RegenerateOptions {
   /** Its time (default REGENERATION_BUDGET_MS from now). */
@@ -142,13 +161,14 @@ export class TravelPlanner {
   }
 
   /**
-   * ItemChanges' listener: the caller wrote an item, so their legs are made again when they have
-   * travel, within ITEM_CHANGE_BUDGET_MS and from cached geocodes only (the request waits). A member
-   * without travel costs one read. A failure is logged and swallowed: it never fails the write. An
-   * arrow: it is handed to ItemChanges as it is.
+   * ItemChanges' listener: the caller wrote an item in a way a leg can follow (`movesTravel`: its
+   * times, status, topic, place or deletion; never a rename or a note), so their legs are made
+   * again when they have travel, within ITEM_CHANGE_BUDGET_MS and from cached geocodes only (the
+   * request waits). A member without travel costs one read. A failure is logged and swallowed: it
+   * never fails the write. An arrow: it is handed to ItemChanges as it is.
    */
   static readonly onItemChange = async (caller: Caller, change: ItemChange): Promise<void> => {
-    if (change.kind === 'travel') return;
+    if (change.kind === 'travel' || !TravelPlanner.movesTravel(change)) return;
     try {
       if (!(await TravelProfile.hasTravelFor(caller))) return;
       await TravelPlanner.regenerate(caller, new Date(), {
@@ -163,6 +183,26 @@ export class TravelPlanner {
       });
     }
   };
+
+  /**
+   * Whether a write can change the member's legs: a new or deleted item with a start (one without
+   * can never be an anchor); an edit of its start, end, all-day, status, topic (the legs' colour,
+   * and a rule may read it), container (its default place), deletion, or props (a location, a
+   * repeat, a layer). A rename, a note or a priority leaves the legs as they are; the next sync or
+   * daily pass reads the item afresh anyway.
+   */
+  static movesTravel(change: Pick<ItemChange, 'before' | 'after'>): boolean {
+    const { before, after } = change;
+    if (before === null || after === null) {
+      const item = before ?? after;
+      return item !== null && item.startAt !== null;
+    }
+    return (
+      TRAVEL_FIELDS.some(
+        (field) => stableStringify(before[field]) !== stableStringify(after[field]),
+      ) || stableStringify(before.props) !== stableStringify(after.props)
+    );
+  }
 
   /**
    * The member changed their own travel and the change is stored (a place, a rule, a setting, a
@@ -191,13 +231,38 @@ export class TravelPlanner {
   }
 
   /**
-   * A sync of this integration ran: every member with travel in its workspace gets their legs made
-   * again (its events may have moved, been cancelled or added), all within AFTER_SYNC_BUDGET_MS:
-   * the members it has no time for wait for the daily pass. One member's failure is logged and the
-   * others still run.
+   * The time travel may take after a sync: AFTER_SYNC_BUDGET_MS, but never past `deadline` (epoch
+   * ms: when the function is stopped) less AFTER_SYNC_MARGIN_MS. Null when that leaves too little
+   * to start one member (STEP_CEILING_MS): travel then waits for the next sync or the daily pass.
+   * No deadline (a job run in the process that started it): the whole budget.
    */
-  static async afterSync(integrationId: string, now: Date = new Date()): Promise<void> {
-    const budget = TimeBudget.start(AFTER_SYNC_BUDGET_MS);
+  static afterSyncBudget(
+    deadline: number | null,
+    clock: () => number = Date.now,
+  ): TimeBudget | null {
+    const ms =
+      deadline === null
+        ? AFTER_SYNC_BUDGET_MS
+        : Math.min(AFTER_SYNC_BUDGET_MS, deadline - clock() - AFTER_SYNC_MARGIN_MS);
+    return ms < STEP_CEILING_MS ? null : TimeBudget.start(ms, clock);
+  }
+
+  /**
+   * A sync of this integration ran: every member with travel in its workspace gets their legs made
+   * again (its events may have moved, been cancelled or added), all within `afterSyncBudget` (what
+   * the function has left, at most AFTER_SYNC_BUDGET_MS): the members it has no time for wait for
+   * the next sync or the daily pass. One member's failure is logged and the others still run.
+   */
+  static async afterSync(
+    integrationId: string,
+    now: Date = new Date(),
+    options: { deadline?: number | null } = {},
+  ): Promise<void> {
+    const budget = TravelPlanner.afterSyncBudget(options.deadline ?? null);
+    if (budget === null) {
+      logger.warn('travel: no time left after a sync', { integrationId });
+      return;
+    }
     const integration = await Integration.forWorker(integrationId);
     if (integration === null) return;
     const { workspaceId } = integration;
@@ -424,6 +489,7 @@ export class TravelPlanner {
       remembered: (fromId, toId, mode) =>
         profile.rememberedMinutes(DayPlanner.tripKey(fromId, toId, mode)),
       time: this.#time,
+      reachability: sharedRoutingReachability(),
     });
   }
 

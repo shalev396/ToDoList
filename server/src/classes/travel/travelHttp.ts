@@ -21,6 +21,7 @@ import {
   type Transport,
 } from '../../sync/http.js';
 import { liveTransport } from '../../sync/transports/live.js';
+import { Reachability } from './routing/Reachability.js';
 
 export const NOMINATIM_MIN_INTERVAL_MS = 1100;
 /** One attempt's longest wait for an answer. */
@@ -59,6 +60,21 @@ export function sharedNominatimClient(): ReadOnlyClient {
     nominatim = { client: travelClient('nominatim'), transport };
   }
   return nominatim.client;
+}
+
+let routing: { reachability: Reachability; transport: Transport | null } | null = null;
+
+/**
+ * The process's one record of whether OpenRouteService answered lately (Reachability): an outage
+ * found by one regeneration spares the next ones the wait. In memory only. A test that sets
+ * another transport starts afresh (never on a deployed stage).
+ */
+export function sharedRoutingReachability(): Reachability {
+  const transport = travelTransportForTests();
+  if (routing?.transport !== transport) {
+    routing = { reachability: new Reachability(), transport };
+  }
+  return routing.reachability;
 }
 
 /**

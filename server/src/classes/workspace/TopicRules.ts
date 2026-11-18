@@ -84,11 +84,13 @@ export class TopicRules {
   /**
    * The topic of the first rule whose glob matches the key, ignoring case (GitHub logins and repo
    * names are case-insensitive, and a GitHub connect stores its `<login>/*` rule in lower case),
-   * else the default topic.
+   * else the default topic. The key is read trimmed, as File under stores its rule (`withRule`):
+   * a calendar named "Braude " is filed by the rule "Braude".
    */
   classify(input: TopicInput): string | null {
+    const key = input.matchKey.trim();
     for (const rule of this.#rules) {
-      if (TopicRules.matches(rule.match, input.matchKey)) return rule.topicId;
+      if (TopicRules.matches(rule.match, key)) return rule.topicId;
     }
     return input.defaultTopicId;
   }

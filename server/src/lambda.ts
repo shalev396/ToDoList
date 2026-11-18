@@ -15,7 +15,7 @@ import { logger } from './services/logger.js';
 import { resetStage, syncSchema } from './services/stageMaintenance.js';
 import { parseSyncJob } from './services/syncJobs.js';
 import { dispatchGcalSyncs } from './sync/gcalDispatcher.js';
-import { runSyncJob } from './sync/worker.js';
+import { runSyncJobWithin } from './sync/worker.js';
 import {
   API_ACTIONS,
   GCAL_DISPATCH_ACTION,
@@ -98,21 +98,32 @@ async function runAction(action: ApiAction): Promise<ActionResult> {
   }
 }
 
-/** One background job. A throw is deliberate: Lambda then retries the async invocation. */
-async function runJob(event: unknown): Promise<ActionResult> {
+/** The function's time left, in ms; null for a context without it (a test's, a local run). */
+export function remainingMsOf(
+  context: Partial<Pick<Context, 'getRemainingTimeInMillis'>>,
+): number | null {
+  const remaining = context.getRemainingTimeInMillis?.();
+  return typeof remaining === 'number' && Number.isFinite(remaining) ? remaining : null;
+}
+
+/**
+ * One background job, within the function's time left (travel after a sync stops in time). A
+ * throw is deliberate: Lambda then retries the async invocation.
+ */
+async function runJob(event: unknown, context: Context): Promise<ActionResult> {
   const job = parseSyncJob(event);
   if (job === null) {
     // Never retried: the same payload would be malformed again.
     logger.warn('background job dropped: malformed');
     return { statusCode: 400, body: JSON.stringify({ error: 'Malformed job' }) };
   }
-  await runSyncJob(job);
+  await runSyncJobWithin(job, remainingMsOf(context));
   return { statusCode: 200, body: JSON.stringify({ ok: true }) };
 }
 
 export const handler = async (event: unknown, context: Context): Promise<unknown> => {
   const action = directAction(event);
-  if (action === SYNC_RUN_ACTION || action === GCAL_RUN_ACTION) return runJob(event);
+  if (action === SYNC_RUN_ACTION || action === GCAL_RUN_ACTION) return runJob(event, context);
   if (isApiAction(action)) return runAction(action);
   return http(event as object, context);
 };

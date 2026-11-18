@@ -7,14 +7,20 @@
  * `notify` awaits every listener in turn, and a listener that throws is logged and swallowed: a
  * listener's failure never fails the write that was already made.
  */
+import type { ItemData } from '../../models/definitions/Item.js';
 import { logger } from '../../services/logger.js';
 import type { ItemKind } from '../../types/domain.js';
 import type { Caller } from '../base/Caller.js';
 
-/** One item written by the caller. */
+/**
+ * One item written by the caller, as it was (`before`: null when the write made it) and as it is
+ * (`after`: null when the write deleted it), so a listener can tell what the write changed.
+ */
 export interface ItemChange {
   itemId: string;
   kind: ItemKind;
+  before: ItemData | null;
+  after: ItemData | null;
 }
 
 export type ItemChangeListener = (caller: Caller, change: ItemChange) => Promise<void>;
