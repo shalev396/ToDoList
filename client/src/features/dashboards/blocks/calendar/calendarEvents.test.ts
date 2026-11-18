@@ -40,6 +40,8 @@ const occ = (over: Partial<Occurrence>): Occurrence => ({
   end: at(2026, 11, 12, 11),
   allDay: false,
   dueOnly: false,
+  originalStart: null,
+  seriesRowId: null,
   ...over,
 });
 

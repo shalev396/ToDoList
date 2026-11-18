@@ -1,0 +1,392 @@
+/**
+ * Which items happen when, in the workspace's time zone: the one occurrence expansion the server
+ * (queries, MCP, the travel planner) and the client (calendar, clock, timeline, agenda, workload,
+ * through `@api-types`) share, so both sides agree on every occurrence. Pure: no DOM, no Node
+ * APIs, no database.
+ *
+ * - A series (an RRULE line in `props.recurrence`) is expanded here on the wall clock of the
+ *   workspace's zone, so "every Tuesday at 10:00" stays 10:00 across a DST change. That holds for a
+ *   Google master and for a local series (a time block) alike.
+ * - Google: a cancelled occurrence arrives as a live item with `status: 'cancelled'` and
+ *   `props.recurringEventId` + `props.originalStartAt`: that occurrence is excluded from its series
+ *   (an exdate) and the item itself is never listed. A moved occurrence is a normal item with the
+ *   same two props: its original slot is excluded and the item shows at its new time.
+ * - Local: `props.exceptions` (`{ originalStart, startAt?, endAt?, skipped? }`), keyed by the
+ *   occurrence's original start, remove skipped slots and replace moved ones. A moved occurrence
+ *   whose new time overlaps the range is listed even when its original slot is outside it.
+ * - A due-only item sits at its due time, marked.
+ */
+import * as rruleModule from 'rrule';
+import type { QueryRowSource } from '../builder.js';
+import { zonedParts, zonedTime, addLocalDays } from './zoned.js';
+
+export { wallDate, wallString } from './zoned.js';
+
+type Instant = Date | string | null;
+
+/** The part of a /query item row the time views read (JSON dates arrive as strings). */
+export interface TimeRow {
+  id: string;
+  kind: string;
+  title: string;
+  status: string;
+  startAt: Instant;
+  endAt: Instant;
+  dueAt: Instant;
+  allDay: boolean;
+  source: QueryRowSource;
+  props: Record<string, unknown>;
+}
+
+/** One stored change to one occurrence of a local series, keyed by its original start (ISO). */
+export interface LocalException {
+  originalStart: string;
+  startAt?: string;
+  endAt?: string;
+  skipped?: boolean;
+}
+
+export interface Occurrence {
+  /**
+   * Unique per occurrence (a series has one row and many occurrences):
+   * `${seriesRowId ?? row.id}@${originalStart ms}` for an occurrence of a series, `row.id` otherwise.
+   */
+  key: string;
+  row: TimeRow;
+  start: Date;
+  /** Null when the item has no end (a point in time). */
+  end: Date | null;
+  allDay: boolean;
+  /** Placed at its due time because it has no start: drawn with a marker. */
+  dueOnly: boolean;
+  /**
+   * The slot this occurrence fills in its series (its start before any move). For a Google moved
+   * exception row it comes from `props.originalStartAt`. Null for an item that is not part of a
+   * series.
+   */
+  originalStart: Date | null;
+  /**
+   * The series row's id. For a Google exception row, its master's id when the master is among the
+   * rows (null otherwise). Null for an item that is not part of a series.
+   */
+  seriesRowId: string | null;
+}
+
+export interface Range {
+  from: Date;
+  to: Date;
+}
+
+export type WeekStart = 'sun' | 'mon';
+
+export const MAX_OCCURRENCES_PER_SERIES = 400;
+
+/**
+ * rrule ships a CommonJS build (what node loads, with the exports under `default`) and an ES one
+ * (what the bundler loads, with named exports): take the parser from whichever this is.
+ */
+const rrulestr: typeof rruleModule.rrulestr =
+  (rruleModule as unknown as { default?: typeof rruleModule }).default?.rrulestr ??
+  rruleModule.rrulestr;
+
+export function toDate(value: Instant): Date | null {
+  if (value === null) {
+    return null;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function floating(date: Date, timeZone: string): Date {
+  const p = zonedParts(date, timeZone);
+  return new Date(Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second));
+}
+
+function fromFloating(date: Date, timeZone: string): Date {
+  return zonedTime(
+    date.getUTCFullYear(),
+    date.getUTCMonth() + 1,
+    date.getUTCDate(),
+    date.getUTCHours(),
+    date.getUTCMinutes(),
+    timeZone,
+  );
+}
+
+function recurrenceRules(props: Readonly<Record<string, unknown>>): string[] {
+  const raw = props['recurrence'];
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter(
+    (line): line is string => typeof line === 'string' && /^RRULE:/i.test(line.trim()),
+  );
+}
+
+/** True when the row repeats: an RRULE line in `props.recurrence` (a Google master or a local series). */
+export function isSeriesRow(row: Pick<TimeRow, 'props'>): boolean {
+  return recurrenceRules(row.props).length > 0;
+}
+
+const isInstantText = (value: unknown): value is string =>
+  typeof value === 'string' && !Number.isNaN(new Date(value).getTime());
+
+/**
+ * A local series' exceptions from its props. An entry without a readable `originalStart` is
+ * dropped; a field of the wrong type is left out of its entry.
+ */
+export function localExceptionsOf(props: Readonly<Record<string, unknown>>): LocalException[] {
+  const raw = props['exceptions'];
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const out: LocalException[] = [];
+  for (const entry of raw as unknown[]) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const fields = entry as Record<string, unknown>;
+    const originalStart = fields['originalStart'];
+    if (!isInstantText(originalStart)) {
+      continue;
+    }
+    const exception: LocalException = { originalStart };
+    const startAt = fields['startAt'];
+    const endAt = fields['endAt'];
+    if (isInstantText(startAt)) {
+      exception.startAt = startAt;
+    }
+    if (isInstantText(endAt)) {
+      exception.endAt = endAt;
+    }
+    if (fields['skipped'] === true) {
+      exception.skipped = true;
+    }
+    out.push(exception);
+  }
+  return out;
+}
+
+function seriesKey(
+  props: Record<string, unknown>,
+  idProp: 'eventId' | 'recurringEventId',
+): string | null {
+  const calendar = props['calendarId'];
+  const id = props[idProp];
+  return typeof calendar === 'string' && typeof id === 'string' ? `${calendar}|${id}` : null;
+}
+
+/** A series' slots on the wall clock of one zone, from its first occurrence. */
+class SeriesSlots {
+  private readonly parsed: ReturnType<typeof rrulestr> | null;
+  private readonly first: Date;
+  private readonly timeZone: string;
+
+  constructor(rule: string, first: Date, timeZone: string) {
+    this.first = first;
+    this.timeZone = timeZone;
+    let parsed: ReturnType<typeof rrulestr> | null = null;
+    try {
+      parsed = rrulestr(rule, { dtstart: floating(first, timeZone) });
+    } catch {
+      parsed = null;
+    }
+    this.parsed = parsed;
+  }
+
+  /**
+   * The starts of the slots from `after` to `before` (both inclusive), at most
+   * MAX_OCCURRENCES_PER_SERIES. A rule that can't be read has one slot: the first occurrence.
+   */
+  between(after: Date, before: Date): Date[] {
+    const fallback = (): Date[] =>
+      this.first >= after && this.first <= before ? [this.first] : [];
+    if (this.parsed === null) {
+      return fallback();
+    }
+    try {
+      return this.parsed
+        .between(floating(after, this.timeZone), floating(before, this.timeZone), true)
+        .slice(0, MAX_OCCURRENCES_PER_SERIES)
+        .map((wall) => fromFloating(wall, this.timeZone));
+    } catch {
+      return fallback();
+    }
+  }
+
+  /** True when `slot` is one of the series' slots. */
+  has(slot: Date): boolean {
+    return this.between(slot, slot).some((candidate) => candidate.getTime() === slot.getTime());
+  }
+}
+
+/** The occurrences that overlap `range`, ordered by start. Cancelled items are never listed. */
+export function expandOccurrences(
+  rows: readonly TimeRow[],
+  range: Range,
+  timeZone: string,
+): Occurrence[] {
+  // The slots a Google series no longer has: cancelled occurrences and the old slot of moved ones.
+  const exdates = new Map<string, Set<number>>();
+  // A Google master's row id by its `calendarId|eventId`.
+  const masters = new Map<string, string>();
+  for (const row of rows) {
+    const key = seriesKey(row.props, 'recurringEventId');
+    const originalText = row.props['originalStartAt'];
+    const original = toDate(typeof originalText === 'string' ? originalText : null);
+    if (key !== null && original !== null) {
+      const slots = exdates.get(key) ?? new Set<number>();
+      slots.add(original.getTime());
+      exdates.set(key, slots);
+    }
+    const own = seriesKey(row.props, 'eventId');
+    if (own !== null && isSeriesRow(row) && !masters.has(own)) {
+      masters.set(own, row.id);
+    }
+  }
+
+  const out: Occurrence[] = [];
+  const overlaps = (start: Date, end: Date | null): boolean =>
+    start.getTime() < range.to.getTime() &&
+    (end === null ? start.getTime() >= range.from.getTime() : end.getTime() > range.from.getTime());
+
+  for (const row of rows) {
+    if (row.status === 'cancelled') {
+      continue;
+    }
+    const startAt = toDate(row.startAt);
+    const endAt = toDate(row.endAt);
+    const start = startAt ?? toDate(row.dueAt);
+    if (start === null) {
+      continue;
+    }
+    const dueOnly = startAt === null;
+    const length = endAt !== null && endAt > start ? endAt.getTime() - start.getTime() : 0;
+    const rule = recurrenceRules(row.props)[0];
+
+    if (!dueOnly && rule !== undefined) {
+      const own = seriesKey(row.props, 'eventId');
+      const gone = own === null ? undefined : exdates.get(own);
+      const exceptions = new Map<number, LocalException>();
+      if (row.source.provider === 'local') {
+        for (const exception of localExceptionsOf(row.props)) {
+          exceptions.set(new Date(exception.originalStart).getTime(), exception);
+        }
+      }
+      // The occurrence that fills one slot, at its exception's times or the slot's own; null when
+      // the slot is skipped, cancelled, or lands outside the range.
+      const occurrenceOf = (slot: Date): Occurrence | null => {
+        const exception = exceptions.get(slot.getTime());
+        if (exception?.skipped === true || gone?.has(slot.getTime()) === true) {
+          return null;
+        }
+        const occurrenceStart = toDate(exception?.startAt ?? null) ?? slot;
+        const movedEnd = toDate(exception?.endAt ?? null);
+        // A move that names no (valid) end keeps the series' length.
+        const occurrenceEnd =
+          movedEnd !== null && movedEnd > occurrenceStart
+            ? movedEnd
+            : length > 0
+              ? new Date(occurrenceStart.getTime() + length)
+              : null;
+        if (!overlaps(occurrenceStart, occurrenceEnd)) {
+          return null;
+        }
+        return {
+          key: `${row.id}@${String(slot.getTime())}`,
+          row,
+          start: occurrenceStart,
+          end: occurrenceEnd,
+          allDay: row.allDay,
+          dueOnly: false,
+          originalStart: slot,
+          seriesRowId: row.id,
+        };
+      };
+
+      // Every slot in the range, widened by the event's length.
+      const series = new SeriesSlots(rule, start, timeZone);
+      const inRange = new Set<number>();
+      for (const slot of series.between(new Date(range.from.getTime() - length), range.to)) {
+        inRange.add(slot.getTime());
+        const occurrence = occurrenceOf(slot);
+        if (occurrence !== null) {
+          out.push(occurrence);
+        }
+      }
+      // A slot outside the range whose exception moves it into the range. An exception whose
+      // original start is no slot of the series is ignored.
+      for (const slotTime of exceptions.keys()) {
+        if (inRange.has(slotTime)) {
+          continue;
+        }
+        const slot = new Date(slotTime);
+        const occurrence = occurrenceOf(slot);
+        if (occurrence !== null && series.has(slot)) {
+          out.push(occurrence);
+        }
+      }
+      continue;
+    }
+
+    const end = length > 0 ? endAt : null;
+    if (overlaps(start, end)) {
+      // A Google moved occurrence: keyed by its master and original slot, like the master's own.
+      const series = seriesKey(row.props, 'recurringEventId');
+      const originalText = row.props['originalStartAt'];
+      const originalStart =
+        series === null ? null : toDate(typeof originalText === 'string' ? originalText : null);
+      const seriesRowId = series === null ? null : (masters.get(series) ?? null);
+      out.push({
+        key:
+          originalStart === null
+            ? row.id
+            : `${seriesRowId ?? row.id}@${String(originalStart.getTime())}`,
+        row,
+        start,
+        end,
+        allDay: row.allDay && !dueOnly,
+        dueOnly,
+        originalStart,
+        seriesRowId: originalStart === null ? null : seriesRowId,
+      });
+    }
+  }
+  return out.sort((a, b) => a.start.getTime() - b.start.getTime() || a.key.localeCompare(b.key));
+}
+
+function weekdayOf(date: Date, timeZone: string): number {
+  const p = zonedParts(date, timeZone);
+  return new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
+}
+
+function weekStartOf(date: Date, timeZone: string, weekStart: WeekStart): Date {
+  const since = (weekdayOf(date, timeZone) - (weekStart === 'sun' ? 0 : 1) + 7) % 7;
+  return addLocalDays(date, -since, timeZone);
+}
+
+/** `[from, to)` of the week that contains `date`: 7 local days, whatever their length. */
+export function weekRange(date: Date, timeZone: string, weekStart: WeekStart): Range {
+  const from = weekStartOf(date, timeZone, weekStart);
+  return { from, to: addLocalDays(from, 7, timeZone) };
+}
+
+/** What a month grid shows: six whole weeks from the week of the 1st. */
+export function monthGridRange(date: Date, timeZone: string, weekStart: WeekStart): Range {
+  const p = zonedParts(date, timeZone);
+  const first = zonedTime(p.year, p.month, 1, 0, 0, timeZone);
+  const from = weekStartOf(first, timeZone, weekStart);
+  return { from, to: addLocalDays(from, 42, timeZone) };
+}
+
+/** The range a view shows when `date` is in it. */
+export function visibleRange(
+  view: 'week' | 'month',
+  date: Date,
+  timeZone: string,
+  weekStart: WeekStart,
+): Range {
+  return view === 'month'
+    ? monthGridRange(date, timeZone, weekStart)
+    : weekRange(date, timeZone, weekStart);
+}
