@@ -3,10 +3,12 @@ Topic colours on the clock and the calendar: every item is painted by its topic'
 role (a local to-do is Work), never by its source, which shows as a small icon. The clock gets a
 legend of the topics on it; the ring never mirrors in Hebrew while the legend flows right to left.
 
-Each test owns a fresh workspace on Asia/Jerusalem with the default dashboard (a clock and a
-calendar) and two local to-dos today: one in Work (on now, so the Now line always shows it) and
-one in College at 13:00-14:00. A new workspace's families come from the server (Personal blue,
-then Work and College take the next two of the cycle), so they are read from its topics.
+Each test owns a fresh workspace on Asia/Jerusalem with the default dashboard (a clock, "Today",
+and a calendar) and two local to-dos today: one in Work (on now, so the Now line always shows it)
+and one in College at 13:00-14:00. The default clock reads events only, so its query's filter is
+taken off first: local to-dos (the Work role) are what a test can create. A new workspace's
+families come from the server (Personal blue, then Work and College take the next two of the
+cycle), so they are read from its topics.
 """
 import re
 from datetime import datetime, time, timedelta, timezone
@@ -15,7 +17,7 @@ import requests
 from playwright.sync_api import Page, expect
 
 from tests.config import NORMAL_TIMEOUT
-from tests.helpers.dashboards import create_dashboard
+from tests.helpers.dashboards import apply_ops, create_dashboard
 from tests.helpers.items import create_local_item
 from tests.helpers.workspaces import list_topics, open_as
 from tests.viewports import DESKTOP_VIEWPORT
@@ -56,7 +58,17 @@ def _seed(page: Page, api_base_url: str, fresh_owner) -> dict:
     """The dashboard and the two to-dos; returns each topic's family by name."""
     user, workspace = fresh_owner
     wid = workspace["id"]
-    create_dashboard(api_base_url, user, wid)
+    dashboard = create_dashboard(api_base_url, user, wid)
+    clock = next(block for block in dashboard["blocks"] if block["type"] == "clock")
+    query = {key: value for key, value in clock["query"].items() if key != "where"}
+    apply_ops(
+        api_base_url,
+        user,
+        wid,
+        dashboard["id"],
+        dashboard["version"],
+        [{"op": "update_block", "blockId": clock["id"], "patch": {"query": query}}],
+    )
     work = create_local_item(api_base_url, user, wid, WORK_TITLE, topic="work")
     college = create_local_item(api_base_url, user, wid, COLLEGE_TITLE, topic="college")
 
@@ -92,8 +104,11 @@ def _open(page: Page, base_url: str, fresh_owner, lang: str = "en") -> None:
     expect(page.locator("[data-calendar-view]")).to_be_visible(timeout=NORMAL_TIMEOUT)
 
 
-def _clock(page: Page, name: str = "Clock"):
-    return page.get_by_role("article", name=name)
+def _clock(page: Page, summary: str = r"^Today, "):
+    """The clock block: the one holding the ring (its title stays the dashboard's language's)."""
+    return page.get_by_role("article").filter(
+        has=page.get_by_role("img", name=re.compile(summary))
+    )
 
 
 def _token(page: Page, token: str) -> str:
@@ -123,6 +138,7 @@ def test_clock_arcs_follow_topics(page: Page, base_url: str, api_base_url: str, 
     families = _seed(page, api_base_url, fresh_owner)
     _open(page, base_url, fresh_owner)
     clock = _clock(page)
+    expect(clock).to_have_count(1, timeout=NORMAL_TIMEOUT)
     ring = clock.get_by_role("img", name=re.compile(r"^Today, "))
     expect(ring).to_be_visible(timeout=NORMAL_TIMEOUT)
 
@@ -177,7 +193,8 @@ def test_dark_and_hebrew(page: Page, base_url: str, api_base_url: str, fresh_own
     assert dark != light
     assert dark == _token(page, f"--tc-{families['College']}-work")
 
-    clock = _clock(page, "שעון")
+    clock = _clock(page, r"^היום, ")
+    expect(clock).to_have_count(1, timeout=NORMAL_TIMEOUT)
     legend = clock.get_by_role("list", name="מקרא צבעים")
     expect(legend).to_be_visible(timeout=NORMAL_TIMEOUT)
     assert legend.evaluate("(el) => getComputedStyle(el).direction") == "rtl"
