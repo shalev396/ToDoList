@@ -142,7 +142,10 @@ export interface TravelLegProps {
   anchorItemId: string;
   /** The anchor occurrence's original start (ISO), or `single` for an item that doesn't repeat. */
   occurrence: string;
-  /** When the anchor starts (ISO), as the leg was planned for it. */
+  /**
+   * When the anchor starts (ISO), as the leg was planned for it. On a leg the member edited, the
+   * start his times were last set against.
+   */
   anchorStart: string;
   direction: TravelDirection;
   mode: TravelMode;
@@ -165,6 +168,12 @@ export interface TravelLegProps {
   edited: boolean;
   /** Its anchor moved since the member edited it ("the event moved; check this trip"). */
   anchorMoved: boolean;
+  /**
+   * While `anchorMoved`: when the anchor starts now (ISO). His next edit of the leg is made against
+   * it, so the edit acknowledges the move (it becomes `anchorStart` and the flag clears). Null
+   * otherwise.
+   */
+  anchorStartNow: string | null;
   /** Set on a removed leg's tombstone; null while it is live. */
   removedReason: RemovalReason | null;
 }
@@ -180,7 +189,7 @@ const isInstant = (value: unknown): value is string =>
 
 /**
  * A leg's travel props, read from its item's props: null unless every field it needs is there and
- * well formed. The flags default to off and the removal reason to none.
+ * well formed. The flags default to off, the removal reason and the anchor's moved start to none.
  */
 export function travelPropsOf(props: Readonly<Record<string, unknown>>): TravelLegProps | null {
   const raw = props['travel'];
@@ -189,6 +198,7 @@ export function travelPropsOf(props: Readonly<Record<string, unknown>>): TravelL
   const { anchorItemId, occurrence, anchorStart, direction, mode, minutes, source } = travel;
   const { fromPlaceId, fromName, toPlaceId, toName, computedAt } = travel;
   const removedReason = travel['removedReason'] ?? null;
+  const anchorStartNow = travel['anchorStartNow'] ?? null;
   if (
     !isText(anchorItemId) ||
     !isText(occurrence) ||
@@ -204,7 +214,8 @@ export function travelPropsOf(props: Readonly<Record<string, unknown>>): TravelL
     minutes < 0 ||
     !oneOf(LEG_SOURCES, source) ||
     !isInstant(computedAt) ||
-    (removedReason !== null && !oneOf(REMOVAL_REASONS, removedReason))
+    (removedReason !== null && !oneOf(REMOVAL_REASONS, removedReason)) ||
+    (anchorStartNow !== null && !isInstant(anchorStartNow))
   ) {
     return null;
   }
@@ -226,6 +237,7 @@ export function travelPropsOf(props: Readonly<Record<string, unknown>>): TravelL
     conflict: travel['conflict'] === true,
     edited: travel['edited'] === true,
     anchorMoved: travel['anchorMoved'] === true,
+    anchorStartNow,
     removedReason,
   };
 }

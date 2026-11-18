@@ -43,6 +43,7 @@ const LEG: TravelLegProps = {
   conflict: false,
   edited: false,
   anchorMoved: false,
+  anchorStartNow: null,
   removedReason: null,
 };
 
@@ -91,7 +92,7 @@ describe('kinds and layers', () => {
 
   it('a leg’s travel props are read whole, or not at all', () => {
     assert.deepEqual(travelPropsOf({ travel: LEG }), LEG);
-    const flags = ['conflict', 'edited', 'anchorMoved', 'removedReason'];
+    const flags = ['conflict', 'edited', 'anchorMoved', 'anchorStartNow', 'removedReason'];
     const required = Object.fromEntries(
       Object.entries(LEG).filter(([key]) => !flags.includes(key)),
     );
@@ -101,6 +102,7 @@ describe('kinds and layers', () => {
     assert.equal(travelPropsOf({ travel: { ...LEG, minutes: -1 } }), null);
     assert.equal(travelPropsOf({ travel: { ...LEG, anchorStart: 'soon' } }), null);
     assert.equal(travelPropsOf({ travel: { ...LEG, removedReason: 'bored' } }), null);
+    assert.equal(travelPropsOf({ travel: { ...LEG, anchorStartNow: 'later' } }), null);
     assert.deepEqual(travelPropsOf({ travel: { ...LEG, removedReason: 'skipped' } }), {
       ...LEG,
       removedReason: 'skipped',

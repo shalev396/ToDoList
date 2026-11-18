@@ -11,9 +11,13 @@
  *
  * Storage (travel storage, plan Task 11):
  * - `applyPlan` writes what LegReconciler worked out, by key, and only the caller's own legs: a
- *   plan applied twice writes nothing the second time. A leg the member edited keeps his times and
- *   the anchor start his edit was made against (so "the event moved" is flagged on every
- *   regeneration until he resets it).
+ *   plan applied twice writes nothing the second time. Each write is conditional on the leg as it
+ *   is read then, so a skip, a hand edit or a start made while the plan was worked out is never
+ *   overwritten (that leg waits for the next regeneration).
+ * - A leg the member edited keeps his times and the anchor start his edit was made against, unless
+ *   the plan changes its mode or a place (it is recomputed then). When its anchor moves, it is
+ *   flagged ("the event moved") with where the anchor is now; his next edit acknowledges the move
+ *   and clears the flag, and Reset clears it with his times.
  * - A removed leg is a tombstone: soft-deleted, with its reason at `props.travel.removedReason`, so
  *   the day panel can say why it went (the purge keeps it at least until the leg is over). A skip
  *   is a tombstone with reason `skipped`, which no regeneration brings back; Reset does.
@@ -139,7 +143,9 @@ export class TravelLeg extends ScheduledItem {
     const applied: AppliedPlan = { created: 0, updated: 0, removed: 0 };
 
     for (const { id, reason } of recon.remove) {
-      if (stored.get(id)?.deletedAt !== null) continue;
+      const row = stored.get(id);
+      // Not the caller's, removed meanwhile, or under way since: left as it is.
+      if (row?.deletedAt !== null || TravelLeg.#startedBy(row, now)) continue;
       if ((await items.removeTravelLeg(caller.workspaceId, id, reason, now)) !== null) {
         applied.removed += 1;
       }
@@ -150,16 +156,36 @@ export class TravelLeg extends ScheduledItem {
       if (row === undefined) continue;
       const key = change.leg.key.toString();
       if (row.props['travelKey'] !== key) continue;
-      const write = TravelLeg.#write(owner, change.leg, places, now, { row, ...change });
-      const { outcome } = await items.upsertTravelLeg(caller.workspaceId, key, write);
-      if (outcome !== 'unchanged') applied.updated += 1;
+      const edited = travelPropsOf(row.props)?.edited === true;
+      if (!TravelLeg.#stillAsPlanned(row, change, edited, now)) continue;
+      const write = TravelLeg.#write(owner, change.leg, places, now, {
+        row,
+        // He reset it since: it is recomputed.
+        keepTimes: change.keepTimes && edited,
+        anchorMoved: change.anchorMoved,
+      });
+      // Written only while the leg is still as read (and so as judged above), atomically.
+      const { outcome } = await items.upsertTravelLeg(caller.workspaceId, key, write, {
+        unchangedSince: row.updatedAt,
+        edited,
+        notSkipped: true,
+        notStartedBefore: now,
+      });
+      if (outcome === 'updated' || outcome === 'created') applied.updated += 1;
     }
     for (const leg of recon.create) {
       const write = TravelLeg.#write(owner, leg, places, now, null);
+      // A leg stored under its key that the facts missed: never a skip brought back, a hand edit
+      // overwritten or a leg under way moved.
       const { outcome } = await items.upsertTravelLeg(
         caller.workspaceId,
         leg.key.toString(),
         write,
+        {
+          edited: false,
+          notSkipped: true,
+          notStartedBefore: now,
+        },
       );
       if (outcome === 'created') applied.created += 1;
       else if (outcome === 'updated') applied.updated += 1;
@@ -205,7 +231,8 @@ export class TravelLeg extends ScheduledItem {
    * alone keeps the length (a new start or end), or the arrival (a new length of a leg there or
    * between; a leg back keeps its departure). The leg is then the member's (`edited`, source
    * `manual`): a regeneration keeps his times until he resets it, and the length is remembered for
-   * the same trip. 400 for anything that isn't a span of more than 0 and at most a day.
+   * the same trip. A leg flagged "the event moved" is edited against the anchor's new start, so the
+   * flag clears. 400 for anything that isn't a span of more than 0 and at most a day.
    */
   async editTimes(caller: Caller, change: LegTimesChange): Promise<TravelLeg> {
     this.#authorize(caller);
@@ -233,6 +260,10 @@ export class TravelLeg extends ScheduledItem {
             source: 'manual',
             computedAt: new Date().toISOString(),
             edited: true,
+            // An edit after the event moved is made against its new start: it acknowledges it.
+            ...(travel.anchorStartNow === null
+              ? {}
+              : { anchorStart: travel.anchorStartNow, anchorMoved: false, anchorStartNow: null }),
           },
         },
       };
@@ -277,7 +308,10 @@ export class TravelLeg extends ScheduledItem {
       const now = current.travel;
       if (now === null) throw new ValidationError('travel: this leg has no travel to reset');
       return {
-        props: { ...current.data.props, travel: { ...now, edited: false, anchorMoved: false } },
+        props: {
+          ...current.data.props,
+          travel: { ...now, edited: false, anchorMoved: false, anchorStartNow: null },
+        },
       };
     });
   }
@@ -331,6 +365,29 @@ export class TravelLeg extends ScheduledItem {
     this.assertIn(caller);
     if (this.ownerUserId !== caller.userId) throw new NotFoundError();
     caller.require('editor');
+  }
+
+  /**
+   * Whether an update the reconciler worked out from earlier facts still fits the leg as read now:
+   * not when it was removed or skipped since (and the update isn't a restore), when he edited it
+   * since (and the update would recompute it), or when it got under way since.
+   */
+  static #stillAsPlanned(
+    row: ItemData,
+    change: Reconciliation['update'][number],
+    edited: boolean,
+    now: Date,
+  ): boolean {
+    const live = row.deletedAt === null;
+    if (!live && !change.restore) return false;
+    if (!live && travelPropsOf(row.props)?.removedReason === 'skipped') return false;
+    if (edited && !change.keepTimes) return false;
+    return !TravelLeg.#startedBy(row, now);
+  }
+
+  /** A live leg that started before `now`: under way or done, history. */
+  static #startedBy(row: ItemData | undefined, now: Date): boolean {
+    return row?.deletedAt === null && row.startAt !== null && row.startAt < now;
   }
 
   /** What the reconciler reads of it; null when its props aren't a leg's or it has no start. */
@@ -423,7 +480,13 @@ export class TravelLeg extends ScheduledItem {
       topicId: this.data.topicId,
       startAt,
       endAt,
-      travel: { ...travel, edited: false, anchorMoved: false, removedReason: null },
+      travel: {
+        ...travel,
+        edited: false,
+        anchorMoved: false,
+        anchorStartNow: null,
+        removedReason: null,
+      },
     });
     return TravelLeg.#of(Item.from(item));
   }
@@ -437,7 +500,8 @@ export class TravelLeg extends ScheduledItem {
     stored: { row: ItemData; keepTimes: boolean; anchorMoved: boolean } | null,
   ): TravelLegWrite {
     const prior = stored === null ? null : travelPropsOf(stored.row.props);
-    const kept = TravelLeg.#keptTimes(stored, prior);
+    const kept = TravelLeg.#keptTimes(stored, prior, leg);
+    const moved = kept !== null && stored?.anchorMoved === true;
     const sameLength =
       prior !== null &&
       prior.minutes === leg.minutes &&
@@ -450,7 +514,8 @@ export class TravelLeg extends ScheduledItem {
     const travel: TravelLegProps = {
       anchorItemId: leg.key.anchorItemId,
       occurrence: leg.key.occurrence,
-      // An edited leg keeps the anchor start his edit was made against, until he resets it.
+      // An edited leg keeps the anchor start his edit was made against (his next edit or a reset
+      // moves it on).
       anchorStart: kept?.prior.anchorStart ?? leg.anchorStart.toISOString(),
       direction: leg.key.direction,
       mode: leg.mode,
@@ -466,7 +531,9 @@ export class TravelLeg extends ScheduledItem {
       computedAt: kept?.prior.computedAt ?? (sameLength ? prior.computedAt : now.toISOString()),
       conflict: kept?.prior.conflict ?? leg.conflict,
       edited: kept !== null,
-      anchorMoved: kept !== null && stored?.anchorMoved === true,
+      anchorMoved: moved,
+      // Where the anchor is now, so his next edit acknowledges the move.
+      anchorStartNow: moved ? leg.anchorStart.toISOString() : null,
       removedReason: null,
     };
     return {
@@ -479,12 +546,24 @@ export class TravelLeg extends ScheduledItem {
     };
   }
 
-  /** His times and their props, when the stored leg he edited keeps them. */
+  /**
+   * His times and their props, when the stored leg he edited keeps them: not when the plan changed
+   * its mode or either place (changing mode or place recomputes a leg; his length was for another
+   * trip).
+   */
   static #keptTimes(
     stored: { row: ItemData; keepTimes: boolean } | null,
     prior: TravelLegProps | null,
+    leg: PlannedLeg,
   ): { prior: TravelLegProps; startAt: Date; endAt: Date } | null {
     if (stored === null || !stored.keepTimes || prior === null) return null;
+    if (
+      prior.mode !== leg.mode ||
+      prior.fromPlaceId !== leg.fromPlaceId ||
+      prior.toPlaceId !== leg.toPlaceId
+    ) {
+      return null;
+    }
     const { startAt, endAt } = stored.row;
     return startAt === null || endAt === null ? null : { prior, startAt, endAt };
   }

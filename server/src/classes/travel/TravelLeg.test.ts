@@ -207,6 +207,7 @@ describe('TravelLeg storage', () => {
       conflict: false,
       edited: false,
       anchorMoved: false,
+      anchorStartNow: null,
       removedReason: null,
     });
 
@@ -385,10 +386,16 @@ describe('TravelLeg storage', () => {
     const flagged = await classes.TravelLeg.findOwn(a.caller, leg.id);
     assert.deepEqual(span(flagged), span(six));
     assert.deepEqual(
-      [flagged.travel?.edited, flagged.travel?.anchorMoved, flagged.travel?.anchorStart],
-      [true, true, LECTURE.toISOString()],
+      [
+        flagged.travel?.edited,
+        flagged.travel?.anchorMoved,
+        flagged.travel?.anchorStart,
+        flagged.travel?.anchorStartNow,
+      ],
+      [true, true, LECTURE.toISOString(), later.toISOString()],
     );
-    // Still flagged the next time: the stored anchor start is the one his edit was made against.
+    // Still flagged the next time: the stored anchor start is the one his edit was made against
+    // (until he edits it again or resets it).
     assert.deepEqual(await regenerate(a, [there(a, later)]), {
       created: 0,
       updated: 0,
@@ -518,5 +525,200 @@ describe('TravelLeg storage', () => {
     assert.deepEqual(await regenerate(a, [there(a)]), { created: 0, updated: 1, removed: 0 });
     const repaired = await classes.TravelLeg.findOwn(a.caller, broken.id);
     assert.equal(repaired.travel?.mode, 'transit');
+  });
+});
+
+describe('TravelLeg storage: what changed while a plan was worked out', () => {
+  it('storedFacts → skip → applyPlan: the skip is never brought back', async () => {
+    const ws = await workspace();
+    const { a } = ws;
+    await regenerate(a, [there(a), back(a)]);
+    const thereLeg = await legOf(a, 'there');
+    // The regeneration reads the facts and works out its plan (the lecture moved) ...
+    const now = new Date();
+    const later = at(LECTURE, 30);
+    const facts = await classes.TravelLeg.storedFacts(a.caller, FROM, TO);
+    const planned = [there(a, later), back(a, later)];
+    const recon = classes.LegReconciler.reconcile(facts, planned, new Map(), now);
+    // ... meanwhile the member skips the leg there; then the plan is written.
+    await thereLeg.skip(a.caller);
+    assert.deepEqual(await classes.TravelLeg.applyPlan(a.caller, recon, now), {
+      created: 0,
+      updated: 1,
+      removed: 0,
+    });
+    const skipped = await classes.TravelLeg.findOwn(a.caller, thereLeg.id);
+    assert.deepEqual([skipped.removedReason, ...span(skipped)], ['skipped', ...span(thereLeg)]);
+    // Nor does a create under its key bring it back (a key the facts missed).
+    const create: Reconciliation = { create: [there(a, later)], update: [], remove: [] };
+    assert.deepEqual(await classes.TravelLeg.applyPlan(a.caller, create, new Date()), {
+      created: 0,
+      updated: 0,
+      removed: 0,
+    });
+    const still = await classes.TravelLeg.findOwn(a.caller, thereLeg.id);
+    assert.equal(still.removedReason, 'skipped');
+  });
+
+  it('storedFacts → editTimes → applyPlan: his times are never overwritten', async () => {
+    const ws = await workspace();
+    const { a } = ws;
+    await regenerate(a, [there(a)]);
+    const leg = await legOf(a, 'there');
+    const now = new Date();
+    const later = at(LECTURE, 30);
+    const facts = await classes.TravelLeg.storedFacts(a.caller, FROM, TO);
+    const recon = classes.LegReconciler.reconcile(facts, [there(a, later)], new Map(), now);
+    assert.equal(recon.update[0]?.keepTimes, false, 'the facts were read before his edit');
+    const edited = await leg.editTimes(a.caller, { minutes: 55 });
+    assert.deepEqual(await classes.TravelLeg.applyPlan(a.caller, recon, now), {
+      created: 0,
+      updated: 0,
+      removed: 0,
+    });
+    const kept = await classes.TravelLeg.findOwn(a.caller, leg.id);
+    assert.deepEqual(span(kept), span(edited));
+    assert.deepEqual([kept.travel?.edited, kept.travel?.minutes], [true, 55]);
+    // The next regeneration reads his edit: it keeps his times and flags the move.
+    await regenerate(a, [there(a, later)]);
+    const flagged = await classes.TravelLeg.findOwn(a.caller, leg.id);
+    assert.deepEqual(span(flagged), span(edited));
+    assert.equal(flagged.travel?.anchorMoved, true);
+  });
+
+  it('a skip or an edit between the read and the write is never overwritten', async (t) => {
+    const ws = await workspace();
+    const { a } = ws;
+    await regenerate(a, [there(a), back(a)]);
+    const thereLeg = await legOf(a, 'there');
+    const backLeg = await legOf(a, 'back');
+    // The member acts in the moment between applyPlan's read of each leg and its write of it.
+    const items = await models.getItemRepository();
+    const upsert = items.upsertTravelLeg.bind(items);
+    t.mock.method(items, 'upsertTravelLeg', async (...args: Parameters<typeof upsert>) => {
+      const [, key] = args;
+      if (key === thereLeg.key) {
+        await (await classes.TravelLeg.findOwn(a.caller, thereLeg.id)).skip(a.caller);
+      } else if (key === backLeg.key) {
+        const stored = await classes.TravelLeg.findOwn(a.caller, backLeg.id);
+        await stored.editTimes(a.caller, { minutes: 55 });
+      }
+      return upsert(...args);
+    });
+    const later = at(LECTURE, 30);
+    assert.deepEqual(await regenerate(a, [there(a, later), back(a, later)]), {
+      created: 0,
+      updated: 0,
+      removed: 0,
+    });
+    t.mock.restoreAll();
+    const skipped = await classes.TravelLeg.findOwn(a.caller, thereLeg.id);
+    assert.deepEqual([skipped.removedReason, ...span(skipped)], ['skipped', ...span(thereLeg)]);
+    const edited = await classes.TravelLeg.findOwn(a.caller, backLeg.id);
+    assert.deepEqual([edited.travel?.edited, edited.travel?.minutes], [true, 55]);
+    assert.equal(edited.startAt?.getTime(), backLeg.startAt?.getTime());
+  });
+
+  it('a create under a stored key never moves a leg under way', async () => {
+    const ws = await workspace();
+    const { a } = ws;
+    // A leg that started ten minutes ago (its anchor is in half an hour), made an hour ago.
+    const soon = new Date(Math.floor(Date.now() / MINUTE) * MINUTE + 30 * MINUTE);
+    const first: Reconciliation = { create: [there(a, soon)], update: [], remove: [] };
+    const made = await classes.TravelLeg.applyPlan(a.caller, first, new Date(Date.now() - HOUR));
+    assert.equal(made.created, 1);
+    const underWay = await legOf(a, 'there');
+    assert.ok((underWay.startAt?.getTime() ?? Infinity) < Date.now());
+    const moved: Reconciliation = { create: [there(a, at(soon, 60))], update: [], remove: [] };
+    assert.deepEqual(await classes.TravelLeg.applyPlan(a.caller, moved, new Date()), {
+      created: 0,
+      updated: 0,
+      removed: 0,
+    });
+    assert.deepEqual(span(await legOf(a, 'there')), span(underWay));
+  });
+
+  it('changing the mode or a place recomputes an edited leg', async () => {
+    const ws = await workspace();
+    const { a } = ws;
+    await regenerate(a, [there(a)]);
+    const leg = await (await legOf(a, 'there')).editTimes(a.caller, { minutes: 55 });
+    const transit = classes.DayPlanner.tripKey(a.homeId, a.braudeId, 'transit');
+    const drive = classes.DayPlanner.tripKey(a.homeId, a.braudeId, 'drive');
+    // The rule now drives: the leg is the plan's, not his transit length marked manual.
+    const driving = there(a, LECTURE, {
+      mode: 'drive',
+      minutes: 25,
+      startAt: at(LECTURE, -25),
+      title: 'Drive to Braude',
+    });
+    assert.deepEqual(await regenerate(a, [driving]), { created: 0, updated: 1, removed: 0 });
+    const recomputed = await classes.TravelLeg.findOwn(a.caller, leg.id);
+    const { travel } = recomputed;
+    assert.deepEqual(
+      [recomputed.title, travel?.mode, travel?.minutes, travel?.source, travel?.edited],
+      ['Drive to Braude', 'drive', 25, 'estimate', false],
+    );
+    assert.deepEqual(span(recomputed), [at(LECTURE, -25).toISOString(), LECTURE.toISOString()]);
+    // His next edit is remembered for the drive; the transit length stays the transit's.
+    await recomputed.editTimes(a.caller, { minutes: 30 });
+    const profile = await classes.TravelProfile.of(a.caller);
+    assert.deepEqual(
+      [profile.rememberedMinutes(drive), profile.rememberedMinutes(transit)],
+      [30, 55],
+    );
+    // A new place recomputes it too.
+    const work = await classes.Place.create(a.caller, {
+      name: 'TLVTech',
+      coords: { lat: 32.0853, lon: 34.7818 },
+    });
+    const toWork = there(a, LECTURE, {
+      mode: 'drive',
+      toPlaceId: work.id,
+      minutes: 70,
+      startAt: at(LECTURE, -70),
+      title: 'Drive to TLVTech',
+    });
+    assert.deepEqual(await regenerate(a, [toWork]), { created: 0, updated: 1, removed: 0 });
+    const elsewhere = (await classes.TravelLeg.findOwn(a.caller, leg.id)).travel;
+    assert.deepEqual(
+      [elsewhere?.toName, elsewhere?.minutes, elsewhere?.edited],
+      ['TLVTech', 70, false],
+    );
+  });
+
+  it('an edit after the event moved acknowledges the move', async () => {
+    const ws = await workspace();
+    const { a } = ws;
+    await regenerate(a, [there(a)]);
+    const leg = await (await legOf(a, 'there')).editTimes(a.caller, { minutes: 50 });
+    const flags = (entry: Classes.TravelLeg): unknown[] => [
+      entry.travel?.anchorStart,
+      entry.travel?.anchorMoved,
+      entry.travel?.anchorStartNow,
+    ];
+    assert.deepEqual(flags(leg), [LECTURE.toISOString(), false, null]);
+    // The lecture moves an hour later: the regeneration keeps his times and flags the leg.
+    const later = at(LECTURE, 60);
+    assert.deepEqual(await regenerate(a, [there(a, later)]), {
+      created: 0,
+      updated: 1,
+      removed: 0,
+    });
+    const flagged = await classes.TravelLeg.findOwn(a.caller, leg.id);
+    assert.deepEqual(span(flagged), span(leg));
+    assert.deepEqual(flags(flagged), [LECTURE.toISOString(), true, later.toISOString()]);
+    // He checks the trip and edits it: made against the new start, the edit clears the flag.
+    const checked = await flagged.editTimes(a.caller, { endAt: later });
+    assert.deepEqual(flags(checked), [later.toISOString(), false, null]);
+    assert.equal(checked.travel?.edited, true);
+    // The next regeneration keeps it cleared, and his times.
+    assert.deepEqual(await regenerate(a, [there(a, later)]), {
+      created: 0,
+      updated: 0,
+      removed: 0,
+    });
+    const after = await classes.TravelLeg.findOwn(a.caller, leg.id);
+    assert.deepEqual([after.travel?.anchorMoved, ...span(after)], [false, ...span(checked)]);
   });
 });

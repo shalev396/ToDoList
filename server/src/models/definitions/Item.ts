@@ -210,7 +210,23 @@ export interface TravelLegWrite {
 }
 
 /** What an upsert of a leg did: made it, changed it (a tombstone made live too), or nothing. */
-export type TravelLegUpsertOutcome = 'created' | 'updated' | 'unchanged';
+export type TravelLegUpsertOutcome = 'created' | 'updated' | 'unchanged' | 'refused';
+
+/**
+ * When a stored leg may be written over: every condition given must hold of it at the moment of the
+ * write (one conditional write, so a change made since it was read can't be overwritten). A stored
+ * leg that fails one is left as it is (`refused`).
+ */
+export interface TravelLegGuard {
+  /** Its `updatedAt` is still this: nobody changed it since it was read. */
+  unchangedSince?: Date;
+  /** It is (true) or is not (false) a leg the member edited by hand (`props.travel.edited`). */
+  edited?: boolean;
+  /** It is not a skipped tombstone (only Reset brings a skip back). */
+  notSkipped?: boolean;
+  /** It is not a live leg that started before this (a leg under way or done is history). */
+  notStartedBefore?: Date;
+}
 
 /** Which of one member's legs (those with a `props.travelKey`) to list. */
 export interface TravelLegFilter {
@@ -341,12 +357,14 @@ export interface IItemRepository {
    * one is created (kind `travel`, visibility `private`, owned by `leg.ownerUserId`); a stored one
    * (a tombstone too, which is made live again) gets the title, topic, times and `props.travel`
    * given. Writing what is stored already writes nothing (its `updatedAt` stays), so applying one
-   * plan twice changes nothing.
+   * plan twice changes nothing. With a guard, a stored leg is written over only while the guard
+   * holds of it (`refused` otherwise, the leg as it is).
    */
   upsertTravelLeg(
     workspaceId: string,
     key: string,
     leg: TravelLegWrite,
+    guard?: TravelLegGuard,
   ): Promise<{ item: ItemData; outcome: TravelLegUpsertOutcome }>;
   /** One member's legs, by start then id; live ones only unless `includeRemoved`. */
   listTravelLegs(workspaceId: string, filter: TravelLegFilter): Promise<ItemData[]>;
