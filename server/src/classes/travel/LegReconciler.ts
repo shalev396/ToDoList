@@ -5,13 +5,18 @@
  * Legs are matched by key (LegKey), so reconciling a plan with its own result changes nothing.
  *
  * - A planned leg nobody stored is created, unless it is past.
- * - A planned leg stored live is updated, unless it is past (a leg under way never shifts). A leg
- *   the member edited keeps his times (`keepTimes`), and is flagged when its anchor moved since
- *   (`anchorMoved`): never dropped or silently shifted.
+ * - A planned leg stored live:
+ *   - once the stored leg has started (under way or done), it is left alone: never shifted, never
+ *     removed;
+ *   - else, when the plan for it is past (its anchor moved earlier, into now or the past), it is
+ *     removed as `moved`, since nobody can take it any more;
+ *   - else it is updated. A leg the member edited keeps his times (`keepTimes`), and is flagged
+ *     when its anchor moved since (`anchorMoved`): never silently shifted.
  * - A planned leg stored as a tombstone is restored, unless it is past or the member skipped it
  *   (only Reset brings a skip back).
- * - A live leg nobody plans any more is removed, unless it is past, with a reason he can see: its
- *   anchor's fate (`present`, so another leg took its place: `replaced`; no fate: `cancelled`).
+ * - A live leg nobody plans any more is removed, unless it has started, with a reason he can see:
+ *   its anchor's fate (`present`, so another leg took its place: `replaced`; no fate:
+ *   `cancelled`).
  */
 import type { RemovalReason } from '../../types/travel.js';
 import type { PlannedLeg } from './DayPlanner.js';
@@ -69,8 +74,9 @@ export class LegReconciler {
   }
 
   /**
-   * The changes that bring `stored` in line with `planned`. Each list keeps its input's order
-   * (`planned` for creates and updates, `stored` for removals). A key planned twice counts once.
+   * The changes that bring `stored` in line with `planned`. Each list keeps its input's order:
+   * `planned` for creates and updates; for removals, the legs whose plan went past (in `planned`
+   * order), then the legs nobody plans (in `stored` order). A key planned twice counts once.
    */
   static reconcile(
     stored: readonly StoredLegFacts[],
@@ -90,15 +96,16 @@ export class LegReconciler {
       const key = leg.key.toString();
       if (plannedKeys.has(key)) continue;
       plannedKeys.add(key);
-      // A past leg is history (or under way): never created, changed or restored. Its key counts
-      // as planned, so a stored one is not removed either.
-      if (leg.past) continue;
       const facts = byKey.get(key);
       if (facts === undefined) {
-        recon.create.push(leg);
+        if (!leg.past) recon.create.push(leg);
       } else if (facts.removedReason === null) {
-        recon.update.push(LegReconciler.#update(facts, leg, false));
-      } else if (facts.removedReason !== 'skipped') {
+        // A leg under way (or done) is history: it never shifts and never goes.
+        if (facts.startAt < this.#now) continue;
+        // Its anchor moved earlier, into now or the past: this leg can't be taken any more.
+        if (leg.past) recon.remove.push({ id: facts.id, reason: 'moved' });
+        else recon.update.push(LegReconciler.#update(facts, leg, false));
+      } else if (facts.removedReason !== 'skipped' && !leg.past) {
         recon.update.push(LegReconciler.#update(facts, leg, true));
       }
     }
