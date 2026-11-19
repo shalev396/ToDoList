@@ -8,6 +8,7 @@ import { toEventInput } from '../dashboards/blocks/calendar/calendarEvents.ts';
 import { buildClockModel } from '../dashboards/blocks/clock/clockModel.ts';
 import type { Occurrence, TimeRow } from '../dashboards/blocks/time/occurrences.ts';
 import {
+  canPickLegMode,
   isPastLeg,
   legFlagsOf,
   legMarksOf,
@@ -154,6 +155,15 @@ describe('removedLegTitle', () => {
     );
     // Without it (props that aren't a leg's) the stored title stands.
     assert.equal(removedLegTitle(tHe, { title: 'Team lunch' }), 'Team lunch');
+  });
+});
+
+describe('canPickLegMode', () => {
+  it('a leg that has started, or is over, keeps its way', () => {
+    assert.equal(canPickLegMode(minutes(NOW, 5), NOW), true);
+    assert.equal(canPickLegMode(NOW, NOW), false);
+    assert.equal(canPickLegMode(minutes(NOW, -30), NOW), false);
+    assert.equal(canPickLegMode(null, NOW), true);
   });
 });
 

@@ -73,6 +73,14 @@ export function isPastLeg(occurrence: Slot, now: Date): boolean {
 }
 
 /**
+ * Whether he can still pick another way for a leg: the planner never touches a leg that has
+ * started, so a mark on it would change nothing.
+ */
+export function canPickLegMode(start: Date | null, now: Date): boolean {
+  return start === null || start.getTime() > now.getTime();
+}
+
+/**
  * What a view marks on a leg: its mode, the conflict, past, and "the event moved" flags, and
  * whether its trip has no length yet (`unset`: drawn dashed, with the placeholder length).
  */

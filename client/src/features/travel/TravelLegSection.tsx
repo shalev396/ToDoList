@@ -39,7 +39,7 @@ import {
 import { AppLinks } from './AppLinks';
 import { EveryOccurrenceDialog } from './EveryOccurrenceDialog';
 import { ConflictMark, LegModeIcon } from './LegMark';
-import { legTitle, repeatPatternOf, repeatsKindOf } from './legView';
+import { canPickLegMode, legTitle, repeatPatternOf, repeatsKindOf } from './legView';
 import {
   editPanelLength,
   editPanelTime,
@@ -109,6 +109,7 @@ function Leg({
   const [pickedMode, setPickedMode] = useState<TravelMode | null>(null);
   const currentMode = useRef<HTMLButtonElement>(null);
   const anchor = useItem(workspaceId === '' ? null : workspaceId, travel.anchorItemId);
+  const canPickMode = canWrite && canPickLegMode(start, new Date());
   const canReset = travel.edited || travel.anchorMoved;
 
   const whenText =
@@ -222,7 +223,7 @@ function Leg({
         <dd className="m-0" data-leg-when="">
           {whenText}
         </dd>
-        {canWrite ? null : (
+        {canPickMode ? null : (
           <>
             <dt className="text-muted-foreground">{t('travel.add.mode')}</dt>
             <dd className="m-0 flex items-center gap-1.5">
@@ -259,43 +260,45 @@ function Leg({
 
       {canWrite ? (
         <>
-          <div
-            role="group"
-            aria-labelledby={`${modeIds}-mode`}
-            data-leg-mode-picker=""
-            className="flex min-w-0 flex-col gap-1.5"
-          >
-            <span id={`${modeIds}-mode`} className="mb-1.5 text-sm font-medium">
-              {t('travel.add.mode')}
-            </span>
-            <div className="flex w-full gap-1 rounded-md bg-sunken p-1">
-              {TRAVEL_MODES.map((mode) => (
-                <button
-                  key={mode}
-                  ref={travel.mode === mode ? currentMode : undefined}
-                  type="button"
-                  aria-pressed={travel.mode === mode}
-                  aria-disabled={busy}
-                  data-leg-mode-choice={mode}
-                  onClick={() => {
-                    // Only a click, Enter or Space on another way asks; the arrow keys just move.
-                    if (!busy && mode !== travel.mode) {
-                      setPickedMode(mode);
-                    }
-                  }}
-                  className={cn(
-                    'flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2 text-center text-[13px] transition-colors outline-none pointer-fine:min-h-8 focus-visible:ring-2 focus-visible:ring-ring',
-                    travel.mode === mode
-                      ? 'bg-card font-medium text-foreground shadow-xs'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  <LegModeIcon mode={mode} className="size-4" />
-                  <span className="min-w-0 break-words">{t(`travel.add.tabs.${mode}`)}</span>
-                </button>
-              ))}
+          {canPickMode ? (
+            <div
+              role="group"
+              aria-labelledby={`${modeIds}-mode`}
+              data-leg-mode-picker=""
+              className="flex min-w-0 flex-col gap-1.5"
+            >
+              <span id={`${modeIds}-mode`} className="mb-1.5 text-sm font-medium">
+                {t('travel.add.mode')}
+              </span>
+              <div className="flex w-full gap-1 rounded-md bg-sunken p-1">
+                {TRAVEL_MODES.map((mode) => (
+                  <button
+                    key={mode}
+                    ref={travel.mode === mode ? currentMode : undefined}
+                    type="button"
+                    aria-pressed={travel.mode === mode}
+                    aria-disabled={busy}
+                    data-leg-mode-choice={mode}
+                    onClick={() => {
+                      // Only a click, Enter or Space on another way asks; the arrow keys just move.
+                      if (!busy && mode !== travel.mode) {
+                        setPickedMode(mode);
+                      }
+                    }}
+                    className={cn(
+                      'flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2 text-center text-[13px] transition-colors outline-none pointer-fine:min-h-8 focus-visible:ring-2 focus-visible:ring-ring',
+                      travel.mode === mode
+                        ? 'bg-card font-medium text-foreground shadow-xs'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                  >
+                    <LegModeIcon mode={mode} className="size-4" />
+                    <span className="min-w-0 break-words">{t(`travel.add.tabs.${mode}`)}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          ) : null}
           <EveryOccurrenceDialog
             open={pickedMode !== null}
             oneAvailable

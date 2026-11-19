@@ -265,6 +265,29 @@ describe('areaTagsByDay', () => {
   });
 });
 
+describe('a leg’s id', () => {
+  const leg = (mode: 'walk' | 'transit', title: string) => ({
+    mode,
+    title,
+    conflict: false,
+    past: false,
+    moved: false,
+    unset: false,
+  });
+  const idOf = (mode: 'walk' | 'transit', title: string) =>
+    toEventInput(
+      { occurrence: occ({ key: 'leg1' }), badges: [], leg: leg(mode, title) },
+      TZ,
+      colour('travel'),
+    ).id;
+
+  it('changes with the mode and the title, so the chip is drawn again', () => {
+    assert.notEqual(idOf('walk', 'Walk to Braude'), idOf('transit', 'Walk to Braude'));
+    assert.notEqual(idOf('transit', 'Bus to Braude'), idOf('transit', 'Bus to Home'));
+    assert.equal(idOf('walk', 'Walk to Braude'), idOf('walk', 'Walk to Braude'));
+  });
+});
+
 describe('timedSpans and the stretch', () => {
   it('spans the timed events; a due date lasts its point; all-day ones are left out', () => {
     const start = at(2026, 11, 19, 8, 20);

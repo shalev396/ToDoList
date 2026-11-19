@@ -154,6 +154,8 @@ export function toEventInput(
           item.leg.past,
           item.leg.moved,
           item.leg.unset,
+          item.leg.mode,
+          item.leg.title,
         ]
           .map(String)
           .join('|');

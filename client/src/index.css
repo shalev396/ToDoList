@@ -661,7 +661,7 @@
  * the sunken wash for today and an ink now-line. Events are painted in their topic colour (fill and
  * ink set per event from features/colours, never the source's); travel is hatched (`--tc-hatch`,
  * set per event) with its label on a plate of its fill; an area is a band in its tint behind
- * everything, edged in its Scheduled step (`--tc-edge`) and labelled at the top.
+ * everything, edged in its Scheduled step (`--tc-edge`); its name is a tag in the day's header, not on the band.
  */
 .todolist-calendar .fc {
   --fc-border-color: var(--border);

@@ -75,7 +75,7 @@ function MarkedItem({ workspaceId, scope }: { workspaceId: string; scope: Travel
           values={{
             title: scope.title,
             weekday: weekdayName(scope.weekday, dateLocale(language)),
-            time: scope.startTime,
+            time: `⁦${scope.startTime}⁩`,
           }}
           components={{ name: <bdi className="font-medium" /> }}
         />

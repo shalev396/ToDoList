@@ -257,7 +257,7 @@ export function ItemTravelSection({
           <p className="text-[13px] text-muted-foreground">
             {t('travel.add.scopeRepeats', {
               weekday: weekdayName(repeatsRule.scope.weekday, dateLocale(language)),
-              time: repeatsRule.scope.startTime,
+              time: `⁦${repeatsRule.scope.startTime}⁩`,
             })}
           </p>
         </div>
