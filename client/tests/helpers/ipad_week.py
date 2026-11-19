@@ -5,8 +5,10 @@ where he put them), with the week that broke: lectures, a 15-minute meeting that
 lecture after it and one inside a lecture, a 10-minute break that ends when a lecture starts, two
 events at the same times, an area and a bus there.
 
-Everything is seeded through the API (requests) into a fresh workspace on Asia/Jerusalem, in this
-week (weeks start on Sunday), so the week calendar opens on it.
+Everything is seeded through the API (requests) into a fresh workspace on Asia/Jerusalem, in NEXT
+week (weeks start on Sunday): the planner never makes a trip whose start has passed, so a trip in
+this week would be missing from Thursday 07:50 on. Next week's Thursday is at most 11 days away
+(inside the 14-day horizon) on any weekday, and the test clicks Next once (`show_seeded_week`).
 """
 from typing import Optional
 
@@ -106,8 +108,8 @@ def summary_dashboard(api_base_url: str, user, workspace_id: str) -> dict:
 
 
 def seed_week(page: Page, api_base_url: str, user, workspace_id: str) -> dict:
-    """His week, this week. Returns the days used (`YYYY-MM-DD`): monday, wednesday, thursday."""
-    sunday = this_sunday(page)
+    """His week, next week. Returns the days used (`YYYY-MM-DD`): monday, wednesday, thursday."""
+    sunday = add_days(this_sunday(page), 7)
     monday, wednesday, thursday = add_days(sunday, 1), add_days(sunday, 3), add_days(sunday, 4)
 
     def todo(title: str, day: str, start: str, end: str, topic: str = "college") -> dict:
@@ -156,6 +158,11 @@ def seed_week(page: Page, api_base_url: str, user, workspace_id: str) -> dict:
         there={"minutes": 40},
     )
     return {"monday": monday, "wednesday": wednesday, "thursday": thursday}
+
+
+def show_seeded_week(calendar) -> None:
+    """The calendar opens on this week; the seeded one is the next (Hebrew UI: "הבא")."""
+    calendar.get_by_role("button", name="הבא", exact=True).click()
 
 
 def box(locator) -> dict:

@@ -35,6 +35,7 @@ from tests.helpers.ipad_week import (
     box,
     ipad_context,
     seed_week,
+    show_seeded_week,
     summary_dashboard,
 )
 from tests.helpers.workspaces import open_as
@@ -58,6 +59,7 @@ def _open_week(page: Page, base_url: str, api_base_url: str, fresh_owner) -> tup
     open_as(page, base_url, user, "/he/dashboard")
     calendar = page.locator("[data-calendar-view='week']")
     expect(calendar).to_be_visible(timeout=NORMAL_TIMEOUT)
+    show_seeded_week(calendar)
     calendar.scroll_into_view_if_needed()
     expect(calendar.locator(".fc-timegrid-event", has_text=INTRO)).to_have_count(
         2, timeout=NORMAL_TIMEOUT
