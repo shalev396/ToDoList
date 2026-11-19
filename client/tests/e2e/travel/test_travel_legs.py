@@ -86,7 +86,6 @@ def _show_day_in_week(page: Page, day: str) -> None:
         page.locator("[data-calendar-view]").get_by_role("button", name="Next", exact=True).click()
 
 
-@pytest.mark.xfail(strict=True, reason=DEFERRED)
 def test_leg_sheet_edit_skip_reset(page: Page, base_url: str, api_base_url: str, fresh_owner):
     user, workspace, _, braude, _, tomorrow = _seed(api_base_url, fresh_owner, page, base_url)
     wid = workspace["id"]
@@ -200,7 +199,6 @@ def test_leg_sheet_edit_skip_reset(page: Page, base_url: str, api_base_url: str,
     assert day["removed"] == []
 
 
-@pytest.mark.xfail(strict=True, reason=DEFERRED)
 def test_cancelled_anchor_shows_reason_in_day_panel(
     page: Page, base_url: str, api_base_url: str, fresh_owner
 ):
@@ -241,7 +239,6 @@ def test_cancelled_anchor_shows_reason_in_day_panel(
     )
 
 
-@pytest.mark.xfail(strict=True, reason=DEFERRED)
 def test_conflict_marked(page: Page, base_url: str, api_base_url: str, fresh_owner):
     user, workspace, _, braude, tlvtech, tomorrow = _seed(api_base_url, fresh_owner, page, base_url)
     wid = workspace["id"]
@@ -300,9 +297,14 @@ def test_conflict_marked(page: Page, base_url: str, api_base_url: str, fresh_own
     marked = calendar.locator(".fc-event.tc-travel[data-conflict='true']")
     expect(marked).to_have_count(1, timeout=NORMAL_TIMEOUT)
     expect(marked).to_contain_text("Drive to TLVTech")
-    expect(marked).to_have_attribute("aria-label", re.compile(r"You can’t make it$"))
+    # No length was set for this trip, so its label goes on from the conflict to "Set how long".
+    expect(marked).to_have_attribute(
+        "aria-label", re.compile(r"You can’t make it.*Set how long$")
+    )
     expect(calendar.locator(".fc-event.tc-travel[data-conflict='false']")).to_have_count(1)
-    marked.click()
+    # The trip (15:00, 30 min as shown) overlaps the meeting it can't reach (15:15): its first
+    # minutes are the part nothing covers.
+    marked.click(position={"x": 4, "y": 4})
     flag = page.locator("[data-item-sheet] [data-leg-flag='conflict']")
     expect(flag).to_contain_text("You can’t make it")
 

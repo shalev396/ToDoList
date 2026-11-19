@@ -198,7 +198,6 @@ def test_area_form_offers_travel_and_marks_the_new_area(
     assert list_rules(api_base_url, user, workspace["id"]) == []
 
 
-@pytest.mark.xfail(strict=True, reason=DEFERRED)
 def test_area_sheet_marks_travel_and_a_gym_block_inside_gets_its_own_legs(
     page: Page, base_url: str, api_base_url: str, fresh_owner
 ):

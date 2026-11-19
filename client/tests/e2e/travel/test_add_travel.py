@@ -200,7 +200,6 @@ def test_new_todo_with_travel_starts_at_its_time_and_is_marked(
     assert set(trips[2:]) <= {("drive", braude["id"])}, trips
 
 
-@pytest.mark.xfail(strict=True, reason=DEFERRED)
 def test_new_todo_leg_shows_before_it_in_calendar(
     page: Page, base_url: str, api_base_url: str, fresh_owner
 ):
@@ -647,7 +646,6 @@ def test_moved_occurrence_shows_its_mark(page: Page, base_url: str, api_base_url
     assert list_rules(api_base_url, user, workspace["id"]) == []
 
 
-@pytest.mark.xfail(strict=True, reason=DEFERRED)
 def test_series_every_occurrence_makes_legs_each_week(
     page: Page, base_url: str, api_base_url: str, demo_owner
 ):

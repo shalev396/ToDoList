@@ -232,7 +232,6 @@ DEFERRED_LEGS = (
 )
 
 
-@pytest.mark.xfail(strict=True, reason=DEFERRED_LEGS)
 def test_next_14_days_counts_stored_legs_and_removals(
     page: Page, base_url: str, api_base_url: str, fresh_owner
 ):
