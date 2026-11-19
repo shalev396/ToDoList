@@ -47,7 +47,7 @@ Owner: "add so I can edit if I walk or take the bus on each event, so it will af
 - Server: `TravelSetup.changeLegMode(legId, { mode, scope })`, scope `this` | `repeats`. It marks the leg's anchor event (`TravelRule.markItem`) with the new mode, keeping the direction and place of the rule that makes the leg now (resolve it as `TravelAnchors` does: item mark, else series mark, else the oldest matching where-rule; place: that rule's place, else the leg's event-side place).
   - `this`: the anchor occurrence only.
   - `repeats`: a repeating anchor → every occurrence (series mark). A non-repeating anchor (his Braude timetable is imported as single events) → it and every later event in the same container with the same title, same weekday and same local start time; all marks stored, then one regeneration (never one per event).
-  - REST `POST …/travel/legs/:id/mode`; MCP `travel_edit_leg` gains `mode` and `every`.
+  - REST `PUT …/travel/legs/:id/mode`; MCP `travel_edit_leg` gains `mode` and `every`.
 - Client: in the trip sheet, "How you go" becomes a Walk / Bus / Drive choice. Changing it asks "Only this day" / "Every repeat" (reuse `EveryOccurrenceDialog` style), saves, and the calendar refreshes. The event's own sheet keeps its travel section.
 - Fix the trip sheet overflow at iPad sizes (no horizontal scroll; time inputs fit).
 - e2e: change a trip to walk for this day, then for every repeat; screenshots at iPad size.
