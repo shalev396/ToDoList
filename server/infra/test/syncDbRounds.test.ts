@@ -107,4 +107,29 @@ describe('sync-db rounds', () => {
       /sync-db failed/,
     );
   });
+
+  it('fails closed on an answer it cannot read: not JSON, or without a boolean done', async () => {
+    const notJson = { functionError: undefined, payload: '{"statusCode":200,"body":"oops"}' };
+    await assert.rejects(
+      runRounds(fake([notJson]).invoke, () => undefined),
+      /not JSON/,
+    );
+    const noBody = { functionError: undefined, payload: '{"statusCode":200}' };
+    await assert.rejects(
+      runRounds(fake([noBody]).invoke, () => undefined),
+      /not JSON/,
+    );
+    for (const body of ['{"results":[]}', '{"done":"yes"}', '{"done":null}']) {
+      const response = {
+        functionError: undefined,
+        payload: JSON.stringify({ statusCode: 200, body }),
+      };
+      const { invoke, calls } = fake([response]);
+      await assert.rejects(
+        runRounds(invoke, () => undefined),
+        /without a boolean done/,
+      );
+      assert.equal(calls(), 1);
+    }
+  });
 });

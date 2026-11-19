@@ -34,17 +34,24 @@ function parse(payload: string): { statusCode?: unknown; body?: string } {
   }
 }
 
-/** The answer's `done` and `pending`; `done` is true when the function does not say (an old one). */
+/**
+ * The answer's `done` and `pending`. Fails closed: a body that does not parse, or has no boolean
+ * `done`, throws, so a deploy never goes on with pending migrations unseen.
+ */
 function parseAnswer(body: string | undefined): { done: boolean; pending: string[] } {
+  let answer: { done?: unknown; pending?: unknown };
   try {
-    const answer = JSON.parse(body ?? '') as { done?: unknown; pending?: unknown };
-    const pending = Array.isArray(answer.pending)
-      ? answer.pending.filter((id): id is string => typeof id === 'string')
-      : [];
-    return { done: answer.done !== false, pending };
+    answer = JSON.parse(body ?? '') as { done?: unknown; pending?: unknown };
   } catch {
-    return { done: true, pending: [] };
+    throw new Error('sync-db answered a body that is not JSON: cannot tell whether it is done');
   }
+  if (typeof answer.done !== 'boolean') {
+    throw new Error('sync-db answered without a boolean done: cannot tell whether it is done');
+  }
+  const pending = Array.isArray(answer.pending)
+    ? answer.pending.filter((id): id is string => typeof id === 'string')
+    : [];
+  return { done: answer.done, pending };
 }
 
 /**
