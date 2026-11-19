@@ -3,9 +3,11 @@
  * deadline, message or pull request. `Item` is the abstract base, and with `ItemQuery` the only
  * code that reads or writes items.
  *
- * - `Item.from(data)` is the polymorphic factory: a local to-do is a `Todo`; a mirrored item is a
- *   `CalendarEvent`, a `PullRequest` or a `TaskItem` (`MirroredItem`s). Each subclass registers
- *   itself (classes/item/index.ts loads them all), so import the item classes from there.
+ * - `Item.from(data)` is the polymorphic factory: a local to-do is a `Todo`; TodoList's own
+ *   reserved time is a `ScheduledItem` (a `TimeBlock`, a `TimeArea` or a `TravelLeg`, by kind and
+ *   layer), never a `Todo`; a mirrored item is a `CalendarEvent`, a `PullRequest` or a `TaskItem`
+ *   (`MirroredItem`s). Each subclass registers itself (classes/item/index.ts loads them all), so
+ *   import the item classes from there.
  * - What an item reads as is its effective value (`override ?? source`, Overrides): its getters,
  *   its views and every query (ItemQuery projects it).
  * - Every change starts from an item the caller may see (ItemPolicy: share-on-attach), found by
@@ -20,6 +22,9 @@ import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { ItemPolicy, type ItemFacts } from '../policies/ItemPolicy.js';
 import { AttributeDefinitions } from '../workspace/AttributeDefinitions.js';
 import { Topic } from '../workspace/Topic.js';
+import { MirroredItemError } from '../../errors/MirroredItemError.js';
+import { NotCompletableError } from '../../errors/NotCompletableError.js';
+import { NotDeletableError } from '../../errors/NotDeletableError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import type { ItemData, ItemOverlayPatch } from '../../models/definitions/Item.js';
 import { getItemRepository } from '../../models/index.js';
@@ -27,7 +32,9 @@ import { scrub } from '../../services/scrub.js';
 import { redactString } from '../../services/secretPatterns.js';
 import type { ItemKind, ItemStatus, Provider, Visibility } from '../../types/domain.js';
 import type { ItemDetail, ItemSummary } from '../../types/items.js';
+import { layerOf } from '../../types/scheduled.js';
 import { AttributeValues } from './AttributeValues.js';
+import { isCompletable, isDeletable, type Completable, type Deletable } from './contracts.js';
 import { Copies, type LiveStatuses } from './Copies.js';
 import { DueDate } from './DueDate.js';
 import type { ItemEdit, ProviderHalf } from './ItemEdit.js';
@@ -37,7 +44,7 @@ import { Overlay, type OverlayEdit } from './Overlay.js';
 import type { OverridableValues } from './Overrides.js';
 
 /** Which class stands for a stored item. */
-export type ItemClassName = 'todo' | 'task' | 'pr' | 'event';
+export type ItemClassName = 'todo' | 'task' | 'pr' | 'event' | 'block' | 'area' | 'travel';
 
 /** Makes one subclass from stored data (its constructor, wrapped). */
 export type ItemFactory = (data: ItemData) => Item;
@@ -69,9 +76,17 @@ export abstract class Item
     Item.#factories.set(name, factory);
   }
 
-  /** Which class a stored item is: a local to-do, or a mirrored event, pull request or task. */
-  static classOf(data: Pick<ItemData, 'kind' | 'source'>): ItemClassName {
-    if (data.source.provider === 'local') return 'todo';
+  /**
+   * Which class a stored item is. A local item is a travel leg (kind `travel`), an area (kind
+   * `block` with `props.layer: 'area'`), a time block (any other `block`) or else a to-do. A
+   * mirrored item is an event, a pull request or a task.
+   */
+  static classOf(data: Pick<ItemData, 'kind' | 'source' | 'props'>): ItemClassName {
+    if (data.source.provider === 'local') {
+      if (data.kind === 'travel') return 'travel';
+      if (data.kind === 'block') return layerOf(data) === 'area' ? 'area' : 'block';
+      return 'todo';
+    }
     if (data.kind === 'event') return 'event';
     if (data.kind === 'pr') return 'pr';
     return 'task';
@@ -163,7 +178,7 @@ export abstract class Item
 
   // ─── What every item is ───────────────────────────────────────────────────
 
-  /** A local to-do (TodoList's own), or mirrored from a provider. */
+  /** TodoList's own (a to-do, a time block, a travel leg), or mirrored from a provider. */
   abstract readonly isLocal: boolean;
 
   get kind(): ItemKind {
@@ -223,6 +238,14 @@ export abstract class Item
     return this.data.containerId;
   }
 
+  /** Where it happens, as its location text says (trimmed); null when it has none. */
+  get location(): string | null {
+    const location = this.data.props['location'];
+    if (typeof location !== 'string') return null;
+    const trimmed = location.trim();
+    return trimmed === '' ? null : trimmed;
+  }
+
   get ownerUserId(): string | null {
     return this.data.ownerUserId;
   }
@@ -263,8 +286,16 @@ export abstract class Item
 
   /** What ItemPolicy reads of it. */
   get facts(): ItemFacts {
-    const { workspaceId, integrationId, ownerUserId, visibility, topicId, deletedAt, source } =
-      this.data;
+    const {
+      workspaceId,
+      integrationId,
+      ownerUserId,
+      visibility,
+      topicId,
+      deletedAt,
+      source,
+      kind,
+    } = this.data;
     return {
       workspaceId,
       integrationId,
@@ -273,7 +304,30 @@ export abstract class Item
       topicId,
       deletedAt,
       source: { provider: source.provider, url: source.url },
+      kind,
     };
+  }
+
+  /**
+   * This item, to complete (`POST …/complete`, MCP `complete_todo`): a mirrored item is completed
+   * at its source (the mirrored 409 with its link); scheduled time has no status (409
+   * `not_completable`).
+   */
+  completable(): Item & Completable<Item> {
+    if (!this.isLocal) throw new MirroredItemError(this.provider, this.sourceUrl);
+    if (!isCompletable(this)) throw new NotCompletableError();
+    return this;
+  }
+
+  /**
+   * This item, to delete (`DELETE …/items/:id`, MCP `delete_todo`): a mirrored item is deleted at
+   * its source (the mirrored 409 with its link); a travel leg is skipped, never deleted (409
+   * `not_deletable`).
+   */
+  deletable(): Item & Deletable {
+    if (!this.isLocal) throw new MirroredItemError(this.provider, this.sourceUrl);
+    if (!isDeletable(this)) throw new NotDeletableError();
+    return this;
   }
 
   /** Whether the caller may see it (ItemPolicy). */

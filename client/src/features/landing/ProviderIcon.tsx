@@ -1,31 +1,9 @@
-import {
-  siClickup,
-  siGithub,
-  siGooglecalendar,
-  siJira,
-  siLinear,
-  siModelcontextprotocol,
-  siMoodle,
-} from 'simple-icons';
 import { cn } from '@/lib/utils';
-import type { Provider } from '@/components/items/types';
+import { SOURCE_GLYPHS, type IconName } from '@/components/items/sourceIcons';
 
-/**
- * Brand marks from Simple Icons (CC0), drawn in the current text colour and used only to name an
- * integration. Importing them by name keeps every other icon out of the bundle.
- */
-const ICONS = {
-  moodle: siMoodle,
-  google_calendar: siGooglecalendar,
-  jira: siJira,
-  clickup: siClickup,
-  linear: siLinear,
-  github: siGithub,
-  mcp: siModelcontextprotocol,
-} as const;
+export type { IconName };
 
-export type IconName = Exclude<Provider, 'local'> | 'mcp';
-
+/** A brand mark (components/items/sourceIcons.ts), drawn in the current text colour. */
 export function ProviderIcon({
   name,
   className,
@@ -40,7 +18,7 @@ export function ProviderIcon({
       focusable="false"
       className={cn('size-5 shrink-0 fill-current', className)}
     >
-      <path d={ICONS[name].path} />
+      <path d={SOURCE_GLYPHS[name]} />
     </svg>
   );
 }

@@ -30,16 +30,8 @@ import { useDataBlock } from './data/useDataBlock';
 import { topicLabel } from '@/features/workspaces/topics';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { usePageVars } from '../variables/pageVars';
-
-const SLOT_COUNT = 7;
-
-/** Source colours by provider (colour follows the source); anything else takes the slots in order. */
-function segmentColor(segment: Segment, index: number): string {
-  if (segment.provider !== undefined) {
-    return `var(--color-source-${segment.provider.replaceAll('_', '-')})`;
-  }
-  return `var(--chart-${String((index % SLOT_COUNT) + 1)})`;
-}
+import { useTopicFamily } from '@/features/colours/useColours';
+import { segmentColor } from './data/segmentColor';
 
 const reducedQuery = '(prefers-reduced-motion: reduce)';
 function subscribeMotion(onChange: () => void): () => void {
@@ -86,7 +78,7 @@ function ChartTooltip({
 
 /**
  * Chart (FRONTEND.md §5): donut, bar, line or a single number from a groupBy + count query.
- * Source colours, one axis, thin marks. The legend chips are buttons: one sets the block's
+ * A topic's colour family (the source's colour when grouped by source), one axis, thin marks. The legend chips are buttons: one sets the block's
  * `emits.onSegmentClick` variable and opens the segment's items in a Sheet. A visually hidden
  * table carries the same numbers for screen readers.
  */
@@ -96,6 +88,7 @@ const LEGEND_VISIBLE = 6;
 export default function ChartBlock({ dashboard, block }: BlockComponentProps) {
   const { t, i18n } = useTranslation();
   const { topics } = useCurrentWorkspace();
+  const topicFamily = useTopicFamily();
   const { query, loadState, now, timeZone, vars } = useDataBlock(dashboard, block);
   const { setVar, clearVar, bound } = usePageVars();
   const reducedMotion = useReducedMotion();
@@ -135,7 +128,7 @@ export default function ChartBlock({ dashboard, block }: BlockComponentProps) {
   const data: Datum[] = segments.map((segment, index) => ({
     name: nameOf(segment),
     value: segment.value,
-    fill: segmentColor(segment, index),
+    fill: segmentColor(segment, index, topicFamily),
     key: segment.key,
   }));
 
@@ -281,7 +274,7 @@ export default function ChartBlock({ dashboard, block }: BlockComponentProps) {
         <span
           aria-hidden="true"
           className="size-2 shrink-0 rounded-full"
-          style={{ background: segmentColor(segment, index) }}
+          style={{ background: segmentColor(segment, index, topicFamily) }}
         />
         <span className={cn('truncate', row ? 'min-w-0 flex-1 text-start' : 'max-w-28')}>
           {name}

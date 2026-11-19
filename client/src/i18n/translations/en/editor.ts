@@ -81,6 +81,8 @@ export const editor = {
     file: 'Files',
     message: 'Messages',
     pr: 'Pull requests',
+    block: 'Time blocks',
+    travel: 'Travel',
   },
   filter: {
     viewNote: 'A saved view brings its own filter and grouping.',
@@ -214,6 +216,7 @@ export const editor = {
       columns: 'Columns',
       view: 'Calendar view',
       allowMonth: 'Allow month view',
+      startHour: 'Opens at hour',
       showTotal: 'Show the total',
       legend: 'Legend',
       needle: 'Needle',

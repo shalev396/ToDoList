@@ -212,6 +212,10 @@ describe('mapCalendarEvent', () => {
       'RRULE:FREQ=WEEKLY;COUNT=12',
     ]);
     assert.deepEqual(recurrence, ['RRULE:FREQ=WEEKLY;COUNT=12', 'EXDATE:20261119T080000Z']);
+    // When the series is over: the end of its 12th Thursday, 28 Jan 08:30–10:20 in Jerusalem.
+    assert.equal(master.props['recurrenceEnd'], '2027-01-28T08:20:00.000Z');
+    const endless = mapLive(event({ id: 'dsweekly002', recurrence: ['RRULE:FREQ=WEEKLY'] }));
+    assert.equal(endless.props?.['recurrenceEnd'], null);
 
     const moved = mapLive(
       event({
@@ -226,6 +230,8 @@ describe('mapCalendarEvent', () => {
       [moved.props?.['recurringEventId'], moved.props?.['originalStartAt'], moved.startAt],
       ['dsweekly001', '2026-11-06T08:00:00.000Z', new Date('2026-11-06T11:00:00.000Z')],
     );
+    // Only a master has an end; an exception is read by its own times.
+    assert.equal(Object.hasOwn(moved.props ?? {}, 'recurrenceEnd'), false);
 
     // A cancelled instance may carry only its id, series and original start. It stays live (an
     // item, not a delete-only record), so the client can hide that one occurrence of the series.

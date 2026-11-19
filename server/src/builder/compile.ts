@@ -43,7 +43,7 @@ import {
 import { BUILTIN_IMPORTANCE_DEFAULT, BUILTIN_IMPORTANCE_KEY } from '../types/attributes.js';
 import type { AttributeDef } from '../types/attributes.js';
 import type { ImportanceConfig } from '../types/importance.js';
-import { ITEM_STATUSES } from '../types/domain.js';
+import { ITEM_STATUSES, SCHEDULED_KINDS } from '../types/domain.js';
 import {
   lookupField,
   storedPath,
@@ -101,14 +101,19 @@ export interface CompileContext {
   fieldRegistry?: ReadonlyMap<string, FieldType>;
   /** The page's importance preset; Weighted with the defaults when absent. */
   importance?: ImportanceConfig;
+  /**
+   * The server's own drafts only (ItemQuery#runDraft), never a request: the rows to read, past
+   * the public cap (CAPS.maxLimit), in place of the query's limit.
+   */
+  rowLimit?: number;
 }
 
 export interface CompiledQuery {
   collection: 'Items' | 'Containers';
   /**
-   * `$match` base filter, then (items) `$addFields` of the effective values, then `$match` of the
-   * query's filters (when it has any), then one `$facet`: `total` (`[{count}]`) plus `rows`
-   * and/or `groups`.
+   * `$match` base filter, then (task-shaped items) a `$match` that leaves reserved time out, then
+   * (items) `$addFields` of the effective values, then `$match` of the query's filters (when it
+   * has any), then one `$facet`: `total` (`[{count}]`) plus `rows` and/or `groups`.
    */
   pipeline: PipelineStage[];
   warnings: string[];
@@ -232,6 +237,47 @@ export function parseQuery(input: unknown): Query {
 }
 
 /**
+ * The block types whose results are time (docs/superpowers/specs/2026-11-17-time-blocks-design.md,
+ * Decision 7): they always hold time blocks, areas and travel legs, read repeating series that
+ * began before their range, and read up to the row cap. Every other block type, and a query with
+ * no block type, is task-shaped: it leaves reserved time out unless a rule on `kind` asks for it.
+ */
+export const TIME_SHAPED_BLOCKS: ReadonlySet<BlockType> = new Set<BlockType>([
+  'calendar',
+  'clock',
+  'timeline',
+  'agenda',
+  'workload',
+]);
+
+function isTimeShaped(blockType: BlockType | undefined): boolean {
+  return blockType !== undefined && TIME_SHAPED_BLOCKS.has(blockType);
+}
+
+/**
+ * True when the group has a rule on `kind`, at any depth (under `not` too). Only a rule that
+ * applies and positively names `block` or `travel` lifts a task-shaped result's default
+ * (compileQuery); a negated one, or one naming other kinds, keeps reserved time out.
+ */
+export function namesKind(group: RuleGroup | undefined): boolean {
+  if (group === undefined) return false;
+  return group.rules.some((node) =>
+    'combinator' in node ? namesKind(node) : node.field === 'kind',
+  );
+}
+
+/** What a task-shaped result leaves out: TodoList's reserved time, which is not work. */
+const TASK_SHAPED_SCOPE: Filter = { kind: { $nin: [...SCHEDULED_KINDS] } };
+
+/** The kinds a compiled `=` or `in` rule on `kind` asks for (`{kind: 'x'}`, `{kind: {$in}}`). */
+function kindsAskedFor(filter: Filter): unknown[] {
+  const value = filter['kind'];
+  if (typeof value === 'string') return [value];
+  const list = typeof value === 'object' && value !== null ? (value as Filter)['$in'] : undefined;
+  return Array.isArray(list) ? list : [];
+}
+
+/**
  * The dateField a query gets when it names none, matching each block type's catalog default:
  * calendars show start times or, without one, due dates (`any`); clocks show start times; every
  * other block, due dates.
@@ -283,6 +329,13 @@ class Compilation {
   usesImportance = false;
   /** Attributes read by the query that default when unset (the built-in Importance). */
   readonly defaultedAttributes = new Set<string>();
+  /**
+   * Set when a rule asks for reserved time: an `=` or `in` on `kind` whose value (given, or its
+   * variable's) includes `block` or `travel`, under no `not` (or an even number of them).
+   */
+  asksForScheduled = false;
+  /** How many `not` groups the rule being compiled sits under. */
+  private negations = 0;
 
   // Plain fields, not constructor parameter properties: the client type-checks this file through
   // @api-types with `erasableSyntaxOnly`, which forbids parameter properties.
@@ -446,6 +499,20 @@ class Compilation {
   }
 
   rule(rule: Rule, pointer: string): Filter | null {
+    const filter = this.ruleFilter(rule, pointer);
+    if (
+      filter !== null &&
+      rule.field === 'kind' &&
+      (rule.operator === '=' || rule.operator === 'in') &&
+      this.negations % 2 === 0 &&
+      kindsAskedFor(filter).some((kind) => (SCHEDULED_KINDS as readonly unknown[]).includes(kind))
+    ) {
+      this.asksForScheduled = true;
+    }
+    return filter;
+  }
+
+  private ruleFilter(rule: Rule, pointer: string): Filter | null {
     const { operator } = rule;
     const spec = this.field(rule.field, `${pointer}/field`);
     const field = storedPath(rule.field, spec);
@@ -581,12 +648,15 @@ class Compilation {
 
   group(group: RuleGroup, pointer: string): Filter | null {
     const filters: Filter[] = [];
+    const negated = group.not === true;
+    if (negated) this.negations += 1;
     group.rules.forEach((node, index) => {
       const nodePointer = `${pointer}/rules/${String(index)}`;
       const filter =
         'combinator' in node ? this.group(node, nodePointer) : this.rule(node, nodePointer);
       if (filter !== null) filters.push(filter);
     });
+    if (negated) this.negations -= 1;
     const combined = combine(filters, group.combinator === 'and' ? '$and' : '$or');
     if (combined === null) return null;
     return group.not === true ? { $nor: [combined] } : combined;
@@ -601,14 +671,35 @@ class Compilation {
       ({ value, label } = resolved);
     }
     const { from, to } = this.bounds(value, '/dateRange', label);
-    if (field !== 'any') return { [field]: { $gte: from, $lt: to } };
-    // A start in range, or no start (null or missing) and a due date in range.
-    return {
-      $or: [
-        { startAt: { $gte: from, $lt: to } },
-        { startAt: null, dueAt: { $gte: from, $lt: to } },
-      ],
-    };
+    const window = (): Filter => ({ $gte: from, $lt: to });
+    if (field === 'dueAt') return { dueAt: window() };
+    // A start in range; for `any`, also no start (null or missing) and a due date in range.
+    const dated: Filter[] =
+      field === 'startAt'
+        ? [{ startAt: window() }]
+        : [{ startAt: window() }, { startAt: null, dueAt: window() }];
+    // A time view also reads a series (a Google master or a local one: its first RRULE line in
+    // `props.recurrence`) that began before the range and has not ended before it
+    // (`props.recurrenceEnd`, ISO; none: it never ends). The expansion (types/recurrence) keeps
+    // the occurrences that fall in the range, so a weekly lecture or study block that started
+    // weeks ago shows every week (plan ruling 4). And a Google occurrence moved out of the range
+    // whose original slot is in it (`props.originalStartAt`, ISO): the expansion takes that slot
+    // out of its series, so no ghost of it stays where it was (B-161; travel reads through this
+    // too, so no leg is made for it either). A task view reads rows by their own dates only.
+    const series = isTimeShaped(this.ctx.blockType)
+      ? [
+          {
+            'props.recurrence.0': { $type: 'string' },
+            startAt: { $lt: to },
+            $or: [
+              { 'props.recurrenceEnd': null },
+              { 'props.recurrenceEnd': { $gte: from.toISOString() } },
+            ],
+          },
+          { 'props.originalStartAt': { $gte: from.toISOString(), $lt: to.toISOString() } },
+        ]
+      : [];
+    return combine([...dated, ...series], '$or');
   }
 
   /** Group fields, checked: whitelisted and not lists. */
@@ -820,7 +911,14 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
   const value = compilation.accumulator(aggregate);
   const facet: Record<string, PipelineStage[]> = { total: [{ $count: 'count' }] };
   if (aggregate === undefined) {
-    const rowLimit = Math.min(parsed.limit ?? DEFAULT_ROW_LIMIT, CAPS.maxLimit);
+    // A time view reads up to the cap when it names no limit: one series row stands for many
+    // occurrences, and a week of events should not be cut at 50.
+    const rowLimit =
+      ctx.rowLimit ??
+      Math.min(
+        parsed.limit ?? (isTimeShaped(ctx.blockType) ? CAPS.maxLimit : DEFAULT_ROW_LIMIT),
+        CAPS.maxLimit,
+      );
     facet['rows'] = compilation.rowStages(
       parsed.sort ?? DEFAULT_SORT[source] ?? [],
       capForPreview(rowLimit, ctx),
@@ -876,8 +974,15 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
     source === 'items' && filter !== null
       ? Overrides.prefilter(filter, (field) => Object.hasOwn(computed, field))
       : null;
+  // A task-shaped result (Decision 7) leaves out time blocks, areas and travel legs, unless a rule
+  // asks for them by name (`kind = block`, `kind in [block, travel]`; never `kind != event`); a
+  // time-shaped block always reads them. `kind` is stored as it reads (no override), so this
+  // narrows before the projection.
+  const taskShaped =
+    source === 'items' && !isTimeShaped(ctx.blockType) && !compilation.asksForScheduled;
   const pipeline: PipelineStage[] = [
     { $match: base },
+    ...(taskShaped ? [{ $match: TASK_SHAPED_SCOPE }] : []),
     ...(prefilter === null ? [] : [{ $match: prefilter }]),
     // The effective values right after the access filter: everything below reads them.
     ...(source === 'items' ? [{ $addFields: Overrides.projection() }] : []),

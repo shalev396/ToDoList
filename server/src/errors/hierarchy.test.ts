@@ -9,6 +9,9 @@ import { FieldNotWritableError } from './FieldNotWritableError.js';
 import { ConflictError } from './ConflictError.js';
 import { ForbiddenError } from './ForbiddenError.js';
 import { MirroredItemError } from './MirroredItemError.js';
+import { NotAnOccurrenceError } from './NotAnOccurrenceError.js';
+import { NotCompletableError } from './NotCompletableError.js';
+import { NotDeletableError } from './NotDeletableError.js';
 import { NotFoundError } from './NotFoundError.js';
 import { ProviderComingSoonError } from './ProviderComingSoonError.js';
 import { ProviderItemMissingError } from './ProviderItemMissingError.js';
@@ -36,6 +39,9 @@ describe('the error hierarchy', () => {
       [new ProviderItemMissingError('jira'), 404, 'provider_item_missing'],
       [new EventHasGuestsError(), 409, 'event_has_guests'],
       [new CalendarNotPrimaryError('i-1'), 409, 'calendar_not_primary'],
+      [new NotCompletableError(), 409, 'not_completable'],
+      [new NotDeletableError(), 409, 'not_deletable'],
+      [new NotAnOccurrenceError(), 400, 'not_an_occurrence'],
     ];
     for (const [error, status, code] of cases) {
       assert.ok(error instanceof AppError, error.name);
@@ -56,6 +62,13 @@ describe('the error hierarchy', () => {
       new MirroredItemError('jira', 'u').message,
       'This item is mirrored from its source: edit it there',
     );
+    assert.equal(new NotCompletableError().message, 'A time block or travel has no status');
+    assert.equal(new NotDeletableError().message, 'Travel is skipped, not deleted');
+    assert.equal(
+      new NotAnOccurrenceError().message,
+      'originalStart: not an occurrence of this time block',
+    );
+    assert.ok(new NotAnOccurrenceError() instanceof ValidationError);
   });
 
   it('a role refusal reads "Only an owner" or "Only an editor"', () => {

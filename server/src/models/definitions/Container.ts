@@ -83,6 +83,14 @@ export interface IContainerRepository {
   ): Promise<SourceDeleteResult>;
   /** A topic was deleted: its containers become Unsorted (`topicId: null`). Returns how many. */
   unsetTopic(workspaceId: string, topicId: string): Promise<number>;
+  /**
+   * Files containers under topics (File under): each live one named by `id` gets its `topicId`,
+   * in one write; the ones that already have it are not counted. Returns how many changed.
+   */
+  setTopics(
+    workspaceId: string,
+    changes: readonly { id: string; topicId: string | null }[],
+  ): Promise<number>;
   /** Sets `deletedAt` on every container of the workspace (workspace deletion). Returns how many. */
   softDeleteForWorkspace(workspaceId: string): Promise<number>;
   /**

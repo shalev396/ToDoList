@@ -20,6 +20,7 @@ import type {
 } from '../../models/definitions/Topic.js';
 import { getTopicRepository, getWorkspaceRepository } from '../../models/index.js';
 import { sha256Hex } from '../../services/crypto/hashing.js';
+import { nextFamily } from '../../types/colours.js';
 import {
   DEFAULT_TOPICS,
   TOPIC_COLOURS,
@@ -217,6 +218,7 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
     const existing = await repository.list(workspaceId);
     const taken = new Set(existing.map((topic) => topic.slug));
     let order = existing.reduce((max, topic) => Math.max(max, topic.order), -1);
+    const families: (TopicColour | null)[] = existing.map((topic) => topic.colour);
     const missing: CreateTopicRow[] = [];
     for (const slug of slugs) {
       if (taken.has(slug)) continue;
@@ -224,11 +226,14 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
       if (topic === undefined) continue;
       order += 1;
       taken.add(slug);
+      const colour = nextFamily(families);
+      families.push(colour);
       missing.push({
         id: Topic.defaultId(workspaceId, slug),
         name: topic.names[language],
         slug,
         icon: topic.icon,
+        colour,
         order,
       });
     }
@@ -284,7 +289,7 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
             name,
             slug,
             icon: input.icon ?? null,
-            colour: input.colour ?? null,
+            colour: input.colour ?? nextFamily(existing.map((topic) => topic.colour)),
             order,
             createdBy: caller.userId,
           }),
@@ -341,16 +346,23 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
   static async update(caller: Caller, topicId: string, input: UpdateTopicInput): Promise<Topic> {
     assertEditor(caller, 'edit pages');
     assertLook(input);
+    const repository = await getTopicRepository();
     const patch: TopicPatch = {};
     if (input.name !== undefined) patch.name = normalizeName(input.name);
     if (input.icon !== undefined) patch.icon = input.icon;
-    if (input.colour !== undefined) patch.colour = input.colour;
+    if (input.colour === null) {
+      // "Assign automatically": the next family the workspace's other topics leave unused.
+      const others = (await repository.list(caller.workspaceId)).filter(
+        (topic) => topic.id !== topicId,
+      );
+      patch.colour = nextFamily(others.map((topic) => topic.colour));
+    } else if (input.colour !== undefined) patch.colour = input.colour;
     if (input.order !== undefined) {
       if (!Number.isInteger(input.order)) throw new AppError(400, 'order must be a whole number');
       patch.order = input.order;
     }
     if (Object.keys(patch).length === 0) throw new AppError(400, 'Nothing to change');
-    const updated = await (await getTopicRepository()).update(caller.workspaceId, topicId, patch);
+    const updated = await repository.update(caller.workspaceId, topicId, patch);
     if (updated === null) throw new AppError(404, 'Not found');
     const topic = new Topic(updated);
     await AuditLog.record(caller, 'topic.update', topic.auditTarget(), {

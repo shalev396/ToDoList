@@ -47,6 +47,7 @@ import {
   type CreateFailure,
   type CreateTarget,
 } from '../../types/providerCreate.js';
+import { isScheduledKind } from '../../types/scheduled.js';
 import { Copies } from './Copies.js';
 import { CreateQuota } from './CreateQuota.js';
 import { MirroredItem } from './MirroredItem.js';
@@ -373,7 +374,11 @@ export class TodoCopy {
     if (!claimed) {
       await quota.release();
       const again = await items.findById(workspaceId, todo.id);
-      if (again?.source.provider !== 'local' || again.ownerUserId !== caller.userId) {
+      if (
+        again?.source.provider !== 'local' ||
+        again.ownerUserId !== caller.userId ||
+        isScheduledKind(again.kind)
+      ) {
         throw new AppError(404, 'Not found');
       }
       const copies = Copies.of(again.copies);

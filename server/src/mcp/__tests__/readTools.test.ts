@@ -436,3 +436,256 @@ describe('topic filters (MCP.md §6: every read tool)', () => {
     assert.ok(work.rows.every((row) => row.topicId === 'work'));
   });
 });
+
+describe('time blocks, areas and travel (time-shaped and task-shaped answers)', () => {
+  const ZONE = 'Asia/Jerusalem';
+  let scheduledTeam: Team;
+  let scheduledKey: TestKey;
+  const made: Record<string, string> = {};
+  /** `hour:minute` on the local day `days` from today, in the workspace's zone. */
+  let at: (days: number, hour: number, minute?: number) => Date = () => new Date(NaN);
+
+  interface Entry extends Summary {
+    endAt: string | null;
+    layer?: string;
+    busy?: boolean;
+    occurrence?: { seriesId: string; originalStart: string } | null;
+  }
+
+  before(async () => {
+    const zoned = await import('../../types/recurrence/zoned.js');
+    at = (days, hour, minute = 0): Date => {
+      const day = zoned.zonedParts(zoned.addLocalDays(new Date(), days, ZONE), ZONE);
+      return zoned.zonedTime(day.year, day.month, day.day, hour, minute, ZONE);
+    };
+    scheduledTeam = await newTeam('read-scheduled');
+    scheduledKey = await insertAgentKey({
+      workspaceId: scheduledTeam.workspace.id,
+      userId: scheduledTeam.owner.id,
+      scopes: ['read'],
+    });
+    const wid = scheduledTeam.workspace.id;
+    const items = await models.getItemRepository();
+    const create = async (
+      key: string,
+      title: string,
+      fields: Record<string, unknown>,
+      ownerUserId = scheduledTeam.owner.id,
+    ): Promise<void> => {
+      made[key] = (
+        await items.createLocal(wid, { ownerUserId, title, topicId: 'college', ...fields })
+      ).id;
+    };
+    // Weekly on today's weekday, 13:00–15:00, since eight weeks ago: one record, many occurrences.
+    await create('series', 'Study: Math', {
+      kind: 'block',
+      startAt: at(-56, 13),
+      endAt: at(-56, 15),
+      props: { recurrence: ['RRULE:FREQ=WEEKLY'] },
+    });
+    await create('area', 'Studying', {
+      kind: 'block',
+      startAt: at(0, 9),
+      endAt: at(0, 17),
+      props: { layer: 'area' },
+    });
+    await create('leg', 'Bus to Braude', {
+      kind: 'travel',
+      visibility: 'private',
+      startAt: at(0, 12, 20),
+      endAt: at(0, 13),
+    });
+    // Another member's leg today: never in this member's answers.
+    await create(
+      'theirLeg',
+      'Their bus',
+      { kind: 'travel', visibility: 'private', startAt: at(0, 12, 20), endAt: at(0, 13) },
+      scheduledTeam.editor.id,
+    );
+    // Reserved time that somehow carries a due date is still no deadline and not due today.
+    await create('dueBlock', 'Reserved, with a due date', {
+      kind: 'block',
+      startAt: at(0, 18),
+      endAt: at(0, 19),
+      dueAt: at(0, 23, 30),
+    });
+    await create('todo', 'Read chapter 3', { dueAt: at(0, 23, 30) });
+
+    // A Google weekly lecture on today's weekday, 10:00–12:00, whose master began eight weeks ago.
+    const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+    await seedIntegration(wid, {
+      id: 'int-sched-gcal',
+      ownerUserId: scheduledTeam.owner.id,
+      provider: 'google_calendar',
+      accountId: 'acct-sched',
+    });
+    await items.bulkUpsert(wid, [
+      {
+        integrationId: 'int-sched-gcal',
+        kind: 'event',
+        topicId: 'college',
+        title: 'Algorithms lecture',
+        status: 'open',
+        startAt: at(-56, 10),
+        endAt: at(-56, 12),
+        props: {
+          calendarId: 'cal-sched',
+          eventId: 'lecture',
+          recurrence: ['RRULE:FREQ=WEEKLY'],
+          transparency: 'opaque',
+        },
+        source: {
+          provider: 'google_calendar',
+          accountId: 'acct-sched',
+          externalId: 'lecture',
+          key: null,
+          url: 'https://example.invalid/lecture',
+          updatedAtSource: null,
+          etag: null,
+          hash: 'h-lecture',
+        },
+      },
+    ]);
+    const [lecture] = await items.aggregate<{ _id: string }>(wid, [
+      { $match: { 'source.externalId': 'lecture' } },
+    ]);
+    made['lecture'] = lecture?._id ?? '';
+  });
+
+  it('list_today.scheduled holds today’s block, area (layer area, busy false) and travel (busy true)', async () => {
+    const today = structured(await call(scheduledKey, 'list_today')) as {
+      events: Entry[];
+      dueToday: Entry[];
+      overdue: Entry[];
+      scheduled: Entry[];
+    };
+    assert.deepEqual(
+      today.scheduled.map((entry) => [entry.title, entry.layer ?? null, entry.busy]),
+      [
+        ['Studying', 'area', false],
+        ['Bus to Braude', null, true],
+        ['Study: Math', 'block', true],
+        ['Reserved, with a due date', 'block', true],
+      ],
+    );
+    const math = today.scheduled.find((entry) => entry.title === 'Study: Math');
+    // Today's occurrence of the series, at 13:00 on the wall clock, keyed by its slot.
+    assert.deepEqual(
+      [math?.startAt, math?.endAt, math?.occurrence],
+      [
+        at(0, 13).toISOString(),
+        at(0, 15).toISOString(),
+        { seriesId: made['series'], originalStart: at(0, 13).toISOString() },
+      ],
+    );
+    const area = today.scheduled.find((entry) => entry.title === 'Studying');
+    assert.equal(area?.occurrence, null);
+    // The lecture is today's event (its occurrence today), never reserved time.
+    assert.deepEqual(
+      today.events.map((entry) => [entry.title, entry.startAt, entry.busy]),
+      [['Algorithms lecture', at(0, 10).toISOString(), true]],
+    );
+    assert.deepEqual(titles(today.dueToday), ['Read chapter 3']);
+    assert.deepEqual(today.overdue, []);
+  });
+
+  it('get_calendar returns one entry per occurrence of a weekly series begun before the range, with occurrence.originalStart', async () => {
+    const calendar = structured(
+      await call(scheduledKey, 'get_calendar', {
+        range: 'custom',
+        from: at(-14, 0).toISOString(),
+        to: at(1, 0).toISOString(),
+      }),
+    ) as { items: Entry[]; total: number };
+    const math = calendar.items.filter((entry) => entry.title === 'Study: Math');
+    assert.deepEqual(
+      math.map((entry) => [entry.startAt, entry.occurrence]),
+      [-14, -7, 0].map((days) => [
+        at(days, 13).toISOString(),
+        { seriesId: made['series'], originalStart: at(days, 13).toISOString() },
+      ]),
+    );
+    // A Google series is expanded the same way.
+    const lecture = calendar.items.filter((entry) => entry.title === 'Algorithms lecture');
+    assert.deepEqual(
+      lecture.map((entry) => entry.occurrence?.originalStart),
+      [-14, -7, 0].map((days) => at(days, 10).toISOString()),
+    );
+    assert.ok(lecture.every((entry) => entry.occurrence?.seriesId === made['lecture']));
+    // Everything else once, in time order; no one else's leg.
+    assert.deepEqual(
+      calendar.items.map((entry) => entry.title).filter((title) => !/Math|lecture/.test(title)),
+      ['Studying', 'Bus to Braude', 'Reserved, with a due date', 'Read chapter 3'],
+    );
+    assert.equal(calendar.total, calendar.items.length);
+    const starts = calendar.items.map((entry) => entry.startAt ?? entry.dueAt ?? '');
+    assert.deepEqual(starts, [...starts].sort());
+    // limit cuts the entries, not the series.
+    const first = structured(
+      await call(scheduledKey, 'get_calendar', {
+        range: 'custom',
+        from: at(-14, 0).toISOString(),
+        to: at(1, 0).toISOString(),
+        limit: 2,
+      }),
+    ) as { items: Entry[]; total: number };
+    assert.deepEqual(
+      first.items.map((entry) => entry.startAt),
+      [at(-14, 10).toISOString(), at(-14, 13).toISOString()],
+    );
+    assert.equal(first.total, calendar.total);
+  });
+
+  it('query_items, search_items and list_deadlines leave out blocks unless kind is given', async () => {
+    const search = async (args: Record<string, unknown>): Promise<string[]> =>
+      titles(
+        (structured(await call(scheduledKey, 'search_items', args)) as { items: Summary[] }).items,
+      );
+    assert.deepEqual(await search({}), ['Algorithms lecture', 'Read chapter 3']);
+    assert.deepEqual(await search({ kind: ['block'] }), [
+      'Reserved, with a due date',
+      'Study: Math',
+      'Studying',
+    ]);
+    assert.deepEqual(await search({ kind: ['travel'] }), ['Bus to Braude']);
+
+    const query = async (body: Record<string, unknown>): Promise<string[]> =>
+      (
+        structured(await call(scheduledKey, 'query_items', body)) as { rows: { title: string }[] }
+      ).rows
+        .map((row) => row.title)
+        .sort();
+    assert.deepEqual(await query({ draft: { source: 'items' } }), [
+      'Algorithms lecture',
+      'Read chapter 3',
+    ]);
+    assert.deepEqual(
+      await query({
+        draft: {
+          source: 'items',
+          where: {
+            combinator: 'and',
+            rules: [{ field: 'kind', operator: 'in', value: ['block', 'travel'] }],
+          },
+        },
+      }),
+      ['Bus to Braude', 'Reserved, with a due date', 'Study: Math', 'Studying'],
+    );
+    // A time-shaped draft holds them without naming them.
+    assert.deepEqual(await query({ draft: { source: 'items' }, blockType: 'calendar' }), [
+      'Algorithms lecture',
+      'Bus to Braude',
+      'Read chapter 3',
+      'Reserved, with a due date',
+      'Study: Math',
+      'Studying',
+    ]);
+
+    const deadlines = structured(await call(scheduledKey, 'list_deadlines')) as {
+      groups: { items: Summary[] }[];
+      total: number;
+    };
+    assert.deepEqual(titles(deadlines.groups.flatMap((group) => group.items)), ['Read chapter 3']);
+    assert.equal(deadlines.total, 1);
+  });
+});

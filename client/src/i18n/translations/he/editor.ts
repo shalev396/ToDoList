@@ -79,6 +79,8 @@ export const editor = {
     file: 'קבצים',
     message: 'הודעות',
     pr: 'בקשות מיזוג',
+    block: 'בלוקי זמן',
+    travel: 'נסיעות',
   },
   filter: {
     viewNote: 'תצוגה שמורה מביאה איתה סינון וקיבוץ משלה.',
@@ -212,6 +214,7 @@ export const editor = {
       columns: 'עמודות',
       view: 'תצוגת יומן',
       allowMonth: 'לאפשר תצוגה חודשית',
+      startHour: 'שעת פתיחה',
       showTotal: 'להציג את הסך הכול',
       legend: 'מקרא',
       needle: 'מחוג',

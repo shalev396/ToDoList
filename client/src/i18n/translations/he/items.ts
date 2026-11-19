@@ -186,6 +186,8 @@ export const items = {
     file: 'קובץ',
     message: 'הודעה',
     pr: 'בקשת מיזוג',
+    block: 'בלוק זמן',
+    travel: 'נסיעה',
   },
   statuses: {
     open: 'פתוח',

@@ -244,6 +244,51 @@ before(async () => {
     topicId: null,
     visibility: 'private',
   });
+  // A's private weekly time block (Sundays 13:00–17:00 in Jerusalem).
+  const privateBlock = await items.createLocal(wid, {
+    ownerUserId: userA,
+    title: mark('private time block', `A block ${MARK}`),
+    topicId: null,
+    kind: 'block',
+    visibility: 'private',
+    startAt: new Date('2026-11-22T11:00:00.000Z'),
+    endAt: new Date('2026-11-22T15:00:00.000Z'),
+    props: { layer: 'block', recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'], exceptions: [] },
+  });
+
+  // A's travel: places whose names and addresses are A's alone, every occurrence of the private
+  // block marked (its legs), and a where-rule. B is aimed at each of them.
+  const travelPlace = async (name: string, address: string, home = false): Promise<string> =>
+    dataOf(
+      await asA('POST', `${base}/travel/places`, {
+        name: mark('travel place name', `${name} ${MARK}`),
+        address: mark('travel address', `${address} ${MARK}`),
+        home,
+      }),
+    )['id'] as string;
+  await travelPlace('A home', 'Herzl 7, Karmiel', true);
+  const travelPlaceId = await travelPlace('A campus', 'Technion City, Haifa');
+  const marked = dataOf(
+    await asA('POST', `${base}/travel/items/${privateBlock.id}`, {
+      every: true,
+      mode: 'transit',
+      direction: 'both',
+      placeId: travelPlaceId,
+    }),
+  );
+  const legIds = (marked['legs'] as { id: string }[]).map((leg) => mark('travel leg id', leg.id));
+  const [travelLegId] = legIds;
+  assert.ok(travelLegId !== undefined, 'A’s weekly block has no legs');
+  const travelRule = dataOf(
+    await asA('POST', `${base}/travel/rules`, {
+      scope: {
+        kind: 'where',
+        where: { combinator: 'and', rules: [{ field: 'title', operator: 'contains', value: 'A' }] },
+      },
+      mode: 'walk',
+      direction: 'both',
+    }),
+  );
 
   // A shares the Jira integration: a block on a dashboard of A's.
   const dashboard = dataOf(await asA('POST', `${base}/dashboards`, { title: 'A board' }));
@@ -286,6 +331,8 @@ before(async () => {
     wid,
     throwawayWid: throwaway['id'] as string,
     itemId: privateTodo.id,
+    timeBlockId: privateBlock.id,
+    travel: { placeId: travelPlaceId, ruleId: travelRule['id'] as string, legId: travelLegId },
     dashboardId: dashboard['id'] as string,
     dashboardVersion: written['version'] as number,
     viewId: view['id'] as string,
@@ -354,11 +401,35 @@ function toolFixtures(expectedVersion: number): Record<string, Record<string, un
       },
     ],
     update_todo: [{ id: ctx.itemId, title: 'Taken' }],
+    create_time_block: [
+      {
+        subject: 'B subject',
+        startAt: '2026-11-23T08:00:00.000Z',
+        endAt: '2026-11-23T09:00:00.000Z',
+      },
+    ],
+    edit_time_block: [
+      { id: ctx.timeBlockId, scope: 'all', title: 'Taken' },
+      { id: ctx.timeBlockId, scope: 'this', originalStart: '2026-11-29T11:00:00.000Z', skip: true },
+    ],
+    travel_list_places: [{}],
+    travel_set_place: [{ name: 'B place', address: 'Rothschild 1, Tel Aviv' }],
+    travel_remove_place: [{ id: ctx.itemId, confirm: true }],
+    travel_list_rules: [{}],
+    travel_set_rule: [{ itemId: ctx.itemId, mode: 'walk', direction: 'there' }],
+    travel_remove_rule: [{ id: ctx.itemId, confirm: true }],
+    travel_get_settings: [{}],
+    travel_set_settings: [{ defaultMode: 'walk' }],
+    travel_mark_item: [{ itemId: ctx.itemId, mode: 'walk', direction: 'there' }],
+    travel_edit_leg: [{ legId: ctx.itemId, minutes: 5 }],
+    travel_skip_leg: [{ legId: ctx.itemId }],
+    travel_reset_leg: [{ legId: ctx.itemId }],
     complete_todo: [{ id: ctx.itemId }],
     delete_todo: [{ id: ctx.itemId }],
     set_overlay: [{ id: unsharedItemId, pinned: true }],
     list_attributes: [{}],
     set_item_attributes: [{ id: unsharedItemId, attrs: { importance: 5 } }],
+    set_subject: [{ name: 'Algebra', family: 'teal', patterns: ['*algebra*'] }],
     sync_now: [{}, { integrationIds: [foreign] }],
     get_sync_status: [{}, { integrationId: foreign }, { runId: 'x' }],
     sync_to_google_calendar: [{ dryRun: true }],

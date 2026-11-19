@@ -1877,8 +1877,8 @@
                 "rules": [
                   {
                     "field": "kind",
-                    "operator": "=",
-                    "value": "event"
+                    "operator": "in",
+                    "value": ["event", "block", "travel"]
                   }
                 ]
               }
@@ -2221,8 +2221,8 @@
                   "rules": [
                     {
                       "field": "kind",
-                      "operator": "=",
-                      "value": "event"
+                      "operator": "in",
+                      "value": ["event", "block", "travel"]
                     }
                   ]
                 }
@@ -6425,8 +6425,8 @@
                   "rules": [
                     {
                       "field": "kind",
-                      "operator": "=",
-                      "value": "event"
+                      "operator": "in",
+                      "value": ["event", "block", "travel"]
                     }
                   ]
                 }
@@ -10755,6 +10755,7 @@
           "meetLink": null,
           "originalStartAt": null,
           "recurrence": ["RRULE:FREQ=WEEKLY;COUNT=12"],
+          "recurrenceEnd": "2027-01-15T10:00:00.000Z",
           "recurringEventId": null,
           "transparency": "opaque"
         },
@@ -14047,7 +14048,21 @@
     "Topics": [
       {
         "__v": 0,
-        "colour": null,
+        "colour": "blue",
+        "createdAt": "<time>",
+        "createdBy": null,
+        "icon": "leaf",
+        "name": "Personal",
+        "order": 0,
+        "slug": "personal",
+        "updatedAt": "<time>",
+        "workspaceId": "workspace:Demo dump",
+        "#id": "topic:personal",
+        "#created": 0
+      },
+      {
+        "__v": 0,
+        "colour": "orange",
         "createdAt": "<time>",
         "createdBy": null,
         "icon": "briefcase",
@@ -14061,7 +14076,7 @@
       },
       {
         "__v": 0,
-        "colour": null,
+        "colour": "teal",
         "createdAt": "<time>",
         "createdBy": null,
         "icon": "graduation-cap",
@@ -14072,20 +14087,6 @@
         "workspaceId": "workspace:Demo dump",
         "#id": "topic:college",
         "#created": 2
-      },
-      {
-        "__v": 0,
-        "colour": null,
-        "createdAt": "<time>",
-        "createdBy": null,
-        "icon": "leaf",
-        "name": "Personal",
-        "order": 0,
-        "slug": "personal",
-        "updatedAt": "<time>",
-        "workspaceId": "workspace:Demo dump",
-        "#id": "topic:personal",
-        "#created": 0
       }
     ],
     "Users": [
@@ -16194,8 +16195,8 @@
                 "rules": [
                   {
                     "field": "kind",
-                    "operator": "=",
-                    "value": "event"
+                    "operator": "in",
+                    "value": ["event", "block", "travel"]
                   }
                 ]
               }
@@ -16538,8 +16539,8 @@
                   "rules": [
                     {
                       "field": "kind",
-                      "operator": "=",
-                      "value": "event"
+                      "operator": "in",
+                      "value": ["event", "block", "travel"]
                     }
                   ]
                 }
@@ -20742,8 +20743,8 @@
                   "rules": [
                     {
                       "field": "kind",
-                      "operator": "=",
-                      "value": "event"
+                      "operator": "in",
+                      "value": ["event", "block", "travel"]
                     }
                   ]
                 }
@@ -25072,6 +25073,7 @@
           "meetLink": null,
           "originalStartAt": null,
           "recurrence": ["RRULE:FREQ=WEEKLY;COUNT=12"],
+          "recurrenceEnd": "2027-01-15T10:00:00.000Z",
           "recurringEventId": null,
           "transparency": "opaque"
         },
@@ -28566,7 +28568,21 @@
     "Topics": [
       {
         "__v": 0,
-        "colour": null,
+        "colour": "blue",
+        "createdAt": "<time>",
+        "createdBy": null,
+        "icon": "leaf",
+        "name": "Personal",
+        "order": 0,
+        "slug": "personal",
+        "updatedAt": "<time>",
+        "workspaceId": "workspace:Demo dump",
+        "#id": "topic:personal",
+        "#created": 0
+      },
+      {
+        "__v": 0,
+        "colour": "orange",
         "createdAt": "<time>",
         "createdBy": null,
         "icon": "briefcase",
@@ -28580,7 +28596,7 @@
       },
       {
         "__v": 0,
-        "colour": null,
+        "colour": "teal",
         "createdAt": "<time>",
         "createdBy": null,
         "icon": "graduation-cap",
@@ -28591,20 +28607,6 @@
         "workspaceId": "workspace:Demo dump",
         "#id": "topic:college",
         "#created": 2
-      },
-      {
-        "__v": 0,
-        "colour": null,
-        "createdAt": "<time>",
-        "createdBy": null,
-        "icon": "leaf",
-        "name": "Personal",
-        "order": 0,
-        "slug": "personal",
-        "updatedAt": "<time>",
-        "workspaceId": "workspace:Demo dump",
-        "#id": "topic:personal",
-        "#created": 0
       }
     ],
     "Users": [

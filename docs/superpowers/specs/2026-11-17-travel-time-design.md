@@ -1,5 +1,15 @@
 # Travel time: design
 
+> **Amendment 2026-11-18 (owner's decision): no routing service; trip lengths are set by the user.** In his words: "We said there is no free API. So let's just let the user decide how much time it's going to take. And of course, if it's a repetitive drive, it's going to be the same thing on all of them." This overrides the body below wherever they differ:
+>
+> - **No outside services.** Nothing in travel calls out: no OpenRouteService, no Nominatim, no straight-line estimate, no routing quota, no geocode cache. A place is a name, aliases, Home, and an optional free-text address used only to open Waze or Google Maps on his device; there are no coordinates and nothing is looked up.
+> - **One length per trip, set by him.** A trip is (from place, to place, mode); each direction is its own trip, and the way back starts with the same length when it has none yet (the ruling of 2026-11-19; he can change it on its own). He sets its minutes once (the leg sheet's "How long this trip takes (every time)", the Add-travel panel, or an agent's `minutes`), and every leg of that trip uses them, every day and every occurrence, except legs whose times he set by hand. Changing only leave or arrive moves just that leg (kept until Reset).
+> - **Not set yet.** A trip with no length still gets its legs, drawn with a 30-minute placeholder, flagged `lengthUnset` (source `unset`): "Set how long" in the leg sheet and day panel, dashed in the time views, and in conflicts with the placeholder. Sources are "set by you" and "not set yet".
+> - **Settings** lose the factors, the buffers and `orsAvailable`; going home in a window, the default mode, default places, rules and places stay.
+> - **Anchoring by location** is by place name or alias only; an unmatched location takes the calendar's or project's default place, or asks to set its place.
+> - **App links:** Waze (driving) and Google Maps, from the addresses (or names) as text. The Moovit link is removed.
+> - **Privacy:** the policy names no outside travel service; places and addresses are private to the member, never shared, logged or given to agents, and an address only opens a map app.
+
 Status: approved by Shalev (2026-11-17). Changes from his follow-up the same day:
 
 - **Agents may set up travel over MCP** (he asked for his week to be populated through the MCP): places, rules and settings, for the key's own member only. Places stay private: tools accept an address but never return one; reads give place names only.
@@ -117,6 +127,12 @@ This answers his question "how do you know when the day starts, with windows bet
    - **Start, end and length are editable on any leg.** Filling two computes the third. An edited leg keeps his times until he resets it, even when it is regenerated.
 5. **Conflicts.** A leg that doesn't fit is still shown, starting at the earlier stay's end, and is marked as a conflict (red edge, "you can't make it": e.g. A ends 12:00, B starts 12:15, travel takes 40 min). The plan never moves or edits his events.
 6. Items with no place, all-day events, and anchors already in the past (that day) don't create new legs.
+7. **Areas** (_added 2026-11-18_). A painted area ("Studying 8–16 at Braude") anchors like any item, and the items inside it nest:
+   - an inner item with a place of its own is there for its own time: leave the area to arrive as it starts, and go back into the area as it ends (in that item's mode; late only matters when an appointment waits there);
+   - a marked area lends its place to an inner item with none (the innermost marked area around its start): that item adds no trips of its own, and marking it says it is inside the area, at that place;
+   - the rest of the area is spent at its place: no legs between two inner items there, and none from the area's place to itself;
+   - he goes back into a part of the area with no appointment only when the gap holds the trip back and the trip on, and he gets there before the part ends; otherwise he goes straight on, or home, from the inner item (_fix round 1, 2026-11-18_). Going home that way after the area's last part is still the area's way home: only when the area asks for `back`, in the area's mode (_2026-11-19_);
+   - legs go to the area at its start, and back (or onward) at its end, by the rules above. An area stays not busy; its legs are busy.
 
 ## Generation and lifecycle (my calls after review)
 

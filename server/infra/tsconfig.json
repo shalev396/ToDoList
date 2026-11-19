@@ -10,6 +10,7 @@
     "fixtures",
     "../scripts/sync-db-local.ts",
     "../scripts/sync-local.ts",
-    "../scripts/gcal-local.ts"
+    "../scripts/gcal-local.ts",
+    "../scripts/sync-schema-local.ts"
   ]
 }

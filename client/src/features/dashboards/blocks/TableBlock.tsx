@@ -11,7 +11,7 @@ import {
 } from '@tanstack/react-table';
 import { ArrowDown, ArrowUp, ArrowUpDown, Table2 } from 'lucide-react';
 import { browserTimeZone, dateLocale, dueText } from '@/components/items/format';
-import { SourceDot } from '@/components/items/SourceDot';
+import { SourceIcon } from '@/components/items/SourceIcon';
 import type { Provider } from '@/components/items/types';
 import { useItemParam } from '@/features/items/useItemParam';
 import { SourceLink } from '@/features/items/SourceLink';
@@ -126,7 +126,7 @@ export default function TableBlock({ dashboard, block }: BlockComponentProps) {
             return <PriorityChip priority={typeof value === 'number' ? value : null} />;
           }
           if (path === 'source.provider' && typeof value === 'string') {
-            return <SourceDot source={value as Provider} showName />;
+            return <SourceIcon source={value as Provider} showName />;
           }
           if (path === 'status' && typeof value === 'string') {
             return t(`dataBlocks.status.${value}`, { defaultValue: value });

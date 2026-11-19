@@ -48,7 +48,7 @@ function MobileMenu({ isAuthenticated }: { isAuthenticated: boolean }) {
           <SheetTitle className="text-sm">{t('nav.menu')}</SheetTitle>
         </SheetHeader>
         <ScrollArea className="min-h-0 flex-1">
-          <div className="flex flex-col gap-6 px-4 pb-[calc(1.5rem+var(--safe-bottom))]">
+          <div className="flex flex-col gap-6 px-4 pb-6">
             <ul className="flex flex-col">
               <li>
                 <SheetClose asChild>

@@ -376,6 +376,40 @@ describe('patchOf', () => {
       assert.equal(patch(allDay, { ...draft, startDate: '' }), null);
     });
   });
+
+  describe('a time block’s or a travel leg’s time (reserved time keeps a start and an end)', () => {
+    for (const kind of ['block', 'travel'] as const) {
+      const reserved = item({
+        kind,
+        allDay: false,
+        dueAt: null,
+        priority: null,
+        // 13:00–17:00 in Jerusalem (UTC+2).
+        startAt: new Date('2026-11-22T11:00:00.000Z'),
+        endAt: new Date('2026-11-22T15:00:00.000Z'),
+        editing: editing({
+          origin: 'local',
+          providerFields: [],
+          overridableFields: ['startAt', 'dueAt'],
+          reachableStatuses: [],
+        }),
+      });
+
+      it(`${kind}: dates and times, a new start keeps the length, never a due day`, () => {
+        const draft = draftOf(reserved, ZONE);
+        assert.deepEqual([draft.startTime, draft.endTime], ['13:00', '17:00']);
+        const moved = withStart(reserved, draft, { date: '2026-11-22', time: '14:00' }, ZONE);
+        assert.deepEqual([moved.endDate, moved.endTime], ['2026-11-22', '18:00']);
+        assert.deepEqual(patch(reserved, moved), { startAt: '2026-11-22T12:00:00.000Z' });
+        // An emptied start is no change: reserved time always has one.
+        assert.equal(patch(reserved, { ...draft, startDate: '' }), null);
+        // A due date is never made "a day" for it (it has a start).
+        assert.deepEqual(patch(reserved, { ...draft, dueDate: '2026-12-01' }), {
+          dueAt: '2026-12-01T10:00:00.000Z',
+        });
+      });
+    }
+  });
 });
 
 describe('clearOverrideBody', () => {

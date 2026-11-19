@@ -17,13 +17,21 @@ let h: McpHarness;
 let models: typeof Models;
 
 const READ = ['workspace_get', 'workspace_list_members', 'audit_log_query'];
-const SHARE = ['workspace_invite', 'workspace_update_member', 'workspace_remove_member'];
+const SHARE = [
+  'workspace_invite',
+  'workspace_update_member',
+  'workspace_remove_member',
+  'set_topic_colour',
+  'set_file_under',
+];
 const ALL = [
   'workspace_get',
   'workspace_list_members',
   'workspace_invite',
   'workspace_update_member',
   'workspace_remove_member',
+  'set_topic_colour',
+  'set_file_under',
   'audit_log_query',
 ];
 
@@ -88,6 +96,14 @@ describe('scope × role matrix over the workspace tools', () => {
         row.tools,
       );
 
+      const { addDefaultTopics } = await import('../../testing/workspaceFixtures.js');
+      await addDefaultTopics(team.workspace.id);
+      const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+      await seedIntegration(team.workspace.id, {
+        id: `int-matrix-${String(seq)}`,
+        ownerUserId: user.id,
+        provider: 'jira',
+      });
       const email = `invited-${String(seq)}@example.test`;
       const allowedCalls: Record<string, Record<string, unknown>> = {
         workspace_get: {},
@@ -97,6 +113,8 @@ describe('scope × role matrix over the workspace tools', () => {
         // Previews: allowed, and they change nothing either.
         workspace_update_member: { userId: target.id, role: 'editor' },
         workspace_remove_member: { userId: target.id },
+        set_topic_colour: { topic: 'work', family: 'violet' },
+        set_file_under: { integrationId: `int-matrix-${String(seq)}`, topic: 'work' },
       };
       const refusedCalls: Record<string, Record<string, unknown>> = {
         ...allowedCalls,
@@ -162,7 +180,7 @@ describe('scope × role matrix over every toolset, on both endpoints', () => {
           tools.map((tool) => tool.name),
           expected,
         );
-        if (role === 'owner' && !readonly) assert.equal(expected.length, 48);
+        if (role === 'owner' && !readonly) assert.equal(expected.length, 65);
         if (readonly) {
           assert.ok(tools.every((tool) => tool.annotations?.readOnlyHint === true));
         }

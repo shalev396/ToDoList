@@ -5,8 +5,9 @@
  * loads nothing of the database.
  *
  * What a member can see = their own integrations' items ∪ the shared integrations' items ∪ the
- * local to-dos they may see (shared ones, and their own private ones); a provider copy of a local
- * to-do is hidden from whoever sees that to-do (H5).
+ * local to-dos they may see (shared ones, and their own private ones; time blocks alike; a travel
+ * leg only its member, whatever its visibility); a provider copy of a local to-do is hidden from
+ * whoever sees that to-do (H5).
  */
 import type { WorkspaceContext } from '../base/Caller.js';
 import type { Provider } from '../../types/domain.js';
@@ -131,7 +132,10 @@ export class ItemAccessFilter {
       $or: [
         ...(ids.length === 0 ? [] : [{ integrationId: { $in: ids } }]),
         { integrationId: null, ownerUserId: access.userId },
-        ...(access.local === 'visible' ? [{ integrationId: null, visibility: 'workspace' }] : []),
+        // A shared local item, but never a travel leg: legs are their member's only (Ruling 8).
+        ...(access.local === 'visible'
+          ? [{ integrationId: null, visibility: 'workspace', kind: { $ne: 'travel' } }]
+          : []),
       ],
       ...ItemAccessFilter.copyAbsorption(access.userId),
     };

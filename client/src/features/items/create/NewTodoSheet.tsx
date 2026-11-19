@@ -12,12 +12,18 @@ import { SelectField } from '@/components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { dateInZone, instantInZone } from '@/features/items/zonedDate';
+import { CreateTravel } from '@/features/travel/TravelPanelForm';
+import { useAddTravel, useTravelSetup } from '@/features/travel/travelHooks';
+import { anchorPanel, type TravelPanelState } from '@/features/travel/travelPanel';
 import { CopyTargets, type Funnels } from './CopyTargets';
 import { isReady } from './funnel';
+import { KindChoice } from './KindChoice';
 import { ResultRow } from './ResultRow';
 import { RepeatControl } from './RepeatControl';
 import { RepeatTarget } from './RepeatTarget';
 import { NO_REPEAT, buildRecurrence, isRepeating, repeatBlockOf, type Repeat } from './recurrence';
+import { TimeBlockForm } from './TimeBlockForm';
+import type { NewItemKind, NewItemPreset } from './timeBlockDraft';
 import { newRequestId, useCopyRunner } from './useCopyRunner';
 
 /** The note reaches a provider cut at this length. */
@@ -26,23 +32,33 @@ export const NOTE_MAX = 500;
 /** How a repeating to-do's create went: made (with its event's link), or made but not shown yet. */
 type RecurringResult = { kind: 'created'; url: string } | { kind: 'notStored' };
 
+const TODO: NewItemPreset = { kind: 'todo' };
+
 /**
+ * The New sheet. Its first choice is the kind: a to-do, a time block or an area (time-blocks
+ * design); a block or an area is the time block form (TimeBlockForm), with its own create.
+ *
  * "New to-do" (H5): title, note, due date, Repeat and page, then "Also create in" with a chip per
  * own integration. Save creates the local to-do, then each target in parallel; the results stream
  * in under the form ("Created in Jira · ABC-123" with its link, a plain failure with Retry, or
  * "Needs permission" with the re-consent). Saving never waits on a provider. A repeating to-do
  * (plan Addendum A3) is created as a repeating event in the workspace calendar only: no local
  * to-do, the other targets are off.
+ *
+ * "Add travel time" (travel-time design): a switch, off by default, opens the travel panel. Travel
+ * needs a start, so a to-do with a due date only is asked for a time; the to-do is created with
+ * that time as its start, then marked (`POST …/travel/items/:id`), and how that went is a toast.
+ * A repeating to-do gets its travel from its event once it exists.
  */
 export function NewTodoSheet({
   open,
   onOpenChange,
-  presetTopicId = '',
+  preset = TODO,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** The page the to-do starts on (a List view's page); the member may still change it. */
-  presetTopicId?: string;
+  /** The kind, page and times it opens on (a List view's page, a calendar's slot). */
+  preset?: NewItemPreset;
 }) {
   const { t } = useTranslation();
   const { workspace, role, topics, settings } = useCurrentWorkspace();
@@ -57,8 +73,10 @@ export function NewTodoSheet({
   const [note, setNote] = useState('');
   const [day, setDay] = useState('');
   const [time, setTime] = useState('');
+  const [chosenKind, setKind] = useState<NewItemKind | null>(null);
+  const kind = chosenKind ?? preset.kind;
   const [chosenTopic, setTopicId] = useState<string | null>(null);
-  const topicId = chosenTopic ?? presetTopicId;
+  const topicId = chosenTopic ?? preset.topicId ?? '';
   const [funnels, setFunnels] = useState<Funnels>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -70,8 +88,13 @@ export function NewTodoSheet({
   // One key per repeating to-do: a retry after a lost answer is the same event, never a second.
   const recurringKey = useRef<string | null>(null);
   const primary = usePrimaryCalendar(workspace?.id ?? '');
+  // Travel: null while "Add travel time" is off.
+  const [travel, setTravel] = useState<TravelPanelState | null>(null);
+  const travelSetup = useTravelSetup(travel !== null);
+  const addTravel = useAddTravel();
 
   const reset = () => {
+    setKind(null);
     setTitle('');
     setNote('');
     setDay('');
@@ -84,6 +107,7 @@ export function NewTodoSheet({
     setRepeatTarget(true);
     setRecurring(null);
     setUncertain(false);
+    setTravel(null);
     recurringKey.current = null;
     runner.reset();
     todoId.current = null;
@@ -93,11 +117,29 @@ export function NewTodoSheet({
   const dueAt = day === '' ? null : instantInZone(day, time === '' ? '12:00' : time, timeZone);
   const selected = Object.values(funnels);
   const repeating = isRepeating(repeat);
-  const recurrence = buildRecurrence(repeat, { dueDate: day, allDay: time === '', timeZone });
+  const recurrence = buildRecurrence(repeat, {
+    dueDate: day,
+    allDay: time === '',
+    timeZone,
+    weekStart: settings?.weekStart ?? 'sun',
+  });
   const repeatBlocked = primary.isError ? 'error' : repeatBlockOf(primary.data);
+  // Travel needs a start: the due date and its time.
+  const anchor = day === '' || time === '' ? null : new Date(instantInZone(day, time, timeZone));
+  const withTravel = travel !== null && !repeating;
+  const travelUnready =
+    withTravel && (anchor === null || !travelSetup.ready || travelSetup.home === null);
   const unready = repeating
     ? recurrence === null || !repeatTarget || repeatBlocked !== null
-    : selected.some((funnel) => !isReady(funnel, dueAt !== null));
+    : selected.some((funnel) => !isReady(funnel, dueAt !== null)) || travelUnready;
+  /** The to-do's day or time changed: the trip there follows its new start. */
+  const moveTravel = (nextDay: string, nextTime: string) => {
+    const start =
+      nextDay === '' || nextTime === ''
+        ? null
+        : new Date(instantInZone(nextDay, nextTime, timeZone));
+    setTravel((previous) => (previous === null ? previous : anchorPanel(previous, start)));
+  };
 
   /** A repeating to-do: one event in the workspace calendar, stored at once as its item. */
   const saveRepeating = async (lines: string[]) => {
@@ -168,15 +210,31 @@ export function NewTodoSheet({
       }
       return;
     }
+    if (travelUnready) {
+      setSaving(false);
+      return;
+    }
     try {
       const item = await createItem.mutateAsync({
         title: title.trim(),
         ...(note.trim() === '' ? {} : { note: note.trim() }),
         ...(dueAt === null ? {} : { dueAt, allDay: time === '' }),
         ...(topicId === '' ? {} : { topicId }),
+        // Travel gets him there by its start.
+        ...(withTravel && dueAt !== null ? { startAt: dueAt } : {}),
         idempotencyKey: newRequestId(),
       });
       todoId.current = item.id;
+      if (withTravel && anchor !== null) {
+        // The to-do stands whatever travel answers; the toast says how travel went.
+        await addTravel({
+          itemId: item.id,
+          state: travel,
+          start: anchor,
+          every: false,
+          createdWithout: t('travel.add.createdWithout'),
+        });
+      }
       if (selected.length === 0) {
         onOpenChange(false);
         reset();
@@ -194,6 +252,17 @@ export function NewTodoSheet({
     { value: '', label: t('items.newTodo.noTopic') },
     ...topics.map((topic) => ({ value: topic.id, label: topic.name })),
   ];
+  const close = () => {
+    onOpenChange(false);
+    reset();
+  };
+  const choosing = recurring === null && runner.results === null;
+  const sheetTitle =
+    kind === 'block'
+      ? t('scheduled.form.titleBlock')
+      : kind === 'area'
+        ? t('scheduled.form.titleArea')
+        : t('items.newTodo.title');
 
   return (
     <Sheet
@@ -212,10 +281,17 @@ export function NewTodoSheet({
         data-new-todo=""
       >
         <SheetHeader>
-          <SheetTitle>{t('items.newTodo.title')}</SheetTitle>
+          <SheetTitle>{sheetTitle}</SheetTitle>
         </SheetHeader>
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-          {recurring !== null ? (
+          {choosing ? (
+            <div className="mb-4">
+              <KindChoice value={kind} onChange={setKind} />
+            </div>
+          ) : null}
+          {kind !== 'todo' ? (
+            <TimeBlockForm layer={kind} preset={preset} onClose={close} />
+          ) : recurring !== null ? (
             <div
               className="flex flex-col gap-3"
               data-new-todo-results=""
@@ -296,7 +372,8 @@ export function NewTodoSheet({
                   <Input
                     id={`${ids}-title`}
                     value={title}
-                    autoFocus
+                    // Only as the sheet opens: coming back from another kind keeps the focus there.
+                    autoFocus={chosenKind === null}
                     maxLength={255}
                     placeholder={t('items.newTodo.namePlaceholder')}
                     aria-invalid={error !== null && title.trim() === ''}
@@ -329,6 +406,7 @@ export function NewTodoSheet({
                         if (event.target.value === '') {
                           setTime('');
                         }
+                        moveTravel(event.target.value, event.target.value === '' ? '' : time);
                       }}
                     />
                   </div>
@@ -339,13 +417,22 @@ export function NewTodoSheet({
                       type="time"
                       value={time}
                       disabled={day === ''}
+                      aria-invalid={withTravel && anchor === null}
                       onChange={(event) => {
                         setTime(event.target.value);
+                        moveTravel(day, event.target.value);
                       }}
                     />
                   </div>
                 </div>
                 <RepeatControl value={repeat} onChange={setRepeat} dueDate={day} />
+                <CreateTravel
+                  value={travel}
+                  onChange={setTravel}
+                  anchorStart={anchor}
+                  needsTime={anchor === null}
+                  blocked={repeating ? t('travel.add.repeatNote') : null}
+                />
                 <div className="flex flex-col gap-1.5">
                   <Label htmlFor={`${ids}-topic`}>{t('items.newTodo.topic')}</Label>
                   <SelectField

@@ -127,6 +127,7 @@ for (const stage of STAGES) {
         'CodebaseLayer',
         'LogGroup',
         'FunctionRole',
+        'Rule',
       ]);
       assert.deepEqual(groups['Storage']?.Members, [
         'ClientBucket',
@@ -137,7 +138,7 @@ for (const stage of STAGES) {
       assert.deepEqual(groups['Auth']?.Members, ['UserPool', 'UserPoolClient']);
     });
 
-    it('draws no queue, worker, alarm, schedule or deploy-time helper', () => {
+    it('draws no queue, worker, alarm, Scheduler schedule or deploy-time helper', () => {
       const types = new Set(Object.values(drawing.Resources).map((r) => r.Type));
       for (const type of [
         'AWS::SQS::Queue',

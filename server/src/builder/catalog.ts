@@ -39,6 +39,7 @@ import {
   ITEM_KINDS,
   ITEM_STATUSES,
   PROVIDERS,
+  SCHEDULED_KINDS,
   VISIBILITIES,
 } from '../types/domain.js';
 import type { AttributeDef, AttributeType } from '../types/attributes.js';
@@ -258,6 +259,8 @@ export interface BlockCatalogEntry {
 
 const OPEN: Rule = { field: 'status', operator: 'in', value: ['open', 'in_progress'] };
 const EVENT: Rule = { field: 'kind', operator: '=', value: 'event' };
+/** Timed things: events, plus the time blocks, areas and travel legs TodoList keeps. */
+const TIMED: Rule = { field: 'kind', operator: 'in', value: ['event', ...SCHEDULED_KINDS] };
 
 export const BLOCK_CATALOG: Readonly<Record<BlockType, BlockCatalogEntry>> = {
   list: {
@@ -333,7 +336,7 @@ export const BLOCK_CATALOG: Readonly<Record<BlockType, BlockCatalogEntry>> = {
     defaults: {
       query: {
         source: 'items',
-        where: { combinator: 'and', rules: [{ field: 'kind', operator: '=', value: 'event' }] },
+        where: { combinator: 'and', rules: [TIMED] },
         dateRange: 'today',
         dateField: 'startAt',
         sort: [{ field: 'startAt', dir: 'asc' }],

@@ -26,6 +26,7 @@ import { newTeam, type Team } from './helpers/team.js';
 let h: McpHarness;
 let models: typeof Models;
 let Member: typeof Classes.Member;
+let Topic: typeof Classes.Topic;
 let audit: typeof Audit;
 let captureStderr: typeof GuardHarness.captureStderr;
 
@@ -38,6 +39,8 @@ const CATALOG = [
   'workspace_invite',
   'workspace_update_member',
   'workspace_remove_member',
+  'set_topic_colour',
+  'set_file_under',
   'audit_log_query',
 ];
 const READ_TOOLS = ['workspace_get', 'workspace_list_members', 'audit_log_query'];
@@ -61,7 +64,7 @@ const UNAUTHORIZED_BODY = {
 before(async () => {
   h = await startMcpHarness('todolist_mcp_http_test', {});
   models = await import('../../models/index.js');
-  ({ Member } = await import('../../classes/workspace/index.js'));
+  ({ Member, Topic } = await import('../../classes/workspace/index.js'));
   audit = await import('../middleware/audit.js');
   ({ captureStderr } = await import('../../testing/guardHarness.js'));
 });
@@ -865,5 +868,165 @@ describe('red team (MCP.md §12)', () => {
       assert.equal(errorText(result), 'Member not found', name);
     }
     assert.equal(await roleOf(theirs.workspace.id, theirs.editor.id), 'editor');
+  });
+});
+
+describe('set_topic_colour and set_file_under (topic colours)', () => {
+  async function filingTeam(label: string): Promise<{
+    team: Team;
+    key: TestKey;
+    integrationId: string;
+    containerId: string;
+    workId: string;
+  }> {
+    const team = await newTeam(label);
+    const { addDefaultTopics } = await import('../../testing/workspaceFixtures.js');
+    const topics = await addDefaultTopics(team.workspace.id);
+    const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+    const integrationId = `int-${label}`;
+    await seedIntegration(team.workspace.id, {
+      id: integrationId,
+      ownerUserId: team.owner.id,
+      provider: 'google_calendar',
+    });
+    const source = {
+      provider: 'google_calendar' as const,
+      accountId: 'acct',
+      externalId: 'cal-1',
+      key: null,
+      url: 'https://example.invalid/cal-1',
+      updatedAtSource: null,
+      etag: null,
+      hash: null,
+    };
+    await (
+      await models.getContainerRepository()
+    ).bulkUpsert(team.workspace.id, [
+      { integrationId, topicId: null, type: 'calendar', name: 'Calc. (I) [2026]', source },
+    ]);
+    const [container] = await (
+      await models.getContainerRepository()
+    ).list(team.workspace.id, { integrationId });
+    await (
+      await models.getItemRepository()
+    ).bulkUpsert(team.workspace.id, [
+      {
+        integrationId,
+        containerId: container?.id ?? null,
+        kind: 'event',
+        topicId: null,
+        title: 'Lecture',
+        status: 'open',
+        source: { ...source, externalId: 'ev-1', url: 'https://example.invalid/ev-1' },
+      },
+    ]);
+    return {
+      team,
+      key: await ownerKey(team),
+      integrationId,
+      containerId: container?.id ?? '',
+      workId: topics.work,
+    };
+  }
+
+  it('an owner key recolours a topic by slug, and an editor key is not offered the tools', async () => {
+    const { team, key } = await filingTeam('colour');
+    const out = structured(
+      await call(key, 'set_topic_colour', { topic: 'work', family: 'violet' }),
+    ) as { topic: { slug: string; family: string } };
+    assert.deepEqual([out.topic.slug, out.topic.family], ['work', 'violet']);
+    assert.equal((await Topic.bySlug(team.workspace.id, 'work'))?.colour, 'violet');
+    const editorKey = await insertAgentKey({
+      workspaceId: team.workspace.id,
+      userId: team.editor.id,
+      scopes: [...SHARE],
+    });
+    const { tools } = await (await h.connect(editorKey.raw)).listTools();
+    const names = tools.map((tool) => tool.name);
+    assert.equal(names.includes('set_topic_colour'), false);
+    assert.equal(names.includes('set_file_under'), false);
+  });
+
+  it('refuses a topic the workspace lacks, and a family that is not one', async () => {
+    const { key, integrationId } = await filingTeam('colour-bad');
+    const missing = await call(key, 'set_topic_colour', { topic: 'nope', family: 'violet' });
+    assert.equal(missing.isError, true);
+    assert.match(errorText(missing), /Unknown topic/);
+    assert.equal(
+      (await call(key, 'set_topic_colour', { topic: 'work', family: 'mauve' })).isError,
+      true,
+    );
+    const filing = await call(key, 'set_file_under', { integrationId, topic: 'nope' });
+    assert.equal(filing.isError, true);
+    assert.match(errorText(filing), /Unknown topic/);
+  });
+
+  it('files a whole connection: its default topic changes and stored items follow', async () => {
+    const { team, key, integrationId, workId } = await filingTeam('fileconn');
+    const out = structured(await call(key, 'set_file_under', { integrationId, topic: 'work' })) as {
+      containerId: string | null;
+      topicId: string | null;
+      rule: unknown;
+      refiled: { containers: number; items: number };
+    };
+    assert.deepEqual([out.containerId, out.topicId, out.rule], [null, workId, null]);
+    assert.equal(out.refiled.items > 0, true);
+    const stored = await (
+      await models.getIntegrationRepository()
+    ).findById(team.workspace.id, integrationId);
+    assert.equal(stored?.topicId, workId);
+    const back = structured(await call(key, 'set_file_under', { integrationId, topic: null })) as {
+      topicId: string | null;
+    };
+    assert.equal(back.topicId, null);
+  });
+
+  it('files one calendar: its rule goes first in the workspace rules and its items move', async () => {
+    const { team, key, integrationId, containerId, workId } = await filingTeam('filecal');
+    const out = structured(
+      await call(key, 'set_file_under', { integrationId, containerId, topic: 'work' }),
+    ) as {
+      containerId: string;
+      topicId: string;
+      rule: { match: string; topicId: string };
+      refiled: { containers: number; items: number };
+    };
+    assert.deepEqual(
+      [out.containerId, out.topicId, out.rule],
+      [containerId, workId, { match: 'Calc. (I) [2026]', topicId: workId }],
+    );
+    assert.equal(out.refiled.items > 0, true);
+    const workspace = await (await models.getWorkspaceRepository()).findById(team.workspace.id);
+    assert.deepEqual(workspace?.settings.topicRules[0], {
+      match: 'Calc. (I) [2026]',
+      topicId: workId,
+    });
+    const cleared = structured(
+      await call(key, 'set_file_under', { integrationId, containerId, topic: null }),
+    ) as { rule: unknown; topicId: string | null };
+    assert.deepEqual([cleared.rule, cleared.topicId], [null, null]);
+  });
+
+  it('another member’s integration, and a container that is not its own, are not found', async () => {
+    const { team, key, integrationId } = await filingTeam('filenot');
+    const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+    await seedIntegration(team.workspace.id, {
+      id: 'int-filenot-theirs',
+      ownerUserId: team.editor.id,
+      provider: 'jira',
+    });
+    const theirs = await call(key, 'set_file_under', {
+      integrationId: 'int-filenot-theirs',
+      topic: 'work',
+    });
+    assert.equal(theirs.isError, true);
+    assert.match(errorText(theirs), /not found/i);
+    const stranger = await call(key, 'set_file_under', {
+      integrationId,
+      containerId: 'no-such-container',
+      topic: 'work',
+    });
+    assert.equal(stranger.isError, true);
+    assert.match(errorText(stranger), /not found/i);
   });
 });

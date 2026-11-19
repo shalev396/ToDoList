@@ -4,10 +4,16 @@ import type {
   CreateAttributeResponseData,
   DeleteAttributeResponseData,
   ListAttributesResponseData,
+  SubjectMatchCountsResponseData,
   UpdateAttributeResponseData,
 } from '../routes/private/attributes.js';
+import { SubjectMatches } from '../classes/item/index.js';
 import { AttributeDefinitions, Workspace } from '../classes/workspace/index.js';
-import { AttributePatchSchema, NewAttributeSchema } from '../types/attributes.js';
+import {
+  AttributePatchSchema,
+  NewAttributeSchema,
+  SubjectMatchCountsSchema,
+} from '../types/attributes.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import { parseOr400, routeParam } from '../utils/validation.js';
 
@@ -43,4 +49,13 @@ const remove: RequestHandler = async (req, res): Promise<void> => {
   res.success(data);
 };
 
-export const AttributesController = { list, create, update, remove };
+const matchCounts: RequestHandler = async (req, res): Promise<void> => {
+  const body = parseOr400(SubjectMatchCountsSchema, req.body);
+  const data: SubjectMatchCountsResponseData = await SubjectMatches.count(
+    (req as WorkspaceRequest).caller,
+    body.subjects,
+  );
+  res.success(data);
+};
+
+export const AttributesController = { list, create, update, remove, matchCounts };

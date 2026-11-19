@@ -91,6 +91,9 @@ describe('itemProblem', () => {
 
   it('names an unknown kind or status, and a topic that is not an id', () => {
     assert.equal(itemProblem(item({ kind: 'epic' })), 'kind');
+    // TodoList's own reserved time is never a provider's record.
+    assert.equal(itemProblem(item({ kind: 'block' })), 'kind');
+    assert.equal(itemProblem(item({ kind: 'travel' })), 'kind');
     assert.equal(itemProblem(item({ status: 'archived' })), 'status');
     assert.equal(itemProblem(item({ status: 'Done' })), 'status', 'enums are exact');
     assert.equal(itemProblem(item({ topicId: 42 })), 'topicId');

@@ -27,8 +27,18 @@ export const ITEM_KINDS = [
   'deadline',
   'message',
   'pr',
+  // TodoList's own reserved time (scheduled.ts): a time block or an area, and a travel leg.
+  'block',
+  'travel',
 ] as const;
 export type ItemKind = (typeof ITEM_KINDS)[number];
+
+/**
+ * The kinds that are reserved time, not markable to-dos: no status to move, never completed, hidden
+ * from task views. Always local (TodoList makes them), never mirrored from a provider.
+ */
+export const SCHEDULED_KINDS = ['block', 'travel'] as const satisfies readonly ItemKind[];
+export type ScheduledKind = (typeof SCHEDULED_KINDS)[number];
 
 export const ITEM_STATUSES = ['open', 'in_progress', 'done', 'cancelled'] as const;
 export type ItemStatus = (typeof ITEM_STATUSES)[number];

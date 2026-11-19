@@ -30,6 +30,19 @@ describe('patchRow', () => {
     assert.equal(patchRow(none, 'a', patchForStatus('done', now)), none);
   });
 
+  it('never patches a time block, an area or a travel leg: they have no status', () => {
+    const result = {
+      rows: [
+        { id: 'block', kind: 'block', status: 'open' },
+        { id: 'leg', kind: 'travel', status: 'open' },
+        { id: 'todo', kind: 'todo', status: 'open' },
+      ],
+    };
+    assert.equal(patchRow(result, 'block', patchForStatus('done', now)), result);
+    assert.equal(patchRow(result, 'leg', patchForStatus('done', now)), result);
+    assert.equal(patchRow(result, 'todo', patchForStatus('done', now)).rows[2]?.status, 'done');
+  });
+
   it('reopening clears closedAt', () => {
     assert.deepEqual(patchForStatus('open', now), { status: 'open', closedAt: null });
   });

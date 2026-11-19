@@ -27,6 +27,8 @@ export const ROUTES = {
   SETTINGS: SETTINGS_BASE,
   MEMBERS: `${SETTINGS_BASE}/members`,
   AGENT_KEYS: `${SETTINGS_BASE}/agent-keys`,
+  /** My own travel: places, rules, factors and default places (editors and owners). */
+  TRAVEL: `${SETTINGS_BASE}/travel`,
   /** Route pattern of a local item's source link (server: localItemUrl); see ItemLinkPage. */
   ITEM_LINK: 'w/:wid/items/:id',
   AUTH: {

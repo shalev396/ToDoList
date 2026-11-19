@@ -14,22 +14,26 @@ import {
   useSensor,
   useSensors,
   type Announcements,
+  type ClientRect,
   type DragEndEvent,
   type DragStartEvent,
+  type UniqueIdentifier,
 } from '@dnd-kit/core';
 import { GripVertical, SquareKanban } from 'lucide-react';
 import { useSetItemStatus } from '@/api/queries/blockItems';
 import { BoardCard } from '@/components/items/BoardCard';
 import { cn } from '@/lib/utils';
+import { useRowColours } from '@/features/colours/useColours';
 import { useItemParam } from '@/features/items/useItemParam';
 import { SourceLink } from '@/features/items/SourceLink';
 import type { ItemQueryRow } from '@api-types/builder';
+import type { ItemColour } from '@api-types/colours';
 import { BlockFrame } from '../BlockFrame';
 import { blockTitle } from '../chrome';
 import type { BlockComponentProps } from '../registry/types';
 import type { DisplayedRow } from '../rules/applyDisplayRules';
 import { kanbanColumns } from './data/kanbanColumns';
-import { isDraggable, statusAfterDrop } from './data/kanbanDrag';
+import { clipToViewport, isDraggable, pointIn, statusAfterDrop } from './data/kanbanDrag';
 import { BadgeChips, ToneRow } from './data/RowParts';
 import { displayProvider, dateOf } from './data/rows';
 import { truncateText } from './data/truncate';
@@ -59,11 +63,13 @@ function Card({
   entry,
   now,
   timeZone,
+  colour,
   dragging = false,
 }: {
   entry: Entry;
   now: Date;
   timeZone: string;
+  colour: ItemColour;
   dragging?: boolean;
 }) {
   const { t } = useTranslation();
@@ -102,6 +108,7 @@ function Card({
           due={dateOf(row.dueAt)}
           timeZone={timeZone}
           assignee={assignee}
+          colour={colour}
           onOpen={() => {
             openItem(row.id);
           }}
@@ -124,6 +131,7 @@ function Column({
   now,
   timeZone,
   droppable,
+  colourOf,
 }: {
   id: string;
   label: string;
@@ -131,15 +139,16 @@ function Column({
   now: Date;
   timeZone: string;
   droppable: boolean;
+  colourOf: (rowId: string) => ItemColour;
 }) {
   const { t } = useTranslation();
   const { setNodeRef, isOver } = useDroppable({ id, disabled: !droppable });
   const headingId = useId();
   return (
-    <div className="flex w-64 shrink-0 flex-col gap-2 max-md:w-full">
+    <div className="flex min-h-0 w-64 shrink-0 flex-col gap-2 md:h-full max-md:w-full">
       <h3
         id={headingId}
-        className="flex items-center gap-2 px-1 text-xs font-semibold text-muted-foreground"
+        className="flex shrink-0 items-center gap-2 px-1 text-xs font-semibold text-muted-foreground"
       >
         <span className="truncate">{label}</span>
         <span className="rounded-full bg-sunken px-1.5 tabular-nums">
@@ -148,44 +157,82 @@ function Column({
         </span>
       </h3>
       <div
-        ref={setNodeRef}
-        data-column={id}
+        data-column-viewport={id}
         className={cn(
-          'flex min-h-16 flex-1 flex-col gap-2 rounded-md bg-sunken/60 p-1.5 transition-colors',
+          'min-h-0 flex-1 overflow-y-auto rounded-md md:overscroll-contain bg-sunken/60 transition-colors max-md:max-h-[60dvh]',
           isOver && 'bg-sunken ring-2 ring-ring',
         )}
       >
-        {entries.length === 0 ? (
-          <p className="px-1 py-2 text-xs text-muted-foreground">
-            {droppable ? t('dataBlocks.kanban.emptyColumn') : ''}
-          </p>
-        ) : (
-          <ul aria-labelledby={headingId} className="m-0 flex list-none flex-col gap-2 p-0">
-            {entries.map((entry) => (
-              <Card key={entry.row.id} entry={entry} now={now} timeZone={timeZone} />
-            ))}
-          </ul>
-        )}
+        <div
+          ref={setNodeRef}
+          data-column={id}
+          className="flex min-h-[max(100%,4rem)] flex-col gap-2 p-1.5"
+        >
+          {entries.length === 0 ? (
+            <p className="px-1 py-2 text-xs text-muted-foreground">
+              {droppable ? t('dataBlocks.kanban.emptyColumn') : ''}
+            </p>
+          ) : (
+            <ul aria-labelledby={headingId} className="m-0 flex list-none flex-col gap-2 p-0">
+              {entries.map((entry) => (
+                <Card
+                  key={entry.row.id}
+                  entry={entry}
+                  now={now}
+                  timeZone={timeZone}
+                  colour={colourOf(entry.row.id)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-/** The column under the pointer; with the keyboard (no pointer) the best-overlapping one. */
-const collisions: CollisionDetection = (args) => {
-  const within = pointerWithin(args);
-  return within.length > 0 ? within : rectIntersection(args);
+/**
+ * The column under the pointer. A column's droppable sits inside its own scrolled viewport and
+ * extends past it, so each rect is clipped to that viewport first: a pointer over the next column
+ * never lands on a column whose overflow reaches under it. With the keyboard (no pointer) the
+ * best-overlapping clipped column wins.
+ */
+const visibleCollisions: CollisionDetection = (args) => {
+  const { pointerCoordinates, droppableContainers, droppableRects } = args;
+  const clippedRects = new Map<UniqueIdentifier, ClientRect>();
+  const containers = droppableContainers.filter((container) => {
+    const rect = droppableRects.get(container.id);
+    const viewport = container.node.current?.closest('[data-column-viewport]');
+    if (rect === undefined || !viewport) {
+      return false;
+    }
+    const clipped = clipToViewport(rect, viewport.getBoundingClientRect());
+    if (clipped === null || (pointerCoordinates && !pointIn(pointerCoordinates, clipped))) {
+      return false;
+    }
+    clippedRects.set(container.id, {
+      ...clipped,
+      width: clipped.right - clipped.left,
+      height: clipped.bottom - clipped.top,
+    });
+    return true;
+  });
+  const clipped = { ...args, droppableContainers: containers, droppableRects: clippedRects };
+  const within = pointerWithin(clipped);
+  return within.length > 0 ? within : rectIntersection(clipped);
 };
 
 /**
  * Kanban (FRONTEND.md §5): Trello-style columns by status (or the query's first groupBy field).
- * Only local items are draggable (a drag handle works with the mouse, touch and the keyboard, with
+ * Only to-dos TodoList owns are draggable (not mirrored cards, not time blocks or travel; a drag handle works with the mouse, touch and the keyboard, with
  * announcements in the page language); dropping one on a status column PATCHes its status.
  * Mirrored cards open in their own app.
  */
 export default function KanbanBlock({ dashboard, block }: BlockComponentProps) {
   const { t } = useTranslation();
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
+  const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
+  const colourOf = useRowColours(itemRows);
   const setStatus = useSetItemStatus();
   const [activeId, setActiveId] = useState<string | null>(null);
   const field = block.query?.groupBy?.[0] ?? 'status';
@@ -261,7 +308,7 @@ export default function KanbanBlock({ dashboard, block }: BlockComponentProps) {
     >
       <DndContext
         sensors={sensors}
-        collisionDetection={collisions}
+        collisionDetection={visibleCollisions}
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         onDragCancel={() => {
@@ -283,6 +330,7 @@ export default function KanbanBlock({ dashboard, block }: BlockComponentProps) {
                 now={now}
                 timeZone={timeZone}
                 droppable={byStatus && hasLocal}
+                colourOf={colourOf}
               />
             ))}
           </div>
@@ -296,6 +344,7 @@ export default function KanbanBlock({ dashboard, block }: BlockComponentProps) {
                 now={now}
                 due={dateOf(active.row.dueAt)}
                 timeZone={timeZone}
+                colour={colourOf(active.row.id)}
               />
             </div>
           )}

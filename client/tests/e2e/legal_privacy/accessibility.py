@@ -19,7 +19,7 @@ def test_privacy_accessibility(page: Page, base_url: str, lng: str):
 
 
 # The policy's parts, as PrivacyPolicyPage.tsx lists them (SECTIONS): one h2 each.
-PRIVACY_SECTIONS = 12
+PRIVACY_SECTIONS = 13
 
 
 def test_privacy_landmarks(page: Page, app_url: str):

@@ -41,6 +41,7 @@ import {
   draftOf,
   editPlan,
   isTimedEvent,
+  keepsSpan,
   patchOf,
   rebase,
   statusChoices,
@@ -548,7 +549,7 @@ function EditForm({
       labelFor={labelFor}
       hereId={`${ids}-${entry.field}-here`}
       label={t(
-        entry.field === 'startAt' && item.kind === 'event' && !timed
+        entry.field === 'startAt' && keepsSpan(item.kind) && !timed
           ? 'items.edit.day'
           : `items.edit.fields.${entry.field}`,
       )}

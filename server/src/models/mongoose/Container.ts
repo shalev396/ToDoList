@@ -154,6 +154,19 @@ export const ContainerRepository: IContainerRepository = {
     return result.modifiedCount;
   },
 
+  async setTopics(workspaceId, changes) {
+    if (changes.length === 0) return 0;
+    const result = await ContainerMongoModel.bulkWrite(
+      changes.map(({ id, topicId }) => ({
+        updateOne: {
+          filter: { _id: id, workspaceId, deletedAt: null, topicId: { $ne: topicId } },
+          update: { $set: { topicId } },
+        },
+      })),
+    );
+    return result.modifiedCount;
+  },
+
   async softDeleteForWorkspace(workspaceId) {
     const result = await ContainerMongoModel.updateMany(
       { workspaceId, deletedAt: null },

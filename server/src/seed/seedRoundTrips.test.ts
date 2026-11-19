@@ -25,9 +25,10 @@ const ROUND_TRIP_MS = Number(process.env['SEED_ROUND_TRIP_MS'] ?? '0');
 
 /**
  * Commands a seed may send. Before its writes were batched it sent 475 (45.6 s with 150 ms a round
- * trip); batched, 73 (about 7 s).
+ * trip); batched, 73 (about 7 s). The demo topic rules it saves re-file each connection's stored
+ * records (File under: two commands a connection, nothing to move yet), so 89.
  */
-const BUDGET = 75;
+const BUDGET = 90;
 
 /** The driver's own commands: handshakes and session clean-up, never the seed's. */
 const HOUSEKEEPING: ReadonlySet<string> = new Set([

@@ -295,6 +295,52 @@ async function seed(): Promise<void> {
     { title: ITEM_TITLE, note: ITEM_NOTE },
     'item with pasted secrets',
   );
+  // The same pasted secrets in a time block's note.
+  const timeBlock = await created(
+    '/time-blocks',
+    {
+      title: ITEM_TITLE,
+      note: ITEM_NOTE,
+      startAt: '2026-11-22T11:00:00.000Z',
+      endAt: '2026-11-22T15:00:00.000Z',
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'],
+    },
+    'time block with pasted secrets',
+  );
+  // Travel: the owner's Home and Braude, every occurrence of the block marked (its legs), and a
+  // where-rule the manifest changes and removes.
+  await created('/travel/places', { name: 'Home', home: true }, 'travel home');
+  const braude = await created(
+    '/travel/places',
+    { name: 'Braude', address: 'Snunit St 51, Karmiel' },
+    'travel place',
+  );
+  const braudeId = dataOf(braude)['id'] as string;
+  const marked = await send(
+    'owner',
+    'POST',
+    `${base}/travel/items/${dataOf(timeBlock)['id'] as string}`,
+    'seed: travel mark',
+    { every: true, mode: 'transit', direction: 'both', placeId: braudeId },
+  );
+  assert.equal(marked.status, 200, marked.text);
+  const [leg] = dataOf(marked)['legs'] as { id: string }[];
+  assert.ok(leg, `the weekly block has no legs: ${marked.text.slice(0, 160)}`);
+  const whereRule = await created(
+    '/travel/rules',
+    {
+      scope: {
+        kind: 'where',
+        where: {
+          combinator: 'and',
+          rules: [{ field: 'title', operator: 'contains', value: 'Gym' }],
+        },
+      },
+      mode: 'walk',
+      direction: 'both',
+    },
+    'travel rule',
+  );
   const dashboard = await created('/dashboards', { title: 'Secrets dashboard' }, 'dashboard');
   const topic = await created('/topics', { name: 'Secrets page' }, 'topic');
   const view = await created(
@@ -322,6 +368,8 @@ async function seed(): Promise<void> {
     wid,
     throwawayWid,
     itemId: dataOf(item)['id'] as string,
+    timeBlockId: dataOf(timeBlock)['id'] as string,
+    travel: { placeId: braudeId, ruleId: dataOf(whereRule)['id'] as string, legId: leg.id },
     dashboardId: dataOf(dashboard)['id'] as string,
     dashboardVersion: dataOf(dashboard)['version'] as number,
     viewId: dataOf(view)['id'] as string,
@@ -452,6 +500,7 @@ describe('credential route', () => {
         // A Google Calendar's live pushed events (a count), and only there.
         ...(status['provider'] === 'google_calendar' ? ['pushedEvents'] : []),
         'status',
+        'topicId',
       ]);
       if (status['provider'] === 'google_calendar') {
         check(typeof status['pushedEvents'] === 'number', 'pushedEvents is a count');
