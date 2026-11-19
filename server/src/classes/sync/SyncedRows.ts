@@ -141,14 +141,19 @@ export class SyncedRows {
     );
   }
 
-  /** A full listing's sweep of its containers: `resource`'s not seen since `before`. */
+  /**
+   * A full listing's sweep of its containers: `resource`'s not seen since `before`. A successful
+   * response that left one out can be a permission flap that the next sync heals, so its travel
+   * rules stay (only a deselect or a disconnect drops them).
+   */
   async sweepContainers(resource: string, before: Date, options: SweepOptions): Promise<number> {
-    const stamped = { ...options, deletedAt: options.deletedAt ?? new Date() };
-    const swept = await (
-      await getContainerRepository()
-    ).sweepUnseen(this.#workspaceId, this.#integrationId, resource, before, stamped);
-    await this.#forgetSwept(swept, stamped.deletedAt);
-    return swept;
+    return (await getContainerRepository()).sweepUnseen(
+      this.#workspaceId,
+      this.#integrationId,
+      resource,
+      before,
+      options,
+    );
   }
 
   /** Its items of resources it no longer lists, soft-deleted. How many. */
@@ -175,7 +180,7 @@ export class SyncedRows {
   }
 
   /**
-   * Containers a sweep just soft-deleted (a calendar no longer selected, say) stop being synced:
+   * Containers a deselect just soft-deleted (a calendar no longer selected) stop being synced:
    * the travel rules for "every repeat" of their events go, as on a disconnect.
    */
   async #forgetSwept(swept: number, deletedAt: Date): Promise<void> {

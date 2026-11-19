@@ -481,7 +481,40 @@ describe('TravelSetup#changeLegMode', () => {
     assert.equal((await classes.TravelRule.listOwn(ws.a)).length, 1);
   });
 
-  it('a calendar no longer synced (swept) loses its repeats rules; another calendar keeps its own', async () => {
+  it('a container a provider response left out (a permission flap) keeps its repeats rules', async () => {
+    const ws = await workspace();
+    const containers = await models.getContainerRepository();
+    // The container ids are global: clear the one the disconnect test above left deleted.
+    await containers.purgeDeletedBefore(new Date(Date.now() + 60_000));
+    await containers.bulkUpsert(ws.id, [
+      {
+        id: 'cal-braude',
+        integrationId: ws.gcal,
+        topicId: null,
+        type: 'calendar',
+        name: 'Braude',
+        syncResource: 'cal-braude',
+        source: gcalSource(ws, 'cal-braude'),
+      },
+    ]);
+    const first = await lecture(ws, 'l1', local(1, 10, 30));
+    await regenerate(ws);
+    await classes.TravelSetup.of(ws.a).changeLegMode(legOf(await legs(ws), first, 'there').id, {
+      mode: 'walk',
+      scope: 'repeats',
+    });
+    assert.equal((await marks(ws)).length, 1);
+    const rows = SyncedRows.of({ id: ws.gcal, workspaceId: ws.id });
+    // A successful listing without the calendar soft-deletes it, but its rules stay: the next sync
+    // that lists it again heals it.
+    const swept = await rows.sweepContainers('cal-braude', new Date(Date.now() + 60_000), {
+      deletedAt: new Date(),
+    });
+    assert.equal(swept, 1);
+    assert.equal((await marks(ws)).length, 1);
+  });
+
+  it('a calendar deselected (swept as an orphan) loses its repeats rules; a provider omission keeps them', async () => {
     const ws = await workspace();
     const containers = await models.getContainerRepository();
     // The container ids are global: clear the one the disconnect test above left deleted.

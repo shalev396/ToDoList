@@ -282,7 +282,13 @@ function Leg({
                     onClick={() => {
                       // Only a click, Enter or Space on another way asks; the arrow keys just move.
                       if (!busy && mode !== travel.mode) {
-                        setPickedMode(mode);
+                        if (repeatsKind === 'none') {
+                          // Nothing repeats: the server changes this one event either way, so
+                          // there is nothing to ask.
+                          void chooseScope(mode, 'this');
+                        } else {
+                          setPickedMode(mode);
+                        }
                       }
                     }}
                     className={cn(

@@ -188,6 +188,38 @@ def test_touching_events_keep_full_width_and_overlapping_sit_side_by_side(
     assert discrete["width"] >= 0.9 * column["width"], "the lecture after the bus is squeezed"
 
 
+def test_narrow_inline_chip_drops_its_icon_for_the_title(
+    ipad: Page, base_url: str, api_base_url: str, fresh_owner
+):
+    """The quarter hour in a half-width lane (Thursday's meeting beside the lecture) is under 64px:
+    its icon goes and the title gets the room (at least three characters wide, not "A...")."""
+    page = ipad
+    calendar, days = _open_week(page, base_url, api_base_url, fresh_owner)
+    narrow = _chip(calendar, days["thursday"], MEETING)
+    expect(narrow.locator("[data-chip-layout='inline']")).to_have_count(1)
+    assert box(narrow)["width"] < 64, f"the lane is not narrow: {box(narrow)}"
+    expect(narrow.locator("[data-source-icon] svg").first).not_to_be_visible()
+    title = narrow.locator("[data-chip-title]")
+    room = title.evaluate(
+        """(el) => {
+            const probe = document.createElement('span');
+            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+            probe.style.font = getComputedStyle(el).font;
+            probe.textContent = el.textContent.slice(0, 3);
+            document.body.append(probe);
+            const three = probe.getBoundingClientRect().width;
+            probe.remove();
+            return { three, width: el.clientWidth };
+        }"""
+    )
+    assert room["width"] >= room["three"] - 1, f"the title has no room for 3 characters: {room}"
+    expect(narrow).to_have_attribute("aria-label", re.compile(rf"^{MEETING}"))
+    expect(narrow).to_have_attribute("title", re.compile(rf"^{MEETING}"))
+    # A full-width quarter hour keeps its icon.
+    wide = _chip(calendar, days["monday"], MEETING)
+    expect(wide.locator("[data-source-icon] svg").first).to_be_visible()
+
+
 def test_tiny_chip_is_its_icon_with_a_hit_area_in_free_time(
     ipad: Page, base_url: str, api_base_url: str, fresh_owner
 ):

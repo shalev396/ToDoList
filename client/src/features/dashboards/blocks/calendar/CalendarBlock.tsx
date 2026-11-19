@@ -452,8 +452,15 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       );
     }
     return (
-      <div className={cn(chip, 'flex items-center gap-1')} style={fill} data-chip-layout="inline">
-        {lead}
+      <div
+        className={cn(chip, 'flex items-center gap-1', !plate && '@container')}
+        style={fill}
+        data-chip-layout="inline"
+      >
+        {/* A chip narrower than 64px (56px inside its padding; a half-width lane) gives the icon's room to the title. */}
+        <span className={cn('flex shrink-0 items-center gap-1', !plate && '@max-[56px]:hidden')}>
+          {lead}
+        </span>
         <span dir="auto" className="min-w-0 truncate" data-chip-title="">
           {arg.event.title}
         </span>
