@@ -56,7 +56,18 @@ export interface Gathered {
   anchors: Anchor[];
   /** By `anchorItemId|occurrence` (LegKey#anchorKey). */
   fates: Map<string, AnchorFate>;
+  /** The rule that asks for each anchor's travel, by the same key (an anchor always has one). */
+  rules: Map<string, TravelRule>;
 }
+
+/** One anchor occurrence as a gather finds it now, and the rule that makes it. */
+export interface RuledAnchor {
+  anchor: Anchor;
+  rule: TravelRule;
+}
+
+/** How far around a moment `ruleOf` reads: an anchor that moved by a day or so is still found. */
+const RULE_OF_MARGIN_MS = 36 * 60 * 60 * 1000;
 
 /** A rule with its scope read once. */
 interface Scoped {
@@ -113,6 +124,7 @@ export class TravelAnchors {
   readonly #defaults: ReadonlyMap<string, string>;
   readonly #rules: readonly Scoped[];
   readonly #fates = new Map<string, AnchorFate>();
+  readonly #ruled = new Map<string, TravelRule>();
 
   private constructor(caller: Caller, input: GatherInput) {
     this.#caller = caller;
@@ -135,6 +147,30 @@ export class TravelAnchors {
     return new TravelAnchors(caller, input).#gather();
   }
 
+  /**
+   * The rule and the place of ONE anchor occurrence as a gather decides them now (the item rule,
+   * else its series', else the oldest where-rule that matches: the one precedence, not a copy of
+   * it). `near` is about when it starts (a leg's `anchorStart`); the day around it is read. Null
+   * when the occurrence is no anchor any more (moved far, cancelled, no rule matches). The anchor
+   * carries the mode, the way (`there`, `back`) and its resolved place.
+   */
+  static async ruleOf(
+    caller: Caller,
+    input: Omit<GatherInput, 'range'>,
+    target: { itemId: string; occurrence: string; near: Date },
+  ): Promise<RuledAnchor | null> {
+    const range = {
+      from: new Date(target.near.getTime() - RULE_OF_MARGIN_MS),
+      to: new Date(target.near.getTime() + RULE_OF_MARGIN_MS),
+    };
+    const gathered = await TravelAnchors.gather(caller, { ...input, range });
+    const anchor = gathered.anchors.find(
+      (one) => one.itemId === target.itemId && one.occurrence === target.occurrence,
+    );
+    const rule = gathered.rules.get(anchorKey(target.itemId, target.occurrence));
+    return anchor === undefined || rule === undefined ? null : { anchor, rule };
+  }
+
   async #gather(): Promise<Gathered> {
     const reads = await ItemQuery.for(this.#caller);
     const rows = await this.#rows(reads, ANCHOR_RULES, true);
@@ -150,7 +186,7 @@ export class TravelAnchors {
       const anchor = this.#anchorOf(occurrence, matches);
       if (anchor !== null) anchors.push(anchor);
     }
-    return { anchors, fates: this.#fates };
+    return { anchors, fates: this.#fates, rules: this.#ruled };
   }
 
   /** One occurrence as an anchor; null when no rule asks for travel to it. */
@@ -170,6 +206,7 @@ export class TravelAnchors {
     }
     const placeId = this.#placeOf(row, itemId, rule);
     this.#fate(key, placeId === null ? 'no_place' : 'present');
+    this.#ruled.set(key, rule);
     return {
       itemId,
       occurrence: slot,

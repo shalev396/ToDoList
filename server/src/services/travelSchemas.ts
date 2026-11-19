@@ -8,7 +8,12 @@
 import { z } from 'zod';
 
 import { RuleGroupSchema } from '../types/builder.js';
-import { RULE_DIRECTIONS, TRAVEL_MODES, TRIP_MINUTES_MAX } from '../types/travel.js';
+import {
+  LEG_MODE_SCOPES,
+  RULE_DIRECTIONS,
+  TRAVEL_MODES,
+  TRIP_MINUTES_MAX,
+} from '../types/travel.js';
 
 const Iso = z.iso.datetime({ offset: true });
 const Id = z.string().min(1).max(200);
@@ -130,6 +135,12 @@ export const LegEditBody = z.strictObject({
   startAt: Iso.optional(),
   endAt: Iso.optional(),
   minutes: Minutes.optional(),
+});
+
+/** How he goes on a leg's event, for this day or every repeat (LegModeRequest). */
+export const LegModeBody = z.strictObject({
+  mode: Mode,
+  scope: z.enum(LEG_MODE_SCOPES),
 });
 
 /** Skip and reset take no body. */

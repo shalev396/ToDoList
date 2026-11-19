@@ -89,6 +89,9 @@ export interface MarkItemInput {
   back?: SpanChange | undefined;
 }
 
+/** One of many marks `markItems` stores in one go: a mark with no typed length or times. */
+export type MarkEachInput = Omit<MarkItemInput, 'there' | 'back'>;
+
 /** Which marks `unmarkItem` takes back: every occurrence's, or one occurrence's (or `single`). */
 export interface UnmarkItemInput {
   itemId: string;
@@ -110,6 +113,7 @@ interface MarkSpan {
 export type MarkedLength = boolean | null;
 
 const ID_MAX = 200;
+const RULE_CAP_MESSAGE = 'You have the most travel rules allowed: remove one first';
 const NOT_ITS_OCCURRENCE = 'occurrence: not an occurrence of this item';
 
 /** An item's rule lines: a repeating item's, else none. */
@@ -276,7 +280,7 @@ export class TravelRule
     const rules = await getTravelRuleRepository();
     const count = await rules.countOwn(caller.workspaceId, caller.userId);
     if (count >= PLAN_LIMITS.travelRulesPerMember) {
-      throw new AppError(409, 'You have the most travel rules allowed: remove one first', {
+      throw new AppError(409, RULE_CAP_MESSAGE, {
         code: 'travel_limit',
       });
     }
@@ -448,6 +452,56 @@ export class TravelRule
       }
     }
     return answer();
+  }
+
+  /**
+   * Editors: many marks at once (`markItem`'s rule part, without a length or times), then the
+   * member's legs are made again ONCE, not once per mark. Each input is checked as `markItem`
+   * checks it (404, 400, `not_an_occurrence`) and the member's Home and places are checked before
+   * anything is stored, and so is the rule cap (409 `travel_limit` when the new rules would pass
+   * it: nothing is stored then). Marking a scope again changes its rule. The rules, in the order
+   * of the inputs (a scope given twice is one rule). A regeneration that fails is logged, as for
+   * `markItem`.
+   */
+  static async markItems(caller: Caller, inputs: readonly MarkEachInput[]): Promise<TravelRule[]> {
+    caller.require('editor');
+    const places = await Place.listOwn(caller);
+    if (!places.some((place) => place.isHome)) {
+      throw new AppError(409, 'Set your Home first: every day of travel starts and ends there', {
+        code: 'travel_home_missing',
+      });
+    }
+    const own = new Set(places.map((place) => place.id));
+    const wanted: { scope: MarkScope; input: MarkEachInput }[] = [];
+    for (const input of inputs) {
+      if (input.placeId !== undefined && input.placeId !== null && !own.has(input.placeId)) {
+        throw new ValidationError('placeId: not one of your places');
+      }
+      const item = await Item.find(caller, input.itemId);
+      const scope = await TravelRule.#markScope(caller, item, input);
+      if (!wanted.some((one) => sameMark(one.scope, scope))) wanted.push({ scope, input });
+    }
+    const marked = await TravelRule.listOwn(caller);
+    const fresh = wanted.filter(({ scope }) => !marked.some((rule) => sameMark(rule.scope, scope)));
+    if (marked.length + fresh.length > PLAN_LIMITS.travelRulesPerMember) {
+      throw new AppError(409, RULE_CAP_MESSAGE, { code: 'travel_limit' });
+    }
+    const rules: TravelRule[] = [];
+    for (const { scope, input } of wanted) {
+      const choice = {
+        mode: input.mode,
+        direction: input.direction,
+        placeId: input.placeId ?? null,
+      };
+      const known = marked.find((rule) => sameMark(rule.scope, scope));
+      rules.push(
+        known === undefined
+          ? await TravelRule.create(caller, { scope, ...choice })
+          : await known.update(caller, choice),
+      );
+    }
+    await TravelPlanner.afterOwnChange(caller, 'mark');
+    return rules;
   }
 
   /**

@@ -424,6 +424,13 @@ export const MANIFEST: readonly Entry[] = [
     expect: [2, 4],
   },
   {
+    method: 'PUT',
+    path: `${W}/travel/legs/:id/mode`,
+    params: (c) => ({ id: c.travel.legId }),
+    body: () => ({ mode: 'walk', scope: 'this' }),
+    expect: [2, 4],
+  },
+  {
     method: 'GET',
     path: `${W}/travel/legs/:id/links`,
     params: (c) => ({ id: c.travel.legId }),

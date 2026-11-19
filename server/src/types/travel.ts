@@ -371,6 +371,30 @@ export interface MarkItemResponse {
   lengthStored: boolean | null;
 }
 
+/** How far a mode change reaches: this trip's event only, or every repeat of it. */
+export const LEG_MODE_SCOPES = ['this', 'repeats'] as const;
+export type LegModeScope = (typeof LEG_MODE_SCOPES)[number];
+
+/**
+ * `PUT …/travel/legs/:id/mode`: how he goes on this leg's event. `this`: that one occurrence;
+ * `repeats`: every occurrence of a repeating event, or, for an event that doesn't repeat (an
+ * imported timetable), it and every later event of the same calendar or project with the same
+ * title, weekday and local start time.
+ */
+export interface LegModeRequest {
+  mode: TravelMode;
+  scope: LegModeScope;
+}
+
+/**
+ * How many events were marked, and the leg as it is after the legs were made again (the same
+ * anchor, occurrence and direction); null when there is none now.
+ */
+export interface LegModeResponse {
+  marked: number;
+  leg: ItemDetail | null;
+}
+
 /**
  * `POST …/travel/preview`: a trip's length as a leg would get it (no leg is made): the length he
  * set for it, else UNSET_TRIP_MINUTES with `lengthUnset`. From defaults to Home; without a place to

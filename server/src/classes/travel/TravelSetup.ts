@@ -10,9 +10,21 @@
  * Marking an item is TravelRule.markItem, which regenerates itself (its answer holds the legs).
  * Editors and owners only (Ruling 16); everything is the caller's own.
  */
+import { NotFoundError } from '../../errors/NotFoundError.js';
+import { ValidationError } from '../../errors/ValidationError.js';
+import {
+  LEG_MODE_SCOPES,
+  TRAVEL_MODES,
+  type LegModeScope,
+  type TravelMode,
+  type TravelSettingsPatch,
+  type TravelSettingsResponse,
+} from '../../types/travel.js';
 import type { Caller } from '../base/Caller.js';
+import { isRecurring, Item } from '../item/index.js';
 import { TravelLeg, type LegTimesChange } from '../item/TravelLeg.js';
-import type { TravelSettingsPatch, TravelSettingsResponse } from '../../types/travel.js';
+import { TravelAnchors } from './TravelAnchors.js';
+import { TravelRepeats } from './TravelRepeats.js';
 import { Place, type NewPlace, type PlaceChange } from './Place.js';
 import { TravelPlanner } from './TravelPlanner.js';
 import { TravelProfile } from './TravelProfile.js';
@@ -133,7 +145,107 @@ export class TravelSetup {
     return TravelLeg.findOwn(caller, id);
   }
 
+  /**
+   * How he goes on one of the caller's legs' events, for `this` day or every `repeats` (the leg's
+   * own: 404 for anyone else's, and for one that was removed or skipped: reset it first). The
+   * event is marked (TravelRule.markItem) with the rule that makes the leg now (TravelAnchors.ruleOf:
+   * its item mark, else its series', else the oldest where-rule that matches) keeping that rule's
+   * way (`there`, `back`, `both`: a rule that only goes there never gains a trip back) and place
+   * (the rule's, else the event's resolved place, else the leg's event side), with the new mode.
+   *
+   * `this`: that occurrence (an event that doesn't repeat: itself). `repeats`: a repeating event's
+   * every occurrence (a series mark); an event that doesn't repeat: it and every later repeat of
+   * it (TravelRepeats: same calendar or project, title, weekday and local start time), all marks
+   * stored and the legs made again ONCE. 409 `travel_limit` when those marks would pass the rule
+   * cap (nothing is stored), 404 when the event is no longer one the leg can be made for
+   * (moved far, cancelled, no rule asks for it now). `leg`: the leg of the same anchor,
+   * occurrence and way after the regeneration; null when none is left.
+   */
+  async changeLegMode(
+    id: string,
+    change: { mode: TravelMode; scope: LegModeScope },
+  ): Promise<{ marked: number; leg: TravelLeg | null }> {
+    const caller = this.#caller;
+    if (!(TRAVEL_MODES as readonly string[]).includes(change.mode)) {
+      throw new ValidationError(`mode: one of ${TRAVEL_MODES.join(', ')}`);
+    }
+    if (!(LEG_MODE_SCOPES as readonly string[]).includes(change.scope)) {
+      throw new ValidationError(`scope: one of ${LEG_MODE_SCOPES.join(', ')}`);
+    }
+    const leg = await TravelLeg.findOwn(caller, id);
+    const travel = leg.travel;
+    if (travel === null || leg.isDeleted) throw new NotFoundError();
+    const item = await Item.find(caller, travel.anchorItemId);
+    const [profile, rules, places] = await Promise.all([
+      TravelProfile.of(caller),
+      TravelRule.listOwn(caller),
+      Place.listOwn(caller),
+    ]);
+    const found = await TravelAnchors.ruleOf(
+      caller,
+      { profile, rules, places, now: new Date() },
+      {
+        itemId: travel.anchorItemId,
+        occurrence: travel.occurrence,
+        near: new Date(travel.anchorStart),
+      },
+    );
+    if (found === null) {
+      throw new NotFoundError();
+    }
+    const placeId =
+      found.rule.placeId ??
+      found.anchor.placeId ??
+      (travel.direction === 'back' ? travel.fromPlaceId : travel.toPlaceId);
+    const choice = { mode: change.mode, direction: found.rule.direction, placeId };
+    const occurrence = travel.occurrence === 'single' ? undefined : new Date(travel.occurrence);
+    let marked: number;
+    if (change.scope === 'this') {
+      await TravelRule.markItem(caller, {
+        itemId: travel.anchorItemId,
+        occurrence,
+        every: false,
+        ...choice,
+      });
+      marked = 1;
+    } else if (isRecurring(item) || item.startAt === null) {
+      await TravelRule.markItem(caller, {
+        itemId: travel.anchorItemId,
+        every: true,
+        ...choice,
+      });
+      marked = 1;
+    } else {
+      const ids = await TravelRepeats.of(caller).from({
+        id: item.id,
+        title: item.title,
+        containerId: item.containerId,
+        startAt: item.startAt,
+      });
+      const rules = await TravelRule.markItems(
+        caller,
+        ids.map((itemId) => ({ itemId, every: false, ...choice })),
+      );
+      marked = rules.length;
+    }
+    return { marked, leg: await this.#legNow(leg) };
+  }
+
   // ─── Inside ───────────────────────────────────────────────────────────────
+
+  /** The live leg with the key of `before`, as the regeneration left it; null when none. */
+  async #legNow(before: TravelLeg): Promise<TravelLeg | null> {
+    const key = before.key;
+    const start = before.startAt;
+    if (key === null || start === null) return null;
+    const day = 24 * 60 * 60 * 1000;
+    const { live } = await TravelLeg.listDays(
+      this.#caller,
+      new Date(start.getTime() - 2 * day),
+      new Date(start.getTime() + 2 * day),
+    );
+    return live.find((one) => one.key === key) ?? null;
+  }
 
   /**
    * The caller's legs over the horizon, made again with what just changed, while the request waits
