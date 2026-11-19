@@ -327,6 +327,36 @@ describe('TravelSetup#changeLegMode', () => {
     assert.equal((await repeatsOf()).length, 0);
   });
 
+  it('repeats again from a later event, the same mode already applying: nothing new is stored', async () => {
+    const ws = await workspace();
+    const first = await lecture(ws, 'l1', local(1, 10, 30));
+    const next = await lecture(ws, 'l2', local(8, 10, 30));
+    await regenerate(ws);
+    const setup = classes.TravelSetup.of(ws.a);
+    const repeatsOf = async (): Promise<Awaited<ReturnType<typeof marks>>> =>
+      (await marks(ws)).filter(({ scope }) => scope.kind === 'repeats');
+    const stored = await setup.changeLegMode(legOf(await legs(ws), first, 'there').id, {
+      mode: 'walk',
+      scope: 'repeats',
+    });
+    assert.equal(stored.marked, 1);
+    // From the next week: the walk rule already makes this trip, so no rule is added.
+    const again = await setup.changeLegMode(legOf(await legs(ws), next, 'there').id, {
+      mode: 'walk',
+      scope: 'repeats',
+    });
+    assert.equal(again.marked, 0);
+    assert.equal(again.leg?.travel?.mode, 'walk');
+    assert.equal((await repeatsOf()).length, 1);
+    // A different mode from there is a change: its own rule.
+    const other = await setup.changeLegMode(legOf(await legs(ws), next, 'there').id, {
+      mode: 'drive',
+      scope: 'repeats',
+    });
+    assert.equal(other.marked, 1);
+    assert.equal((await repeatsOf()).length, 2);
+  });
+
   it('this, then repeats from the same event: the choice reaches that event; others keep theirs', async () => {
     const ws = await workspace();
     const first = await lecture(ws, 'l1', local(1, 10, 30));

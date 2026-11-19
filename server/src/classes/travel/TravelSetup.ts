@@ -12,6 +12,8 @@
  */
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
+import { redactString } from '../../services/secretPatterns.js';
+import { repeatSlotOf, repeatTitleOf } from '../../types/travelRepeats.js';
 import {
   LEG_MODE_SCOPES,
   TRAVEL_MODES,
@@ -228,12 +230,29 @@ export class TravelSetup {
       marked = 1;
     } else {
       // An event that doesn't repeat by itself: one rule for its repeats (later imports too).
-      await TravelRule.markRepeats(caller, {
-        itemId: travel.anchorItemId,
-        dropItemMark: travel.occurrence,
-        ...choice,
-      });
-      marked = 1;
+      // Already made by such a rule of the same pattern and way (chosen from an earlier week):
+      // nothing new is stored, so choosing it again from a later week doesn't spend the rule cap.
+      const slot = repeatSlotOf(item.startAt, caller.settings.timezone);
+      const applying = found.rule.scope;
+      const already =
+        applying.kind === 'repeats' &&
+        applying.containerId === item.containerId &&
+        applying.title === repeatTitleOf(redactString(item.providerTitle)) &&
+        applying.weekday === slot.weekday &&
+        applying.startTime === slot.startTime &&
+        found.rule.mode === choice.mode &&
+        found.rule.direction === choice.direction &&
+        found.rule.placeId === choice.placeId;
+      if (already) {
+        marked = 0;
+      } else {
+        await TravelRule.markRepeats(caller, {
+          itemId: travel.anchorItemId,
+          dropItemMark: travel.occurrence,
+          ...choice,
+        });
+        marked = 1;
+      }
     }
     return { marked, leg: await this.#legNow(leg) };
   }

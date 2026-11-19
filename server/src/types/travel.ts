@@ -391,7 +391,7 @@ export interface LegModeRequest {
 }
 
 /**
- * How many rules were stored (1: "every repeat" is one rule, however many events it reaches), and the leg as it is after the legs were made again (the same
+ * How many rules were stored (1: "every repeat" is one rule, however many events it reaches; 0 when a rule of the same pattern and way already makes the trip), and the leg as it is after the legs were made again (the same
  * anchor, occurrence and direction); null when there is none now.
  */
 export interface LegModeResponse {
