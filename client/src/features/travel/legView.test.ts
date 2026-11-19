@@ -15,6 +15,7 @@ import {
   removalText,
   removedLegTitle,
   repeatPatternOf,
+  repeatsKindOf,
 } from './legView.ts';
 
 /** `t` over a language's texts, with `{{name}}` filled in (as i18next does). */
@@ -287,5 +288,19 @@ describe('repeatPatternOf', () => {
       repeatPatternOf('2026-11-19T07:30:00.000Z', 'Asia/Jerusalem', 'he').weekday,
       'יום חמישי',
     );
+  });
+});
+
+describe('repeatsKindOf', () => {
+  it('claims nothing while the event is not read', () => {
+    assert.equal(repeatsKindOf('single', null), 'unknown');
+  });
+  it('a series occurrence or a series row is every occurrence', () => {
+    assert.equal(repeatsKindOf('2026-11-19T08:30:00.000Z', null), 'series');
+    assert.equal(repeatsKindOf('single', { containerId: 'c', series: true }), 'series');
+  });
+  it('a lone event in a calendar is a pattern; one outside is only this day', () => {
+    assert.equal(repeatsKindOf('single', { containerId: 'c', series: false }), 'pattern');
+    assert.equal(repeatsKindOf('single', { containerId: null, series: false }), 'none');
   });
 });

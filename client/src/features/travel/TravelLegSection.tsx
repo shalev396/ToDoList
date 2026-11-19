@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import { DAY_SHEET_STATE } from './travelDay';
 import { dayLink } from '@/pages/settings/travel/travelForms';
 import type { ItemDetail } from '@api-types/items.ts';
-import { toDate } from '@api-types/recurrence/occurrences.ts';
+import { isSeriesRow, toDate } from '@api-types/recurrence/occurrences.ts';
 import {
   TRAVEL_MODES,
   TRIP_MINUTES_MAX,
@@ -39,7 +39,7 @@ import {
 import { AppLinks } from './AppLinks';
 import { EveryOccurrenceDialog } from './EveryOccurrenceDialog';
 import { ConflictMark, LegModeIcon } from './LegMark';
-import { legTitle, repeatPatternOf } from './legView';
+import { legTitle, repeatPatternOf, repeatsKindOf } from './legView';
 import {
   editPanelLength,
   editPanelTime,
@@ -157,12 +157,20 @@ function Leg({
   const pattern = repeatPatternOf(travel.anchorStart, timeZone, locale);
   // The server makes a repeats rule for an event that doesn't repeat itself and sits in a calendar
   // or project; a series takes a series mark; anything else changes just this day.
+  const repeatsKind = repeatsKindOf(
+    travel.occurrence,
+    anchor.data === undefined
+      ? null
+      : { containerId: anchor.data.containerId, series: isSeriesRow(anchor.data) },
+  );
   const repeatsText =
-    travel.occurrence !== 'single'
+    repeatsKind === 'series'
       ? t('travel.leg.sheet.modeEverySeries')
-      : anchor.data?.containerId !== null && anchor.data?.containerId !== undefined
+      : repeatsKind === 'pattern'
         ? t('travel.leg.sheet.modeEveryPattern', { ...pattern, time: ltr(pattern.time) })
-        : t('travel.leg.sheet.modeEveryNone');
+        : repeatsKind === 'none'
+          ? t('travel.leg.sheet.modeEveryNone')
+          : t('travel.leg.sheet.modeEveryUnknown');
 
   return (
     <section
@@ -535,7 +543,7 @@ function LegTimes({
               id={`${ids}-arrive`}
               type="time"
               dir="ltr"
-              className="max-w-full min-w-0 appearance-none"
+              className="w-full min-w-0"
               value={time(state.end ?? span?.end)}
               onChange={(event) => {
                 const value = event.target.value;

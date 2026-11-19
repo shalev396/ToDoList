@@ -212,6 +212,7 @@ export const travel = {
       modeEveryOne: 'רק היום הזה',
       modeEveryEvery: 'כל החזרות',
       modeEverySeries: 'בכל מופע של האירוע הזה נוסעים ככה.',
+      modeEveryUnknown: 'כל החזרות משנה גם את שאר החזרות של האירוע הזה.',
       modeEveryNone: 'האירוע הזה לא חוזר: רק היום הזה ישתנה.',
       modeEveryPattern: 'כל {{weekday}} ב-{{time}}, כמו הזה, מהאירוע הזה והלאה.',
     },

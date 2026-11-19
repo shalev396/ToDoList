@@ -165,3 +165,25 @@ export function repeatPatternOf(
     time,
   };
 }
+
+/**
+ * What "every repeat" means for a trip's event, for the words of the question: `series` (every
+ * occurrence), `pattern` (a rule for the same title, weekday and time in its calendar or project),
+ * `none` (it doesn't repeat and has no calendar: only this day), or `unknown` while the event is not
+ * read (loading, failed): the words claim nothing.
+ */
+export function repeatsKindOf(
+  occurrence: string,
+  anchor: { containerId: string | null; series: boolean } | null,
+): 'series' | 'pattern' | 'none' | 'unknown' {
+  if (occurrence !== 'single') {
+    return 'series';
+  }
+  if (anchor === null) {
+    return 'unknown';
+  }
+  if (anchor.series) {
+    return 'series';
+  }
+  return anchor.containerId === null ? 'none' : 'pattern';
+}
