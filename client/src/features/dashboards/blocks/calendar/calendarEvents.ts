@@ -11,7 +11,7 @@ import { layerOf, type BlockLayer } from '@api-types/scheduled.ts';
 import type { TravelMode } from '@api-types/travel.ts';
 import { colourVar, paintOf } from '../../../colours/palette.ts';
 import type { LegMarks } from '../../../travel/legView.ts';
-import type { TimedSpan } from './chipLayout.ts';
+import type { TapReach, TimedSpan } from './chipLayout.ts';
 import { wallDate, wallString, type Occurrence } from '../time/occurrences.ts';
 import type { Tone } from '../../rules/applyDisplayRules.ts';
 
@@ -59,6 +59,14 @@ export interface CalendarEventProps {
    * only; chipLayout.ts `stretchedEvents`).
    */
   stretched: boolean;
+  /** A tiny chip's invisible hit area into the free time around it (chipLayout.ts `tapReach`). */
+  tap: TapReach | null;
+}
+
+/** How a short event is drawn beyond its time (chipLayout.ts); never part of the overlap math. */
+export interface ShortEventDrawing {
+  stretched?: boolean;
+  tap?: TapReach | undefined;
 }
 
 /**
@@ -100,14 +108,15 @@ function timing(o: Occurrence, timeZone: string): EventInput {
 }
 
 /**
- * A solid fill under its ink; travel is hatched over its muted fill (`tc-travel`). `stretched`: a
- * short event drawn a line tall over the free time after it (`tc-stretch`).
+ * A solid fill under its ink; travel is hatched over its muted fill (`tc-travel`). A short event
+ * may be drawn a line tall over the free time after it (`stretched`, `tc-stretch`), or keep its
+ * height with a hit area into the free time around it (`tap`).
  */
 export function toEventInput(
   item: DisplayedOccurrence,
   timeZone: string,
   colour: ItemColour,
-  stretched = false,
+  { stretched = false, tap }: ShortEventDrawing = {},
 ): EventInput {
   const { occurrence: o } = item;
   const paint = paintOf(colour);
@@ -129,6 +138,7 @@ export function toEventInput(
     anchorMoved: item.leg?.moved ?? false,
     lengthUnset: item.leg?.unset ?? false,
     stretched,
+    tap: tap ?? null,
   };
   // FullCalendar sets an event's attributes once, when its element is made (`eventDidMount`). A leg's
   // marks change under it (a conflict clears, the day moves on, he edits its times), so they are

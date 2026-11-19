@@ -68,6 +68,7 @@ import {
   chipLayout,
   chipMinutes,
   stretchedEvents,
+  tapReach,
   type ChipLayout,
 } from './chipLayout';
 import { readStartHour, slotTime, startScrollTop } from './startHour';
@@ -201,8 +202,11 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   // plain event, in the area's style, that opens its sheet.
   const areasAsEvents = viewName !== 'timeGridWeek';
   const events = useMemo(() => {
-    // A chip shorter than a line is drawn a line tall only over free time (chipLayout.ts).
-    const stretched = stretchedEvents(timedSpans(displayed));
+    // A chip shorter than a line is drawn a line tall only over free time; one that can't be
+    // keeps its height, its icon only, and a hit area into the free time around it (chipLayout.ts).
+    const spans = timedSpans(displayed);
+    const stretched = stretchedEvents(spans);
+    const reach = tapReach(spans, stretched);
     return [
       ...areas.map((occurrence) =>
         (areasAsEvents ? toAreaPeriodEventInput : toAreaEventInput)(
@@ -212,12 +216,10 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         ),
       ),
       ...displayed.map((item) =>
-        toEventInput(
-          item,
-          timeZone,
-          colourOf(item.occurrence.row.id),
-          stretched.has(item.occurrence.key),
-        ),
+        toEventInput(item, timeZone, colourOf(item.occurrence.row.id), {
+          stretched: stretched.has(item.occurrence.key),
+          tap: reach.get(item.occurrence.key),
+        }),
       ),
     ];
   }, [areas, areasAsEvents, displayed, timeZone, colourOf]);
@@ -357,16 +359,13 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             props.stretched,
           )
         : INLINE_CHIP;
-    // A tiny chip (shorter than a line, kept at its true height) has smaller icons and text.
+    // A tiny chip (shorter than a line, kept at its true height) shows its icon only, as tall as
+    // the chip allows (`--tc-icon`); its title and time are in its name and tooltip.
     const tiny = layout.kind === 'tiny';
     const lead = (
       <>
-        {props.dueOnly ? (
-          <CalendarClock
-            aria-hidden="true"
-            className={cn('shrink-0', tiny ? 'size-2' : 'size-3')}
-            data-due-marker
-          />
+        {props.dueOnly && !tiny ? (
+          <CalendarClock aria-hidden="true" className="size-3 shrink-0" data-due-marker />
         ) : null}
         {props.tone === undefined || tiny ? null : <ToneMark tone={props.tone} />}
         {props.legMode === null ? (
@@ -374,12 +373,12 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             source={ringProvider(props.provider)}
             className={cn(
               'shrink-0',
-              tiny ? '[&>svg]:size-2' : '[&>svg]:size-3',
+              tiny ? '[&>svg]:size-(--tc-icon)' : '[&>svg]:size-3',
               !list && '[&>svg]:text-current',
             )}
           />
         ) : (
-          <LegModeIcon mode={props.legMode} className={tiny ? 'size-2' : 'size-3'} />
+          <LegModeIcon mode={props.legMode} className={tiny ? 'size-(--tc-icon)' : 'size-3'} />
         )}
       </>
     );
@@ -425,21 +424,31 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       );
     }
     if (layout.kind === 'tiny') {
+      const icon = Math.min(12, Math.max(4, layout.linePx));
       return (
-        <div
-          className={cn(chip, 'flex items-center gap-0.5 py-0')}
-          style={{
-            ...fill,
-            fontSize: `${String(Math.max(7, layout.linePx - 1))}px`,
-            lineHeight: `${String(layout.linePx)}px`,
-          }}
-          data-chip-layout="tiny"
-        >
-          {lead}
-          <span dir="auto" className="min-w-0 truncate" data-chip-title="">
-            {arg.event.title}
-          </span>
-        </div>
+        <>
+          {props.tap === null ? null : (
+            // The finger's target: invisible, reaching only into free time (never another event).
+            <span
+              aria-hidden="true"
+              className="absolute inset-x-0"
+              style={{ top: -props.tap.above, bottom: -props.tap.below }}
+              data-chip-tap=""
+            />
+          )}
+          <div
+            className={cn(chip, 'flex items-center py-0')}
+            style={
+              { ...fill, height: layout.linePx, '--tc-icon': `${String(icon)}px` } as CSSProperties
+            }
+            data-chip-layout="tiny"
+          >
+            {lead}
+            <span className="sr-only" data-chip-title="">
+              {arg.event.title}
+            </span>
+          </div>
+        </>
       );
     }
     return (

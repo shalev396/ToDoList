@@ -12,9 +12,10 @@
  * (`slotEventOverlap: false`), none drawn over another.
  *
  * A chip shorter than a line of text is stretched to READABLE_PX only when that runs into free
- * time (`stretchedEvents`: no event starts there); otherwise it keeps its true height and a
- * smaller line (`tiny`). The stretch is CSS on the event (`tc-stretch`), so it never moves the
- * overlap math.
+ * time (`stretchedEvents`: no event starts there). Otherwise it keeps its true height and shows
+ * its icon only (`tiny`; the title and the time are in its name and tooltip), with an invisible
+ * hit area reaching into the free time around it, never over another event (`tapReach`). The
+ * stretch and the hit area are drawing only: they never move the overlap math.
  */
 
 /** One row of the week grid. */
@@ -102,13 +103,13 @@ export function chipMinutes(
 export type ChipLayout =
   | { kind: 'stacked'; titleLines: number }
   | { kind: 'inline'; titleLines: 1 }
-  /** Shorter than a line: one line of `linePx` (smaller text), clipped to the event. */
-  | { kind: 'tiny'; titleLines: 1; linePx: number };
+  /** Shorter than a line: the icon only, at most `linePx` tall (the chip's own height). */
+  | { kind: 'tiny'; titleLines: 0; linePx: number };
 
 /**
  * How a chip of `minutes` lays out in the week grid: stacked (the icon line, then the title on
  * every whole line left) when it is drawn at least STACKED_MIN_PX tall; inline when it holds a
- * line; tiny when it is shorter (and not `stretched` to READABLE_PX).
+ * line; tiny (the icon only) when it is shorter and not `stretched` to READABLE_PX.
  */
 export function chipLayout(minutes: number, stretched = false): ChipLayout {
   const drawn = Math.max(stretched ? READABLE_PX : 0, minutes * PX_PER_MINUTE);
@@ -119,7 +120,7 @@ export function chipLayout(minutes: number, stretched = false): ChipLayout {
   if (drawn >= READABLE_PX) {
     return { kind: 'inline', titleLines: 1 };
   }
-  return { kind: 'tiny', titleLines: 1, linePx: Math.max(0, Math.floor(drawn - EVENT_GAP_PX)) };
+  return { kind: 'tiny', titleLines: 0, linePx: Math.max(0, Math.floor(drawn - EVENT_GAP_PX)) };
 }
 
 export interface TimedSpan {
@@ -150,4 +151,45 @@ export function stretchedEvents(events: readonly TimedSpan[]): Set<string> {
     }
   }
   return stretched;
+}
+
+/** The height a tiny chip can be tapped over (WCAG 2.5.8's minimum target), as free time allows. */
+export const TAP_PX = 24;
+
+export interface TapReach {
+  /** px the hit area reaches above the chip, and below it. */
+  above: number;
+  below: number;
+}
+
+/**
+ * The hit area of each tiny chip (shorter than a line and not stretched): it grows from the chip
+ * to TAP_PX, first into the free time after it, then before it, never into the time of another
+ * event (one starting after it ends, or ending before it starts; one overlapping it is in another
+ * lane, beside it). A walk that ends when the lecture starts reaches up into the time before it.
+ */
+export function tapReach(
+  events: readonly TimedSpan[],
+  stretched: ReadonlySet<string>,
+): Map<string, TapReach> {
+  const reach = new Map<string, TapReach>();
+  const readable = READABLE_MINUTES * 60_000;
+  const px = (ms: number) => (ms / 60_000) * PX_PER_MINUTE;
+  for (const event of events) {
+    if (event.end - event.start >= readable || stretched.has(event.key)) {
+      continue;
+    }
+    const others = events.filter((other) => other.key !== event.key);
+    const nextStart = Math.min(
+      ...others.filter((other) => other.start >= event.end).map((other) => other.start),
+    );
+    const lastEnd = Math.max(
+      ...others.filter((other) => other.end <= event.start).map((other) => other.end),
+    );
+    const want = Math.max(0, TAP_PX - px(event.end - event.start));
+    const below = Math.min(want, px(nextStart - event.end));
+    const above = Math.min(want - below, px(event.start - lastEnd));
+    reach.set(event.key, { above, below });
+  }
+  return reach;
 }

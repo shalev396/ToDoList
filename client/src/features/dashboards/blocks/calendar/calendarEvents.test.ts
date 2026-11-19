@@ -280,10 +280,20 @@ describe('timedSpans and the stretch', () => {
   });
 
   it('marks a stretched event for the page (class and props), and only that one', () => {
-    const stretched = toEventInput({ occurrence: occ({}), badges: [] }, TZ, colour(), true);
+    const stretched = toEventInput({ occurrence: occ({}), badges: [] }, TZ, colour(), {
+      stretched: true,
+    });
     assert.ok(stretched.classNames?.toString().includes('tc-stretch'));
-    assert.deepEqual(pick(stretched, 'stretched'), [true]);
+    assert.deepEqual(pick(stretched, 'stretched', 'tap'), [true, null]);
     const plain = toEventInput({ occurrence: occ({}), badges: [] }, TZ, colour());
-    assert.deepEqual(pick(plain, 'stretched'), [false]);
+    assert.deepEqual(pick(plain, 'stretched', 'tap'), [false, null]);
+  });
+
+  it('carries a tiny chip’s hit area', () => {
+    const tiny = toEventInput({ occurrence: occ({}), badges: [] }, TZ, colour(), {
+      tap: { above: 14, below: 0 },
+    });
+    assert.deepEqual(pick(tiny, 'stretched', 'tap'), [false, { above: 14, below: 0 }]);
+    assert.ok(!(tiny.classNames?.toString() ?? '').includes('tc-stretch'));
   });
 });

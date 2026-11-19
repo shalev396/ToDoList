@@ -8,6 +8,8 @@ and portrait, dark, in Hebrew:
 - Events that only touch are not overlapping: both keep the day's full width, a 10-minute one
   included (drawn at its true height). Overlapping events sit side by side, none drawn over
   another; so do two events at the same times.
+- A chip too short for a line (the 10 minutes) shows its icon only, its title and time in its
+  name, with a hit area of at least 24px reaching only into free time.
 - An area takes no width from the events in it; its name is a tag in the day's header, which opens
   it.
 
@@ -182,6 +184,34 @@ def test_touching_events_keep_full_width_and_overlapping_sit_side_by_side(
     discrete = box(_chip(calendar, days["thursday"], DISCRETE))
     assert leg["y"] + leg["height"] <= discrete["y"] + 1
     assert discrete["width"] >= 0.9 * column["width"], "the lecture after the bus is squeezed"
+
+
+def test_tiny_chip_is_its_icon_with_a_hit_area_in_free_time(
+    ipad: Page, base_url: str, api_base_url: str, fresh_owner
+):
+    """Ten minutes before a lecture: too short for a line, so the icon only (the title and time in
+    its name); its hit area reaches up into the free time before it, never into the lecture."""
+    page = ipad
+    calendar, days = _open_week(page, base_url, api_base_url, fresh_owner)
+    short = _chip(calendar, days["thursday"], BREAK)
+    expect(short.locator("[data-chip-layout='tiny']")).to_have_count(1)
+    expect(short.locator("[data-source-icon] svg").first).to_be_visible()
+    expect(short.locator("[data-chip-title]")).to_have_class(re.compile(r"\bsr-only\b"))
+    expect(short).to_have_attribute("aria-label", re.compile(rf"^{BREAK}, .*12:40.*12:50"))
+    expect(short).to_have_attribute("title", re.compile(rf"^{BREAK}, "))
+
+    short.scroll_into_view_if_needed()
+    chip, target = box(short), box(short.locator("[data-chip-tap]"))
+    intro = box(_chip(calendar, days["thursday"], INTRO))
+    assert target["height"] >= 23, f"the hit area is under 24px: {target}"
+    assert target["y"] < chip["y"] - 5, "the hit area does not reach into the free time above"
+    assert target["y"] + target["height"] <= intro["y"] + 1, "the hit area covers the lecture"
+
+    # A tap in the free time just above the chip opens it.
+    page.mouse.click(target["x"] + target["width"] / 2, target["y"] + 3)
+    sheet = page.locator("[data-item-sheet]")
+    expect(sheet).to_be_visible(timeout=NORMAL_TIMEOUT)
+    expect(sheet.locator("[data-item-title]")).to_have_text(BREAK)
 
 
 def test_area_takes_no_width_and_its_header_tag_opens_it(

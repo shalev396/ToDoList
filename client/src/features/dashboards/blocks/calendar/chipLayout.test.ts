@@ -10,7 +10,9 @@ import {
   chipMinutes,
   drawnOverlap,
   drawnSpan,
+  TAP_PX,
   stretchedEvents,
+  tapReach,
 } from './chipLayout.ts';
 
 /** `HH:MM` as minutes of the day. */
@@ -111,9 +113,9 @@ describe('chipLayout', () => {
     assert.deepEqual(chipLayout(60), { kind: 'stacked', titleLines: 3 });
   });
 
-  it('a shorter event keeps its true height: one smaller line, clipped to it', () => {
-    assert.deepEqual(chipLayout(10), { kind: 'tiny', titleLines: 1, linePx: 9 });
-    assert.deepEqual(chipLayout(5), { kind: 'tiny', titleLines: 1, linePx: 4 });
+  it('a shorter event keeps its true height and shows its icon only (no title line)', () => {
+    assert.deepEqual(chipLayout(10), { kind: 'tiny', titleLines: 0, linePx: 9 });
+    assert.deepEqual(chipLayout(5), { kind: 'tiny', titleLines: 0, linePx: 4 });
   });
 
   it('a shorter event stretched over free time is a full line', () => {
@@ -165,5 +167,47 @@ describe('stretchedEvents', () => {
     const short = event('short', '10:20', '10:25');
     const lecture = event('lecture', '10:00', '11:00');
     assert.deepEqual([...stretchedEvents([short, lecture])], ['short']);
+  });
+});
+
+describe('tapReach', () => {
+  const day = Date.UTC(2026, 10, 19);
+  const event = (key: string, start: string, end: string) => ({
+    key,
+    start: day + at(start) * 60_000,
+    end: day + at(end) * 60_000,
+  });
+  const reachOf = (events: ReturnType<typeof event>[]) => tapReach(events, stretchedEvents(events));
+
+  it('a 10-minute walk that ends when the lecture starts reaches up, never into the lecture', () => {
+    const reach = reachOf([event('walk', '08:20', '08:30'), event('lecture', '08:30', '10:00')]);
+    assert.deepEqual(reach.get('walk'), { above: TAP_PX - 10 * PX_PER_MINUTE, below: 0 });
+    assert.equal(reach.has('lecture'), false);
+  });
+
+  it('reaches only as far as the free time on either side', () => {
+    const reach = reachOf([
+      event('before', '09:00', '09:52'),
+      event('short', '09:55', '10:00'),
+      event('after', '10:00', '11:00'),
+    ]);
+    assert.deepEqual(reach.get('short'), { above: 3 * PX_PER_MINUTE, below: 0 });
+  });
+
+  it('reaches into the time after it first, when that is free', () => {
+    const reach = reachOf([
+      event('short', '09:55', '10:00'),
+      event('after', '10:05', '11:00'),
+      event('before', '08:00', '09:00'),
+    ]);
+    assert.deepEqual(reach.get('short'), {
+      below: 5 * PX_PER_MINUTE,
+      above: TAP_PX - 5 * PX_PER_MINUTE - 5 * PX_PER_MINUTE,
+    });
+  });
+
+  it('a stretched event, and one of a quarter hour, need none', () => {
+    const reach = reachOf([event('alone', '09:00', '09:05'), event('meeting', '11:00', '11:15')]);
+    assert.equal(reach.size, 0);
   });
 });
