@@ -1,10 +1,11 @@
-import { useId, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router-dom';
 import { ArrowRight, CircleAlert, RotateCcw, Route, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
 import { errorMessage } from '@/api/errors';
 import {
+  useChangeLegMode,
   useEditLeg,
   useLegLinks,
   useResetLeg,
@@ -25,15 +26,19 @@ import { dayLink } from '@/pages/settings/travel/travelForms';
 import type { ItemDetail } from '@api-types/items.ts';
 import { toDate } from '@api-types/recurrence/occurrences.ts';
 import {
+  TRAVEL_MODES,
   TRIP_MINUTES_MAX,
   UNSET_TRIP_MINUTES,
   travelPropsOf,
   type LegEditRequest,
+  type LegModeScope,
   type TravelLegProps,
+  type TravelMode,
 } from '@api-types/travel.ts';
 import { AppLinks } from './AppLinks';
+import { EveryOccurrenceDialog } from './EveryOccurrenceDialog';
 import { ConflictMark, LegModeIcon } from './LegMark';
-import { legTitle } from './legView';
+import { legTitle, repeatPatternOf } from './legView';
 import {
   editPanelLength,
   editPanelTime,
@@ -77,6 +82,7 @@ function Leg({
   const workspaceId = workspace?.id ?? '';
   const timeZone = workspace?.settings.timezone ?? 'UTC';
   const location = useLocation();
+  const modeIds = useId();
   const { closeItem } = useItemParam();
   const start = toDate(item.startAt);
   const end = toDate(item.endAt);
@@ -84,6 +90,7 @@ function Leg({
   const day = start === null ? null : dateInZone(start, timeZone);
 
   const edit = useEditLeg(workspaceId);
+  const changeMode = useChangeLegMode(workspaceId);
   const skip = useSkipLeg(workspaceId);
   const reset = useResetLeg(workspaceId);
   const links = useLegLinks(workspaceId, item.id, canWrite);
@@ -96,7 +103,10 @@ function Leg({
   );
   const tripMinutes = legTripMinutes(travel, trip.data);
   const [error, setError] = useState<string | null>(null);
-  const busy = edit.isPending || skip.isPending || reset.isPending;
+  const busy = edit.isPending || skip.isPending || reset.isPending || changeMode.isPending;
+  // The way he picked, until he says whether it is this day only or every repeat.
+  const [pickedMode, setPickedMode] = useState<TravelMode | null>(null);
+  const modeGroup = useRef<HTMLFieldSetElement>(null);
   const canReset = travel.edited || travel.anchorMoved;
 
   const whenText =
@@ -122,6 +132,27 @@ function Leg({
       return false;
     }
   };
+
+  const chooseScope = async (mode: TravelMode, scope: LegModeScope) => {
+    setPickedMode(null);
+    setError(null);
+    try {
+      const answer = await changeMode.mutateAsync({ legId: item.id, body: { mode, scope } });
+      const now = answer.leg === null ? null : travelPropsOf(answer.leg.props);
+      toast.success(
+        now === null
+          ? t('travel.leg.sheet.modeGone')
+          : t('travel.leg.sheet.modeDone', { title: legTitle(t, now) }),
+      );
+      if (answer.leg === null) {
+        // The trip isn't there any more (the legs were made again without it): nothing to show.
+        closeItem();
+      }
+    } catch (failed) {
+      setError(errorMessage(t, failed, 'travel.leg.sheet.modeFailed'));
+    }
+  };
+  const pattern = repeatPatternOf(travel.anchorStart, timeZone, locale);
 
   return (
     <section
@@ -173,11 +204,15 @@ function Leg({
         <dd className="m-0" data-leg-when="">
           {whenText}
         </dd>
-        <dt className="text-muted-foreground">{t('travel.add.mode')}</dt>
-        <dd className="m-0 flex items-center gap-1.5">
-          <LegModeIcon mode={travel.mode} className="size-4" />
-          {t(`travel.modes.${travel.mode}`)}
-        </dd>
+        {canWrite ? null : (
+          <>
+            <dt className="text-muted-foreground">{t('travel.add.mode')}</dt>
+            <dd className="m-0 flex items-center gap-1.5">
+              <LegModeIcon mode={travel.mode} className="size-4" />
+              {t(`travel.modes.${travel.mode}`)}
+            </dd>
+          </>
+        )}
         <dt className="text-muted-foreground">{t('travel.leg.sheet.route')}</dt>
         <dd className="m-0 flex min-w-0 flex-wrap items-center gap-1.5" data-leg-route="">
           <span dir="auto" className="min-w-0 break-words">
@@ -206,6 +241,64 @@ function Leg({
 
       {canWrite ? (
         <>
+          <fieldset
+            ref={modeGroup}
+            tabIndex={-1}
+            disabled={busy}
+            data-leg-mode-picker=""
+            className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0 outline-none"
+          >
+            <legend className="mb-1.5 text-sm font-medium">{t('travel.add.mode')}</legend>
+            <div className="flex w-full gap-1 rounded-md bg-sunken p-1">
+              {TRAVEL_MODES.map((mode) => (
+                <label
+                  key={mode}
+                  data-leg-mode-choice={mode}
+                  className={cn(
+                    'relative flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2 text-center text-[13px] transition-colors pointer-fine:min-h-8 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
+                    travel.mode === mode
+                      ? 'bg-card font-medium text-foreground shadow-xs'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name={`${modeIds}-mode`}
+                    value={mode}
+                    checked={travel.mode === mode}
+                    onChange={() => {
+                      setPickedMode(mode);
+                    }}
+                    className="sr-only"
+                  />
+                  <LegModeIcon mode={mode} className="size-4" />
+                  <span className="min-w-0 break-words">{t(`travel.add.tabs.${mode}`)}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <EveryOccurrenceDialog
+            open={pickedMode !== null}
+            oneAvailable
+            returnFocus={modeGroup}
+            onCancel={() => {
+              setPickedMode(null);
+            }}
+            onChoose={(every) => {
+              if (pickedMode !== null) {
+                void chooseScope(pickedMode, every ? 'repeats' : 'this');
+              }
+            }}
+            copy={{
+              title: t('travel.leg.sheet.modeEveryTitle'),
+              body:
+                travel.occurrence === 'single'
+                  ? t('travel.leg.sheet.modeEveryPattern', pattern)
+                  : t('travel.leg.sheet.modeEverySeries'),
+              one: t('travel.leg.sheet.modeEveryOne'),
+              every: t('travel.leg.sheet.modeEveryEvery'),
+            }}
+          />
           <LegTimes
             // The form starts again from the leg as the server has it now.
             key={`${item.updatedAt.toString()}|${String(item.startAt)}|${String(item.endAt)}`}
@@ -406,8 +499,8 @@ function LegTimes({
 
       <fieldset className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0" data-leg-this-trip="">
         <legend className="mb-1 text-sm font-medium">{t('travel.leg.sheet.thisTrip')}</legend>
-        <div className="grid grid-cols-2 items-end gap-2">
-          <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-end gap-2" data-leg-times-row="">
+          <div className="flex min-w-[9rem] flex-1 flex-col gap-1">
             <Label htmlFor={`${ids}-leave`} className="text-[13px] font-normal">
               {t('travel.add.leave')}
             </Label>
@@ -415,6 +508,7 @@ function LegTimes({
               id={`${ids}-leave`}
               type="time"
               dir="ltr"
+              className="max-w-full min-w-0 appearance-none"
               value={time(state.start ?? span?.start)}
               onChange={(event) => {
                 const value = event.target.value;
@@ -422,7 +516,7 @@ function LegTimes({
               }}
             />
           </div>
-          <div className="flex min-w-0 flex-col gap-1">
+          <div className="flex min-w-[9rem] flex-1 flex-col gap-1">
             <Label htmlFor={`${ids}-arrive`} className="text-[13px] font-normal">
               {t('travel.add.arrive')}
             </Label>
@@ -430,6 +524,7 @@ function LegTimes({
               id={`${ids}-arrive`}
               type="time"
               dir="ltr"
+              className="max-w-full min-w-0 appearance-none"
               value={time(state.end ?? span?.end)}
               onChange={(event) => {
                 const value = event.target.value;

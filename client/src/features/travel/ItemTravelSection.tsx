@@ -273,7 +273,7 @@ export function ItemTravelSection({
             disabled={busy || !setup.ready}
             data-travel-add=""
             onClick={() => {
-              open(current);
+              open(current ?? repeatsRule);
             }}
           >
             {current === null && repeatsRule === null ? (

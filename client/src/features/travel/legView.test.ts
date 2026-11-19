@@ -14,6 +14,7 @@ import {
   legTitle,
   removalText,
   removedLegTitle,
+  repeatPatternOf,
 } from './legView.ts';
 
 /** `t` over a language's texts, with `{{name}}` filled in (as i18next does). */
@@ -265,5 +266,26 @@ describe('conflict, past and unset flags reach the calendar event props', () => 
       unset: false,
     });
     assert.equal(model.current?.row.id, 'leg-1');
+  });
+});
+
+describe('repeatPatternOf', () => {
+  it('names the weekday and the local start time on the workspace clock', () => {
+    // 2026-11-19 07:30Z is Thursday 09:30 in Jerusalem (UTC+2) and Wednesday 23:30 in Los Angeles.
+    assert.deepEqual(repeatPatternOf('2026-11-19T07:30:00.000Z', 'Asia/Jerusalem', 'en'), {
+      weekday: 'Thursday',
+      time: '09:30',
+    });
+    assert.deepEqual(repeatPatternOf('2026-11-19T07:30:00.000Z', 'America/Los_Angeles', 'en'), {
+      weekday: 'Wednesday',
+      time: '23:30',
+    });
+  });
+
+  it('says the weekday in the language', () => {
+    assert.equal(
+      repeatPatternOf('2026-11-19T07:30:00.000Z', 'Asia/Jerusalem', 'he').weekday,
+      'יום חמישי',
+    );
   });
 });

@@ -5,6 +5,8 @@ import type {
   CreatePlaceRequest,
   CreateTravelRuleRequest,
   LegEditRequest,
+  LegModeRequest,
+  LegModeResponse,
   MarkItemRequest,
   MarkItemResponse,
   PlacePinRequest,
@@ -243,6 +245,24 @@ export async function editLeg(
 ) {
   const response = await api.patch<ApiSuccessResponse<ItemDetail>>(
     travelPath(workspaceId, 'legs', legId),
+    body,
+    config,
+  );
+  return response.data;
+}
+
+/**
+ * How he goes on a leg's event: this day only, or every repeat (a series, or the later same-time
+ * events of the calendar). `leg` is the trip after the legs were made again; null when none is left.
+ */
+export async function changeLegMode(
+  workspaceId: string,
+  legId: string,
+  body: LegModeRequest,
+  config?: ApiRequestConfig,
+) {
+  const response = await api.put<ApiSuccessResponse<LegModeResponse>>(
+    travelPath(workspaceId, 'legs', legId, 'mode'),
     body,
     config,
   );

@@ -143,3 +143,25 @@ export const CONFLICT_EDGE =
  */
 export const UNSET_OUTLINE =
   'rounded-sm outline-1 outline-offset-[-1px] outline-dashed outline-muted-foreground/70';
+
+/**
+ * "Thursday" and "10:30" of when a trip's event starts, on the workspace's wall clock: what "every
+ * repeat" of an event that doesn't repeat by itself means (same weekday, same local start time).
+ */
+export function repeatPatternOf(
+  anchorStart: string,
+  timeZone: string,
+  locale: string,
+): { weekday: string; time: string } {
+  const start = new Date(anchorStart);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(start);
+  return {
+    weekday: new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone }).format(start),
+    time,
+  };
+}
