@@ -25,6 +25,8 @@ export interface FieldEntry {
   /** Attributes and provider fields carry their own name; fixed fields are translated by name. */
   label?: string;
   values?: readonly string[];
+  /** What to call a value that is not a word on its own (a topic's id is shown as its name). */
+  valueLabels?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -143,4 +145,20 @@ export function newRule(entry: FieldEntry): Rule {
   return value === undefined
     ? { field: entry.name, operator }
     : { field: entry.name, operator, value };
+}
+
+/** The topic field's values are the workspace's topic ids, shown by name. */
+export function withTopicValues(
+  entries: readonly FieldEntry[],
+  topics: readonly { id: string; name: string }[],
+): FieldEntry[] {
+  return entries.map((entry) =>
+    entry.name === 'topic' && topics.length > 0
+      ? {
+          ...entry,
+          values: topics.map((topic) => topic.id),
+          valueLabels: Object.fromEntries(topics.map((topic) => [topic.id, topic.name])),
+        }
+      : entry,
+  );
 }

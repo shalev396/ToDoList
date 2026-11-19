@@ -15,6 +15,8 @@ interface RuleValueInputProps {
   onChange: (value: RuleValue) => void;
   /** A field with a fixed set of values (enum). */
   values?: readonly string[] | undefined;
+  /** Names for values that are ids (topics), by value. */
+  valueLabels?: Readonly<Record<string, string>> | undefined;
   datePresets: readonly string[];
   /** The label of the whole editor, for screen readers. */
   label: string;
@@ -52,6 +54,7 @@ function ListValue({
   type,
   value,
   values,
+  valueLabels,
   disabled,
   onChange,
 }: {
@@ -59,6 +62,7 @@ function ListValue({
   type: string;
   value: RuleValue | undefined;
   values: readonly string[] | undefined;
+  valueLabels: Readonly<Record<string, string>> | undefined;
   disabled: boolean;
   onChange: (value: RuleValue) => void;
 }) {
@@ -86,7 +90,7 @@ function ListValue({
                 );
               }}
             />
-            {optionLabel(t, entry)}
+            {valueLabels?.[entry] ?? optionLabel(t, entry)}
           </label>
         ))}
       </span>
@@ -123,6 +127,7 @@ export function RuleValueInput({
   value,
   onChange,
   values,
+  valueLabels,
   datePresets,
   label,
   disabled,
@@ -295,6 +300,7 @@ export function RuleValueInput({
         type={type}
         value={value}
         values={values}
+        valueLabels={valueLabels}
         disabled={off}
         onChange={onChange}
       />

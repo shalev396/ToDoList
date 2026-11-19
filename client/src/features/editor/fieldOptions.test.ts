@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { CatalogDescription } from '@api-types/builder.ts';
-import { entryOf, fieldEntries, fieldSections, newRule } from './fieldOptions.ts';
+import { entryOf, fieldEntries, fieldSections, newRule, withTopicValues } from './fieldOptions.ts';
 
 const OPS = ['=', '!='] as const;
 const catalog = {
@@ -116,5 +116,25 @@ describe('field entries', () => {
       value: '',
     });
     assert.deepEqual(rule('status'), { field: 'status', operator: '=', value: 'open' });
+  });
+});
+
+describe('withTopicValues', () => {
+  it('gives the topic field its topics by id, with their names to show', () => {
+    const entries = [
+      { name: 'topic', type: 'enum' as const, operators: OPS, group: 'item' as const },
+      { name: 'status', type: 'enum' as const, operators: OPS, group: 'item' as const },
+    ];
+    const topics = [
+      { id: '9e815078-7684', name: 'Personal' },
+      { id: 'a1', name: 'לימודים' },
+    ];
+    const result = withTopicValues(entries, topics);
+    const topic = result.find((entry) => entry.name === 'topic');
+    const status = result.find((entry) => entry.name === 'status');
+    assert.ok(topic);
+    assert.deepEqual(topic.values, ['9e815078-7684', 'a1']);
+    assert.deepEqual(topic.valueLabels, { '9e815078-7684': 'Personal', a1: 'לימודים' });
+    assert.equal(status?.valueLabels, undefined);
   });
 });
