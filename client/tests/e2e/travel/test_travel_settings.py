@@ -20,7 +20,7 @@ from tests.helpers.responsive import assert_no_horizontal_overflow
 from tests.helpers.select import choose
 from tests.helpers.tap_targets import assert_touch_screen, small_targets
 from tests.helpers.travel import create_place, create_rule, get_settings, list_rules
-from tests.helpers.workspaces import open_as
+from tests.helpers.workspaces import ensure_topics, open_as
 
 IPHONE = {"width": 393, "height": 852}
 
@@ -149,6 +149,7 @@ def test_rule_with_sentence_filter_saves(page: Page, base_url: str, api_base_url
     wid = workspace["id"]
     create_place(api_base_url, user, wid, "Home", home=True)
     braude = create_place(api_base_url, user, wid, "Braude")
+    ensure_topics(api_base_url, user, wid, ["work"])  # a new workspace has Personal only
     _open(page, base_url, user)
     tomorrow = _tomorrow_in_jerusalem(page)
 
@@ -164,6 +165,12 @@ def test_rule_with_sentence_filter_saves(page: Page, base_url: str, api_base_url
     # "When … where [Title] [contains] [Lecture] → by [Driving], [There] to [Braude]"
     new_rule.get_by_role("button", name="Add a condition").click()
     condition = new_rule.locator("[data-sentence-condition]").first
+    # The default field is Topic: its values read as topic names, never as ids.
+    topic_values = condition.get_by_role("group", name="Value")
+    expect(topic_values).to_be_visible(timeout=NORMAL_TIMEOUT)
+    expect(topic_values.get_by_label("Personal")).to_be_visible()
+    expect(topic_values.get_by_label("Work")).to_be_visible()
+    expect(topic_values).not_to_contain_text(re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-"))
     choose(condition.get_by_role("combobox", name="Field", exact=True), "Title")
     choose(condition.get_by_role("combobox", name="Condition", exact=True), "contains")
     condition.get_by_role("textbox", name="Value").fill("Lecture")
