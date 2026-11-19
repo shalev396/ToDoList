@@ -78,6 +78,16 @@ describe('classifyTopic', () => {
     );
   });
 
+  it('reads the key trimmed, as File under stores its rule (A-149)', () => {
+    // A calendar named "Braude " (Google keeps the space): File under stores the rule trimmed.
+    const filed = TopicRules.of([]).withRule('  Braude  ', COLLEGE);
+    assert.deepEqual(filed.toJSON(), [{ match: 'Braude', topicId: COLLEGE }]);
+    for (const matchKey of ['Braude ', '  Braude', '\tBraude\n', 'Braude']) {
+      assert.equal(filed.classify({ matchKey, defaultTopicId: WORK }), COLLEGE, matchKey);
+    }
+    assert.equal(filed.classify({ matchKey: 'Braude 2', defaultTopicId: WORK }), WORK);
+  });
+
   it('falls back to the default topic when nothing matches, which may be none (Unsorted)', () => {
     assert.equal(
       TopicRules.of(rules).classify({ matchKey: 'AutoDS/orders', defaultTopicId: WORK }),
@@ -95,5 +105,55 @@ describe('defaultTopicForIntegration', () => {
   it("is the integration's own topic, or none", () => {
     assert.equal(TopicRules.defaultFor({ topicId: 'topic-college' }), 'topic-college');
     assert.equal(TopicRules.defaultFor({ topicId: null }), null);
+  });
+});
+
+describe('withRule / ruleFor (File under)', () => {
+  it('prepends the new rule so it beats a broader glob', () => {
+    const rules = TopicRules.of([{ match: '*', topicId: 'p' }]).withRule('braude', 'studies');
+    assert.deepEqual(rules.toJSON(), [
+      { match: 'braude', topicId: 'studies' },
+      { match: '*', topicId: 'p' },
+    ]);
+    assert.equal(rules.classify({ matchKey: 'Braude', defaultTopicId: null }), 'studies');
+  });
+
+  it('replaces a rule with the same match, whatever its case', () => {
+    const rules = TopicRules.of([{ match: 'BRAUDE', topicId: 'w' }]).withRule('braude', 'studies');
+    assert.deepEqual(rules.toJSON(), [{ match: 'braude', topicId: 'studies' }]);
+  });
+
+  it('null only removes', () => {
+    const rules = TopicRules.of([
+      { match: 'braude', topicId: 'studies' },
+      { match: '*', topicId: 'p' },
+    ]).withRule('Braude', null);
+    assert.deepEqual(rules.toJSON(), [{ match: '*', topicId: 'p' }]);
+    assert.equal(TopicRules.empty.withRule('x', null).size, 0);
+  });
+
+  it('ruleFor finds the exact rule, ignoring case, never a glob', () => {
+    const rules = TopicRules.of([
+      { match: 'braude', topicId: 'studies' },
+      { match: '*', topicId: 'p' },
+    ]);
+    assert.deepEqual(rules.ruleFor('Braude'), { match: 'braude', topicId: 'studies' });
+    assert.equal(rules.ruleFor('Other'), null);
+  });
+
+  it('a * in a name written into a rule stays a glob (F-A2)', () => {
+    const rules = TopicRules.empty.withRule('Q1 *', 'w');
+    assert.equal(rules.classify({ matchKey: 'Q1 plan', defaultTopicId: null }), 'w');
+    assert.equal(rules.classify({ matchKey: 'Q2 plan', defaultTopicId: null }), null);
+  });
+});
+
+describe('TopicRules.normalize wildcards', () => {
+  it('rejects a match with more than 8 stars', () => {
+    assert.throws(
+      () => TopicRules.normalize([{ match: '*a'.repeat(13), topicId: 't' }]),
+      /wildcards/,
+    );
+    assert.doesNotThrow(() => TopicRules.normalize([{ match: '*a'.repeat(8), topicId: 't' }]));
   });
 });

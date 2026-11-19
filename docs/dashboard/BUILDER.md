@@ -61,7 +61,8 @@ items|containers   where (AND/OR), dateRange,       groupBy ≤3, aggregate     
 | Primitive | JSON | Examples |
 |---|---|---|
 | Filter rule | `{field, operator, value}` in a `{combinator, rules}` group (the react-querybuilder format, FRONTEND.md §3) | `status in [open,in_progress]`, `source.provider = jira` |
-| Date range | `"dateRange": "this_week" \| "next_7d" \| "overdue" \| "today" \| "this_semester" \| {from,to}` | Presets resolve in the workspace timezone, `Asia/Jerusalem`, with weeks starting Sunday (`settings.weekStart`) |
+| Date range | `"dateRange": "this_week" \| "next_7d" \| "overdue" \| "today" \| "this_semester" \| {from,to}` | Presets resolve in the workspace timezone, `Asia/Jerusalem`, with weeks starting Sunday (`settings.weekStart`). In a time view, on `startAt` or `any`, a repeating series that began before the range and has not ended before it (`props.recurrenceEnd`; none: never ends) is read too, and the view expands it into the range's occurrences. A task view reads rows by their own dates only |
+| Task or time | the block's type | Time-shaped types (`calendar`, `clock`, `timeline`, `agenda`, `workload`) always read time blocks, areas and travel legs, and read up to 200 rows when the query sets no `limit`. Every other type, and a query with no block type, leaves them out unless a rule asks for them by name (`kind = block`, `kind in [block, travel]`); `kind != event` or `kind notIn [...]` keeps them out |
 | Dynamic values | `@now`, `@today`, `@me`, `$page.<var>` | `dueAt < @now` |
 | Group / aggregate | `groupBy: ["source.provider"]`, `aggregate: {op:"count"}` | The donut by source |
 | If/then | `rules: [{if:{…}, then:{tone\|badge\|hide}}]` | Overdue shows red, done is hidden |
@@ -76,7 +77,7 @@ items|containers   where (AND/OR), dateRange,       groupBy ≤3, aggregate     
 
 | Type | Purpose | Required query bits | Defaults |
 |---|---|---|---|
-| `clock` | 24h ring of today's events with a **now-needle**, plus "now / next" | `source: items`, `kind: event`, `dateRange: today` | `calendars: from integration`, refreshes every 60 s |
+| `clock` | 24h ring of today's events with a **now-needle**, plus "now / next" | `source: items`, `kind in [event, block, travel]`, `dateRange: today` | `calendars: from integration`, refreshes every 60 s |
 | `chart` | donut, bar, line or number | `groupBy` + `aggregate` | **Donut by `source.provider`** with a total count and area chips |
 | `calendar` | FullCalendar week/month/list | items with `startAt` or `dueAt` | **`view: "week"`** (`timeGridWeek`), with Month as a toggle saved per block |
 | `deadlines` | due-soon list, soonest first | `dueAt` not null, `status` open | `dateRange: next_14d`, overdue items on top |
@@ -135,7 +136,7 @@ The registry pattern is FRONTEND.md §5: adding a type means **one catalog entry
 { "id": "blk_cal", "type": "calendar", "title": "Week",
   "query": { "source": "items", "dateRange": "$page.range", "where": { "combinator": "or", "rules": [
       { "field": "startAt", "operator": "notNull" }, { "field": "dueAt", "operator": "notNull" } ] } },
-  "viz": { "kind": "calendar", "view": "week", "allowMonth": true }, "listen": ["$page.area", "$page.provider"] }
+  "viz": { "kind": "calendar", "view": "week", "allowMonth": true, "startHour": 8 }, "listen": ["$page.area", "$page.provider"] }
 ```
 **Deadlines for one course (a College course page; `$page.course` = `Containers` id):**
 ```json

@@ -4,6 +4,7 @@
  * importance does; server types/workload.ts). A task with no estimate counts as nothing and is
  * listed as unestimated, so a light-looking day is never a silent guess. Pure; unit-tested.
  */
+import { isScheduledKind, layerOf } from '@api-types/scheduled.ts';
 import { estimateHours } from '@api-types/workload.ts';
 import type { ItemQueryRow } from '@api-types/builder.ts';
 import { endOfZonedDay, startOfZonedDay } from '../clock/ClockRing.math.ts';
@@ -38,6 +39,14 @@ export interface WorkloadModel {
   unestimated: ItemQueryRow[];
 }
 
+/** Reserved time that holds the day: an event, a block (not an area) or a travel leg. */
+function isBusy(row: ItemQueryRow): boolean {
+  if (row.status === 'cancelled') {
+    return false;
+  }
+  return row.kind === 'event' || row.kind === 'travel' || layerOf(row) === 'block';
+}
+
 const round = (hours: number): number => Math.round(hours * 100) / 100;
 
 /** The days of the week that contains `anchor`, in the workspace's zone (7 local days). */
@@ -69,7 +78,8 @@ export function buildWorkload(
     from: week[0]?.start ?? startOfZonedDay(anchor, timeZone),
     to: week[6]?.end ?? anchor,
   };
-  const events = rows.filter((row) => row.kind === 'event' && row.status !== 'cancelled');
+  // Busy time: events, time blocks and travel legs. An area is painted time, not busy.
+  const events = rows.filter(isBusy);
   const occurrences = expandOccurrences(events, range, timeZone);
 
   const unestimated: ItemQueryRow[] = [];
@@ -87,7 +97,12 @@ export function buildWorkload(
     }
     let taskHours = 0;
     for (const row of rows) {
-      if (row.kind === 'event' || row.status === 'done' || row.status === 'cancelled') {
+      if (
+        row.kind === 'event' ||
+        isScheduledKind(row.kind) ||
+        row.status === 'done' ||
+        row.status === 'cancelled'
+      ) {
         continue;
       }
       const when = toDate(row.dueAt) ?? toDate(row.startAt);

@@ -18,7 +18,7 @@ export const searchItems = defineTool({
   name: 'search_items',
   title: 'Search items',
   description:
-    'Searches every item the agent may see, mirrored and local: text in titles and previews, and filters by topic, provider, kind, status, container and due date. Sorted by due date (no date last), then id; page with cursor and nextCursor. Each item has source and openIn (where to open it).',
+    'Searches every item the agent may see, mirrored and local: text in titles and previews, and filters by topic, provider, kind, status, container and due date. Time blocks, areas and travel legs (kinds block and travel) are not tasks: they come back only when kind names them. Sorted by due date (no date last), then id; page with cursor and nextCursor. Each item has source and openIn (where to open it).',
   toolset: 'read',
   inputSchema: z.strictObject({
     q: z

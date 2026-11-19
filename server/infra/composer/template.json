@@ -29,7 +29,8 @@
 					"DependenciesLayer",
 					"CodebaseLayer",
 					"LogGroup",
-					"FunctionRole"
+					"FunctionRole",
+					"Rule"
 				]
 			},
 			"Storage": {
@@ -1390,6 +1391,60 @@
 						"Value": "dev"
 					}
 				]
+			}
+		},
+		"Rule": {
+			"Type": "AWS::Events::Rule",
+			"Properties": {
+				"Description": "Press \"sync all\" at every whole hour",
+				"Name": "todolist-dev-hourly-sync",
+				"ScheduleExpression": "cron(0 * * * ? *)",
+				"State": "ENABLED",
+				"Tags": [
+					{
+						"Key": "Project",
+						"Value": "todolist"
+					},
+					{
+						"Key": "Stage",
+						"Value": "dev"
+					}
+				],
+				"Targets": [
+					{
+						"Arn": {
+							"Fn::GetAtt": [
+								"Function",
+								"Arn"
+							]
+						},
+						"Id": "Target0",
+						"Input": "{\"action\":\"sync-dispatch\"}",
+						"RetryPolicy": {
+							"MaximumEventAgeInSeconds": 1800,
+							"MaximumRetryAttempts": 2
+						}
+					}
+				]
+			}
+		},
+		"RulePermission": {
+			"Type": "AWS::Lambda::Permission",
+			"Properties": {
+				"Action": "lambda:InvokeFunction",
+				"FunctionName": {
+					"Fn::GetAtt": [
+						"Function",
+						"Arn"
+					]
+				},
+				"Principal": "events.amazonaws.com",
+				"SourceArn": {
+					"Fn::GetAtt": [
+						"Rule",
+						"Arn"
+					]
+				}
 			}
 		}
 	},

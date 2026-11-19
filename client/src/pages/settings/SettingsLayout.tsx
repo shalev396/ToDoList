@@ -8,19 +8,23 @@ import { pathTo, ROUTES } from '@/router/routes';
 import { PageContainer, PageHeader } from '@/features/shell/PageHeader';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 
-/** General | Members | Agent keys, under the page title. */
+/** General | Members | Agent keys | Travel (editors and owners: it is their own), under the title. */
 function SettingsTabs() {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const { pathname } = useLocation();
+  const { role } = useCurrentWorkspace();
   const tabs = [
     { to: pathTo(ROUTES.SETTINGS, language), label: t('settings.tabs.general') },
     { to: pathTo(ROUTES.MEMBERS, language), label: t('settings.tabs.members') },
     { to: pathTo(ROUTES.AGENT_KEYS, language), label: t('settings.tabs.agentKeys') },
+    ...(role === 'owner' || role === 'editor'
+      ? [{ to: pathTo(ROUTES.TRAVEL, language), label: t('travel.tab') }]
+      : []),
   ];
   return (
     <nav aria-label={t('settings.tabs.label')} className="-mb-px border-b">
-      <ul className="flex gap-5">
+      <ul className="flex flex-wrap gap-x-5">
         {tabs.map((tab) => {
           const active = pathname === tab.to;
           return (
@@ -29,7 +33,7 @@ function SettingsTabs() {
                 to={tab.to}
                 aria-current={active ? 'page' : undefined}
                 className={cn(
-                  'inline-flex min-h-11 items-center border-b-2 text-sm pointer-fine:min-h-10 transition-colors focus-visible:rounded-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+                  'inline-flex min-h-11 min-w-11 items-center justify-center border-b-2 text-sm pointer-fine:min-h-10 pointer-fine:min-w-0 transition-colors focus-visible:rounded-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
                   active
                     ? 'border-foreground font-medium text-foreground'
                     : 'border-transparent text-muted-foreground hover:text-foreground',
@@ -45,8 +49,17 @@ function SettingsTabs() {
   );
 }
 
-/** The settings pages' frame: the workspace's name, the tabs, a reading-width column. */
-export function SettingsFrame({ children }: { children: ReactNode }) {
+/**
+ * The settings pages' frame: the workspace's name, the tabs, a reading-width column. A `personal`
+ * page (Travel: each member's own) has no "only owners can change these" note.
+ */
+export function SettingsFrame({
+  children,
+  personal = false,
+}: {
+  children: ReactNode;
+  personal?: boolean;
+}) {
   const { t } = useTranslation();
   const { workspace, role, isOwner } = useCurrentWorkspace();
   return (
@@ -57,7 +70,7 @@ export function SettingsFrame({ children }: { children: ReactNode }) {
       >
         <SettingsTabs />
       </PageHeader>
-      {isOwner || role === null ? null : (
+      {isOwner || role === null || personal ? null : (
         <p className="mb-6 flex items-start gap-2 rounded-sm bg-sunken px-3 py-2.5 text-sm text-muted-foreground">
           <Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
           <span>{t(`settings.readOnly.${role === 'editor' ? 'editor' : 'viewer'}`)}</span>

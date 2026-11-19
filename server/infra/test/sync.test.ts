@@ -101,13 +101,42 @@ for (const stage of STAGES) {
       const permissions = Object.values(template.findResources('AWS::Lambda::Permission')).map(
         (p) => (p['Properties'] as Json)['Principal'],
       );
-      assert.ok(permissions.every((principal) => principal === 'apigateway.amazonaws.com'));
+      assert.deepEqual([...new Set(permissions)].sort(), [
+        'apigateway.amazonaws.com',
+        'events.amazonaws.com',
+      ]);
+      const [rule] = Object.keys(template.findResources('AWS::Events::Rule'));
+      const fromEvents = Object.values(
+        template.findResources('AWS::Lambda::Permission', {
+          Properties: { Principal: 'events.amazonaws.com' },
+        }),
+      );
+      assert.equal(fromEvents.length, 1);
+      assert.deepEqual((fromEvents[0]?.['Properties'] as Json)['SourceArn'], {
+        'Fn::GetAtt': [rule, 'Arn'],
+      });
     });
 
-    it('has no schedules: the dispatch and purge actions run only when invoked directly', () => {
+    it('runs sync-dispatch every hour on the hour through one EventBridge rule', () => {
+      template.resourceCountIs('AWS::Events::Rule', 1);
+      template.hasResourceProperties('AWS::Events::Rule', {
+        Name: `todolist-${stage}-hourly-sync`,
+        ScheduleExpression: 'cron(0 * * * ? *)',
+        State: 'ENABLED',
+        Targets: [
+          Match.objectLike({
+            Input: '{"action":"sync-dispatch"}',
+            RetryPolicy: { MaximumEventAgeInSeconds: 1800, MaximumRetryAttempts: 2 },
+          }),
+        ],
+      });
+      // The target is the one function.
+      const [fnId] = Object.keys(template.findResources('AWS::Lambda::Function'));
+      const [rule] = Object.values(template.findResources('AWS::Events::Rule'));
+      const targets = (rule?.['Properties'] as Json)['Targets'] as { Arn: unknown }[];
+      assert.deepEqual(targets[0]?.Arn, { 'Fn::GetAtt': [fnId, 'Arn'] });
       template.resourceCountIs('AWS::Scheduler::Schedule', 0);
       template.resourceCountIs('AWS::Scheduler::ScheduleGroup', 0);
-      template.resourceCountIs('AWS::Events::Rule', 0);
       // Every service principal any role trusts, compared whole.
       const trusted = Object.values(template.findResources('AWS::IAM::Role')).flatMap((r) => {
         const policy = (r['Properties'] as Json)['AssumeRolePolicyDocument'] as {
@@ -117,7 +146,9 @@ for (const stage of STAGES) {
       });
       assert.ok(trusted.length > 0, 'the roles trust some service');
       assert.ok(
-        trusted.every((service) => service !== 'scheduler.amazonaws.com'),
+        trusted.every(
+          (service) => service !== 'scheduler.amazonaws.com' && service !== 'events.amazonaws.com',
+        ),
         JSON.stringify(trusted),
       );
     });

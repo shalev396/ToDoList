@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import mongoose from 'mongoose';
 
 import { ATTRIBUTE_KEY_PATTERN } from '../../types/attributes.js';
-import { ITEM_KINDS, ITEM_STATUSES, VISIBILITIES, type ItemStatus } from '../../types/domain.js';
+import {
+  ITEM_KINDS,
+  ITEM_STATUSES,
+  SCHEDULED_KINDS,
+  VISIBILITIES,
+  type ItemStatus,
+} from '../../types/domain.js';
 import {
   ITEM_TABLE_NAME,
   localItemUrl,
@@ -18,9 +24,14 @@ import {
   type ItemUpsert,
   type LocalItemPatch,
   type MirroredItemPatch,
+  type ScheduledItemPatch,
   type SweepWindow,
+  type TravelLegFilter,
+  type TravelLegGuard,
+  type TravelLegWrite,
 } from '../definitions/Item.js';
 import type { AggregateOptions } from '../definitions/common.js';
+import { stableStringify } from '../../utils/stableStringify.js';
 import { MirroredItemError } from '../errors.js';
 import {
   SourceSchema,
@@ -156,12 +167,17 @@ itemSchema.index(
   { unique: true, partialFilterExpression: { 'props.idempotencyKey': { $exists: true } } },
 );
 
+// A travel leg's key (owner|anchor|occurrence|direction): one leg per key, tombstones included.
+itemSchema.index(
+  { workspaceId: 1, 'props.travelKey': 1 },
+  { unique: true, partialFilterExpression: { 'props.travelKey': { $type: 'string' } } },
+);
+
 export const ItemMongoModel = mongoose.model<ItemFields>('Item', itemSchema);
 
 const LOCAL_PATCH_KEYS: readonly (keyof LocalItemPatch)[] = [
   'title',
   'topicId',
-  'kind',
   'bodyPreview',
   'status',
   'priority',
@@ -176,6 +192,15 @@ const LOCAL_PATCH_KEYS: readonly (keyof LocalItemPatch)[] = [
   'props',
   'visibility',
   'closedAt',
+];
+
+const SCHEDULED_PATCH_KEYS: readonly (keyof ScheduledItemPatch)[] = [
+  'title',
+  'topicId',
+  'bodyPreview',
+  'startAt',
+  'endAt',
+  'props',
 ];
 
 const MIRRORED_PATCH_KEYS: readonly (keyof MirroredItemPatch)[] = [
@@ -445,7 +470,11 @@ async function refreshCopyProps(workspaceId: string, id: string): Promise<ItemFi
   ).lean<ItemFields>();
 }
 
-/** Live local items marked private whose owner is none of `memberIds`: former members'. */
+/**
+ * Live local items marked private whose owner is none of `memberIds`: former members' to-dos (and
+ * time blocks). Never a travel leg: legs are no to-dos, and travel storage removes a leaving
+ * member's legs itself (Ruling 25), so the count and the delete agree.
+ */
 function formerMembersPrivateLocal(
   workspaceId: string,
   memberIds: readonly string[],
@@ -456,7 +485,80 @@ function formerMembersPrivateLocal(
     visibility: 'private',
     deletedAt: null,
     ownerUserId: { $nin: [...memberIds] },
+    kind: { $ne: 'travel' },
   };
+}
+
+/** Travel storage's legs: local items of kind `travel` with a key (the key's partial index). */
+const TRAVEL_LEG = {
+  kind: 'travel',
+  'source.provider': 'local',
+  'props.travelKey': { $type: 'string' },
+} as const;
+
+function isDuplicateKey(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === 11000;
+}
+
+/** Whether `stored` already holds what `leg` writes (live, same fields, same travel props). */
+function holdsLeg(stored: ItemFields, leg: TravelLegWrite): boolean {
+  return (
+    (stored.deletedAt ?? null) === null &&
+    stored.title === leg.title &&
+    (stored.topicId ?? null) === leg.topicId &&
+    stored.startAt?.getTime() === leg.startAt.getTime() &&
+    stored.endAt?.getTime() === leg.endAt.getTime() &&
+    stableStringify(stored.props['travel']) === stableStringify(leg.travel)
+  );
+}
+
+/** What a stored leg must match for a guarded write (TravelLegGuard), as one filter. */
+function guardFilter(guard: TravelLegGuard): Record<string, unknown> {
+  const filter: Record<string, unknown> = {};
+  const not: Record<string, unknown>[] = [];
+  if (guard.unchangedSince !== undefined) filter['updatedAt'] = guard.unchangedSince;
+  if (guard.edited !== undefined) {
+    filter['props.travel.edited'] = guard.edited ? true : { $ne: true };
+  }
+  if (guard.notSkipped === true) {
+    not.push({ deletedAt: { $type: 'date' }, 'props.travel.removedReason': 'skipped' });
+  }
+  if (guard.notStartedBefore !== undefined) {
+    not.push({ deletedAt: null, startAt: { $lt: guard.notStartedBefore } });
+  }
+  if (not.length > 0) filter['$nor'] = not;
+  return filter;
+}
+
+/** Creates the leg, or answers null when another write made one with its key meanwhile. */
+async function createTravelLeg(
+  workspaceId: string,
+  key: string,
+  leg: TravelLegWrite,
+): Promise<ItemData | null> {
+  try {
+    const doc = await ItemMongoModel.create(
+      localItemDoc(
+        workspaceId,
+        {
+          ownerUserId: leg.ownerUserId,
+          title: leg.title,
+          topicId: leg.topicId,
+          kind: 'travel',
+          startAt: leg.startAt,
+          endAt: leg.endAt,
+          allDay: false,
+          visibility: 'private',
+          props: { travel: leg.travel, travelKey: key },
+        },
+        randomUUID(),
+      ),
+    );
+    return toItemData(doc);
+  } catch (error) {
+    if (isDuplicateKey(error)) return null;
+    throw error;
+  }
 }
 
 export const ItemRepository: IItemRepository = {
@@ -491,7 +593,14 @@ export const ItemRepository: IItemRepository = {
 
   async updateLocal(workspaceId, id, patch) {
     const doc = await ItemMongoModel.findOneAndUpdate(
-      { _id: id, workspaceId, deletedAt: null, 'source.provider': 'local' },
+      {
+        _id: id,
+        workspaceId,
+        deletedAt: null,
+        'source.provider': 'local',
+        // A to-do's path: reserved time is changed through updateScheduled only.
+        kind: { $nin: [...SCHEDULED_KINDS] },
+      },
       { $set: setFields(withPreview(patch), LOCAL_PATCH_KEYS) },
       { new: true, runValidators: true },
     ).lean<ItemFields>();
@@ -507,13 +616,141 @@ export const ItemRepository: IItemRepository = {
     }
 
     const mirrored = await ItemMongoModel.findOne(
-      { _id: id, workspaceId, deletedAt: null },
+      { _id: id, workspaceId, deletedAt: null, 'source.provider': { $ne: 'local' } },
       { source: 1 },
     ).lean<Pick<ItemFields, '_id' | 'source'>>();
     if (mirrored) {
       throw new MirroredItemError(mirrored._id, mirrored.source.provider, mirrored.source.url);
     }
     return null;
+  },
+  async updateScheduled(workspaceId, id, kind, patch, options = {}) {
+    const { unchangedSince } = options;
+    // A guarded write stamps a time later than the one it read, so two writes in the same
+    // millisecond still differ and a second guarded write on the first one's read misses.
+    const stamp = new Date(Math.max(Date.now(), (unchangedSince?.getTime() ?? 0) + 1));
+    const doc = await ItemMongoModel.findOneAndUpdate(
+      {
+        _id: id,
+        workspaceId,
+        deletedAt: null,
+        'source.provider': 'local',
+        kind,
+        ...(unchangedSince === undefined ? {} : { updatedAt: unchangedSince }),
+      },
+      { $set: { ...setFields(withPreview(patch), SCHEDULED_PATCH_KEYS), updatedAt: stamp } },
+      { new: true, runValidators: true, timestamps: false },
+    ).lean<ItemFields>();
+    return doc ? toItemData(doc) : null;
+  },
+
+  async upsertTravelLeg(workspaceId, key, leg, guard = {}) {
+    // A create that loses a race to another write of the same key updates that leg instead.
+    for (let attempt = 0; ; attempt += 1) {
+      const stored = await ItemMongoModel.findOne({
+        workspaceId,
+        ...TRAVEL_LEG,
+        'props.travelKey': key,
+      }).lean<ItemFields>();
+      if (stored === null) {
+        const created = await createTravelLeg(workspaceId, key, leg);
+        if (created !== null) return { item: created, outcome: 'created' };
+        if (attempt > 0) throw new Error('upsertTravelLeg: the leg could not be written');
+        continue;
+      }
+      if (stored.ownerUserId !== leg.ownerUserId) {
+        throw new Error("upsertTravelLeg: a leg's key names its owner");
+      }
+      if (holdsLeg(stored, leg)) return { item: toItemData(stored), outcome: 'unchanged' };
+      // One conditional write: the guard holds of the leg as it is at this moment, or nothing is
+      // written (a skip, an edit or a start since it was read is never overwritten).
+      const doc = await ItemMongoModel.findOneAndUpdate(
+        { ...guardFilter(guard), _id: stored._id, workspaceId, ...TRAVEL_LEG },
+        {
+          $set: {
+            title: leg.title,
+            topicId: leg.topicId,
+            startAt: leg.startAt,
+            endAt: leg.endAt,
+            'props.travel': leg.travel,
+            deletedAt: null,
+          },
+        },
+        { new: true, runValidators: true },
+      ).lean<ItemFields>();
+      if (doc === null) return { item: toItemData(stored), outcome: 'refused' };
+      return { item: toItemData(doc), outcome: 'updated' };
+    }
+  },
+
+  async listTravelLegs(workspaceId, filter: TravelLegFilter) {
+    const { ownerUserId, from, to, ids, includeRemoved = false } = filter;
+    const startAt: Record<string, Date> = {};
+    if (from !== undefined) startAt['$gte'] = from;
+    if (to !== undefined) startAt['$lt'] = to;
+    const docs = await ItemMongoModel.find({
+      ...(Object.keys(startAt).length === 0 ? {} : { startAt }),
+      ...(ids === undefined ? {} : { _id: { $in: [...ids] } }),
+      ...(includeRemoved ? {} : { deletedAt: null }),
+      workspaceId,
+      ownerUserId,
+      ...TRAVEL_LEG,
+    })
+      .sort({ startAt: 1, _id: 1 })
+      .lean<ItemFields[]>();
+    return docs.map(toItemData);
+  },
+
+  async removeTravelLeg(workspaceId, id, reason, at = new Date()) {
+    // A pipeline write, so a leg whose travel props are not an object still becomes a tombstone.
+    const doc = await ItemMongoModel.findOneAndUpdate(
+      { _id: id, workspaceId, deletedAt: null, ...TRAVEL_LEG },
+      [
+        {
+          $set: {
+            deletedAt: { $literal: at },
+            'props.travel': {
+              $mergeObjects: [
+                {
+                  $cond: [{ $eq: [{ $type: '$props.travel' }, 'object'] }, '$props.travel', {}],
+                },
+                { removedReason: { $literal: reason } },
+              ],
+            },
+            updatedAt: '$$NOW',
+          },
+        },
+      ],
+      { new: true, timestamps: false },
+    ).lean<ItemFields>();
+    return doc ? toItemData(doc) : null;
+  },
+
+  async removeTravelLegsOf(workspaceId, ownerUserId, at = new Date()) {
+    const legs = { workspaceId, ownerUserId, kind: 'travel', 'source.provider': 'local' };
+    // `skipped`: the one reason no regeneration writes over (guardFilter's `notSkipped`), so one
+    // that raced the leave never brings a leg back. A pipeline write, as in removeTravelLeg.
+    const skipped = {
+      'props.travel': {
+        $mergeObjects: [
+          { $cond: [{ $eq: [{ $type: '$props.travel' }, 'object'] }, '$props.travel', {}] },
+          { removedReason: { $literal: 'skipped' } },
+        ],
+      },
+      updatedAt: '$$NOW',
+    };
+    const live = await ItemMongoModel.updateMany(
+      { ...legs, deletedAt: null },
+      [{ $set: { deletedAt: { $literal: at }, ...skipped } }],
+      { timestamps: false },
+    );
+    // Its tombstones too: a restore that raced the leave would bring one back otherwise.
+    await ItemMongoModel.updateMany(
+      { ...legs, deletedAt: { $type: 'date' }, 'props.travel.removedReason': { $ne: 'skipped' } },
+      [{ $set: skipped }],
+      { timestamps: false },
+    );
+    return live.modifiedCount;
   },
 
   async updateMirrored(workspaceId, integrationId, id, patch, options) {
@@ -569,6 +806,16 @@ export const ItemRepository: IItemRepository = {
     return result.modifiedCount;
   },
 
+  async renameAttributeValue(workspaceId, key, from, to) {
+    if (!ATTRIBUTE_KEY_PATTERN.test(key)) throw new Error('Invalid attribute key');
+    const path = `overlay.attrs.${key}`;
+    const result = await ItemMongoModel.updateMany(
+      { workspaceId, [path]: from },
+      { $set: { [path]: to } },
+    );
+    return result.modifiedCount;
+  },
+
   async softDelete(workspaceId, id) {
     const result = await ItemMongoModel.updateOne(
       { _id: id, workspaceId, deletedAt: null },
@@ -608,6 +855,8 @@ export const ItemRepository: IItemRepository = {
         workspaceId,
         deletedAt: null,
         'source.provider': 'local',
+        // A to-do only: reserved time (a time block, a travel leg) is never copied to a provider.
+        kind: { $nin: [...SCHEDULED_KINDS] },
         'copies.requestId': { $ne: copy.requestId },
         ...(options.allowActive === true
           ? {}
@@ -743,6 +992,25 @@ export const ItemRepository: IItemRepository = {
     return result.modifiedCount;
   },
 
+  async refileByContainer(workspaceId, integrationId, assignments) {
+    if (assignments.length === 0) return 0;
+    const result = await ItemMongoModel.bulkWrite(
+      assignments.map(({ containerId, topicId }) => ({
+        updateMany: {
+          filter: {
+            workspaceId,
+            integrationId,
+            containerId,
+            deletedAt: null,
+            topicId: { $ne: topicId },
+          },
+          update: { $set: { topicId } },
+        },
+      })),
+    );
+    return result.modifiedCount;
+  },
+
   async unsetTopic(workspaceId, topicId) {
     const result = await ItemMongoModel.updateMany(
       { workspaceId, topicId },
@@ -757,7 +1025,11 @@ export const ItemRepository: IItemRepository = {
 
   // Global on purpose: the purge job runs over every workspace (jobs/purge.ts).
   async purgeDeletedBefore(date) {
-    const result = await ItemMongoModel.deleteMany({ deletedAt: { $lt: date } });
+    const result = await ItemMongoModel.deleteMany({
+      deletedAt: { $lt: date },
+      // A leg's tombstone tells why it went: it stays at least until its leg is over.
+      $nor: [{ kind: 'travel', endAt: { $gte: date } }],
+    });
     return result.deletedCount;
   },
 

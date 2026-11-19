@@ -21,6 +21,18 @@ export const listAttributesTool = defineTool({
           .array(z.string())
           .optional()
           .describe('select and multiSelect: the allowed values'),
+        optionLooks: z
+          .array(
+            z.object({
+              option: z.string(),
+              colour: z.string().describe('Colour family of the option (subjects: its lessons)'),
+              patterns: z
+                .array(z.string())
+                .describe('Title globs (* any run) that pick the option'),
+            }),
+          )
+          .optional()
+          .describe('select: how options look; the subject select has one per option'),
         min: z.number().optional(),
         max: z.number().optional(),
         builtIn: z.boolean().describe('The built-in Importance cannot be deleted'),

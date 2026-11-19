@@ -65,6 +65,9 @@ export default defineConfig(() => {
         '@': path.resolve(__dirname, './src'),
         '@api-types': path.resolve(__dirname, '../server/src/types'),
       },
+      // The shared occurrence expansion (server/src/types/recurrence) imports rrule: resolve it
+      // from the client's node_modules, so the bundle carries one copy, not the server's too.
+      dedupe: ['rrule'],
     },
     build: {
       rollupOptions: {

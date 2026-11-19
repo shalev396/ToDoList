@@ -3,13 +3,22 @@
  * compiler the dashboards use, so "today", "this week" and the calendar's start-or-due date mean
  * what they mean on a dashboard (workspace time zone, week start, access filter). They answer
  * with the items service's summaries of what it found, in the bridge's order.
+ *
+ * A draft without a block type is task-shaped (it leaves time blocks, areas and travel out unless
+ * a rule names a kind); the time tools pass a time-shaped block type and expand what they find
+ * into occurrences, with the expansion the dashboards share (types/recurrence).
  */
-import { itemReads } from '../itemViews.js';
 import { runWorkspaceQuery } from '../../../services/workspaceQuery.js';
-import type { Query, Rule } from '../../../types/builder.js';
+import type { BlockType, ItemQueryRow, Query, Rule } from '../../../types/builder.js';
 import type { ItemKind, Provider } from '../../../types/domain.js';
+import { expandOccurrences, type Range } from '../../../types/recurrence/occurrences.js';
 import type { ToolContext } from '../../tool.js';
-import { toItemSummaryView, type ItemSummaryView } from '../itemViews.js';
+import {
+  itemReads,
+  toItemSummaryView,
+  toOccurrenceView,
+  type ItemSummaryView,
+} from '../itemViews.js';
 
 /** Statuses that still need doing: what deadlines and "overdue" are about. */
 export const OPEN_STATUSES = ['open', 'in_progress'];
@@ -48,14 +57,43 @@ export function range(from: Date, to: Date): { from: string; to: string } {
   return { from: from.toISOString(), to: to.toISOString() };
 }
 
-/** Runs a draft query and returns the matching items' summaries, in the query's order. */
+/** What a draft found: the summaries, the rows they came from (for the expansion), the total. */
+export interface Found {
+  items: ItemSummaryView[];
+  rows: ItemQueryRow[];
+  total: number;
+}
+
+/**
+ * Runs a draft query and returns the matching items' summaries, in the query's order. With a
+ * `blockType`, the draft is read as that block reads it (a time-shaped type holds reserved time).
+ */
 export async function findItems(
   ctx: ToolContext,
   draft: Query,
   now: Date = ctx.now(),
-): Promise<{ items: ItemSummaryView[]; total: number }> {
-  const result = await runWorkspaceQuery(ctx.workspace, ctx.principal.userId, { draft }, now);
-  const ids = (result.rows ?? []).map((row) => row.id);
-  const summaries = await (await itemReads(ctx)).summaries(ids);
-  return { items: summaries.map(toItemSummaryView), total: result.total };
+  options: { blockType?: BlockType } = {},
+): Promise<Found> {
+  const result = await runWorkspaceQuery(
+    ctx.workspace,
+    ctx.principal.userId,
+    { draft, ...(options.blockType === undefined ? {} : { blockType: options.blockType }) },
+    now,
+  );
+  const rows = (result.rows ?? []).filter((row): row is ItemQueryRow => 'kind' in row);
+  const summaries = await (await itemReads(ctx)).summaries(rows.map((row) => row.id));
+  return { items: summaries.map(toItemSummaryView), rows, total: result.total };
+}
+
+/**
+ * One entry per occurrence in `bounds` of what a time-shaped draft found, in time order: a series
+ * (a Google master or a time block that repeats) gives one per occurrence, moved and skipped ones
+ * applied; a cancelled item gives none, as on the calendar.
+ */
+export function occurrencesOf(found: Found, bounds: Range, timeZone: string): ItemSummaryView[] {
+  const byId = new Map(found.items.map((item) => [item.id, item]));
+  return expandOccurrences(found.rows, bounds, timeZone).flatMap((occurrence) => {
+    const summary = byId.get(occurrence.row.id);
+    return summary === undefined ? [] : [toOccurrenceView(summary, occurrence)];
+  });
 }

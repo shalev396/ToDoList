@@ -1080,6 +1080,7 @@ classDiagram
     +overlay: Overlay
     +copies: Copies
     +facts: ItemFacts
+    +classOf(data)$ ItemClassName
     +from(data)$ Item
     +fromDoc(row)$ Item
     +find(caller, id)$ Item
@@ -1091,6 +1092,8 @@ classDiagram
     +due: DueDate
     +editing(caller)* ItemEditing
     +isVisibleTo(caller, policy) boolean
+    +completable() Item & Completable
+    +deletable() Item & Deletable
     +toSummary(context) ItemSummary
     +toView(caller, context) ItemDetail
   }
@@ -1139,11 +1142,43 @@ classDiagram
   class CalendarEvent {
     +timeRange: TimeRange
     +recurrence
+    +isRecurring / recurrenceLines
     #writeBack() updateEvent
     +createRecurring(caller, input)$
   }
+  class ScheduledItem {
+    <<abstract>>
+    +isLocal = true
+    +layer*
+    +timeRange: TimeRange
+    +editing() local
+    +providerChanges() none
+    +toSummary(context) with layer
+  }
+  class TimeBlock {
+    +layer = block
+    +subject
+    +isRecurring / recurrenceLines
+    +exceptions
+    +occurrences(range, timeZone)
+    +delete(caller)
+    +edit() 400 until Task 5
+  }
+  class TimeArea {
+    +layer = area
+  }
+  class TravelLeg {
+    +layer = null
+    +travel: TravelLegProps
+    +setOverlay() no topic or subject
+    +edit() 400 until Task 11
+  }
   Item <|-- Todo
+  Item <|-- ScheduledItem
   Item <|-- MirroredItem
+  ScheduledItem <|-- TimeBlock
+  TimeBlock <|-- TimeArea
+  ScheduledItem <|-- TravelLeg
   MirroredItem <|-- TaskItem
   TaskItem <|-- PullRequest
   MirroredItem <|-- CalendarEvent
@@ -1172,6 +1207,11 @@ classDiagram
     <<interface>>
     +timeRange
   }
+  class Recurring {
+    <<interface>>
+    +isRecurring
+    +recurrenceLines
+  }
   Editable <|.. Todo
   Completable <|.. Todo
   Deletable <|.. Todo
@@ -1180,6 +1220,10 @@ classDiagram
   ProviderLinked <|.. MirroredItem
   HasDueDate <|.. TaskItem
   Schedulable <|.. CalendarEvent
+  Schedulable <|.. ScheduledItem
+  Recurring <|.. CalendarEvent
+  Recurring <|.. TimeBlock
+  Deletable <|.. TimeBlock
 
   class TodoCopy {
     +run() CreateCopyOutcome
@@ -1212,9 +1256,17 @@ classDiagram
     +listVisible(caller, policy, ids)$
     +findByExternalId(...)$
     +unsetTopicIn(workspaceId, topicId)$
+    +matchKey
     +toView() FacetContainer
   }
   WorkspaceEntity <|-- Container
+  class Refiling {
+    +integration(integration)$
+    +workspace(workspaceId)$
+  }
+  class SubjectMatches {
+    +count(caller, subjects, scanMax)$
+  }
   class ItemQuery {
     +for(caller)$ ItemQuery
     +effectiveStage()$
@@ -1369,6 +1421,7 @@ classDiagram
   Overlay ..> PlannedAt
   Item *-- Copies
   CalendarEvent *-- TimeRange
+  ScheduledItem *-- TimeRange
   Item ..> ItemEdit : edit
   Item ..> ItemEditing : editing
 
@@ -1384,6 +1437,11 @@ classDiagram
   class TaskItem:::built
   class PullRequest:::built
   class CalendarEvent:::built
+  class ScheduledItem:::built
+  class TimeBlock:::built
+  class TimeArea:::built
+  class TravelLeg:::built
+  class Recurring:::built
   class Editable:::built
   class Completable:::built
   class Deletable:::built
@@ -1425,10 +1483,11 @@ classDiagram
   class SyncRun:::built
 ```
 
-- **`Item.from(data)`** is the polymorphic factory: a local to-do is a `Todo`; a mirrored item is a
-  `CalendarEvent` (kind `event`), a `PullRequest` (kind `pr`) or a `TaskItem` (the rest). Each
-  subclass registers itself; `classes/item/index.ts` loads them all, so import the item classes
-  from there.
+- **`Item.from(data)`** is the polymorphic factory (`Item.classOf`): a local item is a
+  `TravelLeg` (kind `travel`), a `TimeArea` (kind `block` with `props.layer: 'area'`), a `TimeBlock`
+  (any other `block`) or else a `Todo`; a mirrored item is a `CalendarEvent` (kind `event`), a
+  `PullRequest` (kind `pr`) or a `TaskItem` (the rest). Each subclass registers itself;
+  `classes/item/index.ts` loads them all, so import the item classes from there.
 - **Effective values.** What an item reads as is `override ?? source` (`Overrides`): its getters,
   its views, MCP's summaries, every `ItemQuery` read (an `$addFields` right after the access
   filter's `$match`), the builder's compiled pipeline (the same stage, second, before the filters,
@@ -1461,6 +1520,187 @@ classDiagram
 deletedBy)`): each through its integration's `deleteLinkedEvent` as that integration's owner (the
   write session is theirs), but the `integration.write` (`event.delete`) entry names the member who
   deleted the to-do, with their address and user agent (`deletedBy`).
+
+### Scheduled items (time blocks, areas and travel legs)
+
+Specs: `docs/superpowers/specs/2026-11-17-time-blocks-design.md` ("The class model", "Decisions
+after review" 1 and 6) and `docs/superpowers/specs/2026-11-17-travel-time-design.md` ("Object
+model", "Privacy and safety"). The spec's diagram, with `TimeArea`:
+
+```mermaid
+classDiagram
+    direction TB
+    class Item {
+        <<abstract>>
+        title
+        topic
+        overlay
+        attributes
+    }
+    class Todo {
+        status
+        dueAt
+        complete()
+        reopen()
+    }
+    class ScheduledItem {
+        <<abstract>>
+        timeRange
+        layer
+    }
+    class TimeBlock {
+        subject
+        recurrence
+        exceptions
+        create(caller, input)$
+        lastTopicForSubject(caller, subject)$
+        occurrences(range)
+        editSeries()
+        editOccurrence()
+        skipOccurrence()
+    }
+    class TimeArea {
+        layer = area
+    }
+    class TravelLeg {
+        mode
+        from
+        to
+        anchor
+        source
+    }
+    class MirroredItem {
+        <<abstract>>
+        openIn
+    }
+    class TaskItem {
+        status at the provider
+    }
+    class CalendarEvent {
+        timeRange
+        recurrence
+    }
+    class Completable {
+        <<interface>>
+    }
+    class Schedulable {
+        <<interface>>
+    }
+    class Recurring {
+        <<interface>>
+    }
+
+    Item <|-- Todo
+    Item <|-- ScheduledItem
+    Item <|-- MirroredItem
+    ScheduledItem <|-- TimeBlock
+    TimeBlock <|-- TimeArea
+    ScheduledItem <|-- TravelLeg
+    MirroredItem <|-- TaskItem
+    MirroredItem <|-- CalendarEvent
+    Todo ..|> Completable
+    ScheduledItem ..|> Schedulable
+    CalendarEvent ..|> Schedulable
+    TimeBlock ..|> Recurring
+    CalendarEvent ..|> Recurring
+```
+
+- **Kinds.** `ITEM_KINDS` gains `block` and `travel` (`SCHEDULED_KINDS`, `types/domain.ts`). An
+  area is a block with `props.layer: 'area'` (`layerOf`, `isScheduledKind`: `types/scheduled.ts`,
+  shared with the client). A leg's own data is `props.travel` (`TravelLegProps`, `travelPropsOf`:
+  `types/travel.ts`): places by id and name only, never an address or a coordinate. They are
+  always local: a provider's record of either kind is refused by the sync (`sync/recordCheck.ts`).
+- **`ScheduledItem`** (abstract) is TodoList's own reserved time: `Schedulable`, `isLocal`, every
+  field its own (`ItemEditing.local()`, no provider half), and its summary carries `layer`. It is
+  deliberately **not** `Completable`: `TimeBlock` and `TravelLeg` have no `complete`, so the
+  compiler refuses to complete one.
+- **`TimeBlock`** (`Recurring`, `Deletable`): one record per series (`props.recurrence` RRULE
+  lines, `props.exceptions` keyed by original start). `occurrences(range, timeZone)` runs the
+  shared expansion (`types/recurrence/occurrences.ts`) on the workspace's wall clock. `subject` is
+  its Subject attribute's value (`overlay.attrs.subject`). `delete` is a soft delete through
+  `ItemPolicy` `manage`. **`TimeArea`** is the same record and class with `layer = 'area'`.
+  - Its writes (`POST/PATCH …/time-blocks`, MCP `create_time_block` and `edit_time_block`):
+    `create` (editors; the subject through `Workspace#ensureSubject`, added on first use; title
+    defaults to the subject, an area needs one; topic as given, else `lastTopicForSubject`, else
+    none), `editSeries` ("all": a new start or rule drops the exceptions that are no longer
+    occurrences), `editOccurrence` ("this one": an exception keyed by its original start) and
+    `skipOccurrence`, both 400 `not_an_occurrence` (`NotAnOccurrenceError`) for a start the
+    expansion does not give. The generic `edit` is an "all" edit of title, note, topic, start and
+    end (anything else is 400). It lasts 1 minute to 24 hours, at most
+    `PLAN_LIMITS.timeBlockExceptionsMax` (366) exceptions, and every save of a series stores
+    `props.recurrenceEnd`.
+  - It is stored through the repository's `updateScheduled` (its kind only; `updateLocal` is the
+    to-do's and never finds reserved time), guarded by the `updatedAt` it read: a change made on a
+    stale read reads again and retries.
+- **`TravelLeg`**: neither `Completable` nor `Deletable` (a leg is skipped, not deleted). It takes
+  its topic and subject from its event: `setOverlay` and `setAttributes` refuse a topic override
+  or a subject of its own (400).
+- **The guards** (`contracts.ts`): `isCompletable(item)` and `isDeletable(item)`, used through
+  `Item#completable()` and `Item#deletable()` by the REST controller, the MCP `complete_todo` and
+  `delete_todo` tools and the test helpers: a mirrored item keeps its 409 with `openIn`; reserved
+  time answers 409 `not_completable` (`NotCompletableError`), a leg's delete 409 `not_deletable`
+  (`NotDeletableError`). MCP `update_todo` names `edit_time_block` or `travel_edit_leg` (400).
+- **Privacy** (`ItemPolicy`, Ruling 8): `ItemFacts.kind`; a leg is read by its owner only, even if
+  stored workspace-visible (`canRead`, and the filter's shared-local branch adds `kind: { $ne:
+'travel' }`, so both agree: `itemPolicy.agreement.test.ts`). `canManage` is false for a leg, and
+  its refusal is `not_deletable`. Former members' private to-dos leave legs out (count and delete
+  share one filter); travel storage removes a leaving member's legs.
+- **Never a to-do elsewhere:** `Todo.findOwn` and the copy flow (`TodoCopy`, the repository's
+  `addCopy`) refuse both kinds, and the workspace calendar's push leaves them out
+  (`Calendar` `pushRule`: `kind` not in `SCHEDULED_KINDS`, whatever the item's `calendarSync`).
+
+### Travel time (`classes/travel`, `classes/item/TravelLeg.ts`)
+
+Spec: `docs/superpowers/specs/2026-11-17-travel-time-design.md` (with its amendment of 2026-11-18);
+plan: `docs/superpowers/plans/2026-11-17-time-blocks-areas-travel.md` (Tasks 9 to 14). The legs are
+items (`TravelLeg`, above); everything else is a pure core behind thin storage classes, and only the
+storage classes touch the database (`class-boundary.mjs`). `readOnly.test.ts` pins that nothing here
+writes to a provider or edits an anchor item: travel writes only a member's own `travel` items. It
+never calls out (the owner's decision of 2026-11-18: no routing service, no geocoder):
+`noOutbound.test.ts` fails if any module of `classes/travel` (or `TravelLeg.ts`) imports an HTTP
+client, a socket, the sync transports or the app secrets, or calls `fetch`.
+
+- **Pure core** (no I/O):
+  - `DayPlanner`: one member's anchors for one day, their Home and settings in, the legs out
+    (stays at one place are one stay; "go home in a window"; a leg home after midnight belongs to
+    the day before; areas nest the items inside them). Lengths come from the trip lengths read
+    beforehand for exactly its `trips()`: the member's own, or `UNSET_TRIP_MINUTES` (source
+    `unset`) for a trip he hasn't set, which plans (and conflicts) alike.
+  - `LegReconciler`: the stored legs and the plan in, the creates, updates and removals out, matched
+    by `LegKey` (`ownerUserId|anchorItemId|occurrence|direction`). A leg that has started is left
+    alone; one whose anchor moved into the past goes as `moved`; a skip is never restored; a hand
+    edit keeps its times and is flagged `anchorMoved`.
+  - `PlaceMatcher` over `types/travelPlaceNames.ts` (shared with the client): a location text to a
+    saved place by name or alias, the only way a location finds a place. `TravelLinks`: Waze
+    (driving) and Google Maps directions, from the places' addresses (else names) as text,
+    computed on read; no Moovit.
+- **Storage** (each a `WorkspaceEntity` or a keyed class over one collection, owned by its member):
+  `Place` (`implements Owned, Viewable`; one Home; 30 at most; a name, aliases and an optional
+  free-text address that only opens a map app, no coordinates; `toView()` for the member with the
+  address; `toAgentView()` names only), `TravelRule` (`Owned, Auditable, Viewable`; 50 at most;
+  scope `where`, `series` or `item`), `TravelProfile` (settings: going home and the default mode;
+  the length of each trip as he set it, `tripLength(key)` and `setTripLength`; pins). `TravelData`
+  is what a leaving member or a deleted workspace removes. DATA.md §3.22 to §3.24.
+  An entity is never serialized as is: only `toView()` / `toAgentView()` leave the class.
+- **Generation:**
+  - `TravelAnchors`: a member's timed occurrences with their rule, place and fate (an area
+    anchors like a block, flagged `area`; `DayPlanner` nests the items inside it); `TravelPlanner`:
+    gather, plan, read each trip's length, reconcile and write one member's whole 14-day horizon.
+  - Its triggers: an item write (`ItemChanges`, subscribed when `classes/travel/index.ts` loads; a
+    travel failure never fails the item write), a sync of an integration in the workspace (the
+    members share `AFTER_SYNC_BUDGET_MS`), the daily pass (`jobs/TravelHorizonPass`, an
+    `AfterDispatchPass` of the hourly tick, 120 s a tick, run even if the dispatch threw), and the
+    member's own changes through `TravelSetup`, which regenerates before it answers.
+  - A leg's change (`TravelSetup#editLeg` over `TravelLeg#editTimes`): `minutes` is the trip's length,
+    every time (`TravelProfile#setTripLength`, then a regeneration: every leg of the trip follows but
+    the hand-timed ones); `startAt`/`endAt` move that one leg (`edited`, kept until Reset).
+  - `TravelLeg.applyPlan` writes by key, each write conditional on the leg as it was read, so a skip,
+    a hand edit or a trip under way is never overwritten.
+- **Surface:** REST `…/travel/*` (`routes/private/travel.ts`) and the MCP `travel_*` tools
+  (`mcp/tools/items/travel*.ts`; MCP.md §7.2), both thin: parse, one class call, `toView()`.
+
+The audit of every place that assumed "a local item is a to-do" is `docs/design/LOCAL-IS-TODO.md`
+(each row with the commit that fixed it).
 
 ## 5. Workspace and people (phase 3, built)
 
@@ -1550,6 +1790,8 @@ classDiagram
     +normalize(rules)$
     +matches(pattern, key)$
     +classify(input)
+    +withRule(match, topicId)
+    +ruleFor(match)
   }
   class AttributeDefinitions {
     <<value object>>
@@ -1564,6 +1806,16 @@ classDiagram
     +store(value)
     #valueError(value)*
   }
+  class Subjects {
+    <<value object>>
+    +of(def)$
+    +list
+    +complete(topicFamilies)
+    +upsert(input, topicFamilies)
+    +named(name)
+    +toDefinition()
+  }
+  Workspace ..> Subjects : upsertSubject, ensureSubject
   Workspace *-- WorkspaceSettings
   Workspace ..> JoinLink : stores sealed
   WorkspaceSettings *-- TopicRules
@@ -1683,6 +1935,8 @@ classDiagram
   class JoinLink:::built
   class TopicRules:::built
   class AttributeDefinitions:::built
+  class Subjects:::built
+  class SubjectMatches:::built
   class AttributeDefinition:::built
   class RatingAttribute:::built
   class NumberAttribute:::built
@@ -1730,7 +1984,17 @@ How the pieces work, in short:
   of the old `joinLinkVault`, unchanged); only its hash is searchable.
 - **Attributes and topic rules.** `AttributeDefinition` is one subclass per type (what a value may
   be and how it is stored is polymorphic); `TopicRules` classifies a container's match key and
-  validates a request's rules.
+  validates a request's rules. `Refiling` re-files stored containers and items after a File under
+  change (a connection's topic, a container's name rule, the workspace's rules), in place and with
+  no provider call: the same rule the sync applies.
+- **Subjects.** `Subjects` is the value object over the `subject` select's options and their looks
+  (colour family, title globs): it completes options with the next free family ("saved when
+  assigned"), and renames, restyles or appends one subject (`Workspace#upsertSubject`, which also
+  moves the stored values of a rename). `Workspace#ensureSubject(caller, name)` is the name-only
+  form a time block uses: the option a typed name stands for whatever its case (`Subjects#named`;
+  its family and patterns untouched), else a new one through `upsertSubject`. `SubjectMatches`
+  counts, for Settings → Subjects, what each subject would take of the caller's visible items,
+  through `subjectOf`, the rule the colours use.
 
 ## 6. Dashboards and views (phases 6a and 6b, built)
 

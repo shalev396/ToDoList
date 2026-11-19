@@ -6,6 +6,7 @@
  * it would refuse).
  */
 import { ITEM_STATUSES, type ItemStatus } from '@api-types/domain.ts';
+import { isScheduledKind } from '@api-types/scheduled.ts';
 import type {
   ItemDetail,
   ItemEditingView,
@@ -160,9 +161,17 @@ type Datable = Pick<
   'kind' | 'title' | 'status' | 'dueAt' | 'startAt' | 'endAt' | 'allDay' | 'priority'
 >;
 
-/** An event with a time of day (start and end are edited as dates and times). */
+/**
+ * A kind that always has a start and an end: an event, or reserved time (a time block, an area or
+ * a travel leg). Its start moves its end and is never emptied, and it has no due day of its own.
+ */
+export function keepsSpan(kind: string): boolean {
+  return kind === 'event' || isScheduledKind(kind);
+}
+
+/** An event (or reserved time) with a time of day (start and end are dates and times). */
 export function isTimedEvent(item: Pick<ItemDetail, 'kind' | 'allDay'>): boolean {
-  return item.kind === 'event' && !item.allDay;
+  return keepsSpan(item.kind) && !item.allDay;
 }
 
 const dateOf = (value: Date | string | null, timeZone: string): string =>
@@ -303,7 +312,7 @@ export function patchOf(
     } else {
       body.dueAt = instantFor(draft.dueDate, item.dueAt, !item.allDay, timeZone);
       // A due date kept in TodoList is a day (no time), for an item without a start of its own.
-      if (due.origin === 'override' && item.kind !== 'event' && item.startAt === null) {
+      if (due.origin === 'override' && !keepsSpan(item.kind) && item.startAt === null) {
         body.allDay = true;
       }
     }
@@ -317,7 +326,7 @@ export function patchOf(
   return Object.keys(body).length === 0 ? null : body;
 }
 
-/** The start (and an event's end) of a save, into `body`. */
+/** The start (and an event's or reserved time's end) of a save, into `body`. */
 function addStart(
   item: Datable,
   draft: EditDraft,
@@ -326,7 +335,7 @@ function addStart(
   body: UpdateItemRequestBody,
   endEditable: boolean,
 ): void {
-  if (item.kind !== 'event') {
+  if (!keepsSpan(item.kind)) {
     if (draft.startDate !== base.startDate) {
       body.startAt =
         draft.startDate === '' ? null : instantFor(draft.startDate, item.startAt, true, timeZone);

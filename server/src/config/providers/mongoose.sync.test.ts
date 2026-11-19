@@ -44,21 +44,25 @@ describe('syncMongo (sync-db on MongoDB)', () => {
     first = await syncDB();
     const second = await syncDB();
     assert.deepEqual(second, first);
-    // Items: + a to-do's provider copies (H5), idempotent local create (T2.5a fix round 1) and the per-resource sweep index
-    // (T3.2 fix round 1). Containers: + the per-resource sweep index.
-    assert.ok(first.includes('Items: indexes ok (11), validator ok'), first.join('\n'));
+    // Items: + a to-do's provider copies (H5), idempotent local create (T2.5a fix round 1), the per-resource sweep index
+    // (T3.2 fix round 1) and a travel leg's key (travel). Containers: + the per-resource sweep index.
+    assert.ok(first.includes('Items: indexes ok (12), validator ok'), first.join('\n'));
     assert.ok(first.includes('Containers: indexes ok (3), validator ok'), first.join('\n'));
     assert.ok(first.includes('Credentials: indexes ok (3), validator ok'), first.join('\n'));
     assert.ok(first.includes('Workspaces: indexes ok (3)'), first.join('\n'));
     assert.ok(first.includes('Invites: indexes ok (3)'), first.join('\n'));
-    // The 18 dashboard collections (Topics the newest) plus Users and Media, one line each.
+    // The workspace collections (the travel ones the newest) plus Users and Media, one line each.
     // The state hash (unique) and the 10-minute TTL.
     assert.ok(first.includes('OAuthStates: indexes ok (2)'), first.join('\n'));
     assert.ok(first.includes('Topics: indexes ok (1)'), first.join('\n'));
     // MCP sign-in adds McpClients and McpAuthRequests (TTL indexes; the request's code hash).
     assert.ok(first.includes('McpClients: indexes ok (1)'), first.join('\n'));
     assert.ok(first.includes('McpAuthRequests: indexes ok (2)'), first.join('\n'));
-    assert.equal(first.length, 23, first.join('\n'));
+    // Travel adds a member's places (one Home), rules and profile.
+    assert.ok(first.includes('Places: indexes ok (2), validator ok'), first.join('\n'));
+    assert.ok(first.includes('TravelRules: indexes ok (1), validator ok'), first.join('\n'));
+    assert.ok(first.includes('TravelProfiles: indexes ok (2), validator ok'), first.join('\n'));
+    assert.equal(first.length, 26, first.join('\n'));
   });
 
   it('reports collection names and counts only, never a value', () => {
@@ -70,7 +74,7 @@ describe('syncMongo (sync-db on MongoDB)', () => {
 
   it('builds the schema indexes in the database', async () => {
     const indexes = await connection.collection('Items').indexes();
-    assert.equal(indexes.filter((index) => index.name !== '_id_').length, 11);
+    assert.equal(indexes.filter((index) => index.name !== '_id_').length, 12);
     assert.ok(
       indexes.some((index) => index.name === 'integrationId_1_syncResource_1_lastSeenAt_1'),
       'the per-resource sweep index',
@@ -97,14 +101,14 @@ describe('syncMongo (sync-db on MongoDB)', () => {
     );
     const lines = await syncDB();
     assert.ok(
-      lines.includes('Items: indexes ok (11), dropped title_text_bodyPreview_text, validator ok'),
+      lines.includes('Items: indexes ok (12), dropped title_text_bodyPreview_text, validator ok'),
       lines.join('\n'),
     );
     const now = (await items.indexes()).find((index) => index.name?.endsWith('_text') === true);
     assert.deepEqual(now?.weights, { title: 5, bodyPreview: 1, 'overlay.overrides.title': 5 });
   });
 
-  it('the Items validator rejects a raw insert with kind "bogus"', async () => {
+  it('the Items validator rejects a raw insert with kind "bogus", and takes block and travel', async () => {
     const items = connection.collection('Items');
     await assert.rejects(items.insertOne(rawItem({ kind: 'bogus' })), isValidationFailure);
     await assert.rejects(
@@ -112,6 +116,17 @@ describe('syncMongo (sync-db on MongoDB)', () => {
       isValidationFailure,
     );
     await items.insertOne(rawItem());
+    // TodoList's own reserved time: the validator sync-db installs takes the new kinds.
+    const source = (externalId: string): Record<string, unknown> => ({
+      provider: 'local',
+      accountId: '',
+      externalId,
+      url: `/w/w-raw/items/${externalId}`,
+    });
+    await items.insertOne(
+      rawItem({ kind: 'block', props: { layer: 'area' }, source: source('b') }),
+    );
+    await items.insertOne(rawItem({ kind: 'travel', visibility: 'private', source: source('t') }));
   });
 
   it('the Containers and Credentials validators reject documents without source or enc parts', async () => {

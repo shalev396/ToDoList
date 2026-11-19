@@ -81,6 +81,16 @@ describe('block catalog defaults', () => {
     });
   }
 
+  it('calendar viz takes a startHour from 0 to 23', () => {
+    const parse = (startHour: number): boolean =>
+      VIZ_SCHEMAS.calendar.safeParse({ kind: 'calendar', startHour }).success;
+    assert.equal(parse(0), true);
+    assert.equal(parse(23), true);
+    assert.equal(parse(24), false);
+    assert.equal(parse(-1), false);
+    assert.equal(parse(7.5), false);
+  });
+
   it('matches BUILDER §4: donut by provider, week calendar, deadlines up to 14 days out', () => {
     const chart = BLOCK_CATALOG.chart.defaults;
     assert.deepEqual(chart.query?.groupBy, ['source.provider']);

@@ -47,6 +47,11 @@ export interface SentenceFilterProps {
   maxRules: number;
   /** Switches to the rule tree. */
   onAdvanced?: (() => void) | undefined;
+  /**
+   * The sentence's own wording, with the `{kinds}`, `{providers}`, `{rules}` and `{sort}` slots
+   * it shows (default `logic.sentence.template`). A travel rule's "When …" leaves out the sort.
+   */
+  template?: string | undefined;
 }
 
 interface Choice {
@@ -224,6 +229,7 @@ export function SentenceFilter({
   topics = [],
   maxRules,
   onAdvanced,
+  template,
 }: SentenceFilterProps) {
   const { t } = useTranslation();
   const read = toSentence(query);
@@ -389,7 +395,7 @@ export function SentenceFilter({
         aria-label={t('logic.sentence.label')}
         className="flex flex-wrap items-center gap-x-2 gap-y-2 text-sm leading-9 max-md:leading-[44px]"
       >
-        {templateParts(t('logic.sentence.template'), slots).map((part, index) =>
+        {templateParts(template ?? t('logic.sentence.template'), slots).map((part, index) =>
           typeof part === 'string' ? (
             <span key={`t${String(index)}`}>{part.trim() === '' ? null : part.trim()}</span>
           ) : (

@@ -56,6 +56,7 @@ const GROUP_OF_CONSTRUCT: Record<string, ComposerGroup> = {
   Email: 'Edge',
   Api: 'Api',
   Compute: 'Compute',
+  Schedule: 'Compute',
   Kms: 'Storage',
   Storage: 'Storage',
   Auth: 'Auth',
@@ -178,6 +179,8 @@ function readableNames(resource: CfnResource): string[] {
   const segments = cdkPath(resource)
     .slice(2)
     .filter((s) => s !== 'Resource' && s !== 'Default')
+    // The rule's invoke permission is named after the rule's logical ID: RulePermission.
+    .map((s) => (s.startsWith('AllowEventRule') ? 'Permission' : s))
     .map((s) => routeName(s) ?? s.replace(/[^A-Za-z0-9]/g, ''));
   const last = segments[segments.length - 1];
   if (last === undefined) return [];

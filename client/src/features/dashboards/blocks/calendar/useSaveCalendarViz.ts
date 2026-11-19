@@ -8,11 +8,11 @@ import type { Block } from '@api-types/builder';
 import type { DashboardView } from '@api-types/dashboards';
 
 /**
- * Saves the calendar's Week/Month choice in the block's viz options (one `update_block` op), for
+ * Saves the calendar's Week/Month choice or start hour in the block's viz options (one `update_block` op), for
  * an editor or owner on the draft. Anyone else keeps the choice for the visit only. The cache is
  * updated by hand with the new version, so the editor's next layout save doesn't conflict.
  */
-export function useSaveCalendarView(dashboard: DashboardView, block: Block) {
+export function useSaveCalendarViz(dashboard: DashboardView, block: Block) {
   const { t } = useTranslation();
   const { workspace, role } = useCurrentWorkspace();
   const queryClient = useQueryClient();
@@ -21,11 +21,11 @@ export function useSaveCalendarView(dashboard: DashboardView, block: Block) {
   const canSave =
     workspace !== null && dashboard.as === 'draft' && (role === 'editor' || role === 'owner');
 
-  return (view: 'week' | 'month') => {
+  return (patch: { view?: 'week' | 'month'; startHour?: number }) => {
     if (!canSave) {
       return;
     }
-    const viz = { ...block.viz, view };
+    const viz = { ...block.viz, ...patch };
     apply.mutate(
       {
         expectedVersion: dashboard.version,

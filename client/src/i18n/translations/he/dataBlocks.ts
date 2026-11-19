@@ -54,6 +54,8 @@ export const dataBlocks = {
       pr: 'בקשת מיזוג',
       file: 'קובץ',
       message: 'הודעה',
+      block: 'בלוק זמן',
+      travel: 'נסיעה',
     },
   },
   deadlines: {

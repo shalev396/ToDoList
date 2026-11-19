@@ -12,13 +12,16 @@ import { Topic } from '../workspace/Topic.js';
 import { AppError } from '../../errors/AppError.js';
 import { MirroredItemError } from '../../errors/MirroredItemError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
+import { ValidationError } from '../../errors/ValidationError.js';
 import type { ItemData, LocalItemPatch } from '../../models/definitions/Item.js';
 import { MirroredItemError as StoredMirroredItemError } from '../../models/errors.js';
 import { getItemRepository } from '../../models/index.js';
 import type { CreateCopyOutcome, CreateCopyRequestBody } from '../../types/providerCreate.js';
+import { isScheduledKind } from '../../types/scheduled.js';
 import { Container } from './Container.js';
 import type { Completable, Copyable, Deletable, Editable, HasDueDate } from './contracts.js';
 import { Item } from './Item.js';
+import { ItemChanges } from './ItemChanges.js';
 import type { ItemEdit, ProviderHalf } from './ItemEdit.js';
 import { ItemEditing } from './ItemEditing.js';
 import { TimeRange } from './TimeRange.js';
@@ -35,6 +38,27 @@ export interface NewTodo {
   containerId?: string | null | undefined;
   priority?: number | null | undefined;
   idempotencyKey?: string | undefined;
+  /** When it happens (a to-do needs a start for travel). */
+  startAt?: Date | undefined;
+  /** Needs `startAt`, and is not before it. */
+  endAt?: Date | undefined;
+}
+
+/** A new to-do's start and end as stored: 400 for an end without a start or before it. */
+function timesOf(input: NewTodo): { startAt?: Date; endAt?: Date } {
+  const { startAt, endAt } = input;
+  for (const [field, time] of [
+    ['startAt', startAt],
+    ['endAt', endAt],
+  ] as const) {
+    if (time !== undefined && Number.isNaN(time.getTime())) {
+      throw new ValidationError(`${field}: Must be a valid date`);
+    }
+  }
+  if (endAt === undefined) return startAt === undefined ? {} : { startAt };
+  if (startAt === undefined) throw new ValidationError('startAt: Required with endAt');
+  if (endAt < startAt) throw new ValidationError('endAt: Must not come before startAt');
+  return { startAt, endAt };
 }
 
 function isDuplicateKey(error: unknown): boolean {
@@ -59,12 +83,14 @@ export class Todo
 
   /**
    * Editors: a new to-do of the caller's. `topicId` defaults to the workspace's `personal` topic
-   * (an unknown topic or a container the caller can't see is 400). `created` is false when the
+   * (an unknown topic or a container the caller can't see is 400). An end needs a start and is
+   * not before it (400 otherwise). `created` is false when the
    * caller already made one with this idempotency key (the unique partial index on (workspace,
    * owner, key) makes that race-free).
    */
   static async create(caller: Caller, input: NewTodo): Promise<{ todo: Todo; created: boolean }> {
     caller.require('editor');
+    const times = timesOf(input);
     if (input.containerId !== undefined && input.containerId !== null) {
       await Container.assertVisible(caller, await ItemPolicy.for(caller), input.containerId);
     }
@@ -77,8 +103,9 @@ export class Todo
         ? ((await Topic.bySlug(workspaceId, 'personal'))?.id ?? null)
         : input.topicId;
     const items = await getItemRepository();
+    let stored: ItemData;
     try {
-      const stored = await items.createLocal(workspaceId, {
+      stored = await items.createLocal(workspaceId, {
         ownerUserId: caller.userId,
         title: input.title,
         topicId,
@@ -87,11 +114,11 @@ export class Todo
         ...(input.allDay === undefined ? {} : { allDay: input.allDay }),
         ...(input.containerId === undefined ? {} : { containerId: input.containerId }),
         ...(input.priority === undefined ? {} : { priority: input.priority }),
+        ...times,
         ...(input.idempotencyKey === undefined
           ? {}
           : { props: { idempotencyKey: input.idempotencyKey } }),
       });
-      return { todo: new Todo(stored), created: true };
     } catch (error) {
       if (input.idempotencyKey === undefined || !isDuplicateKey(error)) throw error;
       const [existing] = await items.aggregate(workspaceId, [
@@ -103,6 +130,9 @@ export class Todo
       if (!(found instanceof Todo)) throw error;
       return { todo: found, created: false };
     }
+    const todo = new Todo(stored);
+    await todo.#changed(caller, null, todo.data);
+    return { todo, created: true };
   }
 
   /**
@@ -114,6 +144,7 @@ export class Todo
   static async createAll(caller: Caller, inputs: readonly NewTodo[]): Promise<Todo[]> {
     caller.require('editor');
     if (inputs.length === 0) return [];
+    const times = inputs.map(timesOf);
     const workspaceId = caller.workspaceId;
     const containerIds = inputs.flatMap(({ containerId }) =>
       containerId === undefined || containerId === null ? [] : [containerId],
@@ -138,7 +169,7 @@ export class Todo
       await getItemRepository()
     ).createLocalMany(
       workspaceId,
-      inputs.map((input) => ({
+      inputs.map((input, index) => ({
         ownerUserId: caller.userId,
         title: input.title,
         topicId: input.topicId === undefined ? personal : input.topicId,
@@ -147,12 +178,15 @@ export class Todo
         ...(input.allDay === undefined ? {} : { allDay: input.allDay }),
         ...(input.containerId === undefined ? {} : { containerId: input.containerId }),
         ...(input.priority === undefined ? {} : { priority: input.priority }),
+        ...times[index],
         ...(input.idempotencyKey === undefined
           ? {}
           : { props: { idempotencyKey: input.idempotencyKey } }),
       })),
     );
-    return stored.map((data) => new Todo(data));
+    const todos = stored.map((data) => new Todo(data));
+    for (const todo of todos) await todo.#changed(caller, null, todo.data);
+    return todos;
   }
 
   /**
@@ -205,10 +239,17 @@ export class Todo
     });
   }
 
-  /** The caller's own live to-do (anyone else's, or a mirrored item: 404). */
+  /**
+   * The caller's own live to-do (anyone else's, a mirrored item, or reserved time such as a time
+   * block or a travel leg: 404).
+   */
   static async findOwn(caller: Caller, id: string): Promise<Todo> {
     const stored = await (await getItemRepository()).findById(caller.workspaceId, id);
-    if (stored?.source.provider !== 'local' || stored.ownerUserId !== caller.userId) {
+    if (
+      stored?.source.provider !== 'local' ||
+      stored.ownerUserId !== caller.userId ||
+      isScheduledKind(stored.kind)
+    ) {
       throw new NotFoundError();
     }
     return new Todo(stored);
@@ -239,7 +280,9 @@ export class Todo
     const topic = edit.get('topicId');
     if (topic !== undefined && topic !== null) await Topic.assertOf(this.workspaceId, topic);
     this.#assertTimeRange(edit);
-    return this.#store(edit.localPatch());
+    const updated = await this.#store(edit.localPatch());
+    await updated.#changed(caller, this.data, updated.data);
+    return updated;
   }
 
   edit(caller: Caller, edit: ItemEdit): Promise<Todo> {
@@ -268,6 +311,7 @@ export class Todo
       throw new AppError(404, 'Not found');
     }
     await CalendarLinks.in(this.workspaceId).onItemDeleted(this.id, caller);
+    await this.#changed(caller, this.data, null);
   }
 
   /** H5: created in one of the caller's own providers too (TodoCopy). */
@@ -286,6 +330,14 @@ export class Todo
     const end = edit.has('endAt') ? (edit.get('endAt') ?? null) : this.data.endAt;
     if (start === null || end === null) return;
     TimeRange.of(start, end, edit.get('allDay') ?? this.data.allDay);
+  }
+
+  /**
+   * Whoever listens hears the caller wrote it, as it was and is (travel: its legs move when its
+   * time did); their failure is theirs.
+   */
+  async #changed(caller: Caller, before: ItemData | null, after: ItemData | null): Promise<void> {
+    await ItemChanges.notify(caller, { itemId: this.id, kind: this.kind, before, after });
   }
 
   /** The policy, once it let the caller edit this to-do (403, 404, or the mirrored 409). */

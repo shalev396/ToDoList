@@ -35,6 +35,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*", "scripts/mcp-smoke.ts"],
+  "include": ["src/**/*", "scripts/mcp-smoke.ts", "scripts/sync-schema-local.ts"],
   "exclude": ["node_modules", "cdk.out", ".build", "infra"]
 }

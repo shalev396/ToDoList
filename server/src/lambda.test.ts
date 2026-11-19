@@ -18,11 +18,13 @@ import { startTestDatabase, type TestDatabase } from './testing/testDatabase.js'
 forceSyncModeForTests('fixtures');
 
 type Handler = (event: unknown, context: Context) => Promise<unknown>;
+type RemainingMsOf = (context: Partial<Pick<Context, 'getRemainingTimeInMillis'>>) => number | null;
 
 let db: TestDatabase;
 let guard: OutboundGuard;
 let models: typeof Models;
 let handler: Handler;
+let remainingMsOf: RemainingMsOf;
 let workspaceId: string;
 const context = {} as Context;
 
@@ -36,7 +38,7 @@ before(async () => {
       await models.getWorkspaceRepository()
     ).create({ name: 'Lambda', slug: 'lambda', ownerId: 'u-owner' })
   ).id;
-  ({ handler } = await import('./lambda.js'));
+  ({ handler, remainingMsOf } = await import('./lambda.js'));
 });
 
 after(async () => {
@@ -65,6 +67,12 @@ async function queuedRun(accountId: string): Promise<{ integrationId: string; ru
 const ok = { statusCode: 200, body: '{"ok":true}' };
 
 describe('lambda handler: background sync jobs', () => {
+  it("reads the function's time left from its context; none without one", () => {
+    assert.equal(remainingMsOf({ getRemainingTimeInMillis: () => 123_456 }), 123_456);
+    assert.equal(remainingMsOf({}), null);
+    assert.equal(remainingMsOf({ getRemainingTimeInMillis: () => Number.NaN }), null);
+  });
+
   it('runs a sync-run job: the queued run it names', async () => {
     const { integrationId, runId } = await queuedRun('lambda-1');
     const event = { action: 'sync-run', integrationId, runId, mode: 'fixtures' };
@@ -109,6 +117,20 @@ describe('lambda handler: maintenance actions', () => {
     };
     assert.equal(result.statusCode, 200);
     assert.equal((JSON.parse(result.body) as { timedOutRuns: unknown }).timedOutRuns, 0);
+  });
+});
+
+describe('lambda handler: scheduled tick', () => {
+  it('runs the scheduled tick on sync-dispatch', async () => {
+    const result = (await handler({ action: 'sync-dispatch' }, context)) as {
+      statusCode: number;
+      body: string;
+    };
+    assert.equal(result.statusCode, 200);
+    const body = JSON.parse(result.body) as { dispatch: { dispatched: unknown }; passes: unknown };
+    assert.equal(typeof body.dispatch.dispatched, 'number');
+    // The travel pass ran, with no member to regenerate.
+    assert.deepEqual(body.passes, { 'travel-pass': { done: 0, left: 0 } });
   });
 });
 

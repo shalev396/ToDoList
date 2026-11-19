@@ -18,3 +18,4 @@ export * from './mcp/index.js';
 export * from './sync/index.js';
 export * from './calendar/index.js';
 export * from './dashboard/index.js';
+export * from './travel/index.js';

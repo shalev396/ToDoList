@@ -29,6 +29,8 @@ interface Fixture {
   wid: string;
   /** A Jira integration with a saved credential. */
   iid: string;
+  /** One of its containers. */
+  cid: string;
 }
 
 interface RouteCase {
@@ -95,6 +97,19 @@ function matrix(owner: Member): RouteCase[] {
       path: one,
       body: { label: 'Renamed', topicId: null },
       expect: own(owner, 200),
+    },
+    {
+      // Workspace owners only (403 below), then the integration's owner (404 for the rest).
+      route: 'PUT /workspaces/:wid/integrations/:iid/containers/:cid/file-under',
+      method: 'PUT',
+      path: (f) => `${one(f)}/containers/${f.cid}/file-under`,
+      body: { topicId: null },
+      expect: {
+        viewer: 403,
+        editor: 403,
+        owner: owner === 'owner' ? 200 : 404,
+        stranger: 404,
+      },
     },
     {
       route: 'POST /workspaces/:wid/integrations/:iid/stop-sharing',
@@ -212,7 +227,30 @@ async function workspace(
     kind: 'api_token_basic',
     secret: JIRA,
   });
-  return { wid: workspace.id, iid: integration.id };
+  await (
+    await models.getContainerRepository()
+  ).bulkUpsert(workspace.id, [
+    {
+      integrationId: integration.id,
+      topicId: 'work',
+      type: 'project',
+      name: 'Board',
+      source: {
+        provider: 'jira',
+        accountId: `site-${String(fixtures)}.atlassian.net`,
+        externalId: 'c-1',
+        key: null,
+        url: 'https://example.test/c-1',
+        updatedAtSource: null,
+        etag: null,
+        hash: null,
+      },
+    },
+  ]);
+  const [container] = await (
+    await models.getContainerRepository()
+  ).list(workspace.id, { integrationId: integration.id });
+  return { wid: workspace.id, iid: integration.id, cid: container?.id ?? '' };
 }
 
 /** Everything the routes above can change in a workspace. */

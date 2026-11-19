@@ -10,6 +10,7 @@
  * and link are checked first, by the engine (`missing_id`, `missing_url`).
  */
 import { CONTAINER_TYPES, ITEM_KINDS, ITEM_STATUSES } from '../types/domain.js';
+import { isScheduledKind } from '../types/scheduled.js';
 import type { DeletedRecord, MappedContainer, MappedItem } from './types.js';
 
 /** Longest item title or container name. */
@@ -69,8 +70,11 @@ const props: Check = (value) => {
   }
 };
 
+/** What a provider's record can be: never TodoList's own reserved time (a block, a travel leg). */
+const MIRRORED_KINDS = ITEM_KINDS.filter((kind) => !isScheduledKind(kind));
+
 const ITEM_CHECKS: Readonly<Record<string, Check>> = {
-  kind: oneOf(ITEM_KINDS),
+  kind: oneOf(MIRRORED_KINDS),
   status: oneOf(ITEM_STATUSES),
   topicId: optional(text(ID_MAX)),
   title: name,

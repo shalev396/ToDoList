@@ -126,7 +126,8 @@ for (const stage of STAGES) {
         LogGroupName: `/aws/lambda/todolist-${stage}-api`,
       });
 
-      // No queue, worker, alarm or schedule (like Elytra): syncs are self-invocations.
+      // No queue, worker or alarm (like Elytra): syncs are self-invocations; one hourly rule starts them.
+      template.resourceCountIs('AWS::Events::Rule', 1);
       for (const type of [
         'AWS::SQS::Queue',
         'AWS::SQS::QueuePolicy',

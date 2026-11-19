@@ -14,22 +14,14 @@
 import { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import type { TopicRule } from '../../models/definitions/Workspace.js';
+import { hasTooManyWildcards, matchesGlob } from '../../types/glob.js';
+import { exactRuleFor, sameRuleMatch } from '../../types/topicRules.js';
 
 export interface TopicInput {
   /** What the rules are matched against, e.g. "shalev396/Elytra". */
   matchKey: string;
   /** The topic when no rule matches: the integration's (defaultFor); null = none. */
   defaultTopicId: string | null;
-}
-
-const REGEXP_SYNTAX = /[.*+?^${}()|[\]\\/]/g;
-
-function globToRegExp(pattern: string): RegExp {
-  const source = pattern
-    .split('*')
-    .map((part) => part.replace(REGEXP_SYNTAX, '\\$&'))
-    .join('.*');
-  return new RegExp(`^${source}$`, 'isu');
 }
 
 export class TopicRules {
@@ -62,6 +54,9 @@ export class TopicRules {
         if (trimmed === '' || trimmed.length > TopicRules.MATCH_MAX || topicId === '') {
           throw new AppError(400, 'Each topic rule needs a match and a topic');
         }
+        if (hasTooManyWildcards(trimmed)) {
+          throw new AppError(400, 'A topic rule match has too many wildcards');
+        }
         return { match: trimmed, topicId };
       }),
     );
@@ -69,7 +64,7 @@ export class TopicRules {
 
   /** True when the glob `pattern` matches all of `key`, ignoring case. */
   static matches(pattern: string, key: string): boolean {
-    return globToRegExp(pattern).test(key);
+    return matchesGlob(pattern, key);
   }
 
   /** The topic an integration's records get when no rule or override applies (set at connect time). */
@@ -89,13 +84,32 @@ export class TopicRules {
   /**
    * The topic of the first rule whose glob matches the key, ignoring case (GitHub logins and repo
    * names are case-insensitive, and a GitHub connect stores its `<login>/*` rule in lower case),
-   * else the default topic.
+   * else the default topic. The key is read trimmed, as File under stores its rule (`withRule`):
+   * a calendar named "Braude " is filed by the rule "Braude".
    */
   classify(input: TopicInput): string | null {
+    const key = input.matchKey.trim();
     for (const rule of this.#rules) {
-      if (TopicRules.matches(rule.match, input.matchKey)) return rule.topicId;
+      if (TopicRules.matches(rule.match, key)) return rule.topicId;
     }
     return input.defaultTopicId;
+  }
+
+  /**
+   * The rules with `match`'s own rule (File under) replaced: any rule with the same match, ignoring
+   * case, goes, and a topic puts the new rule first, so it beats a broader glob; null only removes.
+   * `match` is stored as a glob like any other rule: a `*` in a calendar or project name stays a
+   * wildcard (an ordinary name rule), and the rule then also files names the glob matches.
+   */
+  withRule(match: string, topicId: string | null): TopicRules {
+    const kept = this.#rules.filter((rule) => !sameRuleMatch(rule.match, match));
+    return new TopicRules(topicId === null ? kept : [{ match: match.trim(), topicId }, ...kept]);
+  }
+
+  /** The rule whose match is exactly `match`, ignoring case (never a glob match); null when none. */
+  ruleFor(match: string): TopicRule | null {
+    const found = exactRuleFor(this.#rules, match);
+    return found === null ? null : { match: found.match, topicId: found.topicId };
   }
 
   equals(other: TopicRules): boolean {

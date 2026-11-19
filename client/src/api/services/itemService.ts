@@ -57,6 +57,11 @@ export async function updateItem(
   return response.data;
 }
 
+/** `DELETE …/items/:id` (204): a soft delete of a to-do or a time block (an area too). */
+export async function deleteItem(workspaceId: string, itemId: string, config?: ApiRequestConfig) {
+  await api.delete(itemPath(workspaceId, itemId), config);
+}
+
 export async function updateOverlay(
   workspaceId: string,
   itemId: string,

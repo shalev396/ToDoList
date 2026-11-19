@@ -1,4 +1,5 @@
 import type { ContainerType, IntegrationMode, ItemKind, ItemStatus, Provider } from './domain.js';
+import type { BlockLayer } from './scheduled.js';
 import type { WritableField } from './integrations.js';
 
 /** Item and facet shapes of the items routes (routes/private/items.ts), kept apart so the client can import them without the controllers. */
@@ -158,6 +159,8 @@ export interface ItemSummary {
   /** Provider copies of a local to-do (H5); empty otherwise. */
   copies: ItemCopyView[];
   lastSeenAt: Date | null;
+  /** A time block's layer (`block`, or `area` for painted time); absent on every other item. */
+  layer?: BlockLayer;
 }
 
 /** The full item. */
@@ -178,6 +181,13 @@ export interface ItemDetail extends ItemSummary {
   editing: ItemEditingView;
   /** A mirrored item's values at its provider, before its overrides; null for a to-do. */
   sourceValues: ItemSourceValuesView | null;
+  /**
+   * A moved occurrence of a repeating calendar event (its own row): the series it belongs to (its
+   * master's item id, or its own when the caller doesn't see the master) and the occurrence's
+   * original start (ISO). Travel keeps a mark of that occurrence under them. Ids and times only;
+   * absent on any other item.
+   */
+  seriesOccurrence?: { seriesId: string; originalStart: string };
 }
 
 /**
@@ -249,6 +259,11 @@ export type GetItemResponseData = ItemDetail;
 export interface FacetContainer {
   id: string;
   name: string;
+  /**
+   * What topic rules match: a GitHub repo's `owner/repo` or board's `owner/projects/<n>`, else the
+   * name. A container's own rule (File under) has this as its `match`.
+   */
+  matchKey: string;
   type: ContainerType;
   /** Its topic's id; null = Unsorted. */
   topicId: string | null;

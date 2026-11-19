@@ -3,8 +3,10 @@ import { useTranslation } from 'react-i18next';
 import { CalendarClock } from 'lucide-react';
 import { DeadlineRow } from '@/components/items/DeadlineRow';
 import { useItemParam } from '@/features/items/useItemParam';
+import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
 import type { ItemQueryRow } from '@api-types/builder';
+import type { ItemColour } from '@api-types/colours';
 import { BlockFrame } from '../BlockFrame';
 import { blockTitle } from '../chrome';
 import type { BlockComponentProps } from '../registry/types';
@@ -23,10 +25,12 @@ function DeadlineGroups({
   groups,
   now,
   timeZone,
+  colourOf,
 }: {
   groups: { bucket: string; rows: Dated[] }[];
   now: Date;
   timeZone: string;
+  colourOf: (rowId: string) => ItemColour;
 }) {
   const { t } = useTranslation();
   const prefix = useId();
@@ -57,6 +61,7 @@ function DeadlineGroups({
                         timeZone={timeZone}
                         done={row.status === 'done'}
                         showSource
+                        colour={colourOf(row.id)}
                         onOpen={() => {
                           openItem(row.id);
                         }}
@@ -88,6 +93,8 @@ export default function DeadlinesBlock({ dashboard, block }: BlockComponentProps
   const { query, rows, loadState, now, timeZone, weekStart } = useDataBlock(dashboard, block);
   const title = blockTitle(block, t);
 
+  const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
+  const colourOf = useRowColours(itemRows);
   const dated = useMemo(
     () =>
       rows.flatMap((entry): Dated[] => {
@@ -134,12 +141,12 @@ export default function DeadlinesBlock({ dashboard, block }: BlockComponentProps
       footer={
         dated.length > MAX_VISIBLE ? (
           <ShowAll title={title} count={dated.length}>
-            <DeadlineGroups groups={groups} now={now} timeZone={timeZone} />
+            <DeadlineGroups groups={groups} now={now} timeZone={timeZone} colourOf={colourOf} />
           </ShowAll>
         ) : undefined
       }
     >
-      <DeadlineGroups groups={visibleGroups} now={now} timeZone={timeZone} />
+      <DeadlineGroups groups={visibleGroups} now={now} timeZone={timeZone} colourOf={colourOf} />
     </BlockFrame>
   );
 }

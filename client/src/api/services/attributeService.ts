@@ -6,6 +6,8 @@ import type {
   CreateAttributeResponseData,
   DeleteAttributeResponseData,
   ListAttributesResponseData,
+  SubjectMatchCountsRequestBody,
+  SubjectMatchCountsResponseData,
   UpdateAttributeRequestBody,
   UpdateAttributeResponseData,
 } from '@api-types/api-contracts';
@@ -53,6 +55,20 @@ export async function updateAttribute(
 export async function deleteAttribute(workspaceId: string, key: string, config?: ApiRequestConfig) {
   const response = await api.delete<ApiSuccessResponse<DeleteAttributeResponseData>>(
     `${attributesPath(workspaceId)}/${encodeURIComponent(key)}`,
+    config,
+  );
+  return response.data;
+}
+
+/** How many of the caller's items each subject (in order) would take; `capped` past the scan limit. */
+export async function matchCounts(
+  workspaceId: string,
+  body: SubjectMatchCountsRequestBody,
+  config?: ApiRequestConfig,
+) {
+  const response = await api.post<ApiSuccessResponse<SubjectMatchCountsResponseData>>(
+    `${attributesPath(workspaceId)}/subject/match-counts`,
+    body,
     config,
   );
   return response.data;

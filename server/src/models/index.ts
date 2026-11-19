@@ -23,11 +23,17 @@ import { INVITE_TABLE_NAME, type IInviteRepository } from './definitions/Invite.
 import { ITEM_TABLE_NAME, type IItemRepository } from './definitions/Item.js';
 import { MEMBERSHIP_TABLE_NAME, type IMembershipRepository } from './definitions/Membership.js';
 import { OAUTH_STATE_TABLE_NAME, type IOAuthStateRepository } from './definitions/OAuthState.js';
+import { PLACE_TABLE_NAME, type IPlaceRepository } from './definitions/Place.js';
 import { REPLAY_NONCE_TABLE_NAME, type IReplayNonceRepository } from './definitions/ReplayNonce.js';
 import { CREATE_QUOTA_TABLE_NAME, type ICreateQuotaRepository } from './definitions/CreateQuota.js';
 import { SYNC_RUN_TABLE_NAME, type ISyncRunRepository } from './definitions/SyncRun.js';
 import { SYNC_STATE_TABLE_NAME, type ISyncStateRepository } from './definitions/SyncState.js';
 import { TOPIC_TABLE_NAME, type ITopicRepository } from './definitions/Topic.js';
+import { TRAVEL_RULE_TABLE_NAME, type ITravelRuleRepository } from './definitions/TravelRule.js';
+import {
+  TRAVEL_PROFILE_TABLE_NAME,
+  type ITravelProfileRepository,
+} from './definitions/TravelProfile.js';
 import { VIEW_TABLE_NAME, type IViewRepository } from './definitions/View.js';
 import { WORKSPACE_TABLE_NAME, type IWorkspaceRepository } from './definitions/Workspace.js';
 import { NotSupportedError } from './errors.js';
@@ -61,6 +67,9 @@ export type {
 export type { CalendarLinkData, ICalendarLinkRepository } from './definitions/CalendarLink.js';
 export type { IReplayNonceRepository } from './definitions/ReplayNonce.js';
 export type { OAuthStateData, IOAuthStateRepository } from './definitions/OAuthState.js';
+export type { PlaceData, IPlaceRepository } from './definitions/Place.js';
+export type { TravelRuleData, ITravelRuleRepository } from './definitions/TravelRule.js';
+export type { TravelProfileData, ITravelProfileRepository } from './definitions/TravelProfile.js';
 
 let _userRepository: IUserRepository | null = null;
 let _mediaRepository: IMediaRepository | null = null;
@@ -214,4 +223,21 @@ export const getCreateQuotaRepository = mongoOnly<ICreateQuotaRepository>(
 export const getOAuthStateRepository = mongoOnly<IOAuthStateRepository>(
   OAUTH_STATE_TABLE_NAME,
   async () => (await import('./mongoose/OAuthState.js')).OAuthStateRepository,
+);
+
+// Travel (docs/superpowers/specs/2026-11-17-travel-time-design.md): a member's places, rules and
+// profile.
+export const getPlaceRepository = mongoOnly<IPlaceRepository>(
+  PLACE_TABLE_NAME,
+  async () => (await import('./mongoose/Place.js')).PlaceRepository,
+);
+
+export const getTravelRuleRepository = mongoOnly<ITravelRuleRepository>(
+  TRAVEL_RULE_TABLE_NAME,
+  async () => (await import('./mongoose/TravelRule.js')).TravelRuleRepository,
+);
+
+export const getTravelProfileRepository = mongoOnly<ITravelProfileRepository>(
+  TRAVEL_PROFILE_TABLE_NAME,
+  async () => (await import('./mongoose/TravelProfile.js')).TravelProfileRepository,
 );

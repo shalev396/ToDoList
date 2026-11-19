@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { ArrowUpRight, List as ListIcon, Plus } from 'lucide-react';
@@ -6,16 +7,19 @@ import { RoundCheckbox } from '@/components/items/RoundCheckbox';
 import { TaskRow } from '@/components/items/TaskRow';
 import { Button } from '@/components/ui/button';
 import { buttonVariants } from '@/components/ui/button-variants';
+import { useRowColours } from '@/features/colours/useColours';
 import { useShellUi } from '@/features/shell/shellUi';
 import { useLanguage } from '@/hooks/useLanguage';
 import { pathTo, topicPath } from '@/router/routes';
 import { useItemParam } from '@/features/items/useItemParam';
 import { CopyChips } from '@/features/items/CopyChips';
 import { copiesOfProps } from '@/features/items/copies';
+import { isMarkable } from '@/features/items/kinds';
 import { SourceLink } from '@/features/items/SourceLink';
 import { topicById } from '@/features/workspaces/topics';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { ItemQueryRow } from '@api-types/builder';
+import type { ItemColour } from '@api-types/colours';
 import { BlockFrame } from '../BlockFrame';
 import { blockTitle } from '../chrome';
 import type { BlockComponentProps } from '../registry/types';
@@ -39,11 +43,13 @@ function ListRows({
   now,
   timeZone,
   linkToGroup,
+  colourOf,
 }: {
   rows: readonly DisplayedRow<ItemQueryRow>[];
   now: Date;
   timeZone: string;
   linkToGroup: boolean;
+  colourOf: (rowId: string) => ItemColour;
 }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -54,7 +60,9 @@ function ListRows({
   return (
     <ul className="m-0 flex list-none flex-col p-0">
       {rows.map(({ row, tone, badges }) => {
-        const local = row.source.provider === 'local';
+        // A to-do is ticked here; a time block or a travel leg has no status, a mirrored item is
+        // completed at its provider.
+        const markable = isMarkable(row);
         const done = row.status === 'done';
         const title = truncateText(row.title, MAX_TITLE) || t('dataBlocks.noTitle');
         // A group page lives under its topic's URL; an Unsorted row has none to open.
@@ -69,11 +77,12 @@ function ListRows({
                 due={dateOf(row.dueAt)}
                 timeZone={timeZone}
                 done={done}
+                colour={colourOf(row.id)}
                 onOpen={() => {
                   openItem(row.id);
                 }}
                 checkbox={
-                  local ? (
+                  markable ? (
                     <RoundCheckbox
                       checked={done}
                       label={t(done ? 'dataBlocks.list.markOpen' : 'dataBlocks.list.markDone', {
@@ -111,10 +120,15 @@ function ListRows({
   );
 }
 
-/** Todoist-style list (FRONTEND.md §5): checkbox for local to-dos only, priority and due chips. */
+/**
+ * Todoist-style list (FRONTEND.md §5): checkbox for local to-dos only (never a time block or a
+ * travel leg), priority and due chips.
+ */
 export default function ListBlock({ dashboard, block }: BlockComponentProps) {
   const { t } = useTranslation();
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
+  const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
+  const colourOf = useRowColours(itemRows);
 
   const { role } = useCurrentWorkspace();
   const { openNewTodoIn } = useShellUi();
@@ -152,7 +166,13 @@ export default function ListBlock({ dashboard, block }: BlockComponentProps) {
       footer={
         rows.length > visible ? (
           <ShowAll title={title} count={rows.length}>
-            <ListRows rows={rows} now={now} timeZone={timeZone} linkToGroup={linkToGroup} />
+            <ListRows
+              rows={rows}
+              now={now}
+              timeZone={timeZone}
+              linkToGroup={linkToGroup}
+              colourOf={colourOf}
+            />
           </ShowAll>
         ) : undefined
       }
@@ -162,6 +182,7 @@ export default function ListBlock({ dashboard, block }: BlockComponentProps) {
         now={now}
         timeZone={timeZone}
         linkToGroup={linkToGroup}
+        colourOf={colourOf}
       />
     </BlockFrame>
   );

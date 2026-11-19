@@ -5,9 +5,10 @@
  * A workspace is shared as a whole (every member sees every topic), but integrations are not:
  * what a member can see = their own integrations' items ∪ the items of integrations attached as a
  * connector on any block of the workspace (share-on-attach) ∪ the local to-dos they may see
- * (shared ones, and their own private ones). The workspace calendar's push sends what its owner may
- * see (ruling 12 as amended by the calendar phase: shared integrations and shared to-dos too, never
- * another member's private to-do).
+ * (shared ones, and their own private ones; time blocks alike). A travel leg is only ever its
+ * member's, whatever its visibility (Ruling 8). The workspace calendar's push sends what its owner
+ * may see (ruling 12 as amended by the calendar phase: shared integrations and shared to-dos too,
+ * never another member's private to-do).
  *
  * The share facts are resolved from the data on every request, never from a stored flag that
  * could drift; a request that needs them twice resolves them once (requestMemo.ts), so "Stop
@@ -16,12 +17,13 @@
 import { ForbiddenError } from '../../errors/ForbiddenError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
 import { MirroredItemError } from '../../errors/MirroredItemError.js';
+import { NotDeletableError } from '../../errors/NotDeletableError.js';
 import type { AppError } from '../../errors/AppError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { getContainerRepository, getIntegrationRepository } from '../../models/index.js';
 import { forgetForRequest, memoForRequest } from '../../services/requestMemo.js';
 import { LOCAL_CONNECTOR } from '../../types/builder.js';
-import type { Provider, Visibility } from '../../types/domain.js';
+import type { ItemKind, Provider, Visibility } from '../../types/domain.js';
 import type { Caller } from '../base/Caller.js';
 import { Role } from '../base/Role.js';
 import { IntegrationPolicy } from './IntegrationPolicy.js';
@@ -50,6 +52,8 @@ export interface ItemFacts {
   readonly topicId: string | null;
   readonly deletedAt: Date | null;
   readonly source: { readonly provider: Provider; readonly url: string };
+  /** A travel leg is its member's only, whatever its visibility says (Ruling 8). */
+  readonly kind: ItemKind;
 }
 
 /** How one block reads for one viewer: its connectors, and the dedup order when needed. */
@@ -179,11 +183,16 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
     }
     return (
       item.ownerUserId === this.#access.userId ||
-      (this.#access.local === 'visible' && item.visibility === 'workspace')
+      (this.#access.local === 'visible' &&
+        item.visibility === 'workspace' &&
+        item.kind !== 'travel')
     );
   }
 
-  /** Editors change the local to-dos they see; a mirrored item is changed at its source. */
+  /**
+   * Editors change the local items they see (to-dos, time blocks, their own travel legs); a
+   * mirrored item is changed at its source.
+   */
   canEdit(caller: Caller, item: ItemFacts): boolean {
     return (
       this.canRead(caller, item) &&
@@ -192,9 +201,12 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
     );
   }
 
-  /** Deleting is editing: a local to-do the caller sees, never a mirrored item. */
+  /**
+   * Deleting is editing: a local to-do or time block the caller sees, never a mirrored item, and
+   * never a travel leg (it is skipped instead: 409 `not_deletable`).
+   */
   canManage(caller: Caller, item: ItemFacts): boolean {
-    return this.canEdit(caller, item);
+    return this.canEdit(caller, item) && item.kind !== 'travel';
   }
 
   /**
@@ -213,13 +225,17 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
   }
 
   /**
-   * 404 for an item the caller can't see; 409 with its source link for a mirrored one; otherwise
-   * the editor refusal (editing and deleting both take an editor).
+   * 404 for an item the caller can't see; 409 with its source link for a mirrored one; the editor
+   * refusal for a viewer (editing and deleting both take an editor); 409 `not_deletable` for an
+   * editor deleting a travel leg.
    */
   override refusal(caller: Caller, action: PolicyAction, item: ItemFacts): AppError {
     if (action === 'read' || !this.canRead(caller, item)) return new NotFoundError();
     if (item.source.provider !== 'local') {
       return new MirroredItemError(item.source.provider, item.source.url);
+    }
+    if (action === 'manage' && item.kind === 'travel' && caller.role.atLeast(Role.editor)) {
+      return new NotDeletableError();
     }
     return ForbiddenError.forRole('editor');
   }

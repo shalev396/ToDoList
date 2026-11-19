@@ -9,13 +9,14 @@ Use these rules whenever you read or change TodoList data. Cursor has no hooks f
 
 ## Reading (today, deadlines, calendar)
 - `list_today` for today, `list_deadlines` for what is coming, `get_calendar` for a week or month, `get_item` for one item.
-- Respect areas (`work`, `college`, `personal`): filter or group by them.
+- `list_today.scheduled[]` and `get_calendar` hold time blocks, areas (`layer: "area"`) and travel legs, one entry per occurrence. Blocks and legs are not tasks: never list them as due or overdue, never complete them. `busy` says whether the time is taken (areas are not).
+- Respect topics (`work`, `college`, `personal`): filter or group by them.
 - For provider items show an "Open in <provider>" link from `openIn.url`.
 
 ## Tasks
 1. Call `search_items` before `create_todo` to avoid duplicates.
 2. Titles: verb-first, 120 characters or fewer. Detail goes in `note`.
-3. Always set `area` and `dueAt`; for "someday" pass `dueAt: null` explicitly.
+3. Always set `topic` and `dueAt`; for "someday" pass `dueAt: null` explicitly. Pass `startAt` and `endAt` when it happens at a time.
 4. Always pass a stable `idempotencyKey`.
 5. Never edit mirrored (non-local) items; give the "Open in <provider>" link. Use `set_overlay` for local pins, hides and notes.
 6. Finish work with `complete_todo`, not delete.
@@ -30,3 +31,8 @@ Use these rules whenever you read or change TodoList data. Cursor has no hooks f
 - `sync_now` only when data is stale or the user asks; read the result with `get_sync_status`.
 - Never ask for tokens. To connect a provider call `integrations_start_connect` and give the user the `connectUrl`.
 - `sync_to_google_calendar` is a dry run by default; show the diff first.
+
+## Time blocks and travel
+- A study or work week is laid out with `create_time_block`: ask and show the plan first, make the areas first (`layer: "area"`, with a `title`), then the blocks inside them (`subject`, `startAt`, `endAt`, one `RRULE:` line, a stable `idempotencyKey`). `edit_time_block` changes one occurrence (`scope: "this"`, `originalStart`, `skip`) or the series (`scope: "all"`).
+- Blocks and travel legs are time, not to-dos: never `complete_todo` on one. A leg is skipped (`travel_skip_leg`), edited (`travel_edit_leg`) or reset (`travel_reset_leg`), never deleted.
+- Travel: set Home first (`travel_set_place` with `home: true`; an address is optional and only opens a map app: ask, never guess), then rules (`travel_set_rule`, or `travel_mark_item` for one item). Nothing is looked up: the member sets how long each trip takes. Set the minutes once (`minutes` on `travel_mark_item` or `travel_edit_leg`); every repeat uses them. A leg with `lengthUnset: true` has no length yet (a 30-minute placeholder): ask how long it takes. Agents see place names only, never addresses. Areas take travel like blocks; inside a marked one, an item with its own place gets its own legs, and the area lends its place to one with none (no trips of its own; `travel_mark_item` answers `within`).

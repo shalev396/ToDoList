@@ -26,6 +26,9 @@ const MONGO_ONLY_GETTERS = [
   'getCalendarLinkRepository',
   'getReplayNonceRepository',
   'getCreateQuotaRepository',
+  'getPlaceRepository',
+  'getTravelRuleRepository',
+  'getTravelProfileRepository',
 ] as const;
 
 describe('repository getters when DATABASE_URL is PostgreSQL', () => {

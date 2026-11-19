@@ -8,6 +8,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type * as Models from '../../models/index.js';
+import type { SourceRef } from '../../models/definitions/common.js';
 import { getAdapter, registerAdapter, unregisterAdapter } from '../../sync/registry.js';
 import type { ConnectionTestResult, ProviderAdapter } from '../../sync/types.js';
 import { startApiHarness, type ApiHarness, type ApiResponse } from '../../testing/apiHarness.js';
@@ -45,6 +46,7 @@ const STATUS_KEYS = [
   'needsReconnect',
   'provider',
   'status',
+  'topicId',
 ];
 
 let api: ApiHarness;
@@ -190,6 +192,7 @@ async function call(
 
 interface StatusView {
   id: string;
+  topicId: string | null;
   provider: string;
   accountLabel: string;
   status: string;
@@ -1157,6 +1160,171 @@ describe('PATCH /workspaces/:wid/integrations/:iid', () => {
       assert.deepEqual(await integrationDoc(wid, id), before);
     });
   }
+});
+
+// ─── File under ────────────────────────────────────────────────────────────
+
+/** A live linear integration of the owner with a calendar-like container and an item in it. */
+async function withContainer(
+  wid: string,
+  name: string,
+  topicId: string | null,
+): Promise<{ iid: string; cid: string; itemId: string; other: string }> {
+  const view = await connect(wid, { ...LINEAR_BODY, topicId });
+  const source = (externalId: string): SourceRef => ({
+    provider: 'linear',
+    accountId: 'fake',
+    externalId,
+    key: null,
+    url: `https://example.test/${externalId}`,
+    updatedAtSource: null,
+    etag: null,
+    hash: null,
+  });
+  const containers = await models.getContainerRepository();
+  await containers.bulkUpsert(wid, [
+    { integrationId: view.id, topicId, type: 'project', name, source: source(`c-${name}`) },
+    {
+      integrationId: view.id,
+      topicId,
+      type: 'project',
+      name: `${name} other`,
+      source: source(`c-${name}-other`),
+    },
+  ]);
+  const rows = await containers.list(wid, { integrationId: view.id });
+  const cid = rows.find((row) => row.name === name)?.id ?? '';
+  const other = rows.find((row) => row.name !== name)?.id ?? '';
+  const items = await models.getItemRepository();
+  await items.bulkUpsert(wid, [
+    {
+      integrationId: view.id,
+      containerId: cid,
+      kind: 'task',
+      topicId,
+      title: `${name} task`,
+      status: 'open',
+      source: source(`i-${name}`),
+    },
+  ]);
+  const { ItemMongoModel } = await import('../../models/mongoose/Item.js');
+  const item = await ItemMongoModel.findOne({ workspaceId: wid, title: `${name} task` }).lean();
+  return { iid: view.id, cid, itemId: item?._id ?? '', other };
+}
+
+async function rulesOf(wid: string): Promise<{ match: string; topicId: string }[]> {
+  return (await (await models.getWorkspaceRepository()).findById(wid))?.settings.topicRules ?? [];
+}
+
+async function itemTopic(id: string): Promise<string | null | undefined> {
+  const { ItemMongoModel } = await import('../../models/mongoose/Item.js');
+  return (await ItemMongoModel.findById(id).lean())?.topicId;
+}
+
+describe('PUT /workspaces/:wid/integrations/:iid/containers/:cid/file-under', () => {
+  it('writes the container’s name rule, re-files its items and answers the rule and counts', async () => {
+    const wid = await newWorkspace();
+    const [work, personal] = [await topicOf(wid, 'work'), await topicOf(wid, 'personal')];
+    const { iid, cid, itemId, other } = await withContainer(wid, 'Braude', personal);
+    const url = path(wid, `/${iid}/containers/${cid}/file-under`);
+
+    const res = await call('PUT', url, { topicId: work });
+    assert.equal(res.status, 200, res.text);
+    assert.deepEqual(dataOf(res), {
+      rule: { match: 'Braude', topicId: work },
+      refiled: { containers: 1, items: 1 },
+    });
+    assert.deepEqual((await rulesOf(wid))[0], { match: 'Braude', topicId: work });
+    assert.equal(await itemTopic(itemId), work);
+    const stored = await (await models.getContainerRepository()).findById(wid, other);
+    assert.equal(stored?.topicId, personal);
+
+    const back = await call('PUT', url, { topicId: null });
+    assert.equal(back.status, 200, back.text);
+    assert.deepEqual(dataOf(back), { rule: null, refiled: { containers: 1, items: 1 } });
+    assert.deepEqual(await rulesOf(wid), []);
+    assert.equal(await itemTopic(itemId), personal);
+  });
+
+  it('an editor is refused (403) and another member’s integration is 404', async () => {
+    const wid = await newWorkspace();
+    const work = await topicOf(wid, 'work');
+    const { iid, cid } = await withContainer(wid, 'Braude', null);
+    const url = path(wid, `/${iid}/containers/${cid}/file-under`);
+    assert.equal((await call('PUT', url, { topicId: work }, 'editor')).status, 403);
+    const mine = await call('POST', path(wid), LINEAR_BODY, 'editor');
+    assert.equal(mine.status, 201, mine.text);
+    const theirs = statusOf(mine).id;
+    const ownersOnTheirs = await call('PUT', path(wid, `/${theirs}/containers/${cid}/file-under`), {
+      topicId: work,
+    });
+    assert.equal(ownersOnTheirs.status, 404);
+    assert.deepEqual(await rulesOf(wid), []);
+  });
+
+  it('an unknown container, another integration’s container and an unknown topic are refused', async () => {
+    const wid = await newWorkspace();
+    const work = await topicOf(wid, 'work');
+    const first = await withContainer(wid, 'Braude', null);
+    const unknown = await call('PUT', path(wid, `/${first.iid}/containers/nope/file-under`), {
+      topicId: work,
+    });
+    assert.equal(unknown.status, 404, unknown.text);
+    const jira = await connect(wid, JIRA_BODY);
+    const foreign = await call('PUT', path(wid, `/${jira.id}/containers/${first.cid}/file-under`), {
+      topicId: work,
+    });
+    assert.equal(foreign.status, 404, foreign.text);
+    const bad = await call('PUT', path(wid, `/${first.iid}/containers/${first.cid}/file-under`), {
+      topicId: 'hobby',
+    });
+    assert.equal(bad.status, 400, bad.text);
+    const shape = await call('PUT', path(wid, `/${first.iid}/containers/${first.cid}/file-under`), {
+      topicId: 5,
+    });
+    assert.equal(shape.status, 400, shape.text);
+    assert.deepEqual(await rulesOf(wid), []);
+  });
+});
+
+describe('File under through PATCH and the facets', () => {
+  it('PATCH topicId shows it in the view and moves the integration’s items', async () => {
+    const wid = await newWorkspace();
+    const [work, personal] = [await topicOf(wid, 'work'), await topicOf(wid, 'personal')];
+    const { iid, itemId } = await withContainer(wid, 'Braude', personal);
+    const res = await call('PATCH', path(wid, `/${iid}`), { topicId: work });
+    assert.equal(res.status, 200, res.text);
+    assert.equal(statusOf(res).topicId, work);
+    assert.equal(await itemTopic(itemId), work);
+    assert.deepEqual((await auditActions(wid)).at(-1), {
+      action: 'integration.update',
+      meta: { changed: ['topicId'] },
+    });
+  });
+
+  it('a workspace rules change (PATCH settings) re-files the stored items', async () => {
+    const wid = await newWorkspace();
+    const [work, personal] = [await topicOf(wid, 'work'), await topicOf(wid, 'personal')];
+    const { itemId } = await withContainer(wid, 'Braude', personal);
+    const res = await call('PATCH', `/api/private/workspaces/${wid}`, {
+      settings: { topicRules: [{ match: 'braude', topicId: work }] },
+    });
+    assert.equal(res.status, 200, res.text);
+    assert.equal(await itemTopic(itemId), work);
+  });
+
+  it('the facets’ containers carry their match key', async () => {
+    const wid = await newWorkspace();
+    await withContainer(wid, 'Braude', null);
+    const res = await call('GET', `/api/private/workspaces/${wid}/facets`);
+    assert.equal(res.status, 200, res.text);
+    const containers = (dataOf(res) as { containers: { name: string; matchKey: string }[] })
+      .containers;
+    assert.deepEqual(containers.map(({ name, matchKey }) => [name, matchKey]).sort(), [
+      ['Braude other', 'Braude other'],
+      ['Braude', 'Braude'],
+    ]);
+  });
 });
 
 // ─── DELETE ────────────────────────────────────────────────────────────────

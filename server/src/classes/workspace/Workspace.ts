@@ -17,7 +17,11 @@ import { environment } from '../../config/environment.js';
 import { LIMITS } from '../../config/limits.js';
 import { AppError } from '../../errors/AppError.js';
 import { NotFoundError } from '../../errors/NotFoundError.js';
-import type { WorkspaceData, WorkspacePatch } from '../../models/definitions/Workspace.js';
+import type {
+  AttributeChange,
+  WorkspaceData,
+  WorkspacePatch,
+} from '../../models/definitions/Workspace.js';
 import {
   getItemRepository,
   getMembershipRepository,
@@ -28,11 +32,16 @@ import { isDemoDataStage } from '../../seed/stage.js';
 import { INVITE_TOKEN_PATTERN, hashInviteToken } from '../../services/inviteTokens.js';
 import { logger } from '../../services/logger.js';
 import {
+  AttributeDefSchema,
+  SUBJECT_ATTRIBUTE_KEY,
   type AttributeDef,
   type AttributePatch,
   type NewAttribute,
 } from '../../types/attributes.js';
+import type { ColourSubject } from '../../types/colours.js';
+import type { TopicColour } from '../../types/topics.js';
 import type { Role as RoleName } from '../../types/domain.js';
+import type { FileUnderResult, RefileCounts } from '../../types/topicRules.js';
 import type { Env } from '../../types/env.d.ts';
 import { PLAN_LIMITS } from '../../types/limits.js';
 import type {
@@ -46,6 +55,7 @@ import type { Auditable, SoftDeletable } from '../base/contracts.js';
 import { Entity } from '../base/Entity.js';
 import { AuditLog } from '../AuditLog.js';
 import { Integration, isCalendarProvider } from '../integration/index.js';
+import { Refiling } from '../item/Refiling.js';
 import { WorkspacePolicy } from '../policies/WorkspacePolicy.js';
 import { AccountClosingDeletion, OwnerDeletion } from './cascade.js';
 import { assertInvitableRole } from './Invite.js';
@@ -53,6 +63,7 @@ import { JoinLink, type JoinLinkState } from './JoinLink.js';
 import { Member } from './Member.js';
 import { assertOwner } from './ownerOnly.js';
 import { PrimaryCalendar, PrimaryCalendarStatus } from './PrimaryCalendar.js';
+import { Subjects, type SubjectInput } from './Subjects.js';
 import { Topic } from './Topic.js';
 import { TopicRules } from './TopicRules.js';
 import { WorkspaceSettings, type SettingsInput } from './WorkspaceSettings.js';
@@ -63,6 +74,11 @@ const SLUG_BASE_MAX = 40;
 /** "-2" … "-20" are tried before a random suffix. */
 const SLUG_NUMBERED_ATTEMPTS = 20;
 const SLUG_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
+/**
+ * How often a subject write that found the workspace changed since its read reads it again and
+ * retries (agents adding subjects in parallel each win one round) before a 409.
+ */
+const SUBJECT_WRITE_ATTEMPTS = 10;
 
 /** The signed-in user, as the workspace needs them. */
 export interface WorkspaceUser {
@@ -469,10 +485,41 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
       ...Object.keys(patch.settings ?? {}).map((key) => `settings.${key}`),
     ];
     if (changed.length === 0) throw new AppError(400, 'No changes provided');
+    const updated = await this.#save(caller, patch, changed);
+    // Rules decide the topic of every stored container and item: they follow at once.
+    if (patch.settings?.topicRules !== undefined) await this.#refile();
+    return updated;
+  }
+
+  /**
+   * Owner only (File under): `match`'s own name rule becomes `topicId`, or goes when null, and the
+   * workspace's stored records follow. The rule is an ordinary name rule (TopicRules#withRule):
+   * validated, saved and audited as `update` does.
+   */
+  async setNameRule(
+    caller: Caller,
+    match: string,
+    topicId: string | null,
+  ): Promise<FileUnderResult> {
+    assertOwner(caller);
+    this.#assertCaller(caller);
+    const rules = TopicRules.normalize(this.settings.topicRules.withRule(match, topicId).toJSON());
+    await this.#assertRuleTopics(rules);
+    const topicRules = rules.toJSON();
+    const updated = await this.#save(caller, { settings: { topicRules } }, ['settings.topicRules']);
+    return { rule: updated.settings.topicRules.ruleFor(match), refiled: await this.#refile() };
+  }
+
+  /** The one write of a settings or name change: stored, then audited (`changed`: the field names). */
+  async #save(caller: Caller, patch: WorkspacePatch, changed: string[]): Promise<Workspace> {
     const updated = await (await getWorkspaceRepository()).update(this.id, patch);
     if (updated === null) throw new AppError(404, 'Workspace not found');
     await AuditLog.record(caller, 'workspace.update', this.auditTarget(), { changed });
     return new Workspace(updated);
+  }
+
+  #refile(): Promise<RefileCounts> {
+    return Refiling.workspace(this.id);
   }
 
   /** 400 unless every rule files into a topic of the workspace. */
@@ -714,27 +761,49 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
     WorkspacePolicy.requireRole(caller.role.name, 'edit', action);
   }
 
+  /** The subject select with every option given a family (saved when assigned); others as they are. */
+  async #withFamilies(def: AttributeDef): Promise<AttributeDef> {
+    if (def.key !== SUBJECT_ATTRIBUTE_KEY || def.type !== 'select') return def;
+    return {
+      ...def,
+      ...Subjects.of(def)
+        .complete(await this.#topicFamilies())
+        .toDefinition(),
+    };
+  }
+
   async createAttribute(caller: Caller, input: NewAttribute): Promise<AttributeDef> {
     Workspace.#assertEditor(caller, 'add an attribute');
     this.#assertCaller(caller);
-    const def: AttributeDef = {
+    const def = await this.#withFamilies({
       key: input.key,
       name: input.name,
       type: input.type,
       ...(input.options === undefined ? {} : { options: [...new Set(input.options)] }),
+      ...(input.optionLooks === undefined ? {} : { optionLooks: input.optionLooks }),
       ...(input.min === undefined ? {} : { min: input.min }),
       ...(input.max === undefined ? {} : { max: input.max }),
       builtIn: false,
-    };
+    });
+    await this.#append(caller, def);
+    return def;
+  }
+
+  /** Appends a new attribute definition (409 when the key exists or the list is full), audited. */
+  async #append(caller: Caller, def: AttributeDef): Promise<void> {
+    if ((await this.#tryAppend(caller, def)) === 'exists') {
+      throw new AppError(409, 'An attribute with this key exists', { code: 'attribute_exists' });
+    }
+  }
+
+  /** Appends a new attribute definition, audited; `exists` when the key is taken, 409 when full. */
+  async #tryAppend(caller: Caller, def: AttributeDef): Promise<'added' | 'exists'> {
     const workspaces = await getWorkspaceRepository();
     const result = await workspaces.appendAttribute(
       this.id,
       def,
       PLAN_LIMITS.attributesPerWorkspace,
     );
-    if (result === 'exists') {
-      throw new AppError(409, 'An attribute with this key exists', { code: 'attribute_exists' });
-    }
     if (result === 'full') {
       throw new AppError(
         409,
@@ -742,8 +811,15 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
         { code: 'attribute_limit' },
       );
     }
-    await AuditLog.record(caller, 'attribute.create', AuditTarget.of('attribute', def.key));
-    return def;
+    if (result === 'added') {
+      await AuditLog.record(caller, 'attribute.create', AuditTarget.of('attribute', def.key));
+    }
+    return result;
+  }
+
+  /** The families the topics hold, for giving subjects theirs. */
+  async #topicFamilies(): Promise<(TopicColour | null)[]> {
+    return (await Topic.list(this.id)).map((topic) => topic.colour);
   }
 
   async updateAttribute(caller: Caller, key: string, patch: AttributePatch): Promise<AttributeDef> {
@@ -753,14 +829,143 @@ export class Workspace extends Entity<WorkspaceData> implements Auditable, SoftD
     if (current === undefined) throw new AppError(404, 'Not found');
     const problem = current.patchError(patch);
     if (problem !== null) throw new AppError(400, problem);
+    const merged = await this.#withFamilies(current.merge(patch));
+    const options =
+      patch.options !== undefined ||
+      patch.optionLooks !== undefined ||
+      patch.renames !== undefined ||
+      key === SUBJECT_ATTRIBUTE_KEY;
+    const change: AttributeChange = {
+      ...(patch.name === undefined ? {} : { name: merged.name }),
+      ...(patch.min === undefined ? {} : { min: merged.min }),
+      ...(patch.max === undefined ? {} : { max: merged.max }),
+      ...(!options || merged.options === undefined ? {} : { options: merged.options }),
+      ...(!options || merged.optionLooks === undefined ? {} : { optionLooks: merged.optionLooks }),
+    };
     const workspaces = await getWorkspaceRepository();
-    const updated = await workspaces.updateAttribute(this.id, key, {
-      ...patch,
-      ...(patch.options === undefined ? {} : { options: [...new Set(patch.options)] }),
-    });
+    const updated = await workspaces.updateAttribute(this.id, key, change);
     if (updated === null) throw new AppError(404, 'Not found');
+    await this.#moveValues(key, patch.renames ?? []);
     await AuditLog.record(caller, 'attribute.update', AuditTarget.of('attribute', key));
     return updated;
+  }
+
+  /** Stored values follow the options renamed in an edit. */
+  async #moveValues(key: string, renames: readonly { from: string; to: string }[]): Promise<void> {
+    if (renames.length === 0) return;
+    const items = await getItemRepository();
+    for (const { from, to } of renames) {
+      await items.renameAttributeValue(this.id, key, from, to);
+    }
+  }
+
+  /**
+   * Adds, renames or restyles one subject (an option of the `subject` select and its look),
+   * creating the select on first use. Editors and up. 409 `attribute_exists` when `subject` is
+   * not a select, 400 past 30 subjects. Audited as attribute.create or attribute.update.
+   *
+   * Safe when several run at once (agents creating blocks in parallel): each write is made on the
+   * workspace as it read it (guarded by its `updatedAt`; the select's creation by its key), and one
+   * that finds it changed reads it again and makes its change on that, so no subject is lost.
+   */
+  async upsertSubject(
+    caller: Caller,
+    input: SubjectInput,
+  ): Promise<{ subject: ColourSubject; created: boolean }> {
+    Workspace.#assertEditor(caller, 'change a subject');
+    this.#assertCaller(caller);
+    return this.#onFreshRead(caller, (workspace) => workspace.#writeSubject(caller, input));
+  }
+
+  /**
+   * The subject a block names (time-blocks design, "Subject"): the existing option when one has
+   * this name, whatever its case (its family and patterns stay as they are), else a new one added
+   * as upsertSubject adds it (the select too, on first use). Editors and up; audited when added.
+   * Safe when several run at once, as upsertSubject is.
+   */
+  async ensureSubject(
+    caller: Caller,
+    name: string,
+  ): Promise<{ subject: string; created: boolean }> {
+    Workspace.#assertEditor(caller, 'add a subject');
+    this.#assertCaller(caller);
+    return this.#onFreshRead(caller, async (workspace) => {
+      const current = workspace.#settings.attributes.find(SUBJECT_ATTRIBUTE_KEY);
+      const existing = Subjects.of(current?.toJSON()).named(name);
+      if (existing !== undefined) return { subject: existing, created: false };
+      const written = await workspace.#writeSubject(caller, { name });
+      return written === null ? null : { subject: written.subject.name, created: written.created };
+    });
+  }
+
+  /**
+   * Runs `attempt` on this workspace, then, each time it answers null (the workspace changed since
+   * it was read), on the workspace read again; 409 after SUBJECT_WRITE_ATTEMPTS tries.
+   */
+  async #onFreshRead<T>(
+    caller: Caller,
+    attempt: (workspace: Workspace) => Promise<T | null>,
+  ): Promise<T> {
+    let reread: Workspace | undefined;
+    for (let tries = 0; tries < SUBJECT_WRITE_ATTEMPTS; tries += 1) {
+      const outcome = await attempt(reread ?? this);
+      if (outcome !== null) return outcome;
+      reread = await Workspace.load(caller);
+    }
+    throw new AppError(409, 'The subjects changed while they were saved: try again');
+  }
+
+  /**
+   * One try of upsertSubject on the workspace as this instance read it: the subject and whether it
+   * is new, or null when the workspace changed since that read (nothing was written).
+   */
+  async #writeSubject(
+    caller: Caller,
+    input: SubjectInput,
+  ): Promise<{ subject: ColourSubject; created: boolean } | null> {
+    const current = this.#settings.attributes.find(SUBJECT_ATTRIBUTE_KEY);
+    if (current !== undefined && current.type !== 'select') {
+      throw new AppError(409, 'An attribute with this key exists', { code: 'attribute_exists' });
+    }
+    const before = Subjects.of(current?.toJSON());
+    const after = before.upsert(input, await this.#topicFamilies());
+    const target = input.rename?.trim() ?? input.name.trim();
+    const subject = after.list.find((entry) => entry.name === target);
+    if (subject === undefined) throw new AppError(400, 'Invalid subject');
+    const created = !before.options.includes(input.name.trim());
+    if (current === undefined) {
+      const def = AttributeDefSchema.safeParse({
+        key: SUBJECT_ATTRIBUTE_KEY,
+        name: input.attributeName ?? 'Subject',
+        type: 'select',
+        ...after.toDefinition(),
+        builtIn: false,
+      });
+      if (!def.success) throw new AppError(400, 'Invalid subject');
+      // Created meanwhile by another write: add to that one instead.
+      return (await this.#tryAppend(caller, def.data)) === 'exists' ? null : { subject, created };
+    }
+    const workspaces = await getWorkspaceRepository();
+    const updated = await workspaces.updateAttribute(
+      this.id,
+      SUBJECT_ATTRIBUTE_KEY,
+      {
+        ...after.toDefinition(),
+        ...(input.attributeName === undefined ? {} : { name: input.attributeName }),
+      },
+      { unchangedSince: this.data.updatedAt },
+    );
+    // Changed (or removed) since this read: read again.
+    if (updated === null) return null;
+    if (input.rename !== undefined && target !== input.name.trim()) {
+      await this.#moveValues(SUBJECT_ATTRIBUTE_KEY, [{ from: input.name.trim(), to: target }]);
+    }
+    await AuditLog.record(
+      caller,
+      'attribute.update',
+      AuditTarget.of('attribute', SUBJECT_ATTRIBUTE_KEY),
+    );
+    return { subject, created };
   }
 
   /** Removes a custom attribute and the values items hold for it. The built-in is a 409. */

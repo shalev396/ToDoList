@@ -29,6 +29,14 @@ describe('RecurrenceRule (a strict RRULE parser)', () => {
       ['RRULE:FREQ=YEARLY;INTERVAL=2', 'RRULE:FREQ=YEARLY;INTERVAL=2'],
       ['RRULE:FREQ=DAILY;UNTIL=20261231', 'RRULE:FREQ=DAILY;UNTIL=20261231'],
       ['RRULE:FREQ=WEEKLY;UNTIL=20261231T215959Z', 'RRULE:FREQ=WEEKLY;UNTIL=20261231T215959Z'],
+      [
+        'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=SU',
+        'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=SU',
+      ],
+      [
+        'RRULE:WKST=MO;UNTIL=20270131T215959Z;BYDAY=TU;INTERVAL=3;FREQ=WEEKLY',
+        'RRULE:FREQ=WEEKLY;INTERVAL=3;BYDAY=TU;WKST=MO;UNTIL=20270131T215959Z',
+      ],
     ];
     for (const [line, written] of cases) {
       const rule = RecurrenceRule.parse(line);
@@ -41,10 +49,34 @@ describe('RecurrenceRule (a strict RRULE parser)', () => {
     assert.equal(rule.interval, 3);
     assert.deepEqual(rule.byDay, ['SA']);
     assert.equal(rule.untilIsDate, true);
+    assert.equal(rule.weekStart, null);
     assert.equal(
       JSON.stringify({ rule }),
       '{"rule":"RRULE:FREQ=WEEKLY;INTERVAL=3;BYDAY=SA;UNTIL=20270101"}',
     );
+  });
+
+  it('takes WKST=SU or MO on a weekly rule: which week an INTERVAL counts from', () => {
+    // Every 2 weeks on Sunday and Tuesday from Sun 22 Nov 2026: with weeks starting on Sunday the
+    // Tuesday after each Sunday is in its week; RFC 5545's default (Monday) would pair it with the
+    // Sunday before, a week off.
+    assert.equal(
+      RecurrenceRule.parse('RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=SU').weekStart,
+      'SU',
+    );
+    assert.equal(RecurrenceRule.parse('RRULE:FREQ=WEEKLY;BYDAY=MO;WKST=MO').weekStart, 'MO');
+    for (const line of [
+      'RRULE:FREQ=DAILY;WKST=MO',
+      'RRULE:FREQ=MONTHLY;WKST=SU',
+      'RRULE:FREQ=YEARLY;WKST=SU',
+      'RRULE:FREQ=WEEKLY;WKST=TU',
+      'RRULE:FREQ=WEEKLY;WKST=SA',
+      'RRULE:FREQ=WEEKLY;WKST=SU,MO',
+      'RRULE:FREQ=WEEKLY;WKST=1SU',
+      'RRULE:FREQ=WEEKLY;WKST=SU;WKST=SU',
+    ]) {
+      refused(line);
+    }
   });
 
   it('refuses anything else, never quoting it', () => {
@@ -123,7 +155,8 @@ describe('RecurrenceRule against the client’s Repeat builder', () => {
     'RRULE:FREQ=MONTHLY',
     'RRULE:FREQ=YEARLY',
     'RRULE:FREQ=WEEKLY;BYDAY=WE,SA,SU',
-    'RRULE:FREQ=WEEKLY;INTERVAL=999;BYDAY=TH,WE',
+    'RRULE:FREQ=WEEKLY;INTERVAL=999;BYDAY=TH,WE;WKST=SU',
+    'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;WKST=MO',
     'RRULE:FREQ=DAILY;INTERVAL=999',
     'RRULE:FREQ=MONTHLY;INTERVAL=999',
     'RRULE:FREQ=YEARLY;INTERVAL=999',

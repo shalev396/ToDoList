@@ -5,7 +5,14 @@ import { Overrides } from '../classes/item/Overrides.js';
 import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
 import { BLOCK_TYPES, CAPS, type Query } from '../types/builder.js';
 import { BLOCK_CATALOG } from './catalog.js';
-import { compileQuery, parseQuery, type CompileContext, type CompiledQuery } from './compile.js';
+import {
+  TIME_SHAPED_BLOCKS,
+  compileQuery,
+  namesKind,
+  parseQuery,
+  type CompileContext,
+  type CompiledQuery,
+} from './compile.js';
 import { QueryValidationError } from './errors.js';
 
 const NOW = new Date('2026-11-11T08:00:00Z'); // Wednesday, 10:00 in Jerusalem
@@ -39,13 +46,43 @@ function where(...rules: unknown[]): Query['where'] {
 }
 
 /**
+ * The branches a time view's `startAt`/`any` range gets: a series that began before the range
+ * ends and has not ended before it starts (no `recurrenceEnd`: it never ends), and a Google
+ * occurrence whose original slot is in the range (moved out of it: its slot must not stay).
+ */
+function timeBranches(range: { $gte: Date; $lt: Date }): Record<string, unknown>[] {
+  return [
+    seriesBranch(range),
+    {
+      'props.originalStartAt': { $gte: range.$gte.toISOString(), $lt: range.$lt.toISOString() },
+    },
+  ];
+}
+
+/** The series branch alone (see timeBranches). */
+function seriesBranch(range: { $gte: Date; $lt: Date }): Record<string, unknown> {
+  return {
+    'props.recurrence.0': { $type: 'string' },
+    startAt: { $lt: range.$lt },
+    $or: [
+      { 'props.recurrenceEnd': null },
+      { 'props.recurrenceEnd': { $gte: range.$gte.toISOString() } },
+    ],
+  };
+}
+
+/** The stage a task-shaped items query gets right after its base filter: no reserved time. */
+const TASK_SHAPED_STAGE = { $match: { kind: { $nin: ['block', 'travel'] } } };
+
+/**
  * The query's own filter stage, if any: the last `$match` before the facet (after the base filter,
- * the stored-field prefilter and, for items, the effective values).
+ * the task-shaped scope, the stored-field prefilter and, for items, the effective values).
  */
 function filterOf(compiled: CompiledQuery): Record<string, unknown> | undefined {
+  const scope = JSON.stringify(TASK_SHAPED_STAGE);
   const stage = compiled.pipeline
     .slice(1, -1)
-    .filter((entry) => '$match' in entry)
+    .filter((entry) => '$match' in entry && JSON.stringify(entry) !== scope)
     .at(-1);
   return stage?.['$match'] as Record<string, unknown> | undefined;
 }
@@ -193,10 +230,11 @@ describe('compileQuery: base filter', () => {
 
   it('sees its own and the shared integrations, shared to-dos and its own private ones', () => {
     const match = compileQuery({ source: 'items' }, context()).pipeline[0]?.['$match'];
+    // Another member's travel leg never, whatever its visibility (Ruling 8).
     assert.deepEqual((match as Record<string, unknown>)['$or'], [
       { integrationId: { $in: ['i-own', 'i-shared'] } },
       { integrationId: null, ownerUserId: 'u-1' },
-      { integrationId: null, visibility: 'workspace' },
+      { integrationId: null, visibility: 'workspace', kind: { $ne: 'travel' } },
     ]);
   });
 
@@ -222,7 +260,7 @@ describe('compileQuery: base filter', () => {
     ] as Record<string, unknown>;
     assert.deepEqual(items['$or'], [
       { integrationId: null, ownerUserId: 'u-1' },
-      { integrationId: null, visibility: 'workspace' },
+      { integrationId: null, visibility: 'workspace', kind: { $ne: 'travel' } },
     ]);
     const containers = compileQuery({ source: 'containers' }, context({ access: none }))
       .pipeline[0]?.['$match'] as Record<string, unknown>;
@@ -270,11 +308,13 @@ describe('compileQuery: effective values (a mirrored item’s overrides)', () =>
       context(),
     );
     assert.ok('$match' in (compiled.pipeline[0] ?? {}), 'the access filter stays first');
-    // Then a wider filter on what is stored (indexes narrow), then the effective values.
-    assert.deepEqual(compiled.pipeline[1], {
+    // Then the task-shaped scope and a wider filter on what is stored (indexes narrow), then the
+    // effective values.
+    assert.deepEqual(compiled.pipeline[1], TASK_SHAPED_STAGE);
+    assert.deepEqual(compiled.pipeline[2], {
       $match: { $or: [{ status: 'done' }, { 'overlay.overrides.status': { $ne: null } }] },
     });
-    assert.deepEqual(compiled.pipeline[2], { $addFields: Overrides.projection() });
+    assert.deepEqual(compiled.pipeline[3], { $addFields: Overrides.projection() });
     // The filter, sort and groups come after it, so they read what the item reads as.
     assert.deepEqual(filterOf(compiled), { status: 'done' });
     const containers = compileQuery({ source: 'containers' }, context());
@@ -569,8 +609,8 @@ describe('compileQuery: variables and dynamic values', () => {
       context(),
     );
     assert.equal(filterOf(compiled), undefined);
-    // The base filter, the effective values, the facet.
-    assert.equal(compiled.pipeline.length, 3);
+    // The base filter, the task-shaped scope, the effective values, the facet.
+    assert.equal(compiled.pipeline.length, 4);
   });
 
   it('resolves @me to the caller, @now to now and @today to local midnight', () => {
@@ -635,6 +675,8 @@ describe('compileQuery: variables and dynamic values', () => {
 describe('compileQuery: filters', () => {
   it('applies dateRange to dateField: dueAt by default, any for calendars, startAt for clocks', () => {
     const today = { $gte: new Date('2026-11-10T22:00:00Z'), $lt: new Date('2026-11-11T22:00:00Z') };
+    // A time view reads a series that began before the range too (the expansion places it).
+    const series = timeBranches(today);
     assert.deepEqual(filterOf(compileQuery({ source: 'items', dateRange: 'today' }, context())), {
       dueAt: today,
     });
@@ -642,13 +684,13 @@ describe('compileQuery: filters', () => {
       filterOf(
         compileQuery({ source: 'items', dateRange: 'today' }, context({ blockType: 'calendar' })),
       ),
-      { $or: [{ startAt: today }, { startAt: null, dueAt: today }] },
+      { $or: [{ startAt: today }, { startAt: null, dueAt: today }, ...series] },
     );
     assert.deepEqual(
       filterOf(
         compileQuery({ source: 'items', dateRange: 'today' }, context({ blockType: 'clock' })),
       ),
-      { startAt: today },
+      { $or: [{ startAt: today }, ...series] },
     );
     assert.deepEqual(
       filterOf(
@@ -673,14 +715,19 @@ describe('compileQuery: filters', () => {
     );
   });
 
-  it("dateField 'any': a start in range, or no start and a due date in range", () => {
+  it("dateField 'any': a start in range, or no start and a due date in range, or a series begun before it", () => {
     const week = { $gte: new Date('2026-11-07T22:00:00Z'), $lt: new Date('2026-11-14T22:00:00Z') };
     const anyInWeek = { $or: [{ startAt: week }, { startAt: null, dueAt: week }] };
     const query: Query = { source: 'items', dateRange: 'this_week', dateField: 'any' };
-    // An explicit dateField wins over every block type's default.
-    for (const blockType of [undefined, 'calendar', 'clock', 'deadlines'] as const) {
+    // An explicit dateField wins over every block type's default; a time view adds the series.
+    for (const blockType of [undefined, 'deadlines'] as const) {
       const ctx = blockType === undefined ? context() : context({ blockType });
       assert.deepEqual(filterOf(compileQuery(query, ctx)), anyInWeek);
+    }
+    for (const blockType of ['calendar', 'clock'] as const) {
+      assert.deepEqual(filterOf(compileQuery(query, context({ blockType }))), {
+        $or: [...anyInWeek.$or, ...timeBranches(week)],
+      });
     }
     // With other filters it joins the $and; a variable range resolves the same way.
     const compiled = compileQuery(
@@ -905,6 +952,7 @@ describe('compileQuery: block connectors (PERMISSIONS-V2)', () => {
     const stages = compiled.pipeline.map((stage) => Object.keys(stage)[0]);
     assert.deepEqual(stages, [
       '$match',
+      '$match',
       '$addFields',
       '$match',
       '$addFields',
@@ -913,7 +961,7 @@ describe('compileQuery: block connectors (PERMISSIONS-V2)', () => {
       '$replaceRoot',
       '$facet',
     ]);
-    const group = compiled.pipeline[5]?.['$group'] as Record<string, unknown>;
+    const group = compiled.pipeline[6]?.['$group'] as Record<string, unknown>;
     assert.deepEqual(group['doc'], { $first: '$$ROOT' });
     assert.match(JSON.stringify(group['_id']), /source\.accountId/);
     // Not for containers, and not with fewer than two integrations to choose from.
@@ -1116,6 +1164,182 @@ describe('compileQuery: groups', () => {
       ),
     );
     assert.equal(stage(facet['groups'], '$limit'), CAPS.previewRows);
+  });
+});
+
+describe('compileQuery: task-shaped and time-shaped results (time blocks, areas, travel)', () => {
+  /** The default scope of a task-shaped result: no reserved time. */
+  const EXCLUSION = { kind: { $nin: ['block', 'travel'] } };
+  const TIME_SHAPED = ['calendar', 'clock', 'timeline', 'agenda', 'workload'] as const;
+  const holdsExclusion = (compiled: CompiledQuery): boolean =>
+    JSON.stringify(compiled.pipeline).includes(JSON.stringify(EXCLUSION));
+  const catalogQuery = (type: (typeof BLOCK_TYPES)[number]): Query => {
+    const query = BLOCK_CATALOG[type].defaults.query;
+    assert.ok(query, type);
+    return query;
+  };
+
+  it('task-shaped query excludes block and travel', () => {
+    assert.ok(holdsExclusion(compileQuery({ source: 'items' }, context())), 'no block type');
+    for (const type of ['list', 'counter', 'chart', 'deadlines', 'table', 'kanban'] as const) {
+      const compiled = compileQuery(
+        catalogQuery(type),
+        context({ blockType: type, vars: { topic: 'work' } }),
+      );
+      assert.ok(holdsExclusion(compiled), type);
+    }
+    // Containers are never items: nothing to leave out.
+    assert.ok(!holdsExclusion(compileQuery({ source: 'containers' }, context())));
+  });
+
+  it('time-shaped block types include them', () => {
+    assert.deepEqual([...TIME_SHAPED_BLOCKS].sort(), [...TIME_SHAPED].sort());
+    for (const type of TIME_SHAPED) {
+      const compiled = compileQuery(
+        catalogQuery(type),
+        context({ blockType: type, vars: { range: 'this_week' } }),
+      );
+      assert.ok(!holdsExclusion(compiled), type);
+      assert.ok(!holdsExclusion(compileQuery({ source: 'items' }, context({ blockType: type }))));
+    }
+    // The clock's default reads blocks, areas and travel next to events.
+    assert.deepEqual(catalogQuery('clock').where?.rules, [
+      { field: 'kind', operator: 'in', value: ['event', 'block', 'travel'] },
+    ]);
+  });
+
+  it('a where rule on kind lifts the default', () => {
+    // Only a rule that asks for block or travel by name lifts it: `=` or `in`, not negated.
+    const lifts = (group: Query['where'], ctx: CompileContext = context()): boolean =>
+      !holdsExclusion(compileQuery({ source: 'items', where: group }, ctx));
+    const block = { field: 'kind', operator: '=', value: 'block' };
+    assert.ok(lifts(where(block)));
+    assert.deepEqual(filterOf(compileQuery({ source: 'items', where: where(block) }, context())), {
+      kind: 'block',
+    });
+    assert.ok(lifts(where({ field: 'kind', operator: 'in', value: ['block'] })));
+    assert.ok(lifts(where({ field: 'kind', operator: 'in', value: ['todo', 'travel'] })));
+    // At any depth, beside other rules.
+    assert.ok(
+      lifts(
+        where(
+          { field: 'status', operator: '=', value: 'open' },
+          { combinator: 'or', rules: [block, { field: 'kind', operator: '=', value: 'todo' }] },
+        ),
+      ),
+    );
+    // Negations and rules naming only other kinds keep reserved time out: `kind != event` is
+    // how a list says "tasks".
+    for (const rule of [
+      { field: 'kind', operator: '!=', value: 'event' },
+      { field: 'kind', operator: 'notIn', value: ['message'] },
+      { field: 'kind', operator: '!=', value: 'block' },
+      { field: 'kind', operator: 'notIn', value: ['block', 'travel'] },
+      { field: 'kind', operator: '=', value: 'todo' },
+      { field: 'kind', operator: 'in', value: ['issue', 'task', 'pr'] },
+      { field: 'kind', operator: 'notNull' },
+    ]) {
+      assert.ok(!lifts(where(rule)), JSON.stringify(rule));
+      assert.ok(!lifts(where(rule), context({ blockType: 'list' })), JSON.stringify(rule));
+    }
+    // A `not` group turns a name into a negation; two of them turn it back.
+    const negated = { combinator: 'and', not: true, rules: [block] };
+    assert.ok(!lifts(where(negated)));
+    assert.ok(lifts(where({ combinator: 'and', not: true, rules: [negated] })));
+    // namesKind is about the shape only: any rule on kind, at any depth, under `not` too.
+    assert.equal(namesKind(where(negated)), true);
+    assert.equal(namesKind(where(block)), true);
+    assert.equal(namesKind(where({ field: 'status', operator: '=', value: 'open' })), false);
+    assert.equal(namesKind(undefined), false);
+    // A page filter on kind (the college template: `kind = $page.type`) lifts only when it is set
+    // to block or travel; unset, it applies nothing.
+    const byChip = where({ field: 'kind', operator: '=', value: '$page.type' });
+    const list = (vars: Record<string, unknown>): CompileContext =>
+      context({ blockType: 'deadlines', vars });
+    assert.ok(!lifts(byChip, list({})));
+    assert.ok(!lifts(byChip, list({ type: 'assignment' })));
+    assert.ok(lifts(byChip, list({ type: 'block' })));
+    const byChips = where({ field: 'kind', operator: 'in', value: '$page.kind' });
+    assert.ok(lifts(byChips, list({ kind: ['assignment', 'travel'] })));
+    assert.ok(!lifts(byChips, list({ kind: ['assignment'] })));
+  });
+
+  it('startAt range also matches a series row that started before it', () => {
+    const week = { $gte: new Date('2026-11-07T22:00:00Z'), $lt: new Date('2026-11-14T22:00:00Z') };
+    // Unless it ended before the range: `props.recurrenceEnd` before its start.
+    const series = timeBranches(week);
+    const range = (
+      dateField: 'startAt' | 'any' | 'dueAt',
+      blockType?: (typeof BLOCK_TYPES)[number],
+    ): unknown =>
+      filterOf(
+        compileQuery(
+          { source: 'items', dateRange: 'this_week', dateField },
+          context(blockType === undefined ? {} : { blockType }),
+        ),
+      );
+    for (const type of TIME_SHAPED) {
+      assert.deepEqual(range('startAt', type), { $or: [{ startAt: week }, ...series] }, type);
+      assert.deepEqual(
+        range('any', type),
+        { $or: [{ startAt: week }, { startAt: null, dueAt: week }, ...series] },
+        type,
+      );
+      // A due date never repeats: no series branch.
+      assert.deepEqual(range('dueAt', type), { dueAt: week }, type);
+    }
+    // The calendar's default over `$page.range` reads it too.
+    const calendar = compileQuery(
+      catalogQuery('calendar'),
+      context({
+        blockType: 'calendar',
+        vars: { range: { from: '2026-11-07T22:00:00Z', to: '2026-11-14T22:00:00Z' } },
+      }),
+    );
+    for (const branch of series) {
+      assert.ok(JSON.stringify(filterOf(calendar)).includes(JSON.stringify(branch)));
+    }
+  });
+
+  it('a task-shaped block reads rows by their own dates only: no series branch', () => {
+    const week = { $gte: new Date('2026-11-07T22:00:00Z'), $lt: new Date('2026-11-14T22:00:00Z') };
+    for (const ctx of [
+      context(),
+      context({ blockType: 'list' }),
+      context({ blockType: 'table' }),
+    ]) {
+      const filter = (dateField: 'startAt' | 'any'): unknown =>
+        filterOf(compileQuery({ source: 'items', dateRange: 'this_week', dateField }, ctx));
+      assert.deepEqual(filter('startAt'), { startAt: week });
+      assert.deepEqual(filter('any'), { $or: [{ startAt: week }, { startAt: null, dueAt: week }] });
+    }
+  });
+
+  it('a time view reads up to the 200-row cap when its query names no limit', () => {
+    const limitOf = (query: Query, ctx: CompileContext): unknown =>
+      stage(facetOf(compileQuery(query, ctx))['rows'], '$limit');
+    for (const type of TIME_SHAPED) {
+      assert.equal(limitOf({ source: 'items' }, context({ blockType: type })), CAPS.maxLimit, type);
+      assert.equal(
+        limitOf(catalogQuery(type), context({ blockType: type })),
+        {
+          calendar: CAPS.maxLimit,
+          clock: CAPS.maxLimit,
+          timeline: 100,
+          agenda: 200,
+          workload: 200,
+        }[type],
+      );
+      // A limit it names stands, and a preview still shows 20 rows at most.
+      assert.equal(limitOf({ source: 'items', limit: 30 }, context({ blockType: type })), 30);
+      assert.equal(
+        limitOf({ source: 'items' }, context({ blockType: type, preview: true })),
+        CAPS.previewRows,
+      );
+    }
+    // A task view keeps 50.
+    assert.equal(limitOf({ source: 'items' }, context()), 50);
+    assert.equal(limitOf({ source: 'items' }, context({ blockType: 'list' })), 50);
   });
 });
 

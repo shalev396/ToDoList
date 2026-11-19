@@ -24,8 +24,8 @@
           "rules": [
             {
               "field": "kind",
-              "operator": "=",
-              "value": "event"
+              "operator": "in",
+              "value": ["event", "block", "travel"]
             },
             {
               "field": "topic",
