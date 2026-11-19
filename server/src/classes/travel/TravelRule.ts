@@ -27,6 +27,7 @@ import type { TravelRuleData, TravelRulePatch } from '../../models/definitions/T
 import { getTravelRuleRepository } from '../../models/index.js';
 import { PLAN_LIMITS } from '../../types/limits.js';
 import { seriesHasSlot } from '../../types/recurrence/occurrences.js';
+import { repeatSlotOf, type RepeatsScope } from '../../types/travelRepeats.js';
 import { addLocalDays, startOfZonedDay } from '../../types/recurrence/zoned.js';
 import {
   RULE_DIRECTIONS,
@@ -89,9 +90,6 @@ export interface MarkItemInput {
   back?: SpanChange | undefined;
 }
 
-/** One of many marks `markItems` stores in one go: a mark with no typed length or times. */
-export type MarkEachInput = Omit<MarkItemInput, 'there' | 'back'>;
-
 /** Which marks `unmarkItem` takes back: every occurrence's, or one occurrence's (or `single`). */
 export interface UnmarkItemInput {
   itemId: string;
@@ -100,7 +98,7 @@ export interface UnmarkItemInput {
 }
 
 /** A mark's scope: every occurrence of a series, or one item or occurrence. */
-type MarkScope = Exclude<TravelRuleScope, { kind: 'where' }>;
+type MarkScope = Extract<TravelRuleScope, { kind: 'series' | 'item' }>;
 
 /** A span to apply when marking: the legs it changes (by direction), and how. */
 interface MarkSpan {
@@ -113,7 +111,6 @@ interface MarkSpan {
 export type MarkedLength = boolean | null;
 
 const ID_MAX = 200;
-const RULE_CAP_MESSAGE = 'You have the most travel rules allowed: remove one first';
 const NOT_ITS_OCCURRENCE = 'occurrence: not an occurrence of this item';
 
 /** An item's rule lines: a repeating item's, else none. */
@@ -164,9 +161,33 @@ function scopeOf(scope: TravelRuleScope): TravelRuleScope {
         itemId: itemIdOf(scope.itemId),
         occurrence: occurrenceOf(scope.occurrence),
       };
+    case 'repeats':
+      return repeatsScopeOf(scope);
     default:
-      throw new ValidationError('scope.kind: one of where, series, item');
+      throw new ValidationError('scope.kind: one of where, series, item, repeats');
   }
+}
+
+/** A repeats scope as stored, checked: a calendar or project, a title, a weekday and a time. */
+function repeatsScopeOf(scope: RepeatsScope): RepeatsScope {
+  const { containerId, title, weekday, startTime, from } = scope;
+  if (typeof containerId !== 'string' || containerId === '' || containerId.length > ID_MAX) {
+    throw new ValidationError('scope.containerId: a calendar or project id');
+  }
+  if (typeof title !== 'string' || title === '' || title.length > 500) {
+    throw new ValidationError('scope.title: the event’s title');
+  }
+  if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) {
+    throw new ValidationError('scope.weekday: 0 (Sunday) to 6');
+  }
+  if (typeof startTime !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(startTime)) {
+    throw new ValidationError('scope.startTime: HH:mm');
+  }
+  const instant = typeof from === 'string' ? new Date(from) : null;
+  if (instant === null || Number.isNaN(instant.getTime())) {
+    throw new ValidationError('scope.from: an ISO 8601 time');
+  }
+  return { kind: 'repeats', containerId, title, weekday, startTime, from: instant.toISOString() };
 }
 
 /** The same scope: kind, item and occurrence (a where-rule is never a mark's). */
@@ -174,6 +195,14 @@ function sameMark(a: TravelRuleScope, b: TravelRuleScope): boolean {
   if (a.kind === 'series' && b.kind === 'series') return a.itemId === b.itemId;
   if (a.kind === 'item' && b.kind === 'item') {
     return a.itemId === b.itemId && a.occurrence === b.occurrence;
+  }
+  if (a.kind === 'repeats' && b.kind === 'repeats') {
+    return (
+      a.containerId === b.containerId &&
+      a.title === b.title &&
+      a.weekday === b.weekday &&
+      a.startTime === b.startTime
+    );
   }
   return false;
 }
@@ -280,7 +309,7 @@ export class TravelRule
     const rules = await getTravelRuleRepository();
     const count = await rules.countOwn(caller.workspaceId, caller.userId);
     if (count >= PLAN_LIMITS.travelRulesPerMember) {
-      throw new AppError(409, RULE_CAP_MESSAGE, {
+      throw new AppError(409, 'You have the most travel rules allowed: remove one first', {
         code: 'travel_limit',
       });
     }
@@ -455,53 +484,59 @@ export class TravelRule
   }
 
   /**
-   * Editors: many marks at once (`markItem`'s rule part, without a length or times), then the
-   * member's legs are made again ONCE, not once per mark. Each input is checked as `markItem`
-   * checks it (404, 400, `not_an_occurrence`) and the member's Home and places are checked before
-   * anything is stored, and so is the rule cap (409 `travel_limit` when the new rules would pass
-   * it: nothing is stored then). Marking a scope again changes its rule. The rules, in the order
-   * of the inputs (a scope given twice is one rule). A regeneration that fails is logged, as for
-   * `markItem`.
+   * Editors: "every repeat" of a timed event that does not repeat by itself (an imported
+   * timetable's lecture): ONE rule for the events of its calendar or project with its title, on
+   * its weekday at its local start time, from its start on (`from`), later imports too. The same
+   * container, title, weekday and time is the same rule: marking again changes its mode, way and
+   * place and moves `from` to this event. The member's legs are made again once. 404: an event the
+   * caller can't see; 400: a leg, no start, all day, cancelled or repeating itself (a series
+   * takes a series mark), no calendar or project; 409 `travel_home_missing`, `travel_limit`.
    */
-  static async markItems(caller: Caller, inputs: readonly MarkEachInput[]): Promise<TravelRule[]> {
+  static async markRepeats(
+    caller: Caller,
+    input: { itemId: string; mode: TravelMode; direction: RuleDirection; placeId?: string | null },
+  ): Promise<TravelRule> {
     caller.require('editor');
+    const item = await Item.find(caller, input.itemId);
+    if (item instanceof TravelLeg) throw new ValidationError('itemId: travel is not travelled to');
+    if (item.startAt === null) throw new ValidationError('itemId: travel needs a start time');
+    if (item.allDay) throw new ValidationError('itemId: an all-day item gets no travel');
+    if (item.status === 'cancelled') {
+      throw new ValidationError('itemId: a cancelled event gets no travel');
+    }
+    if (isRecurring(item) || (await TravelRule.#inSeries(caller, item))) {
+      throw new ValidationError('itemId: a repeating event takes a series mark');
+    }
+    if (item.containerId === null) {
+      throw new ValidationError('itemId: an event outside a calendar or project has no repeats');
+    }
     const places = await Place.listOwn(caller);
     if (!places.some((place) => place.isHome)) {
       throw new AppError(409, 'Set your Home first: every day of travel starts and ends there', {
         code: 'travel_home_missing',
       });
     }
-    const own = new Set(places.map((place) => place.id));
-    const wanted: { scope: MarkScope; input: MarkEachInput }[] = [];
-    for (const input of inputs) {
-      if (input.placeId !== undefined && input.placeId !== null && !own.has(input.placeId)) {
-        throw new ValidationError('placeId: not one of your places');
-      }
-      const item = await Item.find(caller, input.itemId);
-      const scope = await TravelRule.#markScope(caller, item, input);
-      if (!wanted.some((one) => sameMark(one.scope, scope))) wanted.push({ scope, input });
-    }
-    const marked = await TravelRule.listOwn(caller);
-    const fresh = wanted.filter(({ scope }) => !marked.some((rule) => sameMark(rule.scope, scope)));
-    if (marked.length + fresh.length > PLAN_LIMITS.travelRulesPerMember) {
-      throw new AppError(409, RULE_CAP_MESSAGE, { code: 'travel_limit' });
-    }
-    const rules: TravelRule[] = [];
-    for (const { scope, input } of wanted) {
-      const choice = {
-        mode: input.mode,
-        direction: input.direction,
-        placeId: input.placeId ?? null,
-      };
-      const known = marked.find((rule) => sameMark(rule.scope, scope));
-      rules.push(
-        known === undefined
-          ? await TravelRule.create(caller, { scope, ...choice })
-          : await known.update(caller, choice),
-      );
-    }
+    const slot = repeatSlotOf(item.startAt, caller.settings.timezone);
+    const scope: RepeatsScope = {
+      kind: 'repeats',
+      containerId: item.containerId,
+      title: item.title,
+      ...slot,
+      from: item.startAt.toISOString(),
+    };
+    const choice = { mode: input.mode, direction: input.direction, placeId: input.placeId ?? null };
+    const known = (await TravelRule.listOwn(caller)).find((rule) => sameMark(rule.scope, scope));
+    const rule =
+      known === undefined
+        ? await TravelRule.create(caller, { scope, ...choice })
+        : await known.update(caller, { scope, ...choice });
     await TravelPlanner.afterOwnChange(caller, 'mark');
-    return rules;
+    return rule;
+  }
+
+  /** Whether the item is an occurrence row of a series (a moved Google occurrence). */
+  static async #inSeries(caller: Caller, item: Item): Promise<boolean> {
+    return item instanceof CalendarEvent && (await item.seriesOccurrence(caller)) !== null;
   }
 
   /**
@@ -582,7 +617,7 @@ export class TravelRule
     const slot = input.occurrence?.toISOString() ?? target.occurrence ?? 'single';
     const marks = (await TravelRule.listOwn(caller)).filter(({ scope }) =>
       input.every
-        ? scope.kind !== 'where' && scope.itemId === target.itemId
+        ? (scope.kind === 'series' || scope.kind === 'item') && scope.itemId === target.itemId
         : scope.kind === 'item' && scope.itemId === target.itemId && scope.occurrence === slot,
     );
     if (marks.length === 0) throw new NotFoundError();

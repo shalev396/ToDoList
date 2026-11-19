@@ -22,9 +22,9 @@ export const PlaceAgentViewSchema = z.object({
 export const RuleViewSchema = z.object({
   id: z.string(),
   scope: z
-    .looseObject({ kind: z.enum(['where', 'series', 'item']) })
+    .looseObject({ kind: z.enum(['where', 'series', 'item', 'repeats']) })
     .describe(
-      'What it applies to: a where-group, every occurrence of a series (itemId), or one item or occurrence (itemId, occurrence)',
+      'What it applies to: a where-group, every occurrence of a series (itemId), one item or occurrence (itemId, occurrence), or the repeats of an event that does not repeat itself (containerId, title, weekday 0-6, startTime HH:mm, from)',
     ),
   mode: z.enum(TRAVEL_MODES),
   direction: z.enum(RULE_DIRECTIONS),
@@ -49,7 +49,7 @@ export function toRuleView(rule: TravelRule, places: readonly Place[]): RuleView
   const place = places.find((candidate) => candidate.id === view.placeId);
   return {
     id: view.id,
-    scope: view.scope,
+    scope: { ...view.scope },
     mode: view.mode,
     direction: view.direction,
     place: place?.name ?? null,

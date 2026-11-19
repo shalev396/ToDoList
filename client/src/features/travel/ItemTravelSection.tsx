@@ -4,11 +4,14 @@ import { CircleAlert, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
 import { apiErrorCode, errorMessage } from '@/api/errors';
 import { useMarkItem, usePinItemPlace, useTravelRules, useUnmarkItem } from '@/api/queries/travel';
 import { Button } from '@/components/ui/button';
+import { dateLocale } from '@/components/items/format';
 import { Label } from '@/components/ui/label';
 import { SelectField } from '@/components/ui/select';
 import type { ItemDetail } from '@api-types/items.ts';
 import { isSeriesRow, localExceptionsOf, toDate } from '@api-types/recurrence/occurrences.ts';
 import type { TravelRuleView } from '@api-types/travel.ts';
+import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
+import { useLanguage } from '@/hooks/useLanguage';
 import { EveryOccurrenceDialog } from './EveryOccurrenceDialog';
 import { HomeMissing, TravelPanel } from './TravelPanelForm';
 import { useTravelSetup } from './travelHooks';
@@ -21,6 +24,8 @@ import {
   outcomeOf,
   outcomeText,
   ownPlaceOf,
+  repeatsRuleOf,
+  weekdayName,
   type TravelPanelState,
 } from './travelPanel';
 
@@ -70,6 +75,18 @@ export function ItemTravelSection({
   const anchorStart = anchorStartOf(item, occurrence);
   const own = ownPlaceOf(item, setup.places, setup.containerPlaces);
   const current = markOf(rules.data ?? [], target.itemId, slot);
+  // An event that doesn't repeat can fall under a repeats rule ("every Thursday at 10:30").
+  const { language } = useLanguage();
+  const { workspace } = useCurrentWorkspace();
+  const itemStart = toDate(item.startAt);
+  const repeatsRule =
+    current !== null || repeating || itemStart === null
+      ? null
+      : repeatsRuleOf(
+          rules.data ?? [],
+          { containerId: item.containerId, title: item.title, startAt: itemStart },
+          workspace?.settings.timezone ?? 'UTC',
+        );
 
   const [draft, setDraft] = useState<TravelPanelState | null>(null);
   const [asking, setAsking] = useState(false);
@@ -217,6 +234,28 @@ export function ItemTravelSection({
                 : t('travel.add.scopeOne')}
             </p>
           )}
+        </div>
+      ) : null}
+
+      {draft === null && repeatsRule !== null && repeatsRule.scope.kind === 'repeats' ? (
+        <div
+          className="flex flex-col gap-1 rounded-lg border bg-card p-3 text-sm"
+          data-travel-status=""
+          data-travel-repeats={repeatsRule.id}
+        >
+          <p className="font-medium" dir="auto">
+            {t('travel.add.status', {
+              mode: t(`travel.modes.${repeatsRule.mode}`),
+              direction: t(`travel.directions.${repeatsRule.direction}`),
+              place: placeName(repeatsRule.placeId),
+            })}
+          </p>
+          <p className="text-[13px] text-muted-foreground">
+            {t('travel.add.scopeRepeats', {
+              weekday: weekdayName(repeatsRule.scope.weekday, dateLocale(language)),
+              time: repeatsRule.scope.startTime,
+            })}
+          </p>
         </div>
       ) : null}
 

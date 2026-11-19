@@ -126,6 +126,30 @@ async function lecture(
   return id;
 }
 
+const weekdayOf = (date: Date): number => {
+  const { year, month, day } = zonedParts(date, ZONE);
+  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+};
+
+/** The anchor (and its rule) of one event's occurrence as a gather finds it now. */
+async function ruleOfAnchor(
+  ws: Ws,
+  itemId: string,
+  at: Date,
+  occurrence?: string,
+): Promise<Awaited<ReturnType<typeof classes.TravelAnchors.ruleOf>>> {
+  return classes.TravelAnchors.ruleOf(
+    ws.a,
+    {
+      profile: await classes.TravelProfile.of(ws.a),
+      rules: await classes.TravelRule.listOwn(ws.a),
+      places: await classes.Place.listOwn(ws.a),
+      now: new Date(),
+    },
+    { itemId, occurrence: occurrence ?? 'single', near: at },
+  );
+}
+
 async function regenerate(ws: Ws): Promise<void> {
   await classes.TravelPlanner.regenerate(ws.a);
 }
@@ -192,17 +216,22 @@ describe('TravelSetup#changeLegMode', () => {
     assert.equal(legOf(after, second, 'there').travel?.mode, 'transit');
   });
 
-  it('repeats on an imported event: the later same title, weekday and time, in one regeneration', async () => {
+  it('repeats on an imported event: ONE rule that covers the later same title, weekday and time', async () => {
     const ws = await workspace();
     const first = await lecture(ws, 'l1', local(1, 10, 30));
     const next = await lecture(ws, 'l2', local(8, 10, 30));
-    const far = await lecture(ws, 'l3', local(22, 10, 30));
-    // Not repeats: moved by an hour, another weekday, another container, another title, earlier.
+    // Not repeats: moved by an hour, another weekday, another container, another title, earlier,
+    // and an occurrence of a series with the same title and time.
     const moved = await lecture(ws, 'moved', local(15, 11, 30));
     const weekday = await lecture(ws, 'weekday', local(2, 10, 30));
     const title = await lecture(ws, 'title', local(9, 10, 30), { title: 'פיזיקה 1' });
-    await lecture(ws, 'elsewhere', local(8, 10, 30), { containerId: 'cal-other' });
-    await lecture(ws, 'earlier', local(-6, 10, 30));
+    const elsewhere = await lecture(ws, 'elsewhere', local(8, 10, 30), {
+      containerId: 'cal-other',
+    });
+    const earlier = await lecture(ws, 'earlier', local(-6, 10, 30));
+    const series = await lecture(ws, 'series', local(3, 10, 30), {
+      props: { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=3'] },
+    });
     await regenerate(ws);
     const there = legOf(await legs(ws), first, 'there');
 
@@ -218,20 +247,96 @@ describe('TravelSetup#changeLegMode', () => {
       regenerations.mock.restore();
     }
 
-    assert.equal(answer.marked, 3);
-    const marked = (await marks(ws)).map((mark) => {
-      assert.equal(mark.mode, 'walk');
-      assert.equal(mark.direction, 'both');
-      assert.equal(mark.placeId, ws.braudeId);
-      return mark.scope.kind === 'item' ? mark.scope.itemId : '';
+    assert.equal(answer.marked, 1);
+    assert.equal(answer.leg?.travel?.mode, 'walk');
+    const [rule, ...others] = await marks(ws);
+    assert.equal(others.length, 0);
+    assert.deepEqual(rule, {
+      scope: {
+        kind: 'repeats',
+        containerId: 'cal-braude',
+        title: 'חדו"א 1מ גב\' קזל נור',
+        weekday: weekdayOf(local(1, 12)),
+        startTime: '10:30',
+        from: local(1, 10, 30).toISOString(),
+      },
+      mode: 'walk',
+      direction: 'both',
+      placeId: ws.braudeId,
     });
-    assert.deepEqual(marked.sort(), [first, next, far].sort());
+    // Events imported after the rule are covered too.
+    const late = await lecture(ws, 'late', local(22, 10, 30));
+    const modeOf = async (itemId: string, at: Date, slot?: string): Promise<string | null> =>
+      (await ruleOfAnchor(ws, itemId, at, slot))?.anchor.mode ?? null;
+    assert.equal(await modeOf(first, local(1, 10, 30)), 'walk');
+    assert.equal(await modeOf(next, local(8, 10, 30)), 'walk');
+    assert.equal(await modeOf(late, local(22, 10, 30)), 'walk');
+    // And these stay as they were: the where-rule's transit, or no travel at all.
+    assert.equal(await modeOf(moved, local(15, 11, 30)), 'transit');
+    assert.equal(await modeOf(weekday, local(2, 10, 30)), 'transit');
+    assert.equal(await modeOf(title, local(9, 10, 30)), 'transit');
+    assert.equal(await modeOf(earlier, local(-6, 10, 30)), 'transit');
+    assert.equal(await modeOf(series, local(3, 10, 30), local(3, 10, 30).toISOString()), 'transit');
+    assert.equal(await modeOf(elsewhere, local(8, 10, 30)), null);
+  });
+
+  it('repeats again changes the same rule; an item mark beats it, it beats the where-rule', async () => {
+    const ws = await workspace();
+    const first = await lecture(ws, 'l1', local(1, 10, 30));
+    const next = await lecture(ws, 'l2', local(8, 10, 30));
+    await regenerate(ws);
+    const setup = classes.TravelSetup.of(ws.a);
+    await setup.changeLegMode(legOf(await legs(ws), first, 'there').id, {
+      mode: 'walk',
+      scope: 'repeats',
+    });
+    // From the second one: the same rule, now from it on, driving.
+    await setup.changeLegMode(legOf(await legs(ws), next, 'there').id, {
+      mode: 'drive',
+      scope: 'repeats',
+    });
+    const repeats = (await marks(ws)).filter(({ scope }) => scope.kind === 'repeats');
+    assert.equal(repeats.length, 1);
+    assert.equal(repeats[0]?.mode, 'drive');
+    assert.equal(
+      repeats[0].scope.kind === 'repeats' ? repeats[0].scope.from : null,
+      local(8, 10, 30).toISOString(),
+    );
     const after = await legs(ws);
-    assert.equal(legOf(after, next, 'there').travel?.mode, 'walk');
-    for (const other of [weekday, title]) {
-      assert.equal(legOf(after, other, 'there').travel?.mode, 'transit', other);
-    }
-    assert.ok(moved);
+    assert.equal(legOf(after, first, 'there').travel?.mode, 'transit');
+    assert.equal(legOf(after, next, 'there').travel?.mode, 'drive');
+    // This day only beats the repeats rule.
+    await setup.changeLegMode(legOf(after, next, 'there').id, { mode: 'walk', scope: 'this' });
+    const last = await legs(ws);
+    assert.equal(legOf(last, next, 'there').travel?.mode, 'walk');
+    assert.equal(legOf(last, next, 'back').travel?.mode, 'walk');
+    assert.equal((await marks(ws)).length, 2);
+    // A repeats rule is removed like any rule (the rules routes and travel_remove_rule).
+    const repeatsRule = (await classes.TravelRule.listOwn(ws.a)).find(
+      (one) => one.scopeKind === 'repeats',
+    );
+    assert.ok(repeatsRule);
+    await setup.removeRule(repeatsRule.id);
+    assert.equal(
+      (await marks(ws)).some(({ scope }) => scope.kind === 'repeats'),
+      false,
+    );
+  });
+
+  it('repeats on a where-rule that only goes there keeps it there', async () => {
+    const ws = await workspace({ direction: 'there' });
+    const first = await lecture(ws, 'l1', local(1, 10, 30));
+    await lecture(ws, 'l2', local(8, 10, 30));
+    await regenerate(ws);
+    const there = legOf(await legs(ws), first, 'there');
+    await classes.TravelSetup.of(ws.a).changeLegMode(there.id, { mode: 'walk', scope: 'repeats' });
+    const [rule] = await marks(ws);
+    assert.equal(rule?.scope.kind, 'repeats');
+    assert.equal(rule.direction, 'there');
+    assert.deepEqual(
+      (await legs(ws)).map((one) => one.travel?.direction),
+      ['there', 'there'],
+    );
   });
 
   it('repeats on a series occurrence: one series mark', async () => {

@@ -10,7 +10,7 @@
  *   and due-only occurrences never anchor. A painted area anchors like a block (the owner's ruling
  *   of 2026-11-18), marked `area`: the day plan nests the items inside it (DayPlanner).
  * - Rule (Ruling 11): the item rule of that occurrence, else the series rule of its series, else
- *   the oldest where-rule that matches (each where-rule is its own draft, ANDed with the range).
+ *   the repeats rule an event that doesn't repeat falls under, else the oldest where-rule that matches (each where-rule is its own draft, ANDed with the range).
  * - Place, in order: the member's pin of the item; the rule's place; a place named (or aliased) in
  *   the event's location, by whole words (`types/travelPlaceNames.ts`: nothing is looked up); the
  *   default place of its calendar or project. Otherwise none of its own: the day plan gives it the
@@ -32,6 +32,7 @@ import {
   type Range,
 } from '../../types/recurrence/occurrences.js';
 import type { TravelRuleScope } from '../../types/travel.js';
+import { matchesRepeats } from '../../types/travelRepeats.js';
 import type { Caller } from '../base/Caller.js';
 import { ItemQuery } from '../item/ItemQuery.js';
 import type { Anchor } from './DayPlanner.js';
@@ -199,7 +200,7 @@ export class TravelAnchors {
     const slot =
       occurrence.originalStart === null ? 'single' : occurrence.originalStart.toISOString();
     const key = anchorKey(itemId, slot);
-    const rule = this.#ruleFor(row.id, itemId, slot, matches);
+    const rule = this.#ruleFor(row, itemId, slot, matches);
     if (rule === null) {
       this.#fate(key, 'no_longer_matches');
       return null;
@@ -224,7 +225,7 @@ export class TravelAnchors {
 
   /** The item rule of the occurrence, else its series', else the oldest where-rule matching it. */
   #ruleFor(
-    rowId: string,
+    row: ItemQueryRow,
     itemId: string,
     slot: string,
     matches: ReadonlyMap<TravelRule, ReadonlySet<string>>,
@@ -237,8 +238,27 @@ export class TravelAnchors {
       ({ scope }) => scope.kind === 'series' && scope.itemId === itemId,
     );
     if (series !== undefined) return series.rule;
+    const repeats = this.#repeatsRuleFor(row, itemId, slot);
+    if (repeats !== null) return repeats;
     for (const [rule, ids] of matches) {
-      if (ids.has(rowId) || ids.has(itemId)) return rule;
+      if (ids.has(row.id) || ids.has(itemId)) return rule;
+    }
+    return null;
+  }
+
+  /**
+   * The oldest repeats rule an event that doesn't repeat (a single, never a series occurrence)
+   * is a repeat of: same calendar or project and title, same weekday and local start time, at or
+   * after the rule's `from` (so an event imported after the rule is covered too).
+   */
+  #repeatsRuleFor(row: ItemQueryRow, itemId: string, slot: string): TravelRule | null {
+    if (slot !== 'single' || itemId !== row.id || row.startAt === null || isSeriesRow(row)) {
+      return null;
+    }
+    const zone = this.#caller.settings.timezone;
+    const event = { containerId: row.containerId, title: row.title, startAt: row.startAt };
+    for (const { rule, scope } of this.#rules) {
+      if (scope.kind === 'repeats' && matchesRepeats(scope, event, zone)) return rule;
     }
     return null;
   }

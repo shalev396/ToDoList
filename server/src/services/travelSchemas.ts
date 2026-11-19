@@ -52,6 +52,15 @@ const Scope = z.discriminatedUnion('kind', [
     itemId: Id,
     occurrence: z.union([z.literal('single'), Iso]),
   }),
+  /** The repeats of an event that doesn't repeat (TravelRule checks it whole). */
+  z.strictObject({
+    kind: z.literal('repeats'),
+    containerId: Id,
+    title: z.string().min(1).max(500),
+    weekday: z.number().int().min(0).max(6),
+    startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    from: Iso,
+  }),
 ]);
 
 const RuleFields = z.strictObject({

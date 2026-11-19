@@ -14,7 +14,7 @@ const RuleId = z.string().min(1).max(100).describe('A rule id, as travel_list_ru
 export const travelListRules = defineTool({
   name: 'travel_list_rules',
   title: 'List the member’s travel rules',
-  description: `The key’s own member’s travel rules, oldest first (where-rules apply in this order; a rule for an item beats one for its series, which beats a where-rule). Each rule names its place by name. ${PRIVACY_NOTE}`,
+  description: `The key’s own member’s travel rules, oldest first (where-rules apply in this order; a rule for an item beats one for its series, which beats a repeats rule, which beats a where-rule; a repeats rule is made by travel_edit_leg with mode and every, and removed here). Each rule names its place by name. ${PRIVACY_NOTE}`,
   toolset: 'items',
   inputSchema: z.strictObject({}),
   outputSchema: z.object({ rules: z.array(RuleViewSchema) }),

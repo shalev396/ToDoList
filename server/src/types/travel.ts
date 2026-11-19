@@ -20,6 +20,7 @@ import { z } from 'zod';
 
 import type { RuleGroup } from './builder.js';
 import type { ItemDetail, ItemSummary } from './items.js';
+import type { RepeatsScope } from './travelRepeats.js';
 
 export const TRAVEL_MODES = ['walk', 'drive', 'transit'] as const;
 export type TravelMode = (typeof TRAVEL_MODES)[number];
@@ -83,14 +84,17 @@ export interface TravelSettingsPatch {
 
 /**
  * What a travel rule applies to (plan Ruling 11): the items a where-group (the dashboards' logic
- * builder) matches, every occurrence of one series (keyed on its master item), or one item or
- * occurrence (`occurrence`: its original start as ISO, or `single`). Precedence: item, then
- * series, then where-rules oldest first.
+ * builder) matches, every occurrence of one series (keyed on its master item), one item or
+ * occurrence (`occurrence`: its original start as ISO, or `single`), or the repeats of an event
+ * that doesn't repeat by itself (`repeats`: the events of one calendar or project with one title
+ * on one weekday at one local time, from one start on, later imports too). Precedence: item, then
+ * series, then repeats, then where-rules oldest first.
  */
 export type TravelRuleScope =
   | { kind: 'where'; where: RuleGroup }
   | { kind: 'series'; itemId: string }
-  | { kind: 'item'; itemId: string; occurrence: string };
+  | { kind: 'item'; itemId: string; occurrence: string }
+  | RepeatsScope;
 
 export type TravelRuleScopeKind = TravelRuleScope['kind'];
 

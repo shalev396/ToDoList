@@ -24,7 +24,6 @@ import type { Caller } from '../base/Caller.js';
 import { isRecurring, Item } from '../item/index.js';
 import { TravelLeg, type LegTimesChange } from '../item/TravelLeg.js';
 import { TravelAnchors } from './TravelAnchors.js';
-import { TravelRepeats } from './TravelRepeats.js';
 import { Place, type NewPlace, type PlaceChange } from './Place.js';
 import { TravelPlanner } from './TravelPlanner.js';
 import { TravelProfile } from './TravelProfile.js';
@@ -149,15 +148,16 @@ export class TravelSetup {
    * How he goes on one of the caller's legs' events, for `this` day or every `repeats` (the leg's
    * own: 404 for anyone else's, and for one that was removed or skipped: reset it first). The
    * event is marked (TravelRule.markItem) with the rule that makes the leg now (TravelAnchors.ruleOf:
-   * its item mark, else its series', else the oldest where-rule that matches) keeping that rule's
+   * its item mark, else its series', else a repeats rule, else the oldest where-rule that matches) keeping that rule's
    * way (`there`, `back`, `both`: a rule that only goes there never gains a trip back) and place
    * (the rule's, else the event's resolved place, else the leg's event side), with the new mode.
    *
    * `this`: that occurrence (an event that doesn't repeat: itself). `repeats`: a repeating event's
    * every occurrence (a series mark); an event that doesn't repeat: it and every later repeat of
-   * it (TravelRepeats: same calendar or project, title, weekday and local start time), all marks
-   * stored and the legs made again ONCE. 409 `travel_limit` when those marks would pass the rule
-   * cap (nothing is stored), 404 when the event is no longer one the leg can be made for
+   * it, as   * one `repeats` rule (TravelRule.markRepeats: same calendar or project, title, weekday and local
+   * start time, from this event on, events imported later too; the same four again change that
+   * rule; an item with no calendar or project is just itself), the legs made again once; `marked` is 1 (rules stored). 409 `travel_limit` when it would
+   * be past the rule cap (nothing is stored), 404 when the event is no longer one the leg can be made for
    * (moved far, cancelled, no rule asks for it now). `leg`: the leg of the same anchor,
    * occurrence and way after the regeneration; null when none is left.
    */
@@ -215,18 +215,19 @@ export class TravelSetup {
         ...choice,
       });
       marked = 1;
-    } else {
-      const ids = await TravelRepeats.of(caller).from({
-        id: item.id,
-        title: item.title,
-        containerId: item.containerId,
-        startAt: item.startAt,
+    } else if (item.containerId === null) {
+      // No calendar or project to find its repeats in (a to-do of his own): just itself.
+      await TravelRule.markItem(caller, {
+        itemId: travel.anchorItemId,
+        occurrence,
+        every: false,
+        ...choice,
       });
-      const rules = await TravelRule.markItems(
-        caller,
-        ids.map((itemId) => ({ itemId, every: false, ...choice })),
-      );
-      marked = rules.length;
+      marked = 1;
+    } else {
+      // An event that doesn't repeat by itself: one rule for its repeats (later imports too).
+      await TravelRule.markRepeats(caller, { itemId: travel.anchorItemId, ...choice });
+      marked = 1;
     }
     return { marked, leg: await this.#legNow(leg) };
   }

@@ -37,6 +37,7 @@ import {
   type TravelRuleView,
 } from '@api-types/travel.ts';
 import { placeByName } from '@api-types/travelPlaceNames.ts';
+import { matchesRepeats } from '@api-types/travelRepeats.ts';
 import { dateInZone, instantInZone } from '../items/zonedDate.ts';
 
 const MINUTE_MS = 60_000;
@@ -618,4 +619,27 @@ export function legEditOf(state: TravelPanelState): LegEditRequest | null {
     ...(state.end === null ? {} : { endAt: state.end.toISOString() }),
     ...(minutes === null ? {} : { minutes }),
   };
+}
+
+/** The weekday's name in `locale` (0 = Sunday), for "Every Thursday at 10:30". */
+export function weekdayName(weekday: number, locale: string): string {
+  // 1 January 2023 was a Sunday.
+  return new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone: 'UTC' }).format(
+    new Date(Date.UTC(2023, 0, 1 + weekday)),
+  );
+}
+
+/**
+ * The repeats rule an event that doesn't repeat falls under (the oldest one, as the server finds
+ * it); none for a repeating event, or when it has its own mark.
+ */
+export function repeatsRuleOf(
+  rules: readonly TravelRuleView[],
+  event: { containerId: string | null; title: string; startAt: Date },
+  timeZone: string,
+): TravelRuleView | null {
+  return (
+    rules.find(({ scope }) => scope.kind === 'repeats' && matchesRepeats(scope, event, timeZone)) ??
+    null
+  );
 }

@@ -35,14 +35,12 @@ export { TravelLinks, type LinkLeg } from './TravelLinks.js';
 export { Place, type NewPlace, type PlaceChange } from './Place.js';
 export {
   TravelRule,
-  type MarkEachInput,
   type MarkItemInput,
   type NewTravelRule,
   type SpanChange,
   type TravelRuleChange,
   type UnmarkItemInput,
 } from './TravelRule.js';
-export { TravelRepeats } from './TravelRepeats.js';
 export { TravelSetup } from './TravelSetup.js';
 export { TravelProfile } from './TravelProfile.js';
 export { TravelData } from './TravelData.js';
