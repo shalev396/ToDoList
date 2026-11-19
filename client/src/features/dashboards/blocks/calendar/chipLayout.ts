@@ -163,32 +163,49 @@ export interface TapReach {
 }
 
 /**
- * The hit area of each tiny chip (shorter than a line and not stretched): it grows from the chip
- * to TAP_PX, first into the free time after it, then before it, never into the time of another
- * event (one starting after it ends, or ending before it starts; one overlapping it is in another
- * lane, beside it). A walk that ends when the lecture starts reaches up into the time before it.
+ * The hit area of each tiny chip (shorter than a line and not stretched): it grows the chip to
+ * TAP_PX, first into the free time after it, then before it, never into another event as drawn:
+ * one starting after it ends, or ending before it starts (a stretched one at its drawn end, a line
+ * after its start). One overlapping it is in another lane, beside it. A gap between two tiny chips
+ * is shared: each reaches at most halfway. The chip itself is drawn 1px short of its time
+ * (FullCalendar's margin under every event), and that pixel is its own to reach into.
+ *
+ * A walk that ends when the lecture starts reaches up into the time before it.
  */
 export function tapReach(
   events: readonly TimedSpan[],
   stretched: ReadonlySet<string>,
 ): Map<string, TapReach> {
-  const reach = new Map<string, TapReach>();
   const readable = READABLE_MINUTES * 60_000;
   const px = (ms: number) => (ms / 60_000) * PX_PER_MINUTE;
+  const isTiny = (event: TimedSpan) =>
+    event.end - event.start < readable && !stretched.has(event.key);
+  const drawnEnd = (event: TimedSpan) =>
+    stretched.has(event.key) ? Math.max(event.end, event.start + readable) : event.end;
+
+  const reach = new Map<string, TapReach>();
   for (const event of events) {
-    if (event.end - event.start >= readable || stretched.has(event.key)) {
+    if (!isTiny(event)) {
       continue;
     }
     const others = events.filter((other) => other.key !== event.key);
-    const nextStart = Math.min(
-      ...others.filter((other) => other.start >= event.end).map((other) => other.start),
-    );
-    const lastEnd = Math.max(
-      ...others.filter((other) => other.end <= event.start).map((other) => other.end),
-    );
-    const want = Math.max(0, TAP_PX - px(event.end - event.start));
-    const below = Math.min(want, px(nextStart - event.end));
-    const above = Math.min(want - below, px(event.start - lastEnd));
+    const after = others.filter((other) => other.start >= event.end);
+    const before = others.filter((other) => other.end <= event.start);
+    const nextStart = Math.min(...after.map((other) => other.start));
+    const lastEnd = Math.min(event.start, Math.max(...before.map(drawnEnd)));
+    // Halfway to a tiny neighbour, which reaches towards this one too.
+    const share = (
+      gap: number,
+      neighbours: TimedSpan[],
+      edge: number,
+      at: (o: TimedSpan) => number,
+    ) => (neighbours.some((other) => at(other) === edge && isTiny(other)) ? gap / 2 : gap);
+    const freeBelow = share(px(nextStart - event.end), after, nextStart, (other) => other.start);
+    const freeAbove = share(px(event.start - lastEnd), before, lastEnd, drawnEnd);
+
+    const want = Math.max(0, TAP_PX - (px(event.end - event.start) - EVENT_GAP_PX));
+    const below = Math.min(want, freeBelow + EVENT_GAP_PX);
+    const above = Math.min(want - below, freeAbove);
     reach.set(event.key, { above, below });
   }
   return reach;

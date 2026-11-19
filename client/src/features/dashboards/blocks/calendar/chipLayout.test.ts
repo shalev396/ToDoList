@@ -5,14 +5,15 @@ import {
   PX_PER_MINUTE,
   READABLE_MINUTES,
   STACKED_MIN_PX,
+  TAP_PX,
   TIME_GRID_LAYOUT,
   chipLayout,
   chipMinutes,
   drawnOverlap,
   drawnSpan,
-  TAP_PX,
   stretchedEvents,
   tapReach,
+  type TimedSpan,
 } from './chipLayout.ts';
 
 /** `HH:MM` as minutes of the day. */
@@ -172,38 +173,119 @@ describe('stretchedEvents', () => {
 
 describe('tapReach', () => {
   const day = Date.UTC(2026, 10, 19);
-  const event = (key: string, start: string, end: string) => ({
+  const event = (key: string, start: string, end: string): TimedSpan => ({
     key,
     start: day + at(start) * 60_000,
     end: day + at(end) * 60_000,
   });
-  const reachOf = (events: ReturnType<typeof event>[]) => tapReach(events, stretchedEvents(events));
+  const reachOf = (events: TimedSpan[]) => tapReach(events, stretchedEvents(events));
+  /** px from the day's start. */
+  const pxOf = (ms: number) => ((ms - day) / 60_000) * PX_PER_MINUTE;
 
-  it('a 10-minute walk that ends when the lecture starts reaches up, never into the lecture', () => {
-    const reach = reachOf([event('walk', '08:20', '08:30'), event('lecture', '08:30', '10:00')]);
-    assert.deepEqual(reach.get('walk'), { above: TAP_PX - 10 * PX_PER_MINUTE, below: 0 });
+  /**
+   * What each event takes on the grid, as FullCalendar and the CSS draw it (1px short of its end,
+   * a stretched one a line tall), and each tiny chip's hit area; then no two that don't overlap in
+   * time (same lane possible) may meet.
+   */
+  function assertClear(events: TimedSpan[]): void {
+    const stretched = stretchedEvents(events);
+    const reach = tapReach(events, stretched);
+    const boxes = events.map((one) => {
+      const top = pxOf(one.start);
+      const drawnEnd = stretched.has(one.key)
+        ? Math.max(pxOf(one.end), top + READABLE_MINUTES * PX_PER_MINUTE)
+        : pxOf(one.end);
+      const bottom = drawnEnd - 1;
+      const tap = reach.get(one.key);
+      return {
+        one,
+        drawn: { top, bottom },
+        hit: tap === undefined ? null : { top: top - tap.above, bottom: bottom + tap.below },
+      };
+    });
+    for (const a of boxes) {
+      for (const b of boxes) {
+        const overlapInTime = a.one.start < b.one.end && b.one.start < a.one.end;
+        if (a === b || overlapInTime || a.hit === null) {
+          continue;
+        }
+        for (const other of [b.drawn, b.hit]) {
+          if (other !== null) {
+            assert.ok(
+              a.hit.bottom <= other.top || other.bottom <= a.hit.top,
+              `${a.one.key}'s hit area meets ${b.one.key}: ${JSON.stringify([a.hit, other])}`,
+            );
+          }
+        }
+      }
+    }
+  }
+
+  it('a 10-minute walk that ends when the lecture starts reaches up to 24px, never into it', () => {
+    const events = [event('walk', '08:20', '08:30'), event('lecture', '08:30', '10:00')];
+    const reach = reachOf(events);
+    // Drawn 9px (1px short of 08:30), its 1px margin below, the rest above: 24px in all.
+    assert.deepEqual(reach.get('walk'), { above: 14, below: 1 });
+    assert.equal(9 + 14 + 1, TAP_PX);
     assert.equal(reach.has('lecture'), false);
+    assertClear(events);
   });
 
   it('reaches only as far as the free time on either side', () => {
-    const reach = reachOf([
+    const events = [
       event('before', '09:00', '09:52'),
       event('short', '09:55', '10:00'),
       event('after', '10:00', '11:00'),
-    ]);
-    assert.deepEqual(reach.get('short'), { above: 3 * PX_PER_MINUTE, below: 0 });
+    ];
+    assert.deepEqual(reachOf(events).get('short'), { above: 3 * PX_PER_MINUTE, below: 1 });
+    assertClear(events);
   });
 
   it('reaches into the time after it first, when that is free', () => {
-    const reach = reachOf([
+    const events = [
       event('short', '09:55', '10:00'),
       event('after', '10:05', '11:00'),
       event('before', '08:00', '09:00'),
-    ]);
-    assert.deepEqual(reach.get('short'), {
-      below: 5 * PX_PER_MINUTE,
-      above: TAP_PX - 5 * PX_PER_MINUTE - 5 * PX_PER_MINUTE,
-    });
+    ];
+    // Drawn 4px; 6px below (5 minutes and its margin); the 14px left above.
+    assert.deepEqual(reachOf(events).get('short'), { below: 6, above: 14 });
+    assertClear(events);
+  });
+
+  it('stops at where a stretched event above it is drawn, not where it ends', () => {
+    // S is drawn a line tall (10:00-10:15); T is tiny (U starts when it ends).
+    const events = [
+      event('S', '10:00', '10:05'),
+      event('T', '10:20', '10:25'),
+      event('U', '10:25', '11:00'),
+    ];
+    assert.deepEqual([...stretchedEvents(events)], ['S']);
+    assert.deepEqual(reachOf(events).get('T'), { above: 5 * PX_PER_MINUTE, below: 1 });
+    assertClear(events);
+  });
+
+  it('two tiny chips share the gap between them, halfway each', () => {
+    // A is tiny (B starts within its line), B is tiny (C starts within its line).
+    const events = [
+      event('A', '09:00', '09:05'),
+      event('B', '09:12', '09:17'),
+      event('C', '09:20', '10:00'),
+    ];
+    const reach = reachOf(events);
+    assert.deepEqual(reach.get('A'), { below: 3.5 + 1, above: TAP_PX - 4 - 4.5 });
+    assert.deepEqual(reach.get('B'), { below: 3 + 1, above: 3.5 });
+    assertClear(events);
+  });
+
+  it('a short event with a line of free time after it is stretched instead, and B stops at it', () => {
+    const events = [
+      event('A', '09:00', '09:05'),
+      event('B', '09:15', '09:20'),
+      event('C', '09:20', '10:00'),
+    ];
+    assert.deepEqual([...stretchedEvents(events)], ['A']);
+    assert.deepEqual(reachOf(events).get('B'), { above: 0, below: 1 });
+    assertClear(events);
   });
 
   it('a stretched event, and one of a quarter hour, need none', () => {

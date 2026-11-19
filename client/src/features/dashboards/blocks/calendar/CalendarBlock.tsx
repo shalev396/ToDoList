@@ -500,8 +500,12 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       arg.el.setAttribute('data-anchor-moved', String(props.anchorMoved));
       arg.el.setAttribute('data-length-unset', String(props.lengthUnset));
     }
-    // A leg says what is wrong with it, or that its trip has no length yet, in its name too.
+    // What the chip's marks say, in its name and tooltip too (a tiny chip shows its icon only):
+    // a display rule's tone and badges, then what is wrong with a leg, or that its trip has no
+    // length yet (last). A due date's mark is the label's own ("Due: ...").
     const flags = [
+      props.tone === undefined ? null : t(`timeBlocks.tone.${props.tone}`),
+      ...props.badges,
       props.conflict ? t('travel.leg.conflict') : null,
       props.lengthUnset ? t('travel.leg.setLength') : null,
     ].filter((flag) => flag !== null);

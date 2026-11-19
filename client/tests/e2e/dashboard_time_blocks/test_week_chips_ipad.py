@@ -203,7 +203,7 @@ def test_tiny_chip_is_its_icon_with_a_hit_area_in_free_time(
     short.scroll_into_view_if_needed()
     chip, target = box(short), box(short.locator("[data-chip-tap]"))
     intro = box(_chip(calendar, days["thursday"], INTRO))
-    assert target["height"] >= 23, f"the hit area is under 24px: {target}"
+    assert round(target["height"], 2) >= 24, f"the hit area is under 24px: {target}"
     assert target["y"] < chip["y"] - 5, "the hit area does not reach into the free time above"
     assert target["y"] + target["height"] <= intro["y"] + 1, "the hit area covers the lecture"
 
