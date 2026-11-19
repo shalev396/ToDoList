@@ -80,12 +80,16 @@ export function ItemTravelSection({
   const { workspace } = useCurrentWorkspace();
   const itemStart = toDate(item.startAt);
   const repeatsRule =
-    current !== null || repeating || itemStart === null
+    workspace === null || current !== null || repeating || itemStart === null
       ? null
       : repeatsRuleOf(
           rules.data ?? [],
-          { containerId: item.containerId, title: item.title, startAt: itemStart },
-          workspace?.settings.timezone ?? 'UTC',
+          {
+            containerId: item.containerId,
+            title: item.sourceValues?.title ?? item.title,
+            startAt: itemStart,
+          },
+          workspace.settings.timezone,
         );
 
   const [draft, setDraft] = useState<TravelPanelState | null>(null);
@@ -272,8 +276,14 @@ export function ItemTravelSection({
               open(current);
             }}
           >
-            {current === null ? <Plus aria-hidden="true" /> : <Pencil aria-hidden="true" />}
-            {current === null ? t('travel.add.add') : t('travel.add.change')}
+            {current === null && repeatsRule === null ? (
+              <Plus aria-hidden="true" />
+            ) : (
+              <Pencil aria-hidden="true" />
+            )}
+            {current === null && repeatsRule === null
+              ? t('travel.add.add')
+              : t('travel.add.change')}
           </Button>
           {current === null ? null : (
             <Button

@@ -45,7 +45,10 @@ export const travelEditLeg = defineTool({
   }),
   outputSchema: z.object({
     leg: ItemDetailView.nullable(),
-    marked: z.number().optional().describe('With mode: how many events were marked'),
+    marked: z
+      .number()
+      .optional()
+      .describe('With mode: how many rules were stored (an every-repeat choice is one rule, so 1)'),
   }),
   annotations: ANNOTATIONS,
   scopes: ['items:write'],

@@ -23,6 +23,7 @@ import type {
   ItemUpsert,
 } from '../../models/definitions/Item.js';
 import { getContainerRepository, getItemRepository } from '../../models/index.js';
+import { TravelData } from '../travel/TravelData.js';
 import type { SyncRunOwner } from './SyncRun.js';
 
 export class SyncedRows {
@@ -182,8 +183,12 @@ export class SyncedRows {
     await (
       await getItemRepository()
     ).softDeleteForIntegration(this.#workspaceId, this.#integrationId, at);
-    await (
-      await getContainerRepository()
-    ).softDeleteForIntegration(this.#workspaceId, this.#integrationId, at);
+    const containers = await getContainerRepository();
+    // Travel rules for "every repeat" of an event name its calendar and hold its title.
+    await TravelData.forgetContainers(
+      this.#workspaceId,
+      await containers.idsForIntegration(this.#workspaceId, this.#integrationId),
+    );
+    await containers.softDeleteForIntegration(this.#workspaceId, this.#integrationId, at);
   }
 }

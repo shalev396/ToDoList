@@ -960,6 +960,8 @@ export interface ItemQueryRow {
   /** Its topic's id; null = Unsorted. The builder field `topic` reads it. */
   topicId: string | null;
   title: string;
+  /** The title as the provider (or its creator) gave it, whatever an override says. */
+  sourceTitle?: string;
   status: ItemStatus;
   statusRaw: string | null;
   priority: number | null;

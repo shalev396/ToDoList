@@ -105,6 +105,16 @@ export const TravelRuleRepository: ITravelRuleRepository = {
     return result.modifiedCount;
   },
 
+  async deleteRepeatsIn(workspaceId, containerIds) {
+    if (containerIds.length === 0) return 0;
+    const result = await TravelRuleMongoModel.deleteMany({
+      workspaceId,
+      'scope.kind': 'repeats',
+      'scope.containerId': { $in: [...containerIds] },
+    });
+    return result.deletedCount;
+  },
+
   async deleteForMember(workspaceId, ownerUserId) {
     const result = await TravelRuleMongoModel.deleteMany({ workspaceId, ownerUserId });
     return result.deletedCount;

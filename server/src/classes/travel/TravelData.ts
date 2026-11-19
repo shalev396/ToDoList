@@ -8,6 +8,8 @@
  *   them), and their places, rules and profile are hard-deleted.
  * - A workspace is deleted: every place, rule and profile of it goes (its legs are items: the
  *   workspace's cascade soft-deletes them with the rest).
+ * - A calendar or project is removed (its integration disconnected): the repeats rules that name
+ *   it go (they hold an event title).
  * - A place is removed: the member's rules naming it name none, and their pins to it and the
  *   lengths set for trips from or to it go.
  *
@@ -35,6 +37,14 @@ export class TravelData {
   /** The workspace was deleted: every travel document of it, hard-deleted. */
   static async forgetWorkspace(workspaceId: string): Promise<void> {
     await new TravelData(workspaceId).#forgetAll();
+  }
+
+  /** Calendars or projects were removed (a disconnect): the repeats rules naming them go. */
+  static async forgetContainers(
+    workspaceId: string,
+    containerIds: readonly string[],
+  ): Promise<void> {
+    await (await getTravelRuleRepository()).deleteRepeatsIn(workspaceId, containerIds);
   }
 
   /** A member removed one of their places: nothing of theirs points at it any more. */

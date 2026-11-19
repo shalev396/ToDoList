@@ -14,6 +14,7 @@ import {
   TRAVEL_MODES,
   TRIP_MINUTES_MAX,
 } from '../types/travel.js';
+import { REPEATS_TITLE_MAX } from '../types/travelRepeats.js';
 
 const Iso = z.iso.datetime({ offset: true });
 const Id = z.string().min(1).max(200);
@@ -56,7 +57,7 @@ const Scope = z.discriminatedUnion('kind', [
   z.strictObject({
     kind: z.literal('repeats'),
     containerId: Id,
-    title: z.string().min(1).max(500),
+    title: z.string().min(1).max(REPEATS_TITLE_MAX),
     weekday: z.number().int().min(0).max(6),
     startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     from: Iso,

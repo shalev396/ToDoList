@@ -119,6 +119,8 @@ export interface IContainerRepository {
   ): Promise<Map<string, number>>;
   /** Whether any container (a deleted one too) belongs to one of these integrations. */
   existsForIntegrations(workspaceId: string, integrationIds: readonly string[]): Promise<boolean>;
+  /** The ids of this integration's containers, deleted ones too. */
+  idsForIntegration(workspaceId: string, integrationId: string): Promise<string[]>;
   /** Sets `deletedAt` (default now) on this integration's live containers. Returns how many. */
   softDeleteForIntegration(
     workspaceId: string,

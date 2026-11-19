@@ -183,7 +183,7 @@ router.patch(
  * occurrence only; `repeats` every occurrence of a repeating event, or, for an event that doesn't
  * repeat (an imported timetable), it and every later one of the same calendar or project with the
  * same title, weekday and local start time. The rule's way (there/back/both) and place are kept;
- * the legs are made again once. `marked`: events marked; `leg`: this trip after that, null when
+ * the legs are made again once. `marked`: rules stored (1: an every-repeat choice is one rule); `leg`: this trip after that, null when
  * none is left. 400 for a body that isn't one; 404 for a leg that isn't the caller's own, or was
  * removed or skipped, or whose event no longer asks for travel; 409 `travel_limit` (too many marks
  * for the rule cap, nothing stored) or `travel_home_missing`.

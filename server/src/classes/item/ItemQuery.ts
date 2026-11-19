@@ -389,7 +389,7 @@ export class ItemQuery {
    */
   async runDraft(
     draft: Query,
-    options: { now: Date; blockType?: BlockType },
+    options: { now: Date; blockType?: BlockType; sourceTitle?: boolean },
   ): Promise<QueryResult> {
     const caller = this.#caller;
     const ws = caller.context;
@@ -414,6 +414,7 @@ export class ItemQuery {
           }
         : {}),
       ...(options.blockType === undefined ? {} : { blockType: options.blockType }),
+      ...(options.sourceTitle === true ? { sourceTitle: true } : {}),
       ...(wide ? { rowLimit: Math.min(limit, DRAFT_ROWS_MAX) } : {}),
     };
     return this.run(query, ctx);

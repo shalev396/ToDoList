@@ -37,7 +37,7 @@ import {
   type TravelRuleView,
 } from '@api-types/travel.ts';
 import { placeByName } from '@api-types/travelPlaceNames.ts';
-import { matchesRepeats } from '@api-types/travelRepeats.ts';
+import { latestRepeats } from '@api-types/travelRepeats.ts';
 import { dateInZone, instantInZone } from '../items/zonedDate.ts';
 
 const MINUTE_MS = 60_000;
@@ -630,16 +630,17 @@ export function weekdayName(weekday: number, locale: string): string {
 }
 
 /**
- * The repeats rule an event that doesn't repeat falls under (the oldest one, as the server finds
- * it); none for a repeating event, or when it has its own mark.
+ * The repeats rule an event that doesn't repeat falls under, as the server finds it: of the
+ * matching ones, the one chosen from the latest start. `title` is the event's own one (not a name
+ * he gave it in TodoList).
  */
 export function repeatsRuleOf(
   rules: readonly TravelRuleView[],
   event: { containerId: string | null; title: string; startAt: Date },
   timeZone: string,
 ): TravelRuleView | null {
-  return (
-    rules.find(({ scope }) => scope.kind === 'repeats' && matchesRepeats(scope, event, timeZone)) ??
-    null
+  const repeats = rules.flatMap((rule) =>
+    rule.scope.kind === 'repeats' ? [{ rule, scope: rule.scope }] : [],
   );
+  return latestRepeats(repeats, event, timeZone)?.rule ?? null;
 }

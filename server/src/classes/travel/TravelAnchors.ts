@@ -10,7 +10,9 @@
  *   and due-only occurrences never anchor. A painted area anchors like a block (the owner's ruling
  *   of 2026-11-18), marked `area`: the day plan nests the items inside it (DayPlanner).
  * - Rule (Ruling 11): the item rule of that occurrence, else the series rule of its series, else
- *   the repeats rule an event that doesn't repeat falls under, else the oldest where-rule that matches (each where-rule is its own draft, ANDed with the range).
+ *   the repeats rule an event that doesn't repeat falls under (the one
+ *   chosen from the latest start), else the oldest where-rule that matches (each where-rule is its
+ *   own draft, ANDed with the range).
  * - Place, in order: the member's pin of the item; the rule's place; a place named (or aliased) in
  *   the event's location, by whole words (`types/travelPlaceNames.ts`: nothing is looked up); the
  *   default place of its calendar or project. Otherwise none of its own: the day plan gives it the
@@ -32,7 +34,7 @@ import {
   type Range,
 } from '../../types/recurrence/occurrences.js';
 import type { TravelRuleScope } from '../../types/travel.js';
-import { matchesRepeats } from '../../types/travelRepeats.js';
+import { latestRepeats } from '../../types/travelRepeats.js';
 import type { Caller } from '../base/Caller.js';
 import { ItemQuery } from '../item/ItemQuery.js';
 import type { Anchor } from './DayPlanner.js';
@@ -247,7 +249,7 @@ export class TravelAnchors {
   }
 
   /**
-   * The oldest repeats rule an event that doesn't repeat (a single, never a series occurrence)
+   * The repeats rule (the one from the latest start) an event that doesn't repeat (a single, never a series occurrence)
    * is a repeat of: same calendar or project and title, same weekday and local start time, at or
    * after the rule's `from` (so an event imported after the rule is covered too).
    */
@@ -256,11 +258,16 @@ export class TravelAnchors {
       return null;
     }
     const zone = this.#caller.settings.timezone;
-    const event = { containerId: row.containerId, title: row.title, startAt: row.startAt };
-    for (const { rule, scope } of this.#rules) {
-      if (scope.kind === 'repeats' && matchesRepeats(scope, event, zone)) return rule;
-    }
-    return null;
+    // The event's own title, not one he renamed it to in TodoList.
+    const event = {
+      containerId: row.containerId,
+      title: row.sourceTitle ?? row.title,
+      startAt: row.startAt,
+    };
+    const repeats = this.#rules.flatMap(({ rule, scope }) =>
+      scope.kind === 'repeats' ? [{ rule, scope }] : [],
+    );
+    return latestRepeats(repeats, event, zone)?.rule ?? null;
   }
 
   /** Pin, rule's place, a place its location names, its container's default; else none. */
@@ -369,7 +376,11 @@ export class TravelAnchors {
       sort: [{ field: 'startAt', dir: 'asc' }],
       limit: ANCHOR_ROWS_MAX,
     };
-    const result = await reads.runDraft(draft, { now, blockType: 'calendar' });
+    const result = await reads.runDraft(draft, {
+      now,
+      blockType: 'calendar',
+      sourceTitle: anchors,
+    });
     const rows = (result.rows ?? []).filter((row): row is ItemQueryRow => 'kind' in row);
     if (anchors && result.total > rows.length) {
       logger.warn('travel: more timed items than one regeneration reads', {
