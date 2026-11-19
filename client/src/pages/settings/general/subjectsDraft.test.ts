@@ -6,6 +6,7 @@ import {
   countsByName,
   issuesOf,
   draftOf,
+  editedRows,
   moveSubject,
   parsePatterns,
   requestOf,
@@ -50,6 +51,28 @@ describe('draftOf', () => {
   });
   it('is empty without a subject attribute', () => {
     assert.deepEqual(draftOf(undefined), []);
+  });
+});
+
+describe('editedRows', () => {
+  it('refuses an edit before the saved subjects are read, so a quick add cannot replace them', () => {
+    // Nothing is read yet (saved is undefined): a draft built on the empty list would hold only
+    // History, and saving it would drop Calculus.
+    assert.equal(
+      editedRows(false, undefined, null, (rows) => addSubject(rows, 'History', [])),
+      null,
+    );
+  });
+  it('builds the edit over the saved subjects once they are read', () => {
+    const rows = editedRows(true, saved, null, (draft) => addSubject(draft, 'Physics', []));
+    assert.ok(rows);
+    assert.deepEqual(names(rows), ['Calculus', 'History', 'Physics']);
+  });
+  it('builds on the draft already edited, not on the saved ones', () => {
+    const edited = draftOf(saved).slice(0, 1);
+    const rows = editedRows(true, saved, edited, (draft) => addSubject(draft, 'Physics', []));
+    assert.ok(rows);
+    assert.deepEqual(names(rows), ['Calculus', 'Physics']);
   });
 });
 

@@ -90,6 +90,7 @@ export const settings = {
     saved: 'Subjects saved',
     saveFailed: 'The subjects couldn’t be saved. Try again.',
     empty: 'No subjects yet.',
+    loadFailed: 'Your subjects couldn’t be loaded. Reload the page to try again.',
     errNameEmpty: 'Give this subject a name.',
     errNameDuplicate: 'Another subject already has this name.',
     errLimit: 'A workspace can have up to {{max}} subjects.',
