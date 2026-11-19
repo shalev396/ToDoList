@@ -4,6 +4,7 @@ import type { EventInput } from '@fullcalendar/core';
 import { zonedTime } from '../clock/ClockRing.math.ts';
 import {
   areaTagsByDay,
+  timedSpans,
   toAreaEventInput,
   toAreaPeriodEventInput,
   toEventInput,
@@ -261,5 +262,28 @@ describe('areaTagsByDay', () => {
       [tags.get('2026-11-20')?.[0]?.from, tags.get('2026-11-20')?.[0]?.to],
       [null, null],
     );
+  });
+});
+
+describe('timedSpans and the stretch', () => {
+  it('spans the timed events; a due date lasts its point; all-day ones are left out', () => {
+    const start = at(2026, 11, 19, 8, 20);
+    const spans = timedSpans([
+      { occurrence: occ({ key: 'walk', start, end: at(2026, 11, 19, 8, 30) }), badges: [] },
+      { occurrence: occ({ key: 'due', start, end: null, dueOnly: true }), badges: [] },
+      { occurrence: occ({ key: 'day', allDay: true, start: at(2026, 11, 19) }), badges: [] },
+    ]);
+    assert.deepEqual(spans, [
+      { key: 'walk', start: start.getTime(), end: start.getTime() + 10 * 60_000 },
+      { key: 'due', start: start.getTime(), end: start.getTime() + 30 * 60_000 },
+    ]);
+  });
+
+  it('marks a stretched event for the page (class and props), and only that one', () => {
+    const stretched = toEventInput({ occurrence: occ({}), badges: [] }, TZ, colour(), true);
+    assert.ok(stretched.classNames?.toString().includes('tc-stretch'));
+    assert.deepEqual(pick(stretched, 'stretched'), [true]);
+    const plain = toEventInput({ occurrence: occ({}), badges: [] }, TZ, colour());
+    assert.deepEqual(pick(plain, 'stretched'), [false]);
   });
 });

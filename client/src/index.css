@@ -771,6 +771,11 @@
 .todolist-calendar .fc .fc-timegrid-event .fc-event-main {
   padding: 0;
 }
+/* A chip shorter than a line of text, with free time after it, is drawn a line tall (`--tc-line`)
+   over that time. Only drawn: FullCalendar's overlaps follow the true times (eventMinHeight 0). */
+.todolist-calendar .fc .fc-timegrid-event.tc-stretch {
+  min-height: var(--tc-line, 14px);
+}
 /* A stacked chip's title lines up under its icon, on the start side of the page's direction, even
    when the title itself runs the other way. */
 .todolist-calendar[dir='rtl'] .fc .tc-chip-title {

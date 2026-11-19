@@ -52,6 +52,7 @@ import {
 } from '../time/occurrences';
 import {
   areaTagsByDay,
+  timedSpans,
   toAreaEventInput,
   toAreaPeriodEventInput,
   toEventInput,
@@ -60,7 +61,15 @@ import {
   type CalendarEventProps,
   type DisplayedOccurrence,
 } from './calendarEvents';
-import { SLOT_PX, TIME_GRID_LAYOUT, chipLayout, chipMinutes, type ChipLayout } from './chipLayout';
+import {
+  READABLE_PX,
+  SLOT_PX,
+  TIME_GRID_LAYOUT,
+  chipLayout,
+  chipMinutes,
+  stretchedEvents,
+  type ChipLayout,
+} from './chipLayout';
 import { readStartHour, slotTime, startScrollTop } from './startHour';
 import { useSaveCalendarViz } from './useSaveCalendarViz';
 
@@ -191,8 +200,10 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   // FullCalendar draws no background events in the month grid or a list: there an area is a
   // plain event, in the area's style, that opens its sheet.
   const areasAsEvents = viewName !== 'timeGridWeek';
-  const events = useMemo(
-    () => [
+  const events = useMemo(() => {
+    // A chip shorter than a line is drawn a line tall only over free time (chipLayout.ts).
+    const stretched = stretchedEvents(timedSpans(displayed));
+    return [
       ...areas.map((occurrence) =>
         (areasAsEvents ? toAreaPeriodEventInput : toAreaEventInput)(
           occurrence,
@@ -200,10 +211,16 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
           timeZone,
         ),
       ),
-      ...displayed.map((item) => toEventInput(item, timeZone, colourOf(item.occurrence.row.id))),
-    ],
-    [areas, areasAsEvents, displayed, timeZone, colourOf],
-  );
+      ...displayed.map((item) =>
+        toEventInput(
+          item,
+          timeZone,
+          colourOf(item.occurrence.row.id),
+          stretched.has(item.occurrence.key),
+        ),
+      ),
+    ];
+  }, [areas, areasAsEvents, displayed, timeZone, colourOf]);
   // The week grid names each day's areas in its header (the bands behind the events have no room).
   const areaTags = useMemo(
     () => (areasAsEvents ? new Map<string, AreaTag[]>() : areaTagsByDay(areas, colourOf, timeZone)),
@@ -335,21 +352,34 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     const plate = props.role === 'travel' && !list;
     const layout =
       arg.view.type === 'timeGridWeek' && !arg.event.allDay && arg.event.start !== null
-        ? chipLayout(chipMinutes(arg.event.start, arg.event.end, arg.isStart, arg.isEnd))
+        ? chipLayout(
+            chipMinutes(arg.event.start, arg.event.end, arg.isStart, arg.isEnd),
+            props.stretched,
+          )
         : INLINE_CHIP;
+    // A tiny chip (shorter than a line, kept at its true height) has smaller icons and text.
+    const tiny = layout.kind === 'tiny';
     const lead = (
       <>
         {props.dueOnly ? (
-          <CalendarClock aria-hidden="true" className="size-3 shrink-0" data-due-marker />
+          <CalendarClock
+            aria-hidden="true"
+            className={cn('shrink-0', tiny ? 'size-2' : 'size-3')}
+            data-due-marker
+          />
         ) : null}
-        {props.tone === undefined ? null : <ToneMark tone={props.tone} />}
+        {props.tone === undefined || tiny ? null : <ToneMark tone={props.tone} />}
         {props.legMode === null ? (
           <SourceIcon
             source={ringProvider(props.provider)}
-            className={cn('shrink-0 [&>svg]:size-3', !list && '[&>svg]:text-current')}
+            className={cn(
+              'shrink-0',
+              tiny ? '[&>svg]:size-2' : '[&>svg]:size-3',
+              !list && '[&>svg]:text-current',
+            )}
           />
         ) : (
-          <LegModeIcon mode={props.legMode} className="size-3" />
+          <LegModeIcon mode={props.legMode} className={tiny ? 'size-2' : 'size-3'} />
         )}
       </>
     );
@@ -389,6 +419,24 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             }}
             data-chip-title=""
           >
+            {arg.event.title}
+          </span>
+        </div>
+      );
+    }
+    if (layout.kind === 'tiny') {
+      return (
+        <div
+          className={cn(chip, 'flex items-center gap-0.5 py-0')}
+          style={{
+            ...fill,
+            fontSize: `${String(Math.max(7, layout.linePx - 1))}px`,
+            lineHeight: `${String(layout.linePx)}px`,
+          }}
+          data-chip-layout="tiny"
+        >
+          {lead}
+          <span dir="auto" className="min-w-0 truncate" data-chip-title="">
             {arg.event.title}
           </span>
         </div>
@@ -564,7 +612,13 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
           aria-label={t('timeBlocks.calendar.scrollRegion')}
           className="todolist-calendar min-h-0 flex-1 overflow-auto focus-visible:ring-2 focus-visible:ring-ring"
           dir={language === 'he' ? 'rtl' : 'ltr'}
-          style={{ '--tc-slot': `${String(SLOT_PX)}px` } as CSSProperties}
+          style={
+            {
+              '--tc-slot': `${String(SLOT_PX)}px`,
+              // A stretched chip's height: a line, less the gap under every event.
+              '--tc-line': `${String(READABLE_PX - 1)}px`,
+            } as CSSProperties
+          }
         >
           <FullCalendar
             ref={calendar}
@@ -632,7 +686,11 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             eventClick={(arg) => {
               arg.jsEvent.preventDefault();
               const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
-              // A click on an area's band opens it too (its header tag is the way in by keyboard).
+              // Every event's click. FullCalendar's click listener covers background events too
+              // (EventClicking: '.fc-event', "on both fg and bg events"), so a click on an area's
+              // band may open the area, unless FullCalendar took it as the start of a selection
+              // (an editor's drag across free time: the New sheet). This branch leaves that as it
+              // was; the dependable way in is the tag in the day's header (AreaTagButton).
               openItem(
                 props.rowId,
                 props.originalStart === null ? undefined : new Date(props.originalStart),

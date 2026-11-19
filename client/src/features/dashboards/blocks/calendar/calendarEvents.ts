@@ -11,6 +11,7 @@ import { layerOf, type BlockLayer } from '@api-types/scheduled.ts';
 import type { TravelMode } from '@api-types/travel.ts';
 import { colourVar, paintOf } from '../../../colours/palette.ts';
 import type { LegMarks } from '../../../travel/legView.ts';
+import type { TimedSpan } from './chipLayout.ts';
 import { wallDate, wallString, type Occurrence } from '../time/occurrences.ts';
 import type { Tone } from '../../rules/applyDisplayRules.ts';
 
@@ -53,6 +54,11 @@ export interface CalendarEventProps {
   anchorMoved: boolean;
   /** A leg whose trip has no length yet: drawn dashed. */
   lengthUnset: boolean;
+  /**
+   * Shorter than a line of text, with free time after it: drawn a line tall (`tc-stretch`, CSS
+   * only; chipLayout.ts `stretchedEvents`).
+   */
+  stretched: boolean;
 }
 
 /**
@@ -93,11 +99,15 @@ function timing(o: Occurrence, timeZone: string): EventInput {
   return { allDay: false, start: wallString(o.start, timeZone), ...(end === null ? {} : { end }) };
 }
 
-/** A solid fill under its ink; travel is hatched over its muted fill (`tc-travel`). */
+/**
+ * A solid fill under its ink; travel is hatched over its muted fill (`tc-travel`). `stretched`: a
+ * short event drawn a line tall over the free time after it (`tc-stretch`).
+ */
 export function toEventInput(
   item: DisplayedOccurrence,
   timeZone: string,
   colour: ItemColour,
+  stretched = false,
 ): EventInput {
   const { occurrence: o } = item;
   const paint = paintOf(colour);
@@ -118,6 +128,7 @@ export function toEventInput(
     legMode: item.leg?.mode ?? null,
     anchorMoved: item.leg?.moved ?? false,
     lengthUnset: item.leg?.unset ?? false,
+    stretched,
   };
   // FullCalendar sets an event's attributes once, when its element is made (`eventDidMount`). A leg's
   // marks change under it (a conflict clears, the day moves on, he edits its times), so they are
@@ -145,6 +156,7 @@ export function toEventInput(
       ...(item.leg?.past === true ? ['tc-past'] : []),
       ...(item.leg?.unset === true ? ['tc-unset'] : []),
       ...(o.dueOnly ? ['fc-due'] : []),
+      ...(stretched ? ['tc-stretch'] : []),
     ],
     backgroundColor: paint.fill,
     borderColor: paint.fill,
@@ -152,6 +164,20 @@ export function toEventInput(
     extendedProps,
     ...timing(o, timeZone),
   };
+}
+
+/**
+ * The timed events' spans (instants, ms) for `stretchedEvents`: one without an end lasts as long
+ * as it is drawn (a due date's point, FullCalendar's default length).
+ */
+export function timedSpans(items: readonly DisplayedOccurrence[]): TimedSpan[] {
+  return items
+    .filter(({ occurrence }) => !occurrence.allDay)
+    .map(({ occurrence: o }) => ({
+      key: o.key,
+      start: o.start.getTime(),
+      end: o.end?.getTime() ?? o.start.getTime() + POINT_MINUTES * 60_000,
+    }));
 }
 
 /** An area: a band in its family's tint behind every event, its title on top (`tc-area`). */
