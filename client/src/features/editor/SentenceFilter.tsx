@@ -16,7 +16,7 @@ import { SelectField } from '@/components/ui/select';
 import type { CatalogDescription, Query, QuerySource } from '@api-types/builder';
 import { ProviderIcon } from '@/features/landing/ProviderIcon';
 import { FieldPicker } from './FieldPicker';
-import { entryOf, fieldEntries, newRule, type FieldEntry } from './fieldOptions';
+import { entryOf, fieldEntries, newRule, withTopicValues, type FieldEntry } from './fieldOptions';
 import { providerIcon } from './fieldLabels';
 import { RuleValueInput } from './RuleValueInput';
 import { valueAfterOperatorChange } from './ruleValue';
@@ -200,6 +200,7 @@ function Condition({
         type={type}
         value={rule.value as never}
         values={entry?.values}
+        valueLabels={entry?.valueLabels}
         datePresets={catalog.datePresets}
         label={t('editor.filter.value')}
         onChange={(value) => {
@@ -281,11 +282,7 @@ export function SentenceFilter({
 
   const sortable = entries.filter((entry) => entry.type !== 'array');
   const full = ruleCountOf(sentence) >= maxRules;
-  const entriesForTopic = entries.map((entry) =>
-    entry.name === 'topic' && topics.length > 0
-      ? { ...entry, values: topics.map((topic) => topic.id) }
-      : entry,
-  );
+  const entriesForTopic = withTopicValues(entries, topics);
 
   const ruleSlots: ReactNode[] = [];
   sentence.clauses.forEach((clause, index) => {
