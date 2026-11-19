@@ -243,9 +243,10 @@ describe('the travel tools', () => {
       itemId: reading.item.id,
       mode: 'walk',
       direction: 'both',
-    })) as { legs: Entry[]; within: unknown };
+    })) as { legs: Entry[]; within: unknown; lengthStored: unknown };
     assert.deepEqual(inside.legs, []);
     assert.deepEqual(inside.within, { area: 'Studying', place: 'Technion' });
+    assert.equal(inside.lengthStored, null);
 
     const calendar = (await call('get_calendar', {
       range: 'custom',
@@ -260,6 +261,40 @@ describe('the travel tools', () => {
         ['Studying', 'block', false],
         ['Reading', 'block', true],
         ['Bus home', 'travel', true],
+      ],
+    );
+
+    // Minutes for an item whose own place isn't known (no place, no location, outside any area):
+    // nothing is stored, and the output says so.
+    const errand = (await call('create_time_block', {
+      title: 'Errand',
+      startAt: at(8, 16).toISOString(),
+      endAt: at(8, 17).toISOString(),
+    })) as { item: { id: string } };
+    const unplaced = (await call('travel_mark_item', {
+      itemId: errand.item.id,
+      mode: 'drive',
+      direction: 'there',
+      minutes: 15,
+    })) as { legs: Entry[]; lengthStored: unknown };
+    assert.deepEqual([unplaced.legs, unplaced.lengthStored], [[], false]);
+    // Named by place: the trip there is set, and its leg takes it (15 minutes before 16:00).
+    const placed = (await call('travel_mark_item', {
+      itemId: errand.item.id,
+      mode: 'drive',
+      direction: 'there',
+      place: 'Technion',
+      minutes: 15,
+    })) as { legs: Entry[]; lengthStored: unknown };
+    assert.equal(placed.lengthStored, true);
+    assert.deepEqual(
+      placed.legs.map((leg) => [leg.title, leg.startAt, leg.endAt]),
+      [
+        [
+          'Drive to Technion',
+          new Date(at(8, 16).getTime() - 15 * 60_000).toISOString(),
+          at(8, 16).toISOString(),
+        ],
       ],
     );
   });

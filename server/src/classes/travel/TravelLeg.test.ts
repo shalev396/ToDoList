@@ -383,6 +383,8 @@ describe('TravelLeg storage', () => {
     // viewer: 403.
     for (const change of [
       { startAt: LECTURE, endAt: at(LECTURE, -10) },
+      // A length with a span that isn't one: refused before the length is stored.
+      { minutes: 30, startAt: LECTURE, endAt: at(LECTURE, -10) },
       { minutes: 0 },
       { minutes: 25 * 60 },
       {},

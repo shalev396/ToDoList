@@ -128,7 +128,7 @@ const pinItemPlace: RequestHandler = async (req, res): Promise<void> => {
 const markItem: RequestHandler = async (req, res): Promise<void> => {
   const { occurrence, every, ...body } = parseOr400(MarkItemBody, req.body);
   const { caller } = req as WorkspaceRequest;
-  const { rule, legs, within } = await TravelRule.markItem(caller, {
+  const { rule, legs, within, lengthStored } = await TravelRule.markItem(caller, {
     ...body,
     itemId: routeParam(req, 'itemId'),
     occurrence: optionalTime(occurrence),
@@ -139,6 +139,7 @@ const markItem: RequestHandler = async (req, res): Promise<void> => {
     rule: rule.toView(),
     legs: await Promise.all(legs.map((leg) => reads.detail(leg))),
     within,
+    lengthStored,
   };
   res.success(data);
 };

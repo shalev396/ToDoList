@@ -178,9 +178,11 @@ export function previewFill(
 }
 
 /**
- * `HH:MM` typed for the leave or arrive time of this trip, on the day of the trip (its arrival's)
- * in the zone. A leave time later than the arrival is the day before. '' clears it (it follows
- * again).
+ * `HH:MM` typed for the leave or arrive time of this trip, in the zone, on the day the trip is
+ * held by: a trip there on its arrival's day (a leave time at or after the arrival is the day
+ * before: he leaves the night before), a trip back (`keepsDeparture`) on its departure's day (an
+ * arrive time at or before the departure is the day after: he gets home after midnight). A later
+ * leave time on a trip back is later that day. '' clears it (it follows again).
  */
 export function editPanelTime(
   state: TravelPanelState,
@@ -191,15 +193,22 @@ export function editPanelTime(
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
     return { ...state, [field]: null };
   }
-  const arrival = state.end ?? panelSpan(state)?.end ?? state.anchor;
-  if (arrival === null) {
+  const leaves = state.keepsDeparture === true;
+  const held = leaves
+    ? (state.start ?? panelSpan(state)?.start ?? state.anchor)
+    : (state.end ?? panelSpan(state)?.end ?? state.anchor);
+  if (held === null) {
     return state;
   }
-  let instant = new Date(instantInZone(dateInZone(arrival, timeZone), time, timeZone));
-  if (field === 'start' && instant.getTime() >= arrival.getTime()) {
-    instant = new Date(instant.getTime() - 24 * 60 * 60_000);
+  const typed = new Date(instantInZone(dateInZone(held, timeZone), time, timeZone)).getTime();
+  const DAY_MS = 24 * 60 * MINUTE_MS;
+  let instant = typed;
+  if (!leaves && field === 'start' && typed >= held.getTime()) {
+    instant = typed - DAY_MS;
+  } else if (leaves && field === 'end' && typed <= held.getTime()) {
+    instant = typed + DAY_MS;
   }
-  return { ...state, [field]: instant };
+  return { ...state, [field]: new Date(instant) };
 }
 
 export function directionOf(state: Pick<TravelPanelState, 'there' | 'back'>): RuleDirection {
@@ -500,39 +509,48 @@ export function markOf(
 }
 
 /** What a mark came to, for the member. */
-export type TravelOutcome =
+export type TravelOutcome = (
   | { kind: 'added'; count: number }
   /** Stored, with no trips of its own: it is spent in a marked area, at the area's place. */
   | { kind: 'inside'; area: string; place: string }
   /** Stored, with no trips yet (its place isn't known yet, or they come with the next sync). */
-  | { kind: 'pending'; ownPlace: boolean };
+  | { kind: 'pending'; ownPlace: boolean }
+) & {
+  /** He typed a length and it was not stored: the item's own place isn't known yet. */
+  lengthNotStored: boolean;
+};
 
 /** The text of what a mark came to (a toast, the item sheet's note). */
 export function outcomeText(t: TFunction, outcome: TravelOutcome): string {
-  switch (outcome.kind) {
-    case 'added':
-      return t('travel.add.added', { count: outcome.count });
-    case 'inside':
-      return t('travel.add.inside', { area: outcome.area, place: outcome.place });
-    case 'pending':
-      return outcome.ownPlace
-        ? `${t('travel.add.pending')} ${t('travel.add.pendingOwnPlace')}`
-        : t('travel.add.pending');
-  }
+  const text = ((): string => {
+    switch (outcome.kind) {
+      case 'added':
+        return t('travel.add.added', { count: outcome.count });
+      case 'inside':
+        return t('travel.add.inside', { area: outcome.area, place: outcome.place });
+      case 'pending':
+        return outcome.ownPlace
+          ? `${t('travel.add.pending')} ${t('travel.add.pendingOwnPlace')}`
+          : t('travel.add.pending');
+    }
+  })();
+  return outcome.lengthNotStored ? `${text} ${t('travel.add.lengthNotStored')}` : text;
 }
 
 /**
  * An answer with no trips is a calm note, never an error: inside a marked area at its place, it
  * says so (the area lends its place, so the item adds no trips); else the trips are still to come.
+ * A length he typed that was not stored (its place isn't known yet) is said with it.
  */
 export function outcomeOf(answer: MarkItemResponse, ownPlace: boolean): TravelOutcome {
+  const lengthNotStored = answer.lengthStored === false;
   if (answer.legs.length > 0) {
-    return { kind: 'added', count: answer.legs.length };
+    return { kind: 'added', count: answer.legs.length, lengthNotStored };
   }
   if (answer.within !== null) {
-    return { kind: 'inside', ...answer.within };
+    return { kind: 'inside', ...answer.within, lengthNotStored };
   }
-  return { kind: 'pending', ownPlace };
+  return { kind: 'pending', ownPlace, lengthNotStored };
 }
 
 // ─── A leg's own sheet ──────────────────────────────────────────────────────

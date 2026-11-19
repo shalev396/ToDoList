@@ -1,8 +1,8 @@
 /**
  * Travel privacy over MCP (the travel spec, "Privacy and safety"): an agent sees a place by its
- * name only, never an address (there are no coordinates), in any answer; and a key is its member's alone:
- * another member's key never sees their legs, on any path that lists time (get_calendar,
- * list_today's scheduled, search_items by kind).
+ * name only, never an address (there are no coordinates), in any answer; and a key is its
+ * member's alone: another member's key never sees their legs, on any path that lists time
+ * (get_calendar, list_today's scheduled, search_items by kind).
  */
 import { wallDate } from '../../types/recurrence/zoned.js';
 import { after, before, describe, it } from 'node:test';

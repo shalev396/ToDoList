@@ -11,9 +11,10 @@ Every shape is built from the server's own types and serializers, field for fiel
   - a trip's length (`POST …/travel/preview`): `TravelPreviewResponse`.
 The envelope is `{ data }` (middlewares/responseFormatter.ts); a skip answers 204.
 
-The stub answers only reads (a trip's length too) and the leg's own changes (edit, skip, reset), and
-keeps their effect, so what the page shows after one is what the server would show. Its request bodies are kept for the test
-to assert. Everything else goes to the real server (`route.fallback()`).
+The stub answers only reads (a trip's length too) and the leg's own changes (edit, skip, reset),
+and keeps their effect, so what the page shows after one is what the server would show (a length
+set fills the way back when it has none, as TravelProfile#setTripLength does). Its request bodies
+are kept for the test to assert. Everything else goes to the real server (`route.fallback()`).
 """
 import json
 import re
@@ -388,9 +389,18 @@ class StubbedLegs:
                     "startAt": None, "endAt": None}
         return {"minutes": minutes, "source": "set", "lengthUnset": False, "startAt": None, "endAt": None}
 
-    def _follow(self, trip: tuple, minutes: int, edited: Leg) -> None:
-        """A trip's length set: every leg of it is computed with it (a trip back keeps its
-        departure, any other its arrival), and the ones he never timed by hand take it now."""
+    def _set_length(self, trip: tuple, minutes: int, edited: Leg) -> None:
+        """A trip's length set (TravelProfile#setTripLength): its legs follow it, and its way back
+        (to → from, same mode) starts with the same length when it has none yet."""
+        back = (trip[1], trip[0], trip[2])
+        fill = back != trip and back not in self.trip_lengths
+        self._follow(trip, minutes, edited)
+        if fill:
+            self._follow(back, minutes, None)
+
+    def _follow(self, trip: tuple, minutes: int, edited: Optional[Leg]) -> None:
+        """A trip's length: every leg of it is computed with it (a trip back keeps its departure,
+        any other its arrival), and the ones he never timed by hand take it now."""
         self.trip_lengths[trip] = minutes
         for leg in self.legs.values():
             if StubbedLegs._trip(leg.computed["travel"]) != trip:
@@ -433,4 +443,4 @@ class StubbedLegs:
             "anchorStartNow": None,
         }
         if "minutes" in body:
-            self._follow(StubbedLegs._trip(leg.travel), body["minutes"], leg)
+            self._set_length(StubbedLegs._trip(leg.travel), body["minutes"], leg)

@@ -330,9 +330,11 @@ export interface SpanInput {
 /**
  * `POST …/travel/items/:itemId`: travel to (and from) one timed item. Every occurrence of a
  * repeating item (`every`: a series rule), one occurrence of it (`occurrence`, its original
- * start), or an item that doesn't repeat (neither). In `there` and `back`, `minutes` sets the
- * length of the trip its leg takes (every leg of that trip follows); times move that one leg (with
- * `every`, a length only).
+ * start), or an item that doesn't repeat (neither). In `there`, `minutes` is how long the trip he
+ * names takes, every time: from `there.fromPlaceId` (else Home) to `placeId` (else the item's own
+ * place), by `mode`; in `back`, that trip reversed. It is set whether or not the item has legs yet
+ * (every leg of the trip follows; the way back starts the same when it has no length). Times move
+ * that one leg (with `every`, a length only).
  */
 export interface MarkItemRequest {
   occurrence?: string;
@@ -362,6 +364,11 @@ export interface MarkItemResponse {
   rule: TravelRuleView;
   legs: ItemDetail[];
   within: WithinArea | null;
+  /**
+   * The length typed with the mark: true when it was set for the trip it names; false when it was
+   * not stored, since the item's own place isn't known yet; null when none was typed.
+   */
+  lengthStored: boolean | null;
 }
 
 /**

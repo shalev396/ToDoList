@@ -424,17 +424,26 @@ describe('profile', () => {
     profile = await profile.setTripLength(ws.a, trip, 52);
     assert.equal(profile.tripMinutes(trip), 52);
     assert.deepEqual(profile.tripLength(trip), { minutes: 52, source: 'set' });
-    // Each direction is its own trip, and so is each mode.
-    assert.deepEqual(profile.tripLength(back), { minutes: UNSET_TRIP_MINUTES, source: 'unset' });
+    // The way back (same mode) had none: it starts with the same length. Another mode has none.
+    assert.deepEqual(profile.tripLength(back), { minutes: 52, source: 'set' });
     assert.equal(
       profile.tripMinutes(classes.DayPlanner.tripKey(home.id, braude.id, 'drive')),
       null,
     );
+    // Each direction is its own trip from then on: the way back changes alone, and a way back that
+    // has a length keeps it when the trip there changes.
+    profile = await profile.setTripLength(ws.a, back, 40);
+    assert.deepEqual([profile.tripMinutes(trip), profile.tripMinutes(back)], [52, 40]);
+    profile = await profile.setTripLength(ws.a, trip, 60);
+    assert.deepEqual([profile.tripMinutes(trip), profile.tripMinutes(back)], [60, 40]);
+    // A refused length stores nothing, either way.
     await assert.rejects(profile.setTripLength(ws.a, trip, 0), { statusCode: 400 });
     await assert.rejects(profile.setTripLength(ws.a, trip, 24 * 60 + 1), { statusCode: 400 });
     await assert.rejects(profile.setTripLength(ws.a, 'home.braude', 10), { statusCode: 400 });
     await assert.rejects(profile.setTripLength(ws.viewerA, trip, 10), { statusCode: 403 });
     await assert.rejects(profile.setTripLength(ws.b, trip, 10), { statusCode: 404 });
+    profile = await classes.TravelProfile.of(ws.a);
+    assert.deepEqual([profile.tripMinutes(trip), profile.tripMinutes(back)], [60, 40]);
     profile = await profile.pinItemPlace(ws.a, 'lecture-1', braude.id);
     profile = await profile.setContainerPlace(ws.a, 'calendar-braude', braude.id);
     assert.deepEqual([...profile.itemPlaces], [['lecture-1', braude.id]]);
@@ -518,6 +527,7 @@ describe('leaving', () => {
     assert.equal(await (await models.getTravelProfileRepository()).delete(ws.id, A), false);
     assert.equal((await classes.Place.listOwn(other.a)).length, 2);
     assert.equal((await classes.TravelRule.listOwn(other.a)).length, 1);
-    assert.equal((await classes.TravelProfile.of(other.a)).id, `${other.id}|${A}`);
+    // The other workspace's profile is still there (deleting it finds one; `of` would make one).
+    assert.equal(await (await models.getTravelProfileRepository()).delete(other.id, A), true);
   });
 });

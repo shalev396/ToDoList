@@ -37,12 +37,16 @@ export interface ITravelProfileRepository {
     ownerUserId: string,
     settings: TravelSettings,
   ): Promise<TravelProfileData | null>;
-  /** How long a trip takes (`from|to|mode`), as the member set it. */
+  /**
+   * How long a trip takes (`from|to|mode`), as the member set it; `fillKey` (its way back) takes
+   * the same minutes only when it has none yet. One write.
+   */
   setTripLength(
     workspaceId: string,
     ownerUserId: string,
     tripKey: string,
     minutes: number,
+    fillKey: string | null,
   ): Promise<TravelProfileData | null>;
   /** A pin of an item (`itemPlaces`) or a container (`containerPlaces`); null removes it. */
   setPin(

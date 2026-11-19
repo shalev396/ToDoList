@@ -295,7 +295,7 @@ describe('TravelPlanner.regenerate', () => {
     assert.equal(fetches.mock.callCount(), 0);
   });
 
-  it('the length set once is every occurrence’s, every day; the way back is its own trip', async () => {
+  it('the length set once is every occurrence’s, every day; the way back starts the same', async () => {
     const ws = await workspace();
     const lab = await block(ws.a, local(3, 10), 2, 'RRULE:FREQ=WEEKLY');
     await travelTo(ws.a, { kind: 'series', itemId: lab.id });
@@ -303,8 +303,10 @@ describe('TravelPlanner.regenerate', () => {
     const [first] = (await legsOf(ws.a)).live;
     assert.ok(first);
 
-    // He sets how long the bus to Braude takes on the first leg: every leg there takes it.
-    const set = await classes.TravelSetup.of(ws.a.caller).editLeg(first.id, { minutes: 25 });
+    // He sets how long the bus to Braude takes on the first leg: every leg there takes it, and the
+    // way back, which had no length, starts with the same.
+    const setup = classes.TravelSetup.of(ws.a.caller);
+    const set = await setup.editLeg(first.id, { minutes: 25 });
     assert.deepEqual(shape(set), [
       'there',
       iso(local(3, 9, 35)),
@@ -313,11 +315,22 @@ describe('TravelPlanner.regenerate', () => {
       'set',
       false,
     ]);
+    const legs = (await legsOf(ws.a)).live;
+    assert.deepEqual(legs.map(shape), [
+      ['there', iso(local(3, 9, 35)), iso(local(3, 10)), 25, 'set', false],
+      ['back', iso(local(3, 12)), iso(local(3, 12, 25)), 25, 'set', false],
+      ['there', iso(local(10, 9, 35)), iso(local(10, 10)), 25, 'set', false],
+      ['back', iso(local(10, 12)), iso(local(10, 12, 25)), 25, 'set', false],
+    ]);
+    // The way back is its own trip from then on: 40 on a leg back changes only the legs back.
+    const backLeg = legs[1];
+    assert.ok(backLeg);
+    await setup.editLeg(backLeg.id, { minutes: 40 });
     assert.deepEqual((await legsOf(ws.a)).live.map(shape), [
       ['there', iso(local(3, 9, 35)), iso(local(3, 10)), 25, 'set', false],
-      ['back', iso(local(3, 12)), iso(local(3, 12, 30)), 30, 'unset', false],
+      ['back', iso(local(3, 12)), iso(local(3, 12, 40)), 40, 'set', false],
       ['there', iso(local(10, 9, 35)), iso(local(10, 10)), 25, 'set', false],
-      ['back', iso(local(10, 12)), iso(local(10, 12, 30)), 30, 'unset', false],
+      ['back', iso(local(10, 12)), iso(local(10, 12, 40)), 40, 'set', false],
     ]);
     // A day coming into range (the daily pass, a week on) takes it too.
     const weekOn = await classes.TravelPlanner.regenerate(ws.a.caller, local(7, 0));
@@ -329,7 +342,7 @@ describe('TravelPlanner.regenerate', () => {
     );
     assert.deepEqual(later.map(shape), [
       ['there', iso(local(17, 9, 35)), iso(local(17, 10)), 25, 'set', false],
-      ['back', iso(local(17, 12)), iso(local(17, 12, 30)), 30, 'unset', false],
+      ['back', iso(local(17, 12)), iso(local(17, 12, 40)), 40, 'set', false],
     ]);
   });
 
@@ -383,7 +396,7 @@ describe('TravelPlanner.regenerate', () => {
   it('marking every occurrence with a length sets its trip once; the legs all take it', async () => {
     const ws = await workspace();
     const lab = await block(ws.a, local(3, 10), 2, 'RRULE:FREQ=WEEKLY');
-    const { legs } = await classes.TravelRule.markItem(ws.a.caller, {
+    const { legs, lengthStored } = await classes.TravelRule.markItem(ws.a.caller, {
       itemId: lab.id,
       every: true,
       mode: 'drive',
@@ -391,13 +404,15 @@ describe('TravelPlanner.regenerate', () => {
       placeId: ws.a.braudeId,
       there: { minutes: 35 },
     });
+    assert.equal(lengthStored, true);
+    // The way back had no length: it starts with the same.
     assert.deepEqual(
       legs.map((one) => [one.travel?.direction, one.travel?.minutes, one.travel?.source]),
       [
         ['there', 35, 'set'],
-        ['back', 30, 'unset'],
+        ['back', 35, 'set'],
         ['there', 35, 'set'],
-        ['back', 30, 'unset'],
+        ['back', 35, 'set'],
       ],
     );
     const profile = await classes.TravelProfile.of(ws.a.caller);
@@ -407,7 +422,114 @@ describe('TravelPlanner.regenerate', () => {
     );
     assert.equal(
       profile.tripMinutes(classes.DayPlanner.tripKey(ws.a.braudeId, ws.a.homeId, 'drive')),
+      35,
+    );
+  });
+
+  it('a mark’s length is the trip it names, even with no legs yet (past the 14 days)', async () => {
+    const ws = await workspace();
+    const trip = (mode: 'walk' | 'drive' | 'transit'): string =>
+      classes.DayPlanner.tripKey(ws.a.homeId, ws.a.braudeId, mode);
+    const lengths = async (): Promise<(number | null)[]> => {
+      const profile = await classes.TravelProfile.of(ws.a.caller);
+      return [profile.tripMinutes(trip('transit')), profile.tripMinutes(trip('walk'))];
+    };
+    // An exam next month, to Braude by bus: no legs (past the horizon), the trip is set anyway.
+    const exam = await block(ws.a, local(30, 9), 3);
+    const marked = await classes.TravelRule.markItem(ws.a.caller, {
+      itemId: exam.id,
+      every: false,
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.a.braudeId,
+      there: { minutes: 35 },
+    });
+    assert.deepEqual([marked.legs, marked.lengthStored], [[], true]);
+    assert.deepEqual(await lengths(), [35, null]);
+    // Its own place, from its location (a name), walking: set too.
+    const { todo } = await classes.Todo.create(ws.a.caller, {
+      title: 'Seminar',
+      startAt: local(25, 14),
+      endAt: local(25, 15),
+    });
+    await (
+      await models.getItemRepository()
+    ).updateLocal(ws.id, todo.id, {
+      props: { location: 'Braude, hall 2' },
+    });
+    const walked = await classes.TravelRule.markItem(ws.a.caller, {
+      itemId: todo.id,
+      every: false,
+      mode: 'walk',
+      direction: 'there',
+      there: { minutes: 20 },
+    });
+    assert.equal(walked.lengthStored, true);
+    assert.deepEqual(await lengths(), [35, 20]);
+    // A place nobody knows yet: nothing is stored, and the answer says so.
+    const { todo: nowhere } = await classes.Todo.create(ws.a.caller, {
+      title: 'Somewhere',
+      startAt: local(26, 14),
+      endAt: local(26, 15),
+    });
+    const unknown = await classes.TravelRule.markItem(ws.a.caller, {
+      itemId: nowhere.id,
+      every: false,
+      mode: 'drive',
+      direction: 'there',
+      there: { minutes: 50 },
+    });
+    assert.equal(unknown.lengthStored, false);
+    assert.equal((await classes.TravelProfile.of(ws.a.caller)).tripMinutes(trip('drive')), null);
+    // No length typed: nothing to say.
+    const plain = await classes.TravelRule.markItem(ws.a.caller, {
+      itemId: exam.id,
+      every: false,
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.a.braudeId,
+    });
+    assert.equal(plain.lengthStored, null);
+  });
+
+  it('a series length never reaches a trip from another place (a leg between stays unset)', async () => {
+    const ws = await workspace();
+    const tlv = await classes.Place.create(ws.a.caller, { name: 'TLVTech' });
+    // A weekly lab at Braude; on its first day a meeting at TLVTech comes first.
+    const lab = await block(ws.a, local(3, 10), 2, 'RRULE:FREQ=WEEKLY');
+    const meeting = await block(ws.a, local(3, 7), 1);
+    await classes.TravelRule.create(ws.a.caller, {
+      scope: { kind: 'item', itemId: meeting.id, occurrence: 'single' },
+      mode: 'drive',
+      direction: 'there',
+      placeId: tlv.id,
+    });
+    const { legs } = await classes.TravelRule.markItem(ws.a.caller, {
+      itemId: lab.id,
+      every: true,
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.a.braudeId,
+      there: { minutes: 35 },
+    });
+    // Day 3 goes on from TLVTech (between, not set yet); day 10 comes from Home (35).
+    assert.deepEqual(
+      legs.map((one) => [one.travel?.direction, one.travel?.fromName, one.travel?.source]),
+      [
+        ['between', 'TLVTech', 'unset'],
+        ['back', 'Braude', 'set'],
+        ['there', 'Home', 'set'],
+        ['back', 'Braude', 'set'],
+      ],
+    );
+    const profile = await classes.TravelProfile.of(ws.a.caller);
+    assert.equal(
+      profile.tripMinutes(classes.DayPlanner.tripKey(tlv.id, ws.a.braudeId, 'transit')),
       null,
+    );
+    assert.equal(
+      profile.tripMinutes(classes.DayPlanner.tripKey(ws.a.homeId, ws.a.braudeId, 'transit')),
+      35,
     );
   });
 

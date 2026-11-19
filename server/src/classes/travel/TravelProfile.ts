@@ -54,6 +54,12 @@ function checkedTrip(key: TripKey): TripKey {
   return key;
 }
 
+/** The same trip the other way: `to|from|mode`. */
+function wayBack(key: TripKey): TripKey {
+  const [from, to, mode] = key.split('|');
+  return [to, from, mode].join('|');
+}
+
 function checkedId(id: string, field: string): string {
   if (!ID_PATTERN.test(id)) throw new ValidationError(`${field}: an id`);
   return id;
@@ -213,17 +219,28 @@ export class TravelProfile extends WorkspaceEntity<TravelProfileData> implements
   /**
    * Editors, their own: how long a trip (`from|to|mode`) takes, every time. Every leg of that trip
    * takes it from the next regeneration on, every day and every occurrence, but the legs whose
-   * times he set by hand. More than 0 and at most a day.
+   * times he set by hand. The way back (`to|from|mode`) starts with the same length when it has
+   * none yet (the controller's ruling of 2026-11-19); one it has is left alone, and he can change
+   * it on its own. More than 0 and at most a day. The one place a trip's length is set: a leg's
+   * minutes, a mark's minutes, REST and MCP all come here.
    */
   async setTripLength(caller: Caller, key: TripKey, minutes: number): Promise<TravelProfile> {
     this.#authorize(caller);
     if (!Number.isFinite(minutes) || minutes <= 0 || minutes > TRIP_MINUTES_MAX) {
       throw new ValidationError(`minutes: more than 0 and at most ${String(TRIP_MINUTES_MAX)}`);
     }
+    const trip = checkedTrip(key);
+    const back = wayBack(trip);
     return this.#asStored(
       await (
         await getTravelProfileRepository()
-      ).setTripLength(this.workspaceId, this.ownerUserId, checkedTrip(key), minutes),
+      ).setTripLength(
+        this.workspaceId,
+        this.ownerUserId,
+        trip,
+        minutes,
+        back === trip ? null : back,
+      ),
     );
   }
 

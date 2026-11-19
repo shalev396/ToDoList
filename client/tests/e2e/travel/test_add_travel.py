@@ -496,11 +496,15 @@ def test_series_every_occurrence_creates_rule(
     assert marked.status == 200, marked.text()[:300]
     series_rule = marked.json()["data"]["rule"]
     assert series_rule["scope"] == {"kind": "series", "itemId": lecture["id"]}
-    # Its place isn't known yet: a calm note, not an error, and it has the focus.
+    # Its place isn't known yet, so the 30 minutes name no trip: nothing is stored, and it says so.
+    assert marked.json()["data"]["lengthStored"] is False
+    # A calm note, not an error, and it has the focus.
     note = travel.locator("[data-travel-note]")
     expect(note).to_have_text(
         "Travel is on. Trips appear after the next sync. "
-        "If none appear, set its place for travel in its details."
+        "If none appear, set its place for travel in its details. "
+        "The length you typed wasn’t saved: its place isn’t known yet. "
+        "Choose where you go, then set it again."
     )
     expect(note).to_be_focused()
     expect(travel.locator("[data-travel-error]")).to_have_count(0)
@@ -537,6 +541,8 @@ def test_series_every_occurrence_creates_rule(
     assert (body["mode"], body["direction"], body["placeId"]) == ("drive", "there", None)
     assert _same_instant(body["occurrence"], slot)
     assert marked.status == 200, marked.text()[:300]
+    # No length typed: nothing to say about one.
+    assert marked.json()["data"]["lengthStored"] is None
     scope = marked.json()["data"]["rule"]["scope"]
     assert (scope["kind"], scope["itemId"]) == ("item", lecture["id"])
     assert _same_instant(scope["occurrence"], slot)

@@ -208,17 +208,40 @@ export class TravelAnchors {
 
   /** Pin, rule's place, a place its location names, its container's default; else none. */
   #placeOf(row: ItemQueryRow, itemId: string, rule: TravelRule): string | null {
+    return TravelAnchors.placeOf(
+      { id: row.id, location: locationOf(row), containerId: row.containerId },
+      itemId,
+      rule.placeId,
+      { places: [...this.#places.values()], pins: this.#pins, defaults: this.#defaults },
+    );
+  }
+
+  /**
+   * Where an item is by its own, as a gather places it: the member's pin of it (by `itemId`, its
+   * series' for an occurrence, or its own row), the rule's place, a place its location names by
+   * name or alias, its calendar's or project's default; null when none (an area may lend it one,
+   * which only the day plan knows). The ids it answers are the member's own places only. Pure.
+   */
+  static placeOf(
+    row: { id: string; location: string | null; containerId: string | null },
+    itemId: string,
+    rulePlaceId: string | null,
+    own: {
+      places: readonly Place[];
+      pins: ReadonlyMap<string, string>;
+      defaults: ReadonlyMap<string, string>;
+    },
+  ): string | null {
+    const ids = new Set(own.places.map((place) => place.id));
     const known = (id: string | null | undefined): string | null =>
-      id !== null && id !== undefined && this.#places.has(id) ? id : null;
-    const pinned = known(this.#pins.get(itemId)) ?? known(this.#pins.get(row.id));
+      id !== null && id !== undefined && ids.has(id) ? id : null;
+    const pinned = known(own.pins.get(itemId)) ?? known(own.pins.get(row.id));
     if (pinned !== null) return pinned;
-    const ruled = known(rule.placeId);
+    const ruled = known(rulePlaceId);
     if (ruled !== null) return ruled;
-    const location = locationOf(row);
-    const named =
-      location === null ? null : PlaceMatcher.byName(location, [...this.#places.values()]);
+    const named = row.location === null ? null : PlaceMatcher.byName(row.location, own.places);
     if (named !== null) return named.id;
-    return row.containerId === null ? null : known(this.#defaults.get(row.containerId));
+    return row.containerId === null ? null : known(own.defaults.get(row.containerId));
   }
 
   /**

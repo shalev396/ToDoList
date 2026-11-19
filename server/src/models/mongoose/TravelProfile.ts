@@ -77,7 +77,7 @@ const ownFilter = (workspaceId: string, ownerUserId: string): Record<string, unk
 async function change(
   workspaceId: string,
   ownerUserId: string,
-  update: Record<string, unknown>,
+  update: Record<string, unknown> | Record<string, unknown>[],
 ): Promise<TravelProfileData | null> {
   const doc = await TravelProfileMongoModel.findOneAndUpdate(
     ownFilter(workspaceId, ownerUserId),
@@ -127,11 +127,25 @@ export const TravelProfileRepository: ITravelProfileRepository = {
     return change(workspaceId, ownerUserId, { $set: { settings, updatedAt: new Date() } });
   },
 
-  async setTripLength(workspaceId, ownerUserId, tripKey, minutes) {
+  async setTripLength(workspaceId, ownerUserId, tripKey, minutes, fillKey) {
     assertFieldKey(tripKey);
-    return change(workspaceId, ownerUserId, {
-      $set: { [`tripLengths.${tripKey}`]: minutes, updatedAt: new Date() },
-    });
+    if (fillKey !== null) assertFieldKey(fillKey);
+    // One pipeline write: the way back (`fillKey`) first, then what is stored (a length it already
+    // has wins), then this trip's own length.
+    return change(workspaceId, ownerUserId, [
+      {
+        $set: {
+          tripLengths: {
+            $mergeObjects: [
+              fillKey === null ? {} : { $literal: { [fillKey]: minutes } },
+              { $ifNull: ['$tripLengths', {}] },
+              { $literal: { [tripKey]: minutes } },
+            ],
+          },
+          updatedAt: '$$NOW',
+        },
+      },
+    ]);
   },
 
   async setPin(workspaceId, ownerUserId, map, id, placeId) {

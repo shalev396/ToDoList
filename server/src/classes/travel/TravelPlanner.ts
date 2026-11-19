@@ -63,9 +63,9 @@ import { TravelRule } from './TravelRule.js';
 /** Every member's regeneration after one sync, together (the rest wait for the daily pass). */
 export const AFTER_SYNC_BUDGET_MS = 60_000;
 /**
- * What a sync job keeps of the function's time after its travel: the writes a regeneration makes
- * after its last call out, and the job's own end. Lambda stops the function at 5 minutes, and a
- * job stopped there is run again.
+ * What a sync job keeps of the function's time after its travel: the last member's regeneration
+ * (its reads and writes, once it has started), and the job's own end. Lambda stops the function
+ * at 5 minutes, and a job stopped there is run again.
  */
 export const AFTER_SYNC_MARGIN_MS = 20_000;
 

@@ -5,16 +5,23 @@
  */
 import type { QueryClient } from '@tanstack/react-query';
 import type { PlaceView, TravelRuleView } from '@api-types/travel.ts';
+import { workspaceKey } from '../../features/workspaces/switching.ts';
 import { queryKeys } from './keys.ts';
 import { sameWorkspace } from './sameWorkspace.ts';
 
 /**
  * Every travel change makes my legs again on the server before it answers, so after one my
- * travel and every block that shows items (calendar, clock, timeline, agenda) are read again.
+ * travel, every block that shows items (calendar, clock, timeline, agenda) and every leg read on
+ * its own (a leg's sheet: a length set moves every leg of its trip, and its way back) are read
+ * again.
  */
 export function refreshAfterChange(queryClient: QueryClient, workspaceId: string): void {
   void queryClient.invalidateQueries({ queryKey: queryKeys.travel(workspaceId) });
   void queryClient.invalidateQueries({ predicate: (query) => query.queryKey[2] === 'block' });
+  void queryClient.invalidateQueries({
+    queryKey: workspaceKey(workspaceId, 'item'),
+    predicate: (query) => (query.state.data as { kind?: unknown } | undefined)?.kind === 'travel',
+  });
 }
 
 /**

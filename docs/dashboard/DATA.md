@@ -329,7 +329,7 @@ A **sign-in grant** (`kind: "oauth"`) is the same row made by an MCP OAuth clien
 ### 3.24 `TravelProfiles` (one per member and workspace)
 `{_id: "<workspaceId>|<userId>", workspaceId, ownerUserId, settings, tripLengths{}, itemPlaces{}, containerPlaces{}, hasTravel, lastPassDay, updatedAt}`.
 - `settings`: `goHome` (`enabled`, `minWindowMinutes`, `minAtHomeMinutes`) and `defaultMode`. No factors or buffers: there is no computed length for them to scale.
-- `tripLengths`: how long each trip takes as the member set it, in minutes, by trip (`from|to|mode`, place ids; each direction is its own trip). The only source of a leg's length: every leg of the trip takes it, every day and every occurrence, but legs whose times he set by hand. A trip without one is drawn with `UNSET_TRIP_MINUTES` (30). Removing a place removes the trips from or to it.
+- `tripLengths`: how long each trip takes as the member set it, in minutes, by trip (`from|to|mode`, place ids; each direction is its own trip, and setting one fills its way back, `to|from|mode`, when that has none yet). The only source of a leg's length: every leg of the trip takes it, every day and every occurrence, but legs whose times he set by hand. A trip without one is drawn with `UNSET_TRIP_MINUTES` (30). Removing a place removes the trips from or to it.
 - `itemPlaces` and `containerPlaces`: a place pinned to an item, or a default place for a calendar or project.
 - `hasTravel` (the member has rules, so item changes and the daily pass regenerate their legs) and `lastPassDay` (the last workspace-zone day the daily pass ran for them).
 Private to its member; hard-deleted like Places.

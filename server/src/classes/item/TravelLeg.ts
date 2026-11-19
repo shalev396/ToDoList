@@ -354,6 +354,8 @@ export class TravelLeg extends ScheduledItem {
     }
     const trip = this.travel;
     if (trip === null) throw new ValidationError('travel: this leg has no travel to edit');
+    // The span is checked before anything is stored: a refused change leaves the trip as it was.
+    this.#spanAfter(change, trip);
     if (minutes !== undefined) {
       // The trip's length first: it is what he asked for, and the next regeneration applies it.
       const key = DayPlanner.tripKey(trip.fromPlaceId, trip.toPlaceId, trip.mode);

@@ -394,10 +394,12 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       arg.el.setAttribute('data-anchor-moved', String(props.anchorMoved));
       arg.el.setAttribute('data-length-unset', String(props.lengthUnset));
     }
-    arg.el.setAttribute(
-      'aria-label',
-      props.conflict ? `${label}. ${t('travel.leg.conflict')}` : label,
-    );
+    // A leg says what is wrong with it, or that its trip has no length yet, in its name too.
+    const flags = [
+      props.conflict ? t('travel.leg.conflict') : null,
+      props.lengthUnset ? t('travel.leg.setLength') : null,
+    ].filter((flag) => flag !== null);
+    arg.el.setAttribute('aria-label', [label, ...flags].join('. '));
   };
 
   const status = data.isLoading ? 'loading' : data.isError ? 'error' : 'ready';

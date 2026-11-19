@@ -523,6 +523,13 @@ def _check_calendar(page: Page, text: dict) -> None:
     expect(event("leg-bus-next")).to_have_class(re.compile(r"\btc-unset\b"))
     expect(event("leg-bus-next")).to_have_attribute("data-length-unset", "true")
     expect(calendar.locator(".tc-unset")).to_have_count(1)
+    # And in its name, for anyone who can't see the dashes.
+    expect(event("leg-bus-next")).to_have_attribute(
+        "aria-label", re.compile(re.escape(text["set_length"]) + r"$")
+    )
+    expect(event("leg-bus-moved")).not_to_have_attribute(
+        "aria-label", re.compile(re.escape(text["set_length"]))
+    )
 
 
 def _check_clock(page: Page, text: dict) -> None:
@@ -543,6 +550,13 @@ def _check_clock(page: Page, text: dict) -> None:
     unset = ring.locator("path[data-length-unset='true']")
     expect(unset).to_have_count(1)
     expect(unset).to_have_attribute("style", re.compile(r"stroke-dasharray"))
+    # Said in its words too: the arc's title (and the ring's list for screen readers).
+    expect(unset.locator("title")).to_have_text(
+        re.compile(re.escape(text["set_length"]) + r"$")
+    )
+    expect(
+        ring.locator("path[data-length-unset='false'] title", has_text=text["set_length"])
+    ).to_have_count(0)
     expect(ring.locator("path[data-past='true']")).to_have_count(1)
     expect(ring.locator("path[data-past='true']")).to_have_attribute("data-leg-mode", "walk")
     # The ring's own words name the trip in the UI language.
@@ -584,6 +598,9 @@ def _check_agenda(page: Page, text: dict) -> None:
     unset = agenda.locator("li[data-agenda-leg][data-length-unset='true']")
     expect(unset).to_have_count(1)
     expect(unset).to_have_class(re.compile(r"outline-dashed"))
+    expect(unset.get_by_role("button")).to_have_accessible_name(
+        f"{text['bus_braude']}. {text['set_length']}"
+    )
     expect(
         agenda.locator("section[data-agenda-part='tomorrow'] li[data-agenda-leg='walk']")
     ).to_contain_text(text["walk_braude"])
@@ -617,6 +634,9 @@ def _check_timeline(page: Page, text: dict) -> None:
     unset = timeline.locator("li[data-timeline-leg][data-length-unset='true']")
     expect(unset).to_have_count(1)
     expect(unset).to_have_class(re.compile(r"outline-dashed"))
+    expect(unset.get_by_role("button")).to_have_accessible_name(
+        f"{text['bus_braude']}. {text['set_length']}"
+    )
 
 
 def _open_leg(page: Page, leg_id: str):
@@ -639,6 +659,28 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
     expect(sheet.locator("[data-leg-link]")).to_have_count(2)
     page.keyboard.press("Escape")
     expect(sheet).to_be_hidden()
+
+    # A trip there whose length isn't set yet: it says so, and asks for it (the field is empty).
+    sheet = _open_leg(page, "leg-bus-next")
+    section = sheet.locator("[data-travel-leg]")
+    expect(section).to_have_attribute("data-length-unset", "true")
+    expect(section.locator("[data-leg-length]")).to_have_text(text["length_unset"])
+    length = section.get_by_label(text["length_field"])
+    expect(length).to_have_value("")
+    expect(length).to_have_attribute("placeholder", text["length_placeholder"])
+    expect(section.locator("[data-leg-length-hint]")).to_have_text(text["length_unset_hint"])
+    page.keyboard.press("Escape")
+    expect(sheet).to_be_hidden()
+    # The day says "Set how long" on it too.
+    page.locator("[data-agenda] [data-travel-changed]").click()
+    panel = page.locator("[data-travel-day-sheet]")
+    expect(panel.locator(f"[data-travel-day='{TODAY}']")).to_be_visible(timeout=NORMAL_TIMEOUT)
+    unset = panel.locator("[data-travel-day-leg='leg-bus-next']")
+    expect(unset).to_have_attribute("data-length-unset", "true")
+    expect(unset.locator("[data-leg-set-length]")).to_have_text(text["set_length"])
+    expect(panel.locator("[data-leg-set-length]")).to_have_count(1)
+    page.keyboard.press("Escape")
+    expect(panel).to_be_hidden()
 
     # The leg whose event moved, edited by hand: the sheet in full.
     sheet = _open_leg(page, "leg-bus-moved")
@@ -674,10 +716,11 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
     length = section.get_by_label(text["length_field"])
     expect(length).to_have_value("40", timeout=NORMAL_TIMEOUT)
     this_trip = section.locator("[data-leg-this-trip]")
-    # This trip only: he leaves earlier (16:50); it keeps its own length, the arrival follows
-    # (17:30), and only the time he typed is sent.
-    this_trip.locator("input[type='time']").first.fill("16:50")
-    expect(this_trip.locator("input[type='time']").nth(1)).to_have_value("17:30")
+    # This trip only: he leaves later (17:50), after it would have arrived (17:40): later that
+    # day, not the day before. It keeps its own length, the arrival follows (18:30), and only the
+    # time he typed is sent.
+    this_trip.locator("input[type='time']").first.fill("17:50")
+    expect(this_trip.locator("input[type='time']").nth(1)).to_have_value("18:30")
     expect(length).to_have_value("40")
     expect(section.locator("[data-leg-save]")).to_be_enabled()
     with page.expect_response(
@@ -685,18 +728,19 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
         timeout=APP_REQUEST_TIMEOUT,
     ):
         section.locator("[data-leg-save]").click()
-    assert stub.calls[-1] == ("edit", "leg-bus-moved", {"startAt": iso(at(TODAY, "16:50"))})
+    assert stub.calls[-1] == ("edit", "leg-bus-moved", {"startAt": iso(at(TODAY, "17:50"))})
+    expect(section.locator("[data-leg-when]")).to_contain_text(re.compile(r"17:50\W+18:30"))
     # His times, acknowledged: the "moved" flag is gone.
     expect(section.locator("[data-leg-length]")).to_have_text(text["length_set"])
     expect(section.locator("[data-leg-flag='moved']")).to_have_count(0)
     expect(page.locator("[data-calendar-view] .fc-event[data-item-id='leg-bus-moved']")).to_have_attribute(
         "data-anchor-moved", "false"
     )
-    # How long the trip takes, every time: 35. A trip back keeps its departure (16:50); only the
+    # How long the trip takes, every time: 35. A trip back keeps its departure (17:50); only the
     # length is sent, and it says every such trip takes it now.
     length = section.get_by_label(text["length_field"])
     length.fill("35")
-    expect(section.locator("[data-leg-this-trip] input[type='time']").nth(1)).to_have_value("17:25")
+    expect(section.locator("[data-leg-this-trip] input[type='time']").nth(1)).to_have_value("18:25")
     with page.expect_response(
         lambda r: r.request.method == "PATCH" and r.url.endswith("/travel/legs/leg-bus-moved"),
         timeout=APP_REQUEST_TIMEOUT,
@@ -705,6 +749,11 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
     assert stub.calls[-1] == ("edit", "leg-bus-moved", {"minutes": 35})
     expect(page.locator("[data-sonner-toast]", has_text=text["length_saved"])).to_be_visible()
     expect(section.locator("[data-leg-length]")).to_have_text(text["length_35"])
+    # The way there (Home → Braude by bus) had no length yet: it starts with the same 35, and is
+    # no longer dashed (13:05-13:40, arriving as the class starts).
+    bus_next = page.locator("[data-calendar-view] .fc-event[data-item-id='leg-bus-next']")
+    expect(bus_next).to_have_attribute("data-length-unset", "false", timeout=NORMAL_TIMEOUT)
+    expect(page.locator("[data-calendar-view] .tc-unset")).to_have_count(0)
 
     # Reset: computed again with the trip's length (18:00-18:35), nothing left to reset.
     with page.expect_response(
@@ -719,15 +768,13 @@ def _check_leg_sheet(page: Page, stub: StubbedLegs, text: dict) -> None:
     page.keyboard.press("Escape")
     expect(sheet).to_be_hidden()
 
-    # A trip whose length isn't set yet: it says so, and asks for it (the field is empty).
+    # The trip there took the way home's 35, set by him: the field shows it.
     sheet = _open_leg(page, "leg-bus-next")
     section = sheet.locator("[data-travel-leg]")
-    expect(section).to_have_attribute("data-length-unset", "true")
-    expect(section.locator("[data-leg-length]")).to_have_text(text["length_unset"])
-    length = section.get_by_label(text["length_field"])
-    expect(length).to_have_value("")
-    expect(length).to_have_attribute("placeholder", text["length_placeholder"])
-    expect(section.locator("[data-leg-length-hint]")).to_have_text(text["length_unset_hint"])
+    expect(section).to_have_attribute("data-length-unset", "false")
+    expect(section.locator("[data-leg-length]")).to_have_text(text["length_35"])
+    expect(section.locator("[data-leg-when]")).to_contain_text(re.compile(r"13:05\W+13:40"))
+    expect(section.get_by_label(text["length_field"])).to_have_value("35", timeout=NORMAL_TIMEOUT)
     # Skip a trip that was in the way: the sheet closes, and the calendar loses it.
     with page.expect_response(
         lambda r: r.request.method == "POST" and r.url.endswith("/travel/legs/leg-bus-next/skip"),
@@ -772,11 +819,11 @@ def _check_day_panel(page: Page, stub: StubbedLegs, text: dict) -> None:
     assert stub.calls[-1] == ("reset", "leg-bus-next", {})
     expect(trips).to_have_count(4, timeout=NORMAL_TIMEOUT)
     expect(skipped).to_have_count(0)
-    # The trip back has no length yet: the day says "Set how long" on it.
-    unset = panel.locator("[data-travel-day-leg='leg-bus-next']")
-    expect(unset).to_have_attribute("data-length-unset", "true")
-    expect(unset.locator("[data-leg-set-length]")).to_have_text(text["set_length"])
-    expect(panel.locator("[data-leg-set-length]")).to_have_count(1)
+    # The trip there is back with its trip's length (35, from the way home): nothing asks for one
+    # now ("Set how long" was said on it before, see _check_leg_sheet).
+    brought = panel.locator("[data-travel-day-leg='leg-bus-next']")
+    expect(brought).to_have_attribute("data-length-unset", "false")
+    expect(panel.locator("[data-leg-set-length]")).to_have_count(0)
     # A trip opens its own sheet, in place of the day's.
     panel.locator("[data-travel-day-leg='leg-bus-next'] button").click()
     expect(page.locator("[data-item-sheet] [data-travel-leg]")).to_be_visible(timeout=NORMAL_TIMEOUT)

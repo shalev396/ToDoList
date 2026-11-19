@@ -122,6 +122,8 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
         <div className="-my-1 flex min-w-0 flex-1 flex-col">
           <button
             type="button"
+            // A trip with no length yet says so in its name, for anyone who can't see the dashes.
+            aria-label={leg?.unset === true ? `${label}. ${t('travel.leg.setLength')}` : undefined}
             onClick={() => {
               openItem(row.id, occurrence.originalStart ?? undefined);
             }}

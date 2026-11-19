@@ -1,7 +1,8 @@
 /**
  * DayPlanner (docs/superpowers/specs/2026-11-17-travel-time-design.md, "The day plan"): anchors,
  * Home and lengths in, legs out. Pure: every length comes from the lengths map (the member's own,
- * or the placeholder of a trip he hasn't set), which holds exactly the trips `trips()` lists. Times are read on the Asia/Jerusalem wall clock, the owner's.
+ * or the placeholder of a trip he hasn't set), which holds exactly the trips `trips()` lists.
+ * Times are read on the Asia/Jerusalem wall clock, the owner's.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -831,7 +832,7 @@ describe('DayPlanner: painted areas (the owner’s ruling of 2026-11-18)', () =>
   });
 
   it('the gym ending just before the area does: home from the gym, never back to Braude for it', () => {
-    // The review's case: walking Braude ↔ gym 20 min, by bus Braude ↔ Home 20, walking gym → Home 30.
+    // The review's case: walking Braude ↔ gym 20 min, bus Braude ↔ Home 20, walking gym → Home 30.
     const gym = anchor({
       itemId: 'gym',
       start: at('15:00'),

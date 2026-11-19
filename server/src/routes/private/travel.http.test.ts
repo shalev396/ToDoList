@@ -331,12 +331,14 @@ describe('marking an item', () => {
       },
       201,
     );
-    const answer = await ok<{ rule: TravelRuleView; legs: Leg[] }>(
+    const answer = await ok<{ rule: TravelRuleView; legs: Leg[]; lengthStored: boolean | null }>(
       'editor',
       'POST',
       `/travel/items/${lab.id}`,
       { every: true, mode: 'transit', direction: 'both', placeId: braudeId },
     );
+    // No length typed: nothing to say about one.
+    assert.equal(answer.lengthStored, null);
     assert.deepEqual(answer.rule, {
       id: answer.rule.id,
       scope: { kind: 'series', itemId: lab.id },
@@ -368,17 +370,22 @@ describe('marking an item', () => {
     );
     const rules = await ok<TravelRuleView[]>('editor', 'GET', '/travel/rules');
     assert.ok(rules.some((rule) => rule.id === answer.rule.id));
-    // Marked again: the same rule, changed (never a second one).
-    const again = await ok<{ rule: TravelRuleView; legs: Leg[] }>(
+    // Marked again: the same rule, changed (never a second one). The length typed is the trip
+    // it names (Home → Braude by car): every leg there takes it.
+    const again = await ok<{ rule: TravelRuleView; legs: Leg[]; lengthStored: boolean | null }>(
       'editor',
       'POST',
       `/travel/items/${lab.id}`,
-      { every: true, mode: 'drive', direction: 'there', placeId: braudeId },
+      { every: true, mode: 'drive', direction: 'there', placeId: braudeId, there: { minutes: 25 } },
     );
     assert.equal(again.rule.id, answer.rule.id);
+    assert.equal(again.lengthStored, true);
     assert.deepEqual(
-      again.legs.map((leg) => leg.title),
-      ['Drive to Braude', 'Drive to Braude'],
+      again.legs.map((leg) => [leg.title, leg.props.travel.minutes, leg.props.travel.source]),
+      [
+        ['Drive to Braude', 25, 'set'],
+        ['Drive to Braude', 25, 'set'],
+      ],
     );
     assert.equal(
       (await ok<TravelRuleView[]>('editor', 'GET', '/travel/rules')).length,

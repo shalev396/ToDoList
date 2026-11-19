@@ -282,6 +282,8 @@ export const travel = {
     added_other: 'Travel added: {{count}} trips.',
     pending: 'Travel is on. Trips appear after the next sync.',
     pendingOwnPlace: 'If none appear, set its place for travel in its details.',
+    lengthNotStored:
+      'The length you typed wasn’t saved: its place isn’t known yet. Choose where you go, then set it again.',
     inside: 'It’s inside {{area}}, at {{place}}, so it needs no trips of its own.',
     removed: 'Travel removed.',
     failed: 'Travel couldn’t be added.',

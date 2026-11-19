@@ -112,12 +112,23 @@ describe('travel cache', () => {
     const days = queryKeys.travelDays('A', '2026-11-19', '2026-11-19');
     const otherDays = queryKeys.travelDays('B', '2026-11-19', '2026-11-19');
     const block = queryKeys.block('A', 'd1', 'b1', 'v');
+    // A leg read on its own (its sheet): a length set moves the other legs of its trip, and its
+    // way back. Another item, or another workspace's leg, is left as it is.
+    const leg = queryKeys.item('A', 'leg-1');
+    const todo = queryKeys.item('A', 'todo-1');
+    const otherLeg = queryKeys.item('B', 'leg-2');
     queryClient.setQueryData(days, { days: [] });
     queryClient.setQueryData(otherDays, { days: [] });
     queryClient.setQueryData(block, { rows: [] });
+    queryClient.setQueryData(leg, { id: 'leg-1', kind: 'travel' });
+    queryClient.setQueryData(todo, { id: 'todo-1', kind: 'todo' });
+    queryClient.setQueryData(otherLeg, { id: 'leg-2', kind: 'travel' });
     refreshAfterChange(queryClient, 'A');
     assert.equal(queryClient.getQueryState(days)?.isInvalidated, true);
     assert.equal(queryClient.getQueryState(block)?.isInvalidated, true);
     assert.equal(queryClient.getQueryState(otherDays)?.isInvalidated, false);
+    assert.equal(queryClient.getQueryState(leg)?.isInvalidated, true);
+    assert.equal(queryClient.getQueryState(todo)?.isInvalidated, false);
+    assert.equal(queryClient.getQueryState(otherLeg)?.isInvalidated, false);
   });
 });

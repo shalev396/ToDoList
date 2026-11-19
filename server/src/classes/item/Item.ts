@@ -238,6 +238,14 @@ export abstract class Item
     return this.data.containerId;
   }
 
+  /** Where it happens, as its location text says (trimmed); null when it has none. */
+  get location(): string | null {
+    const location = this.data.props['location'];
+    if (typeof location !== 'string') return null;
+    const trimmed = location.trim();
+    return trimmed === '' ? null : trimmed;
+  }
+
   get ownerUserId(): string | null {
     return this.data.ownerUserId;
   }

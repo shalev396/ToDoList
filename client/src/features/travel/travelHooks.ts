@@ -69,10 +69,10 @@ export function useAddTravel() {
         ),
       });
       const outcome = outcomeOf(answer, input.state.toPlaceId === null);
-      if (outcome.kind === 'added') {
+      if (outcome.kind === 'added' && !outcome.lengthNotStored) {
         toast.success(outcomeText(t, outcome));
       } else {
-        // No trips yet is a calm note, not an error (they come with the next sync).
+        // No trips yet (they come with the next sync), or a length not stored: a calm note.
         toast.info(outcomeText(t, outcome));
       }
     } catch (failure) {

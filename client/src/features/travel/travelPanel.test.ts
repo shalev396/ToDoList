@@ -445,22 +445,45 @@ describe('which items take travel, and their mark', () => {
 
   it('an answer with no trips yet is a calm note, not an error', () => {
     const view = { id: 'r', scope: { kind: 'series', itemId: 'x' } } as unknown as TravelRuleView;
-    assert.deepEqual(outcomeOf({ rule: view, legs: [], within: null }, false), {
+    assert.deepEqual(outcomeOf({ rule: view, legs: [], within: null, lengthStored: null }, false), {
       kind: 'pending',
       ownPlace: false,
+      lengthNotStored: false,
     });
     const legs = [{}, {}] as unknown as Parameters<typeof outcomeOf>[0]['legs'];
-    assert.deepEqual(outcomeOf({ rule: view, legs, within: null }, true), {
+    assert.deepEqual(outcomeOf({ rule: view, legs, within: null, lengthStored: true }, true), {
       kind: 'added',
       count: 2,
+      lengthNotStored: false,
     });
+  });
+
+  it('a length that was not stored (its place isn’t known yet) is said, with what came of it', () => {
+    const view = { id: 'r', scope: { kind: 'item', itemId: 'x' } } as unknown as TravelRuleView;
+    const outcome = outcomeOf({ rule: view, legs: [], within: null, lengthStored: false }, true);
+    assert.deepEqual(outcome, { kind: 'pending', ownPlace: true, lengthNotStored: true });
+    assert.equal(
+      outcomeText(t, outcome),
+      'Travel is on. Trips appear after the next sync. If none appear, set its place for travel ' +
+        'in its details. The length you typed wasn’t saved: its place isn’t known yet. Choose ' +
+        'where you go, then set it again.',
+    );
+    assert.equal(
+      he.travel.add.lengthNotStored,
+      'משך הנסיעה שהקלדתם לא נשמר: המקום שלו עוד לא ידוע. בחרו לאן נוסעים והגדירו אותו שוב.',
+    );
   });
 
   it('no trips because it is inside a marked area: says so, never "set its place"', () => {
     const view = { id: 'r', scope: { kind: 'item', itemId: 'x' } } as unknown as TravelRuleView;
     const within = { area: 'Studying', place: 'Braude' };
-    const outcome = outcomeOf({ rule: view, legs: [], within }, true);
-    assert.deepEqual(outcome, { kind: 'inside', area: 'Studying', place: 'Braude' });
+    const outcome = outcomeOf({ rule: view, legs: [], within, lengthStored: null }, true);
+    assert.deepEqual(outcome, {
+      kind: 'inside',
+      area: 'Studying',
+      place: 'Braude',
+      lengthNotStored: false,
+    });
     assert.equal(
       outcomeText(t, outcome),
       'It’s inside Studying, at Braude, so it needs no trips of its own.',
@@ -468,7 +491,11 @@ describe('which items take travel, and their mark', () => {
     assert.equal(he.travel.add.inside, 'הוא בתוך {{area}}, ב־{{place}}, ולכן אין לו נסיעות משלו.');
     // Trips of its own win: "inside" is only why there are none.
     const legs = [{}] as unknown as Parameters<typeof outcomeOf>[0]['legs'];
-    assert.deepEqual(outcomeOf({ rule: view, legs, within }, true), { kind: 'added', count: 1 });
+    assert.deepEqual(outcomeOf({ rule: view, legs, within, lengthStored: null }, true), {
+      kind: 'added',
+      count: 1,
+      lengthNotStored: false,
+    });
   });
 });
 
@@ -514,6 +541,25 @@ describe('a leg’s own sheet', () => {
       25,
     ]);
     assert.deepEqual(legEditOf(shorter), { minutes: 25 });
+  });
+
+  it('a later leave on a trip back is later that day; an arrival past midnight the next', () => {
+    const back = open({ ...LEG, direction: 'back' });
+    // It leaves at 13:20 and arrives at 14:00: leaving at 14:10 is that afternoon, not the day
+    // before, and it keeps its own 40 minutes (arriving 14:50).
+    const later = editPanelTime(back, 'start', '14:10', ZONE);
+    assert.deepEqual(spanOf(later), [
+      minutesAfter(AT_TWO, 10).toISOString(),
+      minutesAfter(AT_TWO, 50).toISOString(),
+      40,
+    ]);
+    assert.deepEqual(legEditOf(later), { startAt: minutesAfter(AT_TWO, 10).toISOString() });
+    // Arriving at 00:10 after leaving at 13:20 is the next day.
+    const late = editPanelTime(back, 'end', '00:10', ZONE);
+    assert.equal(late.end?.toISOString(), minutesAfter(AT_TWO, 10 * 60 + 10).toISOString());
+    // A trip there still reads a leave at or after its arrival as the day before.
+    const early = editPanelTime(open(), 'start', '14:10', ZONE);
+    assert.equal(early.start?.toISOString(), minutesBefore(AT_TWO, 24 * 60 - 10).toISOString());
   });
 
   it('leave or arrive move this trip only, keeping its own length', () => {

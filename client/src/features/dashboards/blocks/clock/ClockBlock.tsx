@@ -101,7 +101,11 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
         topic: event.colour === undefined ? t('topics.unsorted') : labelOf(event.colour),
         source: t(sourceNameKey(event.source)),
       });
-      return event.leg?.conflict === true ? `${text}. ${t('travel.leg.conflict')}` : text;
+      const flags = [
+        event.leg?.conflict === true ? t('travel.leg.conflict') : null,
+        event.leg?.unset === true ? t('travel.leg.setLength') : null,
+      ].filter((flag) => flag !== null);
+      return [text, ...flags].join('. ');
     },
     describeArea: (area: ClockArea) =>
       t('timeBlocks.clock.describeArea', {
@@ -232,6 +236,9 @@ function SummaryLine({
             )}
             <span dir="auto" title={title} className="min-w-0 flex-1 truncate">
               {title}
+              {leg?.unset === true ? (
+                <span className="sr-only">. {t('travel.leg.setLength')}</span>
+              ) : null}
             </span>
             <span className="shrink-0 text-muted-foreground tabular-nums" dir="ltr">
               {detail}
