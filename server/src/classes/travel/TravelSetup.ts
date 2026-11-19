@@ -241,8 +241,8 @@ export class TravelSetup {
         applying.weekday === slot.weekday &&
         applying.startTime === slot.startTime &&
         found.rule.mode === choice.mode &&
-        found.rule.direction === choice.direction &&
-        found.rule.placeId === choice.placeId;
+        // A rule stored without a place (the item's own) means the place we'd store.
+        (found.rule.placeId ?? choice.placeId) === choice.placeId;
       if (already) {
         marked = 0;
       } else {

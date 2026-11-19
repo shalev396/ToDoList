@@ -4,6 +4,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { ArrowRight, CircleAlert, RotateCcw, Route, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
 import { errorMessage } from '@/api/errors';
+import { useItem } from '@/api/queries/items';
 import {
   useChangeLegMode,
   useEditLeg,
@@ -106,7 +107,8 @@ function Leg({
   const busy = edit.isPending || skip.isPending || reset.isPending || changeMode.isPending;
   // The way he picked, until he says whether it is this day only or every repeat.
   const [pickedMode, setPickedMode] = useState<TravelMode | null>(null);
-  const modeGroup = useRef<HTMLFieldSetElement>(null);
+  const currentMode = useRef<HTMLButtonElement>(null);
+  const anchor = useItem(workspaceId === '' ? null : workspaceId, travel.anchorItemId);
   const canReset = travel.edited || travel.anchorMoved;
 
   const whenText =
@@ -153,6 +155,14 @@ function Leg({
     }
   };
   const pattern = repeatPatternOf(travel.anchorStart, timeZone, locale);
+  // The server makes a repeats rule for an event that doesn't repeat itself and sits in a calendar
+  // or project; a series takes a series mark; anything else changes just this day.
+  const repeatsText =
+    travel.occurrence !== 'single'
+      ? t('travel.leg.sheet.modeEverySeries')
+      : anchor.data?.containerId !== null && anchor.data?.containerId !== undefined
+        ? t('travel.leg.sheet.modeEveryPattern', { ...pattern, time: ltr(pattern.time) })
+        : t('travel.leg.sheet.modeEveryNone');
 
   return (
     <section
@@ -241,46 +251,47 @@ function Leg({
 
       {canWrite ? (
         <>
-          <fieldset
-            ref={modeGroup}
-            tabIndex={-1}
-            disabled={busy}
+          <div
+            role="group"
+            aria-labelledby={`${modeIds}-mode`}
             data-leg-mode-picker=""
-            className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0 outline-none"
+            className="flex min-w-0 flex-col gap-1.5"
           >
-            <legend className="mb-1.5 text-sm font-medium">{t('travel.add.mode')}</legend>
+            <span id={`${modeIds}-mode`} className="mb-1.5 text-sm font-medium">
+              {t('travel.add.mode')}
+            </span>
             <div className="flex w-full gap-1 rounded-md bg-sunken p-1">
               {TRAVEL_MODES.map((mode) => (
-                <label
+                <button
                   key={mode}
+                  ref={travel.mode === mode ? currentMode : undefined}
+                  type="button"
+                  aria-pressed={travel.mode === mode}
+                  aria-disabled={busy}
                   data-leg-mode-choice={mode}
+                  onClick={() => {
+                    // Only a click, Enter or Space on another way asks; the arrow keys just move.
+                    if (!busy && mode !== travel.mode) {
+                      setPickedMode(mode);
+                    }
+                  }}
                   className={cn(
-                    'relative flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2 text-center text-[13px] transition-colors pointer-fine:min-h-8 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring',
+                    'flex min-h-11 min-w-0 flex-1 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-2 text-center text-[13px] transition-colors outline-none pointer-fine:min-h-8 focus-visible:ring-2 focus-visible:ring-ring',
                     travel.mode === mode
                       ? 'bg-card font-medium text-foreground shadow-xs'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  <input
-                    type="radio"
-                    name={`${modeIds}-mode`}
-                    value={mode}
-                    checked={travel.mode === mode}
-                    onChange={() => {
-                      setPickedMode(mode);
-                    }}
-                    className="sr-only"
-                  />
                   <LegModeIcon mode={mode} className="size-4" />
                   <span className="min-w-0 break-words">{t(`travel.add.tabs.${mode}`)}</span>
-                </label>
+                </button>
               ))}
             </div>
-          </fieldset>
+          </div>
           <EveryOccurrenceDialog
             open={pickedMode !== null}
             oneAvailable
-            returnFocus={modeGroup}
+            returnFocus={currentMode}
             onCancel={() => {
               setPickedMode(null);
             }}
@@ -291,10 +302,7 @@ function Leg({
             }}
             copy={{
               title: t('travel.leg.sheet.modeEveryTitle'),
-              body:
-                travel.occurrence === 'single'
-                  ? t('travel.leg.sheet.modeEveryPattern', pattern)
-                  : t('travel.leg.sheet.modeEverySeries'),
+              body: repeatsText,
               one: t('travel.leg.sheet.modeEveryOne'),
               every: t('travel.leg.sheet.modeEveryEvery'),
             }}
@@ -499,8 +507,11 @@ function LegTimes({
 
       <fieldset className="m-0 flex min-w-0 flex-col gap-1.5 border-0 p-0" data-leg-this-trip="">
         <legend className="mb-1 text-sm font-medium">{t('travel.leg.sheet.thisTrip')}</legend>
-        <div className="flex flex-wrap items-end gap-2" data-leg-times-row="">
-          <div className="flex min-w-[9rem] flex-1 flex-col gap-1">
+        <div
+          className="grid grid-cols-[repeat(2,minmax(0,1fr))] items-end gap-2 max-[26rem]:grid-cols-[minmax(0,1fr)]"
+          data-leg-times-row=""
+        >
+          <div className="flex min-w-0 flex-col gap-1">
             <Label htmlFor={`${ids}-leave`} className="text-[13px] font-normal">
               {t('travel.add.leave')}
             </Label>
@@ -508,7 +519,7 @@ function LegTimes({
               id={`${ids}-leave`}
               type="time"
               dir="ltr"
-              className="max-w-full min-w-0 appearance-none"
+              className="w-full min-w-0"
               value={time(state.start ?? span?.start)}
               onChange={(event) => {
                 const value = event.target.value;
@@ -516,7 +527,7 @@ function LegTimes({
               }}
             />
           </div>
-          <div className="flex min-w-[9rem] flex-1 flex-col gap-1">
+          <div className="flex min-w-0 flex-col gap-1">
             <Label htmlFor={`${ids}-arrive`} className="text-[13px] font-normal">
               {t('travel.add.arrive')}
             </Label>

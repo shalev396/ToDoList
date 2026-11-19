@@ -9,11 +9,18 @@ How he goes on a trip, from the trip's sheet (plan 2026-11-19, Task 3), on the o
 - The sheet has no horizontal overflow at either size (the "only this trip" leave and arrive
   inputs fit; the owner's iPad showed 15:20 cut off and a horizontal scrollbar).
 
-The lecture is a weekly time block (a series) on a Thursday of next week, travelled to by bus from
-Home. UNRUN when written: the e2e login needs AWS (SSO was expired), so this has not been executed;
+The lecture is a weekly time block (a series) starting tomorrow, travelled to by bus from Home.
+Trips exist only through today+13 (TRAVEL_HORIZON_DAYS = 14), so the two occurrences used are
+tomorrow and tomorrow+7. This is the series path only: "Only this day" marks that occurrence,
+"Every repeat" the series. The other "every repeat" path (an event that does not repeat itself, a
+rule by calendar, title, weekday and time) and the "already made by that rule: nothing stored"
+answer (marked: 0) are covered by the server tests in TravelSetup.legMode.test.ts: the e2e helpers
+cannot seed an imported event. UNRUN when written: the e2e login needs AWS (SSO was expired), so this has not been executed;
 the first run may need its waits tuned. The legs are read from the server (`…/travel/days`), the
 sheet from its own attributes.
 """
+from datetime import date
+
 import pytest
 from playwright.sync_api import Locator, Page, expect
 
@@ -44,14 +51,18 @@ def ipad_landscape(browser, browser_context_args):
 
 
 def _seed(page: Page, api_base_url: str, fresh_owner) -> tuple:
-    """Home, Braude and a weekly Thursday lecture from next week's Thursday, travelled to by bus
-    ("there" only, 40 minutes). Returns (user, workspace id, [the first three Thursdays])."""
+    """Home, Braude and a weekly lecture from tomorrow, travelled to by bus ("there" only, 40
+    minutes). Returns (user, workspace id, [tomorrow, tomorrow + 7], this Sunday)."""
     user, workspace = fresh_owner
     wid = workspace["id"]
     create_dashboard(api_base_url, user, wid, language="he")
     page.goto("about:blank")
-    first = add_days(this_sunday(page), 11)
-    thursdays = [first, add_days(first, 7), add_days(first, 14)]
+    today = page.evaluate(
+        "() => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jerusalem' }).format(new Date())"
+    )
+    first = add_days(today, 1)
+    days = [first, add_days(first, 7)]
+    weekday = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"][date.fromisoformat(first).weekday()]
     create_place(api_base_url, user, wid, "Home", home=True)
     braude = create_place(api_base_url, user, wid, "Braude")
     lecture = create_time_block(
@@ -61,7 +72,7 @@ def _seed(page: Page, api_base_url: str, fresh_owner) -> tuple:
         subject=LECTURE,
         startAt=zoned_iso(page, first, "10:30"),
         endAt=zoned_iso(page, first, "12:00"),
-        recurrence=["RRULE:FREQ=WEEKLY;BYDAY=TH"],
+        recurrence=[f"RRULE:FREQ=WEEKLY;BYDAY={weekday}"],
     )
     mark_item(
         api_base_url,
@@ -74,11 +85,11 @@ def _seed(page: Page, api_base_url: str, fresh_owner) -> tuple:
         place_id=braude["id"],
         there={"minutes": 40},
     )
-    return user, wid, thursdays
+    return user, wid, days, this_sunday(page)
 
 
 def _leg(api_base_url: str, user, wid: str, day: str) -> dict:
-    """The one trip of `day` (a Thursday: the bus there), as the server has it now."""
+    """The one trip of `day` (the lecture's: one trip there), as the server has it now."""
     [row] = get_days(api_base_url, user, wid, day, day)
     assert len(row["legs"]) == 1, row
     return row["legs"][0]
@@ -118,8 +129,8 @@ def _no_horizontal_overflow(page: Page) -> None:
 def test_sheet_has_no_horizontal_overflow(
     ipad: Page, base_url: str, api_base_url: str, fresh_owner
 ):
-    user, wid, thursdays = _seed(ipad, api_base_url, fresh_owner)
-    leg = _leg(api_base_url, user, wid, thursdays[0])
+    user, wid, days, _ = _seed(ipad, api_base_url, fresh_owner)
+    leg = _leg(api_base_url, user, wid, days[0])
     section = _open_leg(ipad, base_url, user, leg)
     expect(section.locator("[data-leg-times-row]")).to_be_visible()
     _no_horizontal_overflow(ipad)
@@ -135,12 +146,12 @@ def test_walk_this_day_then_every_repeat(
     ipad_landscape: Page, base_url: str, api_base_url: str, fresh_owner
 ):
     page = ipad_landscape
-    user, wid, [day1, day2, day3] = _seed(page, api_base_url, fresh_owner)
-    first, second, third = (_leg(api_base_url, user, wid, day) for day in (day1, day2, day3))
-    for leg in (first, second, third):
+    user, wid, [day1, day2], sunday = _seed(page, api_base_url, fresh_owner)
+    first, second = (_leg(api_base_url, user, wid, day) for day in (day1, day2))
+    for leg in (first, second):
         assert leg["props"]["travel"]["mode"] == "transit", leg
 
-    # Only this day: the first Thursday's trip walks, the next week's is still the bus.
+    # Only this day: tomorrow's trip walks, the next week's is still the bus.
     section = _open_leg(page, base_url, user, first)
     expect(section).to_have_attribute("data-leg-mode", "transit")
     section.locator("[data-leg-mode-choice='walk']").click()
@@ -154,16 +165,15 @@ def test_walk_this_day_then_every_repeat(
     assert changed.value.request.post_data_json == {"mode": "walk", "scope": "this"}
     assert changed.value.status == 200
     expect(section).to_have_attribute("data-leg-mode", "walk", timeout=NORMAL_TIMEOUT)
-    expect(section.locator("[data-leg-mode-choice='walk'] input")).to_be_checked()
+    expect(section.locator("[data-leg-mode-choice='walk']")).to_have_attribute("aria-pressed", "true")
     # The trip's title in the sheet follows the mode ("נסיעה באוטובוס לבראודה" becomes the walk).
     expect(section.locator("#leg-title")).to_contain_text("הליכה")
     assert _leg(api_base_url, user, wid, day1)["props"]["travel"]["mode"] == "walk"
     assert _leg(api_base_url, user, wid, day1)["title"].startswith("Walk")
     assert _leg(api_base_url, user, wid, day2)["props"]["travel"]["mode"] == "transit"
-    assert _leg(api_base_url, user, wid, day3)["props"]["travel"]["mode"] == "transit"
 
-    # Every repeat, from the second Thursday: it is the series that walks now, so the third (and
-    # the second) change; the first, already walking, stays.
+    # Every repeat, from the next week's: it is the series that walks now, so that week changes
+    # (tomorrow's, already walking, stays).
     second = _leg(api_base_url, user, wid, day2)
     section = _open_leg(page, base_url, user, second)
     expect(section).to_have_attribute("data-leg-mode", "transit")
@@ -178,14 +188,14 @@ def test_walk_this_day_then_every_repeat(
     assert repeated.value.request.post_data_json == {"mode": "walk", "scope": "repeats"}
     assert repeated.value.json()["data"]["marked"] == 1
     expect(section).to_have_attribute("data-leg-mode", "walk", timeout=NORMAL_TIMEOUT)
-    for day in (day1, day2, day3):
+    for day in (day1, day2):
         assert _leg(api_base_url, user, wid, day)["props"]["travel"]["mode"] == "walk", day
 
-    # The way he goes is the same in the week calendar (the chip's icon is the mode's).
+    # The way he goes is the same in the week calendar (the week of the second trip) (the chip's icon is the mode's).
     page.goto(f"{base_url}/he/dashboard")
     calendar = page.locator("[data-calendar-view='week']")
     expect(calendar).to_be_visible(timeout=NORMAL_TIMEOUT)
-    for _ in range(1):
+    for _ in range((date.fromisoformat(day2) - date.fromisoformat(sunday)).days // 7):
         calendar.get_by_role("button", name="הבא", exact=True).click()
     chips = calendar.locator(".fc-event.tc-travel")
     expect(chips.first).to_be_visible(timeout=NORMAL_TIMEOUT)

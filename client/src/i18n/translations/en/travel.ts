@@ -210,6 +210,7 @@ export const travel = {
       modeEveryOne: 'Only this day',
       modeEveryEvery: 'Every repeat',
       modeEverySeries: 'Every occurrence of this event goes this way.',
+      modeEveryNone: 'This event does not repeat: only this day changes.',
       modeEveryPattern: 'Every {{weekday}} at {{time}}, like this one, from this one on.',
     },
   },

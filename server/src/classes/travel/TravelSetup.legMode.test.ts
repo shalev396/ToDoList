@@ -357,6 +357,36 @@ describe('TravelSetup#changeLegMode', () => {
     assert.equal((await repeatsOf()).length, 2);
   });
 
+  it('repeats: a rule stored without a place (from MCP) is the same as the place we would store', async () => {
+    const ws = await workspace();
+    const first = await lecture(ws, 'l1', local(1, 10, 30));
+    const next = await lecture(ws, 'l2', local(8, 10, 30));
+    await classes.TravelRule.create(ws.a, {
+      scope: {
+        kind: 'repeats',
+        containerId: 'cal-braude',
+        title: 'חדו"א 1מ גב\' קזל נור',
+        weekday: weekdayOf(local(1, 12)),
+        startTime: '10:30',
+        from: local(1, 10, 30).toISOString(),
+      },
+      mode: 'walk',
+      direction: 'both',
+      placeId: null,
+    });
+    // The calendar's own place is where the rule's trips go.
+    await classes.TravelSetup.of(ws.a).setContainerPlace('cal-braude', ws.braudeId);
+    await regenerate(ws);
+    const before = (await marks(ws)).length;
+    const answer = await classes.TravelSetup.of(ws.a).changeLegMode(
+      legOf(await legs(ws), next, 'there').id,
+      { mode: 'walk', scope: 'repeats' },
+    );
+    assert.equal(answer.marked, 0);
+    assert.equal((await marks(ws)).length, before);
+    assert.ok(first);
+  });
+
   it('this, then repeats from the same event: the choice reaches that event; others keep theirs', async () => {
     const ws = await workspace();
     const first = await lecture(ws, 'l1', local(1, 10, 30));
