@@ -2,7 +2,8 @@
 The owner's iPad and his week (2026-11-19 screenshots): a 13-inch iPad Pro Home Screen app, dark,
 in Hebrew, on the Summary dashboard laid out as his (the default "dashboard" template, its blocks
 where he put them), with the week that broke: lectures, a 15-minute meeting that only touches the
-lecture after it and one inside a lecture, two events at the same times, an area and a bus there.
+lecture after it and one inside a lecture, a 10-minute break that ends when a lecture starts, two
+events at the same times, an area and a bus there.
 
 Everything is seeded through the API (requests) into a fresh workspace on Asia/Jerusalem, in this
 week (weeks start on Sunday), so the week calendar opens on it.
@@ -54,6 +55,7 @@ DISCRETE = "מתמטיקה דיסקרטית 1"
 CALCULUS = "חדו\"א 1"
 INTRO = "מבוא למדעי המחשב (מל\"מ) גבוה"
 MEETING = "AutoDS Daily Meeting"
+BREAK = "הפסקה"
 SAME_A = "מעבדה א"
 SAME_B = "מעבדה ב"
 
@@ -138,6 +140,8 @@ def seed_week(page: Page, api_base_url: str, user, workspace_id: str) -> dict:
     discrete = todo(DISCRETE, thursday, "08:30", "10:00")
     todo(CALCULUS, thursday, "10:30", "12:00")
     todo(MEETING, thursday, "11:00", "11:15", topic="work")
+    # Ten minutes that end when the next lecture starts: shorter than a line of text.
+    todo(BREAK, thursday, "12:40", "12:50", topic="personal")
     todo(INTRO, thursday, "12:50", "14:30")
     create_place(api_base_url, user, workspace_id, "Home", home=True)
     braude = create_place(api_base_url, user, workspace_id, "Braude")

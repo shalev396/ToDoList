@@ -5,8 +5,9 @@ and portrait, dark, in Hebrew:
 - A chip shows no time of day. Its icon is at the start (the right) and, when the chip is tall
   enough, on a line of its own above the title, which wraps instead of being cut to one letter. A
   15-minute chip has the icon and the title on one line. The time is in its name.
-- Events that only touch are not overlapping: both keep the day's full width. Overlapping events
-  sit side by side, none drawn over another; so do two events at the same times.
+- Events that only touch are not overlapping: both keep the day's full width, a 10-minute one
+  included (drawn at its true height). Overlapping events sit side by side, none drawn over
+  another; so do two events at the same times.
 - An area takes no width from the events in it; its name is a tag in the day's header, which opens
   it.
 
@@ -20,6 +21,7 @@ from playwright.sync_api import Page, expect
 from tests.config import NORMAL_TIMEOUT
 from tests.helpers.ipad_week import (
     AREA,
+    BREAK,
     CALCULUS,
     DISCRETE,
     INTRO,
@@ -103,7 +105,21 @@ def test_chip_is_icon_then_title_without_a_time(
         "(el) => ({ h: el.scrollHeight - el.clientHeight, w: el.scrollWidth - el.clientWidth })"
     )
     assert shown["h"] <= 1 and shown["w"] <= 1, f"the title is cut: {shown}"
-    assert title_box["height"] >= 2 * 13 - 1, "a long title wraps onto a second line"
+    # Wider than the chip on one line (measured, as the column's width varies): it wraps.
+    natural = title.evaluate(
+        """(el) => {
+            const probe = document.createElement('span');
+            probe.style.cssText = 'position:absolute;visibility:hidden;white-space:nowrap';
+            probe.style.font = getComputedStyle(el).font;
+            probe.textContent = el.textContent;
+            document.body.append(probe);
+            const width = probe.getBoundingClientRect().width;
+            probe.remove();
+            return { width, room: el.clientWidth };
+        }"""
+    )
+    lines = 2 if natural["width"] > natural["room"] + 1 else 1
+    assert title_box["height"] >= lines * 13 - 1, f"the title is not on {lines} line(s): {natural}"
     # The time is in its name (and tooltip), kept in order inside Hebrew.
     expect(lecture).to_have_attribute("aria-label", re.compile(r"12:50.*14:30"))
     expect(lecture).to_have_attribute("title", re.compile(r"12:50.*14:30"))
@@ -151,6 +167,15 @@ def test_touching_events_keep_full_width_and_overlapping_sit_side_by_side(
     same_b = box(_chip(calendar, days["wednesday"], SAME_B))
     assert _apart(same_a, same_b), f"one event at the same time covers the other: {same_a}, {same_b}"
     assert same_a["width"] > 20 and same_b["width"] > 20
+
+    # Ten minutes that end when the lecture starts: drawn at their true height, both full width.
+    short = _chip(calendar, days["thursday"], BREAK)
+    expect(short.locator("[data-chip-layout='tiny']")).to_have_count(1)
+    short_box = box(short)
+    intro = box(_chip(calendar, days["thursday"], INTRO))
+    assert short_box["width"] >= 0.9 * column["width"], f"the 10 minutes are squeezed: {short_box}"
+    assert intro["width"] >= 0.9 * column["width"], f"the lecture after them is squeezed: {intro}"
+    assert short_box["y"] + short_box["height"] <= intro["y"] + 1, "the 10 minutes run into the lecture"
 
     # The bus there arrives when the first lecture starts: it only touches it.
     leg = box(calendar.locator(f".fc-timegrid-col[data-date='{days['thursday']}'] .fc-event.tc-travel"))
