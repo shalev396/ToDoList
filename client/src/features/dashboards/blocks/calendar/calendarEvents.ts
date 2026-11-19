@@ -66,9 +66,9 @@ export interface CalendarAreaProps {
   originalStart: string | null;
 }
 
-function addDay(date: string): string {
+function addDay(date: string, days = 1): string {
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
 /** A point's slot ends at midnight at the latest, so a 23:59 due date stays on its own day. */
@@ -175,6 +175,66 @@ export function toAreaEventInput(
     extendedProps,
     ...timing(occurrence, timeZone),
   };
+}
+
+/**
+ * An area named in the week grid's day header. Its band behind the events carries no visible label
+ * (events would cover it, and a rail beside them took their width): the header does, and opens it.
+ */
+export interface AreaTag {
+  key: string;
+  rowId: string;
+  title: string;
+  family: ColourFamily;
+  /** As `CalendarAreaProps.originalStart`: opens the sheet on this occurrence. */
+  originalStart: string | null;
+  /** Its wall-clock times (`HH:MM`); null for an all-day area. */
+  from: string | null;
+  to: string | null;
+}
+
+/** The days (`YYYY-MM-DD`, wall clock) an area's band covers, first to last. */
+function daysCovered(o: Occurrence, timeZone: string): string[] {
+  const { start, end } = timing(o, timeZone) as { start: string; end?: string };
+  const first = start.slice(0, 10);
+  let last = first;
+  if (o.allDay && end !== undefined) {
+    // The end is the exclusive midnight after the last day.
+    last = new Date(Date.parse(`${end}T00:00:00Z`) - 1).toISOString().slice(0, 10);
+  } else if (end !== undefined && end > start) {
+    // An end at midnight closes the day before.
+    last = end.slice(11) === '00:00:00' ? addDay(end.slice(0, 10), -1) : end.slice(0, 10);
+  }
+  const days: string[] = [];
+  for (let day = first; day <= last && days.length < 62; day = addDay(day)) {
+    days.push(day);
+  }
+  return days;
+}
+
+/** The areas each day of the grid shows in its header, in order of start. */
+export function areaTagsByDay(
+  areas: readonly Occurrence[],
+  colourOf: (rowId: string) => ItemColour,
+  timeZone: string,
+): Map<string, AreaTag[]> {
+  const byDay = new Map<string, AreaTag[]>();
+  const sorted = [...areas].sort((a, b) => a.start.getTime() - b.start.getTime());
+  for (const o of sorted) {
+    const tag: AreaTag = {
+      key: o.key,
+      rowId: o.row.id,
+      title: o.row.title,
+      family: colourOf(o.row.id).family,
+      originalStart: o.originalStart?.toISOString() ?? null,
+      from: o.allDay ? null : wallString(o.start, timeZone).slice(11, 16),
+      to: o.allDay || o.end === null ? null : wallString(o.end, timeZone).slice(11, 16),
+    };
+    for (const day of daysCovered(o, timeZone)) {
+      byDay.set(day, [...(byDay.get(day) ?? []), tag]);
+    }
+  }
+  return byDay;
 }
 
 /**

@@ -752,41 +752,32 @@
 .todolist-calendar .fc .fc-timegrid-event-short .tc-leg-words {
   display: none;
 }
+/* An area: a band in its tint behind the day's events, framed in its Scheduled step. It takes no
+   width from them and nothing covers them: its name is a tag in the day's header (CalendarBlock's
+   AreaTagButton), which opens it. */
 .todolist-calendar .fc .tc-area {
   opacity: 1;
   box-shadow: inset 0 0 0 1px var(--tc-edge, var(--border));
 }
-.todolist-calendar .fc .tc-area-label {
-  overflow: hidden;
-  padding: 2px 4px;
-  color: var(--foreground);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.todolist-calendar .fc .fc-col-header-cell-cushion:has([data-area-tags]) {
+  display: block;
+  min-width: 0;
 }
-/* In the week grid, events would cover a label at the band's top: a day with an area keeps a rail
-   along its start, clear of events, and the label runs down it. */
-.todolist-calendar .fc .fc-timegrid-col:has(.tc-area) .fc-timegrid-col-events {
-  margin-inline-start: 18px;
+/* Half-hour rows of `--tc-slot` (chipLayout.ts SLOT_PX): a quarter hour holds a line of text. */
+.todolist-calendar .fc .fc-timegrid-slot {
+  height: var(--tc-slot, 1.5em);
 }
-.todolist-calendar .fc .fc-timegrid-col .tc-area-label {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: 0;
-  display: flex;
-  justify-content: center;
-  width: 18px;
-  padding: 4px 0;
+/* The chip pads itself (chipLayout.ts counts it). */
+.todolist-calendar .fc .fc-timegrid-event .fc-event-main {
+  padding: 0;
 }
-.todolist-calendar .fc .fc-timegrid-col .tc-area-label > [aria-hidden] {
-  max-height: 100%;
-  overflow: hidden;
-  /* Line-left is the top in a vertical line, in either direction: the label starts at the top. */
+/* A stacked chip's title lines up under its icon, on the start side of the page's direction, even
+   when the title itself runs the other way. */
+.todolist-calendar[dir='rtl'] .fc .tc-chip-title {
+  text-align: right;
+}
+.todolist-calendar[dir='ltr'] .fc .tc-chip-title {
   text-align: left;
-  text-overflow: ellipsis;
-  writing-mode: vertical-rl;
 }
 .todolist-calendar .fc .fc-daygrid-more-link {
   color: var(--muted-foreground);

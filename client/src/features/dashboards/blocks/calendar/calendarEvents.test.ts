@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { EventInput } from '@fullcalendar/core';
 import { zonedTime } from '../clock/ClockRing.math.ts';
-import { toAreaEventInput, toAreaPeriodEventInput, toEventInput } from './calendarEvents.ts';
+import {
+  areaTagsByDay,
+  toAreaEventInput,
+  toAreaPeriodEventInput,
+  toEventInput,
+} from './calendarEvents.ts';
 import type { Occurrence, TimeRow } from '../time/occurrences.ts';
 import type { ColourRole, ItemColour } from '@api-types/colours.ts';
 
@@ -186,5 +191,75 @@ describe('toAreaPeriodEventInput', () => {
       TZ,
     );
     assert.deepEqual([input.allDay, input.start, input.end], [true, '2026-11-12', '2026-11-13']);
+  });
+});
+
+describe('areaTagsByDay', () => {
+  const area = (key: string, over: Partial<Occurrence>): Occurrence =>
+    occ({ key, row: { ...row(key), title: key }, ...over });
+  const teal = (): ItemColour => ({ ...colour('area'), family: 'teal' });
+
+  it('names an area in its day’s header, with its times and the slot it opens on', () => {
+    const slot = at(2026, 11, 19, 8, 30);
+    const tags = areaTagsByDay(
+      [area('Braude', { start: slot, end: at(2026, 11, 19, 15), originalStart: slot })],
+      teal,
+      TZ,
+    );
+    assert.deepEqual([...tags.keys()], ['2026-11-19']);
+    assert.deepEqual(tags.get('2026-11-19'), [
+      {
+        key: 'Braude',
+        rowId: 'Braude',
+        title: 'Braude',
+        family: 'teal',
+        originalStart: slot.toISOString(),
+        from: '08:30',
+        to: '15:00',
+      },
+    ]);
+  });
+
+  it('lists a day’s areas in order of start', () => {
+    const tags = areaTagsByDay(
+      [
+        area('Evening', { start: at(2026, 11, 19, 18), end: at(2026, 11, 19, 20) }),
+        area('Morning', { start: at(2026, 11, 19, 8), end: at(2026, 11, 19, 12) }),
+      ],
+      teal,
+      TZ,
+    );
+    assert.deepEqual(
+      tags.get('2026-11-19')?.map((tag) => tag.title),
+      ['Morning', 'Evening'],
+    );
+  });
+
+  it('names an area past midnight on both days; an end at midnight closes the day before', () => {
+    const night = areaTagsByDay(
+      [area('Night', { start: at(2026, 11, 19, 22), end: at(2026, 11, 20, 2) })],
+      teal,
+      TZ,
+    );
+    assert.deepEqual([...night.keys()], ['2026-11-19', '2026-11-20']);
+    const toMidnight = areaTagsByDay(
+      [area('Late', { start: at(2026, 11, 19, 20), end: at(2026, 11, 20, 0) })],
+      teal,
+      TZ,
+    );
+    assert.deepEqual([...toMidnight.keys()], ['2026-11-19']);
+  });
+
+  it('names an all-day area on every day it covers, without times', () => {
+    const tags = areaTagsByDay(
+      [area('Trip', { allDay: true, start: at(2026, 11, 19), end: at(2026, 11, 21) })],
+      teal,
+      TZ,
+    );
+    assert.deepEqual([...tags.keys()], ['2026-11-19', '2026-11-20']);
+    assert.deepEqual(
+      [tags.get('2026-11-20')?.[0]?.from, tags.get('2026-11-20')?.[0]?.to],
+      [null, null],
+    );
   });
 });
