@@ -29,6 +29,10 @@
  *   - he goes back into a part of an area that holds no appointment only when the gap holds the
  *     trip back and the trip on, and he gets there before the part ends (ruling of 2026-11-18);
  *     otherwise he goes straight on, or home, from the item before it;
+ *   - when the day's last area part is skipped that way, the way home is still the area's: it
+ *     exists only when the area asks for `back`, goes in the area's mode and is keyed as the
+ *     area's `back` (as any leg home is keyed to whose way home it is), only starting from where
+ *     he is (ruling of 2026-11-19);
  *   - a leg home leaves at the later of its stay's end and the time he can leave it.
  *
  * Titles are English templates (plan Ruling 19) with place names only, never an address.
@@ -145,6 +149,12 @@ interface Stay {
   readonly hardStart: Date | null;
   /** When its last appointment ends (not an area cut short); null: none. */
   readonly hardEnd: Date | null;
+  /**
+   * Whose way home a leg home from it is (its flag, mode and key): what closes it, or, when the
+   * area parts after it to the end of the day are skipped (#visited), the area that closes the
+   * last of them.
+   */
+  readonly wayHome: Located;
 }
 
 /** A trip home in a window at a place (go home in a window): no anchors of its own. */
@@ -314,6 +324,7 @@ function stayOf(pieces: readonly Piece[]): Stay {
     end: new Date(end),
     hardStart: hardStarts.length === 0 ? null : new Date(Math.min(...hardStarts)),
     hardEnd: hardEnds.length === 0 ? null : new Date(Math.max(...hardEnds)),
+    wayHome: last.anchor,
   };
 }
 
@@ -439,18 +450,22 @@ export class DayPlanner {
    * go back into from an item elsewhere only when the gap holds the trip back and the trip on (to
    * the stay after it, arriving by its start), and he gets there before the part ends. Otherwise
    * he goes straight on (or home) from the stay before it: two items at one place either side of
-   * it are then one visit, with no trip between them.
+   * it are then one visit, with no trip between them. When the day's last parts are skipped, the
+   * last stay he goes to owes the area's way home (`wayHome`).
    */
   #visited(length: (trip: TripKey) => Estimate): Stay[] {
     const minutes = (trip: TripKey): number => length(trip).minutes * MS_PER_MINUTE;
     const visited: Stay[] = [];
     // When he gets back into an area part he left an item for: he leaves it no sooner.
     const arrivals = new Map<Stay, number>();
-    this.#stays.forEach((stay, index) => {
+    // The last stay skipped since the last one he goes to.
+    let skipped: Stay | null = null;
+    for (const [index, stay] of this.#stays.entries()) {
       const previous = visited.at(-1);
       if (previous === undefined || previous.placeId === stay.placeId || !stay.first.softStart) {
         visited.push(stay);
-        return;
+        skipped = null;
+        continue;
       }
       // As #leaving: once its appointments are over and he is there.
       const known = [previous.hardEnd?.getTime(), arrivals.get(previous)].filter(
@@ -469,8 +484,16 @@ export class DayPlanner {
       if (fits || !isResumedOnly(stay)) {
         visited.push(stay);
         arrivals.set(stay, arrives);
+        skipped = null;
+      } else {
+        skipped = stay;
       }
-    });
+    }
+    const last = visited.at(-1);
+    // Skipping his way back into the area doesn't change whose way home it is.
+    if (last !== undefined && skipped !== null) {
+      visited[visited.length - 1] = { ...last, wayHome: skipped.wayHome };
+    }
     return visited;
   }
 
@@ -486,9 +509,11 @@ export class DayPlanner {
       for (let to = index + 1; to <= stays.length; to += 1) {
         const target = stays[to];
         if (to > index + 1) {
+          const owed = stays.at(-1);
           if (target === undefined) {
-            if (from.placeId !== this.#homeId) {
-              trips.push(DayPlanner.tripKey(from.placeId, this.#homeId, from.last.anchor.mode));
+            // The way home of the area whose last part is skipped, from where he is.
+            if (from.placeId !== this.#homeId && owed !== undefined) {
+              trips.push(DayPlanner.tripKey(from.placeId, this.#homeId, owed.wayHome.mode));
             }
           } else if (target.placeId !== from.placeId) {
             trips.push(this.#legTrip(from, target));
@@ -556,7 +581,8 @@ export class DayPlanner {
       stops.push(stayOf(stay.pieces.slice(from, cut)), { kind: 'home' });
       from = cut;
     }
-    stops.push(stayOf(stay.pieces.slice(from)));
+    // The last of them ends the stay, and owes its way home.
+    stops.push({ ...stayOf(stay.pieces.slice(from)), wayHome: stay.wayHome });
     return stops;
   }
 
@@ -615,7 +641,7 @@ export class DayPlanner {
       into = leg;
     });
     const last = stops.at(-1);
-    if (last?.kind === 'stay' && last.placeId !== home && last.last.anchor.back) {
+    if (last?.kind === 'stay' && last.placeId !== home && last.wayHome.back) {
       specs.push(this.#home(last, into));
     }
     return specs;
@@ -643,9 +669,12 @@ export class DayPlanner {
     return { direction: 'there', anchor, from, to, mode: anchor.mode, arriveBy };
   }
 
-  /** Home from a stay, by what closes it: as it ends, or later if he gets there later. */
+  /**
+   * Home from a stay: the way home of whose it is (`wayHome`: its mode and key), as the stay ends,
+   * or later if he gets there later.
+   */
   #home(stay: Stay, into: LegSpec | null): LegSpec {
-    const { anchor } = stay.last;
+    const anchor = stay.wayHome;
     return {
       direction: 'back',
       anchor,

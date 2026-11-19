@@ -131,7 +131,7 @@ This answers his question "how do you know when the day starts, with windows bet
    - an inner item with a place of its own is there for its own time: leave the area to arrive as it starts, and go back into the area as it ends (in that item's mode; late only matters when an appointment waits there);
    - a marked area lends its place to an inner item with none (the innermost marked area around its start): that item adds no trips of its own, and marking it says it is inside the area, at that place;
    - the rest of the area is spent at its place: no legs between two inner items there, and none from the area's place to itself;
-   - he goes back into a part of the area with no appointment only when the gap holds the trip back and the trip on, and he gets there before the part ends; otherwise he goes straight on, or home, from the inner item (_fix round 1, 2026-11-18_);
+   - he goes back into a part of the area with no appointment only when the gap holds the trip back and the trip on, and he gets there before the part ends; otherwise he goes straight on, or home, from the inner item (_fix round 1, 2026-11-18_). Going home that way after the area's last part is still the area's way home: only when the area asks for `back`, in the area's mode (_2026-11-19_);
    - legs go to the area at its start, and back (or onward) at its end, by the rules above. An area stays not busy; its legs are busy.
 
 ## Generation and lifecycle (my calls after review)
