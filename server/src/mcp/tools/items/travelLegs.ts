@@ -48,7 +48,9 @@ export const travelEditLeg = defineTool({
     marked: z
       .number()
       .optional()
-      .describe('With mode: how many rules were stored (an every-repeat choice is one rule, so 1)'),
+      .describe(
+        'With mode: how many rules were stored (0 or 1: an every-repeat choice is one rule)',
+      ),
   }),
   annotations: ANNOTATIONS,
   scopes: ['items:write'],

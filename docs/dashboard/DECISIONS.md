@@ -221,7 +221,7 @@ Rulings 1 to 26 of the plan, one line each:
 8. Legs are stored private and owned by their member, and `ItemPolicy` adds a kind branch on top.
 9. A leg's key is `ownerUserId|anchorItemId|occurrence|direction`; a moved Google occurrence anchors on its series master, so two members can share a lecture.
 10. App links are computed on read, served to the owner by REST only, never stored and never sent over MCP, since they carry the places' addresses (superseded in part on 2026-11-18: Waze and Google Maps only, from text; see below).
-11. One `TravelRule` model with three scopes (`where`, `series`, `item`); precedence item, then series, then where-rules oldest first.
+11. One `TravelRule` model with four scopes (`where`, `series`, `item`, `repeats`); precedence item, then series, then repeats, then where-rules oldest first. `repeats` (added 2026-11-19) is "every repeat" of an imported event that does not repeat itself: its calendar or project, title, weekday and local start time, from the marked one on; it is removed with its calendar (a disconnect, or the calendar no longer synced).
 12. Regeneration is one member's whole 14-day horizon; the daily pass runs per member and gets 120 s per tick, the rest wait for the next hour.
 13. ~~Factor and buffer apply to computed lengths only; public transport's straight-line speed is 25 km/h with a 1.3 detour.~~ Superseded on 2026-11-18: there are no computed lengths, and no factors or buffers.
 14. ~~Geocoding uses OpenRouteService's geocoder when the key exists, else Nominatim; "lat, lon" typed as an address is taken as coordinates.~~ Superseded on 2026-11-18: nothing is looked up; a place has no coordinates, and an event's location matches a place by name or alias only.

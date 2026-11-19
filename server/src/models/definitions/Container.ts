@@ -121,6 +121,8 @@ export interface IContainerRepository {
   existsForIntegrations(workspaceId: string, integrationIds: readonly string[]): Promise<boolean>;
   /** The ids of this integration's containers, deleted ones too. */
   idsForIntegration(workspaceId: string, integrationId: string): Promise<string[]>;
+  /** The ids of this integration's containers soft-deleted at exactly `deletedAt`. */
+  idsDeletedAt(workspaceId: string, integrationId: string, deletedAt: Date): Promise<string[]>;
   /** Sets `deletedAt` (default now) on this integration's live containers. Returns how many. */
   softDeleteForIntegration(
     workspaceId: string,

@@ -159,8 +159,8 @@ export class TravelSetup {
    * or project, own title, weekday and local start time, from this event on, events imported later
    * too; an item with no calendar or project is just itself). Either way the chosen occurrence's
    * own item mark goes, so the choice reaches it; other events' item marks stay as exceptions.
-   * The legs are made again once. `marked` is the rules stored (1). 409 `travel_limit` when that
-   * would pass the rule cap (nothing is stored), 404 when the event is no longer one the leg can
+   * The legs are made again once. `marked` is the rules stored (0 or 1). 409 `travel_limit` when
+   * that would pass the rule cap (nothing is stored), 404 when the event is no longer one the leg can
    * be made for (moved far, cancelled, no rule asks for it now). `leg`: the leg of the same
    * anchor, occurrence and way after the regeneration; null when none is left.
    */

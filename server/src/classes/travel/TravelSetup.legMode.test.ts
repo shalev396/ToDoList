@@ -481,6 +481,39 @@ describe('TravelSetup#changeLegMode', () => {
     assert.equal((await classes.TravelRule.listOwn(ws.a)).length, 1);
   });
 
+  it('a calendar no longer synced (swept) loses its repeats rules; another calendar keeps its own', async () => {
+    const ws = await workspace();
+    const containers = await models.getContainerRepository();
+    // The container ids are global: clear the one the disconnect test above left deleted.
+    await containers.purgeDeletedBefore(new Date(Date.now() + 60_000));
+    await containers.bulkUpsert(ws.id, [
+      {
+        id: 'cal-braude',
+        integrationId: ws.gcal,
+        topicId: null,
+        type: 'calendar',
+        name: 'Braude',
+        syncResource: 'cal-braude',
+        source: gcalSource(ws, 'cal-braude'),
+      },
+    ]);
+    const first = await lecture(ws, 'l1', local(1, 10, 30));
+    await regenerate(ws);
+    await classes.TravelSetup.of(ws.a).changeLegMode(legOf(await legs(ws), first, 'there').id, {
+      mode: 'walk',
+      scope: 'repeats',
+    });
+    assert.equal((await marks(ws)).length, 1);
+    const rows = SyncedRows.of({ id: ws.gcal, workspaceId: ws.id });
+    // Nothing swept (the calendar is still in the config): the rule stays.
+    assert.equal(await rows.sweepOrphanedContainers(['cal-braude'], { deletedAt: new Date() }), 0);
+    assert.equal((await marks(ws)).length, 1);
+    // The calendar left the integration's config: its containers are swept, and its rules go.
+    const swept = await rows.sweepOrphanedContainers(['cal-other'], { deletedAt: new Date() });
+    assert.equal(swept, 1);
+    assert.equal((await marks(ws)).length, 0);
+  });
+
   it('repeats past the rule cap: 409 travel_limit, nothing stored', async () => {
     const ws = await workspace();
     const first = await lecture(ws, 'l1', local(1, 10, 30));
