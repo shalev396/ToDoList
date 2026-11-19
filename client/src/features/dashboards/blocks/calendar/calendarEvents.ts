@@ -140,28 +140,30 @@ export function toEventInput(
     stretched,
     tap: tap ?? null,
   };
-  // FullCalendar sets an event's attributes once, when its element is made (`eventDidMount`). A leg's
-  // marks change under it (a conflict clears, the day moves on, he edits its times), so they are
-  // part of its id: a leg that reads differently is drawn again.
-  const legId =
-    item.leg === undefined
-      ? o.key
-      : [
-          o.key,
-          o.start.getTime(),
-          o.end?.getTime(),
-          item.leg.conflict,
-          item.leg.past,
-          item.leg.moved,
-          item.leg.unset,
-          item.leg.mode,
-          item.leg.title,
-        ]
-          .map(String)
-          .join('|');
+  // FullCalendar sets an event's attributes once, when its element is made (`eventDidMount`), and
+  // reuses the element while the id stays. Its name and tooltip carry its times (the chip shows
+  // none), its title, tone and badges, and a leg's marks; all of them change under it (a moved
+  // occurrence keeps its key, a conflict clears, the day moves on), so they are part of its id: an
+  // event that reads differently is drawn again.
+  const title = item.leg?.title ?? o.row.title;
+  const drawnId = [
+    o.key,
+    o.start.getTime(),
+    o.end?.getTime(),
+    title,
+    item.tone,
+    item.badges.join(','),
+    colour.family,
+    colour.role,
+    ...(item.leg === undefined
+      ? []
+      : [item.leg.conflict, item.leg.past, item.leg.moved, item.leg.unset, item.leg.mode]),
+  ]
+    .map(String)
+    .join('|');
   return {
-    id: legId,
-    title: item.leg?.title ?? o.row.title,
+    id: drawnId,
+    title,
     classNames: [
       ...(colour.role === 'travel' ? ['tc-travel'] : []),
       ...(item.leg?.conflict === true ? ['tc-conflict'] : []),

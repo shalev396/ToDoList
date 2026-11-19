@@ -288,6 +288,43 @@ describe('a leg’s id', () => {
   });
 });
 
+describe('an event is drawn again when what its name says changes', () => {
+  // A moved occurrence keeps its key (`row@slot`): only the id tells FullCalendar to draw it again,
+  // and its name and tooltip (eventDidMount) are where its times are now.
+  const base = { occurrence: occ({ key: 'block@slot' }), badges: [] as string[] };
+  const idOf = (item: Parameters<typeof toEventInput>[0], role: ColourRole = 'work') =>
+    toEventInput(item, TZ, colour(role)).id;
+
+  it('is the same for the same event', () => {
+    assert.equal(idOf(base), idOf({ ...base }));
+  });
+
+  it('changes when the occurrence moves (this one only, to 14:00)', () => {
+    const moved = {
+      ...base,
+      occurrence: occ({
+        key: 'block@slot',
+        start: at(2026, 11, 12, 14),
+        end: at(2026, 11, 12, 18),
+      }),
+    };
+    assert.notEqual(idOf(base), idOf(moved));
+    const longer = { ...base, occurrence: occ({ key: 'block@slot', end: at(2026, 11, 12, 12) }) };
+    assert.notEqual(idOf(base), idOf(longer));
+  });
+
+  it('changes with the tone, the badges, the title and the colour', () => {
+    assert.notEqual(idOf(base), idOf({ ...base, tone: 'destructive' }));
+    assert.notEqual(idOf(base), idOf({ ...base, badges: ['Late'] }));
+    const renamed = {
+      ...base,
+      occurrence: occ({ key: 'block@slot', row: { ...row('r'), title: 'New' } }),
+    };
+    assert.notEqual(idOf(base), idOf(renamed));
+    assert.notEqual(idOf(base), idOf(base, 'scheduled'));
+  });
+});
+
 describe('timedSpans and the stretch', () => {
   it('spans the timed events; a due date lasts its point; all-day ones are left out', () => {
     const start = at(2026, 11, 19, 8, 20);
