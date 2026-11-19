@@ -48,6 +48,21 @@
   --color-sunken: var(--sunken);
   --color-chart-6: var(--chart-6);
   --color-chart-7: var(--chart-7);
+  --color-status-good: var(--status-good);
+  --color-status-warning: var(--status-warning);
+  --color-status-serious: var(--status-serious);
+  --color-status-critical: var(--status-critical);
+  --font-sans:
+    'IBM Plex Sans Variable', 'IBM Plex Sans Hebrew', ui-sans-serif, system-ui, sans-serif;
+}
+
+/*
+ * Source colours (one per provider, components/items/sources.ts). `static`: every variable is
+ * written to :root whether or not a class uses it, because a chart reads them by name at run time
+ * (`var(--color-source-clickup)`, blocks/data/segmentColor.ts). Tailwind only keeps the variables
+ * it finds in the source, and a name built at run time is never found: the segment went black.
+ */
+@theme inline static {
   --color-source-jira: var(--chart-1);
   --color-source-moodle: var(--chart-2);
   --color-source-google-calendar: var(--chart-3);
@@ -55,12 +70,6 @@
   --color-source-github: var(--chart-6);
   --color-source-linear: var(--chart-7);
   --color-source-local: var(--muted-foreground);
-  --color-status-good: var(--status-good);
-  --color-status-warning: var(--status-warning);
-  --color-status-serious: var(--status-serious);
-  --color-status-critical: var(--status-critical);
-  --font-sans:
-    'IBM Plex Sans Variable', 'IBM Plex Sans Hebrew', ui-sans-serif, system-ui, sans-serif;
 }
 
 /*
