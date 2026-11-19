@@ -7,128 +7,24 @@
  *
  * No DOM and no React: `npm run test:unit` runs these under `node --test`.
  */
+import { endOfZonedDay, startOfZonedDay, zonedParts } from '@api-types/recurrence/zoned.ts';
+
+// The wall-clock helpers are shared with the server; re-exported so callers keep their imports.
+export {
+  endOfZonedDay,
+  startOfZonedDay,
+  timeZoneOffsetMinutes,
+  zonedParts,
+  zonedTime,
+  type ZonedParts,
+} from '@api-types/recurrence/zoned.ts';
 
 export interface TimeRange {
   start: Date;
   end: Date;
 }
 
-export interface ZonedParts {
-  year: number;
-  /** 1 to 12. */
-  month: number;
-  day: number;
-  /** 0 to 23. */
-  hour: number;
-  minute: number;
-  second: number;
-}
-
 const MINUTES_PER_DAY = 24 * 60;
-const MS_PER_MINUTE = 60_000;
-const MS_PER_HOUR = 60 * MS_PER_MINUTE;
-const MS_PER_DAY = 24 * MS_PER_HOUR;
-
-const formatters = new Map<string, Intl.DateTimeFormat>();
-
-function formatterFor(timeZone: string): Intl.DateTimeFormat {
-  let formatter = formatters.get(timeZone);
-  if (!formatter) {
-    formatter = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      hourCycle: 'h23',
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: 'numeric',
-      second: 'numeric',
-    });
-    formatters.set(timeZone, formatter);
-  }
-  return formatter;
-}
-
-/** The wall-clock date and time of `date` in `timeZone`. */
-export function zonedParts(date: Date, timeZone: string): ZonedParts {
-  const parts = formatterFor(timeZone).formatToParts(date);
-  const read = (type: Intl.DateTimeFormatPartTypes): number => {
-    const part = parts.find((p) => p.type === type);
-    return part ? Number(part.value) : 0;
-  };
-  return {
-    year: read('year'),
-    month: read('month'),
-    day: read('day'),
-    // Some engines print midnight as 24 even with h23.
-    hour: read('hour') % 24,
-    minute: read('minute'),
-    second: read('second'),
-  };
-}
-
-/** Minutes `timeZone` is ahead of UTC at `date` (Asia/Jerusalem in November: 120). */
-export function timeZoneOffsetMinutes(date: Date, timeZone: string): number {
-  const p = zonedParts(date, timeZone);
-  const wallAsUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
-  const wholeSeconds = date.getTime() - date.getUTCMilliseconds();
-  return Math.round((wallAsUtc - wholeSeconds) / MS_PER_MINUTE);
-}
-
-/**
- * The instant the wall clock in `timeZone` reads `hour:minute` on the given date, resolved the way
- * Temporal's `disambiguation: 'compatible'` does: a wall time that happens twice (clocks fall back)
- * is its first occurrence, and a wall time the clocks skip (spring forward) moves forward by the
- * length of the jump, so 02:30 becomes 03:30.
- */
-export function zonedTime(
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  timeZone: string,
-): Date {
-  const wall = Date.UTC(year, month - 1, day, hour, minute);
-  // The zone's offset a day before and a day after: the same on an ordinary day, and the offsets
-  // either side of the change on a DST day.
-  const offsetBefore = timeZoneOffsetMinutes(new Date(wall - MS_PER_DAY), timeZone);
-  const offsetAfter = timeZoneOffsetMinutes(new Date(wall + MS_PER_DAY), timeZone);
-  const candidates = [offsetBefore, offsetAfter]
-    .map((offset) => wall - offset * MS_PER_MINUTE)
-    .sort((a, b) => a - b);
-  const readsAsWall = (instant: number): boolean => {
-    const p = zonedParts(new Date(instant), timeZone);
-    return (
-      p.year === year &&
-      p.month === month &&
-      p.day === day &&
-      p.hour === hour &&
-      p.minute === minute
-    );
-  };
-  // Both candidates read as the wall time when it happens twice: the earlier one is the first.
-  const exact = candidates.find(readsAsWall);
-  if (exact !== undefined) {
-    return new Date(exact);
-  }
-  // Neither does when the clocks skip it: read it with the offset from before the jump, which
-  // lands as far past the jump as the wall time was past its start.
-  return new Date(wall - offsetBefore * MS_PER_MINUTE);
-}
-
-/** The first instant of the calendar day that contains `date` in `timeZone`. */
-export function startOfZonedDay(date: Date, timeZone: string): Date {
-  const { year, month, day } = zonedParts(date, timeZone);
-  return zonedTime(year, month, day, 0, 0, timeZone);
-}
-
-/** The first instant of the next calendar day (the end of `date`'s day, exclusive). */
-export function endOfZonedDay(date: Date, timeZone: string): Date {
-  // 36 hours after the start is safely inside the next day, even on a 25-hour DST day.
-  const start = startOfZonedDay(date, timeZone);
-  return startOfZonedDay(new Date(start.getTime() + 36 * MS_PER_HOUR), timeZone);
-}
 
 /**
  * Degrees clockwise from midnight for the wall-clock time of `date` in `timeZone`: 0 at 00:00,

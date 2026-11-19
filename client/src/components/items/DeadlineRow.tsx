@@ -2,6 +2,8 @@ import type { ReactNode } from 'react';
 import { CircleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/utils';
+import { ColourDot } from '@/features/colours/ColourDot';
+import type { ItemColour } from '@api-types/colours';
 import {
   browserTimeZone,
   calendarDaysFrom,
@@ -13,8 +15,7 @@ import {
   timeOfDay,
 } from './format';
 import { OpenTitle } from './OpenTitle';
-import { SourceDot } from './SourceDot';
-import { sourceNameKey } from './sources';
+import { SourceIcon } from './SourceIcon';
 import type { Provider } from './types';
 
 export interface DeadlineRowProps {
@@ -37,6 +38,8 @@ export interface DeadlineRowProps {
   onOpen?: (() => void) | undefined;
   /** The "Open in <provider>" slot. */
   openIn?: ReactNode;
+  /** The item's colour: a dot before the title (deadlines read as Work). */
+  colour?: ItemColour | undefined;
   className?: string | undefined;
 }
 
@@ -56,6 +59,7 @@ export function DeadlineRow({
   showSource = false,
   onOpen,
   openIn,
+  colour,
   className,
 }: DeadlineRowProps) {
   const { t, i18n } = useTranslation();
@@ -65,13 +69,15 @@ export function DeadlineRow({
   const overdue = isOverdue(due, now, done);
   const absolute =
     Math.abs(days) <= 1 ? timeOfDay(due, locale, zone) : shortDate(due, locale, zone);
-  const sourceName = showSource ? t(sourceNameKey(source)) : null;
 
   return (
     <div className={cn('flex min-h-11 items-center gap-3 py-2', className)}>
-      <span aria-hidden={showSource} className="flex shrink-0 self-start pt-[7px]">
-        <SourceDot source={source} />
-      </span>
+      {colour || !showSource ? (
+        <span className="flex shrink-0 items-center gap-2 self-start pt-[7px]">
+          {colour ? <ColourDot colour={colour} /> : null}
+          {showSource ? null : <SourceIcon source={source} />}
+        </span>
+      ) : null}
       <div className="min-w-0 flex-1">
         <OpenTitle
           as="p"
@@ -85,16 +91,16 @@ export function DeadlineRow({
           {title}
           {done ? <span className="sr-only">, {t('items.done')}</span> : null}
         </OpenTitle>
-        {(sourceName ?? context) ? (
-          <p className="truncate text-[13px] text-muted-foreground">
-            {sourceName}
-            {sourceName && context ? (
+        {showSource || context ? (
+          <p className="flex items-center text-[13px] text-muted-foreground">
+            {showSource ? <SourceIcon source={source} showName /> : null}
+            {showSource && context ? (
               <span aria-hidden="true" className="mx-1.5 text-border">
                 /
               </span>
             ) : null}
-            {sourceName && context ? <span className="sr-only">, </span> : null}
-            {context}
+            {showSource && context ? <span className="sr-only">, </span> : null}
+            {context ? <span className="truncate">{context}</span> : null}
           </p>
         ) : null}
       </div>

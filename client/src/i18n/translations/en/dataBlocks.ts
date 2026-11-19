@@ -54,6 +54,8 @@ export const dataBlocks = {
       pr: 'Pull request',
       file: 'File',
       message: 'Message',
+      block: 'Time block',
+      travel: 'Travel',
     },
   },
   deadlines: {

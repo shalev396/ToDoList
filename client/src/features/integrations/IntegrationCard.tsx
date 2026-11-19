@@ -39,6 +39,7 @@ import type {
   SyncRunView,
 } from '@api-types/integrations';
 import { hasResourcePicker, revokePageOf, revokesOnDisconnect, isOAuthSignIn } from './oauthSetup';
+import { FileUnder } from './FileUnder';
 import { finishProgress } from './cleanupLoop';
 import { CleanupNote, CleanupProgressLine, CleanupRunning } from './CleanupNote';
 import { daysUntil, needsRenewalHint } from './status';
@@ -352,6 +353,7 @@ export function IntegrationCard({
           />
         )}
       </div>
+      <FileUnder workspaceId={workspaceId} integration={integration} />
       {pushedLeft <= 0 ? null : (
         <div data-pushed-leftover className="flex flex-col gap-1.5 text-[13px]">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">

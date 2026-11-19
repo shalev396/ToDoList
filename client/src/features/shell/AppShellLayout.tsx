@@ -1,5 +1,5 @@
 import { Fragment, Suspense, useCallback, useMemo, useState } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { useTranslation } from 'react-i18next';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -21,7 +21,9 @@ import { useGlobalShortcuts } from '@/features/shell/useGlobalShortcuts';
 import { buildNavigation } from '@/features/shell/navigation';
 import { AddPageDialog } from '@/features/shell/TopicControls';
 import { NewTodoSheet } from '@/features/items/create/NewTodoSheet';
+import type { NewItemPreset } from '@/features/items/create/timeBlockDraft';
 import { useConsentReturn } from '@/features/items/create/useConsentReturn';
+import { TravelDaySheet } from '@/features/travel/TravelDaySheet';
 
 const SIDEBAR_STORAGE_KEY = 'todolist-sidebar-collapsed';
 
@@ -82,8 +84,17 @@ export default function AppShellLayout() {
   const [joinOpen, setJoinOpen] = useState(false);
   const [addPageOpen, setAddPageOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
-  const [newTodoOpen, setNewTodoOpen] = useState(false);
-  const [newTodoTopic, setNewTodoTopic] = useState('');
+  const [newItemOpen, setNewItemOpen] = useState(false);
+  const [newItem, setNewItem] = useState<NewItemPreset>({ kind: 'todo' });
+  // A sheet kept in the shell's own state (not in the URL) is covering the page it was opened on:
+  // going to another page (its "Add your Home" link, say) closes it. The sheets the URL holds
+  // (`?item=`, `?travelDay=`) follow their own parameter, which is not the path.
+  const { pathname } = useLocation();
+  const [sheetPath, setSheetPath] = useState(pathname);
+  if (sheetPath !== pathname) {
+    setSheetPath(pathname);
+    setNewItemOpen(false);
+  }
   const [collapsed, setCollapsed] = useState(readCollapsed);
 
   const toggleSidebar = useCallback(() => {
@@ -98,8 +109,12 @@ export default function AppShellLayout() {
     });
   }, []);
 
-  const shellUi = useMemo<ShellUi>(
-    () => ({
+  const shellUi = useMemo<ShellUi>(() => {
+    const openNewItem = (preset: NewItemPreset) => {
+      setNewItem(preset);
+      setNewItemOpen(true);
+    };
+    return {
       openPalette: () => {
         setPaletteOpen(true);
       },
@@ -110,21 +125,19 @@ export default function AppShellLayout() {
         setAddPageOpen(true);
       },
       openNewTodo: () => {
-        setNewTodoTopic('');
-        setNewTodoOpen(true);
+        openNewItem({ kind: 'todo' });
       },
       openNewTodoIn: (topicId) => {
-        setNewTodoTopic(topicId);
-        setNewTodoOpen(true);
+        openNewItem({ kind: 'todo', topicId });
       },
+      openNewItem,
       openShortcuts: () => {
         setShortcutsOpen(true);
       },
       sidebarCollapsed: collapsed,
       toggleSidebar,
-    }),
-    [collapsed, toggleSidebar],
-  );
+    };
+  }, [collapsed, toggleSidebar]);
 
   const togglePalette = useCallback(() => {
     setPaletteOpen((open) => !open);
@@ -163,11 +176,12 @@ export default function AppShellLayout() {
           <JoinInviteDialog open={joinOpen} onOpenChange={setJoinOpen} />
           <AddPageDialog open={addPageOpen} onOpenChange={setAddPageOpen} />
           <KeyboardShortcutsDialog open={shortcutsOpen} onOpenChange={setShortcutsOpen} />
+          <TravelDaySheet key={`travel-day-${String(generation)}`} />
           <NewTodoSheet
             key={generation}
-            open={newTodoOpen}
-            onOpenChange={setNewTodoOpen}
-            presetTopicId={newTodoTopic}
+            open={newItemOpen}
+            onOpenChange={setNewItemOpen}
+            preset={newItem}
           />
         </CommandRegistryProvider>
       </ShellUiContext.Provider>

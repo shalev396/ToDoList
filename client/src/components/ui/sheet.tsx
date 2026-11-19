@@ -44,6 +44,18 @@ const SIDES = {
     'inset-x-0 bottom-0 h-auto border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
 } as const;
 
+/**
+ * Sheets that reach the screen's edges keep their content clear of the status bar and the home
+ * indicator (the bars use the same two variables); a bottom sheet only meets the bottom edge and
+ * its content carries that inset itself.
+ */
+const INSETS = {
+  end: 'pt-[var(--safe-top)] pb-[var(--safe-bottom)]',
+  start: 'pt-[var(--safe-top)] pb-[var(--safe-bottom)]',
+  top: 'pt-[var(--safe-top)]',
+  bottom: '',
+} as const;
+
 function SheetContent({
   className,
   children,
@@ -63,12 +75,20 @@ function SheetContent({
         className={cn(
           'fixed z-50 flex flex-col gap-4 bg-popover text-popover-foreground shadow-(--shadow-overlay) ease-out data-[state=closed]:animate-out data-[state=closed]:duration-150 data-[state=open]:animate-in data-[state=open]:duration-200 motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
           SIDES[side],
+          INSETS[side],
           className,
         )}
         {...props}
       >
         {children}
-        <SheetPrimitive.Close className="absolute top-3 end-3 flex size-9 min-h-11 min-w-11 items-center pointer-coarse:top-0.5 pointer-coarse:end-1 pointer-fine:min-h-0 pointer-fine:min-w-0 justify-center rounded-sm text-muted-foreground transition-colors hover:bg-sunken hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none">
+        <SheetPrimitive.Close
+          data-slot="sheet-close-button"
+          className={cn(
+            'absolute top-3 end-3 flex size-9 min-h-11 min-w-11 items-center pointer-coarse:top-0.5 pointer-coarse:end-1 pointer-fine:min-h-0 pointer-fine:min-w-0 justify-center rounded-sm text-muted-foreground transition-colors hover:bg-sunken hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+            side !== 'bottom' &&
+              'top-[calc(0.75rem+var(--safe-top))] pointer-coarse:top-[calc(0.125rem+var(--safe-top))]',
+          )}
+        >
           <XIcon className="size-4" />
           <span className="sr-only">{closeLabel}</span>
         </SheetPrimitive.Close>

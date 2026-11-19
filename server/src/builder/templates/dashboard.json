@@ -13,7 +13,7 @@
         "source": "items",
         "where": {
           "combinator": "and",
-          "rules": [{ "field": "kind", "operator": "=", "value": "event" }]
+          "rules": [{ "field": "kind", "operator": "in", "value": ["event", "block", "travel"] }]
         },
         "dateRange": "today",
         "dateField": "startAt",

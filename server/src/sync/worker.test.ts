@@ -176,3 +176,59 @@ describe('runSyncJob: gcal-run', () => {
     assert.deepEqual(guard.externalHosts(), []);
   });
 });
+
+describe('runSyncJob: travel', () => {
+  it('a sync that changed items triggers travel; a travel failure never fails the job', async () => {
+    const { runSyncJob } = await import('./worker.js');
+    const changed: SyncRunSummary = {
+      ...outcome(null),
+      counts: { ...outcome(null).counts, updated: 2 },
+    };
+    const runner = (integrationId: string): Promise<SyncRunSummary> =>
+      Promise.resolve(
+        integrationId === 'i-auth'
+          ? outcome('auth_failed')
+          : integrationId === 'i-network'
+            ? outcome('network')
+            : changed,
+      );
+    const gcal = (): Promise<{ ran: false; reason: 'refused' }> =>
+      Promise.resolve({ ran: false, reason: 'refused' });
+    const refreshed: string[] = [];
+    const travel = (integrationId: string): Promise<void> => {
+      refreshed.push(integrationId);
+      return Promise.resolve();
+    };
+    const job = (integrationId: string): SyncJob => ({
+      action: 'sync-run',
+      integrationId,
+      runId: 'r-travel',
+      mode: 'fixtures',
+    });
+
+    await runSyncJob(job('i-changed'), runner, gcal, travel);
+    // A failed run changed nothing: travel waits (and a retried one is retried first).
+    await runSyncJob(job('i-auth'), runner, gcal, travel);
+    await assert.rejects(runSyncJob(job('i-network'), runner, gcal, travel), {
+      name: 'RetrySyncJob',
+    });
+    await runSyncJob({ action: 'gcal-run', integrationId: 'i-calendar' }, runner, gcal, travel);
+    assert.deepEqual(refreshed, ['i-changed', 'i-calendar']);
+
+    // Travel gets the function's deadline (Lambda's time left), for both kinds of job.
+    const deadlines: (number | null)[] = [];
+    const timed = (_id: string, deadline: number | null): Promise<void> => {
+      deadlines.push(deadline);
+      return Promise.resolve();
+    };
+    await runSyncJob(job('i-changed'), runner, gcal, timed, 1_700_000_000_000);
+    await runSyncJob({ action: 'gcal-run', integrationId: 'i-calendar' }, runner, gcal, timed, 42);
+    await runSyncJob(job('i-changed'), runner, gcal, timed);
+    assert.deepEqual(deadlines, [1_700_000_000_000, 42, null]);
+
+    // Travel failing is logged; the job still succeeds (and is never retried for it).
+    const broken = (): Promise<void> => Promise.reject(new Error('travel is down'));
+    await runSyncJob(job('i-changed'), runner, gcal, broken);
+    await runSyncJob({ action: 'gcal-run', integrationId: 'i-calendar' }, runner, gcal, broken);
+  });
+});

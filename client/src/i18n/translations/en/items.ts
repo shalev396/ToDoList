@@ -184,6 +184,8 @@ export const items = {
     file: 'File',
     message: 'Message',
     pr: 'Pull request',
+    block: 'Time block',
+    travel: 'Travel',
   },
   statuses: {
     open: 'Open',

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { PARITY_CASES } from '@api-types/recurrence/cases.ts';
 import { zonedTime } from '../clock/ClockRing.math.ts';
 import {
   expandOccurrences,
@@ -205,4 +206,24 @@ describe('week start setting', () => {
     assert.equal(sun.from.getTime(), at(2026, 11, 1).getTime());
     assert.equal(mon.from.getTime(), at(2026, 10, 26).getTime());
   });
+});
+
+describe('parity with the server: every shared case through the client import path', () => {
+  for (const c of PARITY_CASES) {
+    it(c.name, () => {
+      const got = expandOccurrences(
+        c.rows,
+        { from: new Date(c.range.from), to: new Date(c.range.to) },
+        c.timeZone,
+      );
+      assert.deepEqual(
+        got.map((o) => ({
+          key: o.key,
+          start: o.start.toISOString(),
+          end: o.end?.toISOString() ?? null,
+        })),
+        c.expected,
+      );
+    });
+  }
 });

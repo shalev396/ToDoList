@@ -86,10 +86,36 @@ export abstract class AttributeDefinition {
    * null when it does. A patch that changes neither is always fine.
    */
   patchError(patch: AttributePatch): string | null {
-    if (patch.options === undefined && patch.min === undefined && patch.max === undefined) {
+    if (
+      patch.options === undefined &&
+      patch.min === undefined &&
+      patch.max === undefined &&
+      patch.optionLooks === undefined &&
+      patch.renames === undefined
+    ) {
       return null;
     }
+    if (!this.takesLooks && (patch.optionLooks !== undefined || patch.renames !== undefined)) {
+      return 'Only a select has looks and renames';
+    }
     return this.shapeError(patch);
+  }
+
+  /** Whether the type has option looks and renames (a select does). */
+  protected readonly takesLooks: boolean = false;
+
+  /**
+   * The definition after a patch: what the patch names replaces what was stored (options without
+   * duplicates). `renames` are an instruction for the stored values, never part of a definition.
+   */
+  merge(patch: AttributePatch): AttributeDef {
+    return {
+      ...this.#data,
+      ...(patch.name === undefined ? {} : { name: patch.name }),
+      ...(patch.options === undefined ? {} : { options: [...new Set(patch.options)] }),
+      ...(patch.min === undefined ? {} : { min: patch.min }),
+      ...(patch.max === undefined ? {} : { max: patch.max }),
+    };
   }
 
   /** The type's rule for a patch that names options or a range: by default it takes neither. */
@@ -176,9 +202,48 @@ class DateAttribute extends AttributeDefinition {
 class SelectAttribute extends AttributeDefinition {
   readonly type = 'select' as const;
 
+  protected override readonly takesLooks: boolean = true;
+
+  /** Looks follow their option through a rename and go with an option the patch drops. */
+  override merge(patch: AttributePatch): AttributeDef {
+    const merged = super.merge(patch);
+    const options = merged.options ?? [];
+    const stored = this.definition.optionLooks;
+    if (patch.optionLooks === undefined && stored === undefined) return merged;
+    const renamed = new Map((patch.renames ?? []).map(({ from, to }) => [from, to]));
+    const optionLooks =
+      patch.optionLooks ??
+      (stored ?? [])
+        .map((look) => ({ ...look, option: renamed.get(look.option) ?? look.option }))
+        .filter((look) => options.includes(look.option));
+    return { ...merged, optionLooks };
+  }
+
   protected override shapeError(patch: AttributePatch): string | null {
     if (patch.min !== undefined || patch.max !== undefined) return 'Only a number has a range';
-    return patch.options?.length === 0 ? 'A select needs options' : null;
+    if (patch.options?.length === 0) return 'A select needs options';
+    const options = this.merge(patch).options ?? [];
+    const renames = patch.renames ?? [];
+    const froms = new Set(renames.map((rename) => rename.from));
+    const tos = new Set(renames.map((rename) => rename.to));
+    if (froms.size !== renames.length || tos.size !== renames.length) {
+      return 'Each option is renamed at most once';
+    }
+    for (const { from, to } of renames) {
+      if (!this.options.includes(from) || options.includes(from)) {
+        return 'A rename names an option that was removed';
+      }
+      if (this.options.includes(to) || !options.includes(to)) {
+        return 'A rename names a new option';
+      }
+    }
+    const seen = new Set<string>();
+    for (const look of this.merge(patch).optionLooks ?? []) {
+      if (!options.includes(look.option)) return 'A look names an option';
+      if (seen.has(look.option)) return 'One look per option';
+      seen.add(look.option);
+    }
+    return null;
   }
 
   protected valueError(value: unknown): string | null {

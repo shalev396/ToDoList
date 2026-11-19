@@ -45,6 +45,10 @@ export const legal = {
         title: 'Sharing and who can see what',
         body: 'Members of a workspace see that workspace’s mirrored items, within their topic scope: an owner can limit a member to certain topics, and a member then sees only those.\n\nYou bring people in with an email invite or a join link. Anyone who joins can see what their role and scope allow, so share links only with people you trust. Remove a member or revoke a link at any time.',
       },
+      travel: {
+        title: 'Places and travel time',
+        body: 'Travel time is optional. When you turn it on, TodoList keeps the places you save (Home, campus, the gym), with an address if you type one, together with your travel rules, your settings and how long you say each trip takes.\n\nNothing about your places or trips is sent to any other service: TodoList doesn’t look addresses up and doesn’t work routes out. You set how long each trip takes yourself.\n\nYour places and addresses are private to you: they are never shared with other members of a workspace, never logged, and never given to AI agents, which see place names only. An address is used only to open a map app on your device, when you tap Waze or Google Maps on a trip. A travel leg on your calendar carries place names only, and only you can see it. When you leave a workspace, your places, travel rules and travel settings are deleted at once, and so are your legs.',
+      },
       retention: {
         title: 'How long we keep things',
         body: 'When you delete an item, it is purged for good after 30 days. When you disconnect a source, its items disappear from view right away and are purged on the same schedule.\n\nWhen you delete your account, we delete the workspaces it owns, with their data and secrets, and remove your memberships in other workspaces.',

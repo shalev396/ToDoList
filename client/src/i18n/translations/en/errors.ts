@@ -76,6 +76,11 @@ export const errors = {
     scopeNotAllowed: 'Your role can’t give an agent that access. Choose fewer permissions.',
     requestExpired: 'This sign-in expired. Go back to your agent and connect again.',
     agentKeyCap: 'You have the maximum number of agents here. Revoke one in Agent keys first.',
+    notCompletable: 'A time block or travel has no status to complete.',
+    notDeletable: 'Travel can’t be deleted. Skip it instead.',
+    notAnOccurrence: 'That time isn’t one of this block’s repeats. Refresh and try again.',
+    travelHomeMissing: 'Set your Home place first: your day’s travel starts and ends there.',
+    travelLimit: 'You have the most places or travel rules allowed. Remove one first.',
   },
   generic: 'Something went wrong. Try again in a moment.',
   status: {

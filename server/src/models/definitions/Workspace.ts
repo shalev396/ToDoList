@@ -1,5 +1,8 @@
 import type { AttributeDef, AttributePatch } from '../../types/attributes.js';
 
+/** What a patch stores: everything but `renames`, which move item values and are no part of a definition. */
+export type AttributeChange = Omit<AttributePatch, 'renames'>;
+
 export type WeekStart = 'sun' | 'mon';
 
 /** e.g. `{ match: "shalev396/*", topicId: <the Personal topic's id> }`. */
@@ -122,8 +125,17 @@ export interface IWorkspaceRepository {
    * `max` already.
    */
   appendAttribute(id: string, def: AttributeDef, max: number): Promise<'added' | 'exists' | 'full'>;
-  /** Patches one attribute (never its key, type or built-in flag). Null when it is not found. */
-  updateAttribute(id: string, key: string, patch: AttributePatch): Promise<AttributeDef | null>;
+  /**
+   * Patches one attribute (never its key, type or built-in flag). Null when it is not found. With
+   * `unchangedSince`, only while the workspace's `updatedAt` is still that value (it then stamps a
+   * later one): a write made on a stale read finds nothing (null), so the caller reads again.
+   */
+  updateAttribute(
+    id: string,
+    key: string,
+    change: AttributeChange,
+    options?: { unchangedSince?: Date },
+  ): Promise<AttributeDef | null>;
   /** Removes a custom attribute definition (the built-in stays). False when not removed. */
   removeAttribute(id: string, key: string): Promise<boolean>;
   /** The join link of a live workspace; null when it has none (restricted). */

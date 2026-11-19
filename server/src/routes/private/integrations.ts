@@ -7,6 +7,7 @@ import {
 import { requireWorkspace } from '../../middlewares/requireWorkspace.js';
 import { sensitiveBody } from '../../middlewares/sensitiveBody.js';
 import type { CleanupProgress } from '../../types/primaryCalendar.js';
+import type { FileUnderResult } from '../../types/topicRules.js';
 import type { IntegrationStatusView } from '../../models/definitions/Integration.js';
 import type { AuthMethod, IntegrationMode } from '../../types/domain.js';
 import type {
@@ -263,6 +264,30 @@ router.patch(
   '/workspaces/:wid/integrations/:iid',
   requireWorkspace('viewer'),
   IntegrationsController.update,
+);
+
+// ─── PUT /api/private/workspaces/:wid/integrations/:iid/containers/:cid/file-under ─
+
+/**
+ * File under, one calendar or project. The workspace owner, on a connection of their own (404 for
+ * another's; 403 for editors and viewers). `topicId` files the container under a topic of the
+ * workspace (400 for an unknown one); null puts it back under the connection's topic. This writes an
+ * ordinary name rule (the container's match key → topic, a glob like any other: a `*` in a name
+ * stays a wildcard), then re-files the stored records the workspace's rules cover at once, with no
+ * call to the provider. 404 unless the container is one of this connection's live ones. Answers
+ * the container's rule now (null = none) and how many containers and items moved. Audited as
+ * `workspace.update`.
+ */
+export interface FileUnderRequestBody {
+  topicId: string | null;
+}
+
+export type FileUnderResponseData = FileUnderResult;
+
+router.put(
+  '/workspaces/:wid/integrations/:iid/containers/:cid/file-under',
+  requireWorkspace('owner'),
+  IntegrationsController.fileContainerUnder,
 );
 
 // ─── POST /api/private/workspaces/:wid/integrations/:iid/stop-sharing ───────

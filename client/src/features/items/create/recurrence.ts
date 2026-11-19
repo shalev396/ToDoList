@@ -1,10 +1,11 @@
 /**
  * The Repeat control of a new to-do (plan Addendum A3), as pure functions: what the member picked,
  * whether it can be sent, and the one `RRULE:` line it becomes. The line uses only what the
- * server's RecurrenceRule takes (FREQ, INTERVAL, BYDAY, BYMONTHDAY, COUNT, UNTIL; a YEARLY rule
- * takes neither BYDAY nor BYMONTHDAY), so a valid choice is never refused there.
+ * server's RecurrenceRule takes (FREQ, INTERVAL, BYDAY, BYMONTHDAY, WKST, COUNT, UNTIL, in that
+ * order; a YEARLY rule takes neither BYDAY nor BYMONTHDAY), so a valid choice is never refused there.
  */
 import type { PrimaryCalendarView } from '@api-types/primaryCalendar.ts';
+import type { WeekStart } from '@api-types/recurrence/occurrences.ts';
 import { instantInZone } from '../zonedDate.ts';
 
 /** RFC 5545 weekdays, Monday first (the order BYDAY is written in). */
@@ -153,11 +154,13 @@ export function untilOf(date: string, allDay: boolean, timeZone: string): string
 
 /**
  * The `recurrence` to send: one `RRULE:` line, or null when it doesn't repeat or can't be sent
- * yet (repeatProblem says why).
+ * yet (repeatProblem says why). Every N weeks (N > 1) names the workspace's week start (WKST):
+ * it decides which weeks are counted, so "every 2 weeks on Sunday and Tuesday" keeps each Tuesday
+ * with the Sunday before it when weeks start on Sunday (RFC 5545's default is Monday).
  */
 export function buildRecurrence(
   repeat: Repeat,
-  context: { dueDate: string; allDay: boolean; timeZone: string },
+  context: { dueDate: string; allDay: boolean; timeZone: string; weekStart: WeekStart },
 ): string[] | null {
   const freq = frequencyOf(repeat);
   if (freq === null || repeatProblem(repeat, context.dueDate) !== null) {
@@ -169,6 +172,9 @@ export function buildRecurrence(
   }
   if (freq === 'WEEKLY') {
     parts.push(`BYDAY=${weeklyDays(repeat, context.dueDate).join(',')}`);
+    if (repeat.preset === 'custom' && repeat.interval > 1) {
+      parts.push(`WKST=${context.weekStart === 'mon' ? 'MO' : 'SU'}`);
+    }
   }
   if (repeat.end.kind === 'after') {
     parts.push(`COUNT=${String(repeat.end.count)}`);

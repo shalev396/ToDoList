@@ -35,7 +35,7 @@ export const listDeadlines = defineTool({
   name: 'list_deadlines',
   title: 'List deadlines',
   description:
-    'Open items due within the next days (14 by default), overdue ones included unless includeOverdue is false, earliest first, grouped by topic, container (project or course) or provider. Each item has source and openIn. Filter by topic and provider.',
+    'Open items due within the next days (14 by default), overdue ones included unless includeOverdue is false, earliest first, grouped by topic, container (project or course) or provider. Time blocks and travel are never deadlines. Each item has source and openIn. Filter by topic and provider.',
   toolset: 'read',
   inputSchema: z.strictObject({
     days: z.number().int().min(1).max(90).default(14).describe('How many days ahead'),

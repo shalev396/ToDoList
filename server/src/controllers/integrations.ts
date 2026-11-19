@@ -8,6 +8,7 @@ import type {
   IntegrationSharingResponseData,
   ListIntegrationsResponseData,
   DisconnectIntegrationResponseData,
+  FileUnderResponseData,
   RemovePushedResponseData,
   StopSharingResponseData,
   TestIntegrationResponseData,
@@ -20,6 +21,7 @@ import { redactString } from '../services/secretPatterns.js';
 import {
   CreateIntegrationBody,
   DisconnectQuery,
+  FileUnderBody,
   UpdateIntegrationBody,
 } from '../services/integrationConfig.js';
 import type { WorkspaceRequest } from '../types/express.js';
@@ -127,6 +129,19 @@ const update: RequestHandler = async (req, res): Promise<void> => {
   res.success(data);
 };
 
+/** File under, one container: its owner and the workspace's owner (404 / 403 otherwise). */
+const fileContainerUnder: RequestHandler = async (req, res): Promise<void> => {
+  const { topicId } = parseOr400(FileUnderBody, req.body);
+  const request = req as WorkspaceRequest;
+  const integration = await Integration.findOwn(request.caller, routeParam(req, 'iid'));
+  const data: FileUnderResponseData = await integration.fileContainerUnder(
+    request.caller,
+    routeParam(req, 'cid'),
+    topicId,
+  );
+  res.success(data);
+};
+
 const remove: RequestHandler = async (req, res): Promise<void> => {
   const query = parseOr400(DisconnectQuery, req.query);
   const request = req as WorkspaceRequest;
@@ -184,6 +199,7 @@ export const IntegrationsController = {
   test,
   config,
   update,
+  fileContainerUnder,
   remove,
   removePushed,
   stopSharing,

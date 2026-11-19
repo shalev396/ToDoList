@@ -26,7 +26,10 @@ describe('domain enums (shared with the client)', () => {
       'deadline',
       'message',
       'pr',
+      'block',
+      'travel',
     ]);
+    assert.deepEqual(domain.SCHEDULED_KINDS, ['block', 'travel']);
     assert.deepEqual(domain.ITEM_STATUSES, ['open', 'in_progress', 'done', 'cancelled']);
     assert.deepEqual(domain.CONTAINER_TYPES, [
       'project',

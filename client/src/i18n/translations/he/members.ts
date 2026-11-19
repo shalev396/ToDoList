@@ -25,6 +25,7 @@ export const members = {
     failed: 'לא הצלחנו לשלוח את ההזמנה. נסו שוב.',
     invalidEmails: 'בדקו את הכתובות האלה: {{emails}}',
     sent_one: 'ההזמנה נשלחה',
+    sent_two: 'נשלחו שתי הזמנות',
     sent_other: 'נשלחו {{count}} הזמנות',
     copied: 'הקישור הועתק',
     copyFailed: 'ההעתקה נכשלה. סמנו את הקישור והעתיקו אותו בעצמכם.',

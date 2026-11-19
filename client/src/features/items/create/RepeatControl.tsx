@@ -20,8 +20,17 @@ import {
   type Repeat,
   type RepeatEnd,
   type RepeatPreset,
+  type RepeatProblem,
   type Weekday,
 } from './recurrence';
+
+/** Words a caller puts in place of the to-do's (its "due date" is a block's start). */
+export interface RepeatWording {
+  /** The tooltip of the first occurrence's own day, which can't be unticked. */
+  dueDay?: string;
+  needsDue?: string;
+  untilBeforeDue?: string;
+}
 
 /** The week as the chips show it: Sunday first (Israel and the US both start there). */
 const WEEK_ORDER: readonly Weekday[] = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
@@ -41,17 +50,22 @@ const whole = (value: string): number => (/^\d{1,4}$/.test(value) ? Number(value
  * The Repeat control of a new to-do, like Google Calendar's: Does not repeat, Daily, Weekly on
  * the picked days, Monthly, Yearly or Custom (every N days, weeks, months or years), and when it
  * ends: never, on a date, or after N times. It edits a `Repeat` value; the RRULE line is built from
- * it (recurrence.ts) only when the to-do is saved.
+ * it (recurrence.ts) only when the to-do is saved. A caller may offer fewer presets (a time block
+ * offers none, weekly and custom) and its own words for the due date.
  */
 export function RepeatControl({
   value,
   onChange,
   dueDate,
+  presets = REPEAT_PRESETS,
+  wording = {},
 }: {
   value: Repeat;
   onChange: (next: Repeat) => void;
   /** `YYYY-MM-DD`, or '' while there is no due date (the presets then read plainly). */
   dueDate: string;
+  presets?: readonly RepeatPreset[];
+  wording?: RepeatWording;
 }) {
   const { t } = useTranslation();
   const { language } = useLanguage();
@@ -111,6 +125,10 @@ export function RepeatControl({
     set({ end });
   };
   const problem = repeatProblem(value, dueDate);
+  const problemText = (which: RepeatProblem): string =>
+    (which === 'needsDue' || which === 'untilBeforeDue' ? wording[which] : undefined) ??
+    t(`items.newTodo.repeat.problems.${which}`);
+  const dueDayText = wording.dueDay ?? t('items.newTodo.repeat.dueDay');
 
   return (
     <div className="flex flex-col gap-3" data-repeat="">
@@ -126,7 +144,7 @@ export function RepeatControl({
               preset === 'custom' ? (frequencyOf(value) ?? value.frequency) : value.frequency;
             set({ preset, frequency });
           }}
-          options={REPEAT_PRESETS.map((preset) => ({ value: preset, label: presetLabel(preset) }))}
+          options={presets.map((preset) => ({ value: preset, label: presetLabel(preset) }))}
         />
       </div>
 
@@ -184,10 +202,10 @@ export function RepeatControl({
                       aria-disabled={fixed ? true : undefined}
                       aria-label={
                         fixed
-                          ? `${weekdayName(day, locale, 'long')}, ${t('items.newTodo.repeat.dueDay')}`
+                          ? `${weekdayName(day, locale, 'long')}, ${dueDayText}`
                           : weekdayName(day, locale, 'long')
                       }
-                      title={fixed ? t('items.newTodo.repeat.dueDay') : undefined}
+                      title={fixed ? dueDayText : undefined}
                       data-weekday={day}
                       data-due-day={fixed ? '' : undefined}
                       className={cn(
@@ -288,7 +306,7 @@ export function RepeatControl({
             data-repeat-problem={problem ?? ''}
             className={cn('min-h-5 text-[13px]', problem === null ? '' : 'text-destructive')}
           >
-            {problem === null ? '' : t(`items.newTodo.repeat.problems.${problem}`)}
+            {problem === null ? '' : problemText(problem)}
           </p>
         </div>
       )}

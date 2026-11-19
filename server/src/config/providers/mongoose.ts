@@ -50,6 +50,9 @@ async function registerModels(): Promise<void> {
   await import('../../models/mongoose/ReplayNonce.js');
   await import('../../models/mongoose/CreateQuota.js');
   await import('../../models/mongoose/OAuthState.js');
+  await import('../../models/mongoose/Place.js');
+  await import('../../models/mongoose/TravelRule.js');
+  await import('../../models/mongoose/TravelProfile.js');
 }
 
 /** A driver error's code name (e.g. "DuplicateKey"): never its message, which can quote values. */

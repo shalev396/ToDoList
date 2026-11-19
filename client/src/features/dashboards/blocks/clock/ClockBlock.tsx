@@ -2,9 +2,13 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useBlockData } from '@/api/queries/blocks';
 import { dateLocale, longDate, timeOfDay } from '@/components/items/format';
-import { SourceDot } from '@/components/items/SourceDot';
+import { SourceIcon } from '@/components/items/SourceIcon';
 import { sourceNameKey } from '@/components/items/sources';
+import { ColourDot } from '@/features/colours/ColourDot';
+import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
+import { ConflictMark, LegModeIcon } from '@/features/travel/LegMark';
+import { legMarksOf, rowTitle, type LegMarks } from '@/features/travel/legView';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
 import { useNow } from '@/hooks/useNow';
@@ -14,9 +18,12 @@ import type { BlockComponentProps } from '../../registry/types';
 import { applyDisplayRules } from '../../rules/applyDisplayRules';
 import { usePageVars } from '../../variables/pageVars';
 import type { ItemQueryRow, QueryRow } from '@api-types/builder';
+import type { ItemColour } from '@api-types/colours';
 import type { Occurrence } from '../time/occurrences';
-import { buildClockModel, ringProvider, type ClockEvent } from './clockModel';
+import { buildClockModel, ringProvider, type ClockArea, type ClockEvent } from './clockModel';
+import { ClockLegend } from './ClockLegend';
 import { ClockRing } from './ClockRing';
+import { legendEntries } from './legend';
 
 /** At most this many all-day items are listed; the rest are counted. */
 const MAX_ALL_DAY = 4;
@@ -26,28 +33,44 @@ function isTimeRow(row: QueryRow): row is ItemQueryRow {
 }
 
 /**
- * The clock block: today on a 24-hour ring with a now-needle, a "now / next" summary and the
- * all-day items listed under it (never drawn). The ring is a role="img" whose label is a live text
- * summary of the day; it never mirrors in right-to-left pages (ClockRing).
+ * The clock block: today on a 24-hour ring with a now-needle, a legend of the colours on it, a
+ * "now / next" summary and the all-day items listed under it (never drawn). Every item is
+ * coloured by its subject or topic and role (features/colours); its source is a small icon. Areas
+ * are a band around the ring. The ring is a role="img" whose label is a live text summary of the
+ * day; it never mirrors in right-to-left pages (ClockRing).
  */
 export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
   const { t } = useTranslation();
   const { language } = useLanguage();
   const locale = dateLocale(language);
-  const { settings } = useCurrentWorkspace();
+  const { settings, topics } = useCurrentWorkspace();
   const timeZone = settings?.timezone ?? 'UTC';
   const now = useNow();
   const { vars } = usePageVars();
   const data = useBlockData(dashboard, block, vars);
   const showNext = block.viz['showNext'] !== false;
 
-  const model = useMemo(() => {
+  const kept = useMemo(() => {
     const rows = (data.data?.rows ?? []).filter(isTimeRow);
-    const kept = applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars })
+    return applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars })
       .filter((entry) => !entry.hidden)
       .map((entry) => entry.row);
-    return buildClockModel(kept, now, timeZone);
   }, [data.data?.rows, block.rules, now, timeZone, vars]);
+  const colourOf = useRowColours(kept);
+  const model = useMemo(
+    () => buildClockModel(kept, now, timeZone, colourOf, (row) => rowTitle(t, row)),
+    [kept, now, timeZone, colourOf, t],
+  );
+  const topicNames = useMemo(
+    () => new Map(topics.map((topic) => [topic.id, topic.name])),
+    [topics],
+  );
+  /** What a colour stands for: its subject, else its topic, else Unsorted. */
+  const labelOf = (colour: ItemColour): string =>
+    colour.subject ??
+    (colour.topicId === null ? undefined : topicNames.get(colour.topicId)) ??
+    t('topics.unsorted');
+  const legend = legendEntries([...model.timed, ...model.areas], labelOf);
 
   const time = (date: Date) => timeOfDay(date, locale, timeZone);
   const status = data.isLoading ? 'loading' : data.isError ? 'error' : 'ready';
@@ -57,9 +80,9 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
     current === null ? null : (model.timed[model.timedOccurrences.indexOf(current)]?.end ?? null);
   const dayStatus =
     current !== null && currentEnd !== null
-      ? t('timeBlocks.clock.nowEvent', { title: current.row.title, time: time(currentEnd) })
+      ? t('timeBlocks.clock.nowEvent', { title: rowTitle(t, current.row), time: time(currentEnd) })
       : next !== null
-        ? t('timeBlocks.clock.nextEvent', { title: next.row.title, time: time(next.start) })
+        ? t('timeBlocks.clock.nextEvent', { title: rowTitle(t, next.row), time: time(next.start) })
         : t('timeBlocks.clock.nothingNext');
   const date = longDate(now, locale, timeZone);
   const summary =
@@ -70,12 +93,26 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
   const labels = {
     summary,
     eventList: t('timeBlocks.clock.eventList'),
-    describeEvent: (event: ClockEvent) =>
-      t('timeBlocks.clock.describeEvent', {
+    describeEvent: (event: ClockEvent) => {
+      const text = t('timeBlocks.clock.describeEvent', {
         title: event.title,
         start: time(event.start),
         end: time(event.end),
+        topic: event.colour === undefined ? t('topics.unsorted') : labelOf(event.colour),
         source: t(sourceNameKey(event.source)),
+      });
+      const flags = [
+        event.leg?.conflict === true ? t('travel.leg.conflict') : null,
+        event.leg?.unset === true ? t('travel.leg.setLength') : null,
+      ].filter((flag) => flag !== null);
+      return [text, ...flags].join('. ');
+    },
+    describeArea: (area: ClockArea) =>
+      t('timeBlocks.clock.describeArea', {
+        title: area.title,
+        start: time(area.start),
+        end: time(area.end),
+        topic: labelOf(area.colour),
       }),
   };
 
@@ -91,12 +128,16 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
         <div className="flex w-full min-w-0 flex-1 items-center justify-center">
           <ClockRing
             events={model.timed}
+            areas={model.areas}
             now={now}
             timeZone={timeZone}
             labels={labels}
             className="w-full max-w-[260px]"
           />
         </div>
+        {legend.entries.length === 0 ? null : (
+          <ClockLegend entries={legend.entries} more={legend.more} />
+        )}
         <div aria-live="polite" className="w-full min-w-0 space-y-1 text-[13px]">
           {model.timed.length === 0 ? (
             <p className="text-muted-foreground">{t('timeBlocks.clock.empty')}</p>
@@ -105,6 +146,8 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
               <SummaryLine
                 label={t('timeBlocks.clock.now')}
                 occurrence={current}
+                now={now}
+                colourOf={colourOf}
                 empty={t('timeBlocks.clock.nothingNow')}
                 detail={
                   currentEnd === null ? '' : t('timeBlocks.clock.until', { time: time(currentEnd) })
@@ -114,6 +157,8 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
                 <SummaryLine
                   label={t('timeBlocks.clock.next')}
                   occurrence={next}
+                  now={now}
+                  colourOf={colourOf}
                   empty={t('timeBlocks.clock.nothingNext')}
                   detail={next === null ? '' : time(next.start)}
                 />
@@ -129,7 +174,8 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
             <ul className="space-y-0.5">
               {model.allDay.slice(0, MAX_ALL_DAY).map((o) => (
                 <li key={o.key} className="flex min-w-0 items-center gap-2 text-[13px]">
-                  <SourceDot source={ringProvider(o.row.source.provider)} />
+                  <ColourDot colour={colourOf(o.row.id)} />
+                  <SourceIcon source={ringProvider(o.row.source.provider)} />
                   <span dir="auto" title={o.row.title} className="min-w-0 flex-1 truncate">
                     {o.row.title}
                   </span>
@@ -155,30 +201,56 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
 function SummaryLine({
   label,
   occurrence,
+  now,
+  colourOf,
   empty,
   detail,
 }: {
   label: string;
   occurrence: Occurrence | null;
+  now: Date;
+  colourOf: (rowId: string) => ItemColour;
   empty: string;
   detail: string;
 }) {
+  const { t } = useTranslation();
+  const leg: LegMarks | null = occurrence === null ? null : legMarksOf(t, occurrence, now);
+  const title = occurrence === null ? '' : (leg?.title ?? occurrence.row.title);
   return (
-    <p className="flex min-w-0 items-center gap-2">
-      <span className="w-12 shrink-0 text-xs font-medium text-muted-foreground">{label}</span>
-      {occurrence === null ? (
-        <span className="text-muted-foreground">{empty}</span>
-      ) : (
-        <>
-          <SourceDot source={ringProvider(occurrence.row.source.provider)} />
-          <span dir="auto" title={occurrence.row.title} className="min-w-0 flex-1 truncate">
-            {occurrence.row.title}
-          </span>
-          <span className="shrink-0 text-muted-foreground tabular-nums" dir="ltr">
-            {detail}
-          </span>
-        </>
-      )}
-    </p>
+    <div
+      data-clock-line=""
+      data-conflict={leg === null ? undefined : String(leg.conflict)}
+      data-past={leg === null ? undefined : String(leg.past)}
+    >
+      <p className="flex min-w-0 items-center gap-2">
+        <span className="w-12 shrink-0 text-xs font-medium text-muted-foreground">{label}</span>
+        {occurrence === null ? (
+          <span className="text-muted-foreground">{empty}</span>
+        ) : (
+          <>
+            <ColourDot colour={colourOf(occurrence.row.id)} />
+            {leg === null ? (
+              <SourceIcon source={ringProvider(occurrence.row.source.provider)} />
+            ) : (
+              <LegModeIcon mode={leg.mode} />
+            )}
+            <span dir="auto" title={title} className="min-w-0 flex-1 truncate">
+              {title}
+              {leg?.unset === true ? (
+                <span className="sr-only">. {t('travel.leg.setLength')}</span>
+              ) : null}
+            </span>
+            <span className="shrink-0 text-muted-foreground tabular-nums" dir="ltr">
+              {detail}
+            </span>
+          </>
+        )}
+      </p>
+      {leg?.conflict === true ? (
+        <p className="ps-14 text-xs text-destructive">
+          <ConflictMark />
+        </p>
+      ) : null}
+    </div>
   );
 }

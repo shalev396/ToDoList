@@ -13,12 +13,17 @@ import {
 } from './recurrence.ts';
 
 const on = (patch: Partial<Repeat>): Repeat => ({ ...NO_REPEAT, ...patch });
-const timed = { dueDate: '2026-11-18', allDay: false, timeZone: 'Asia/Jerusalem' };
+const timed = {
+  dueDate: '2026-11-18',
+  allDay: false,
+  timeZone: 'Asia/Jerusalem',
+  weekStart: 'sun' as const,
+};
 const allDay = { ...timed, allDay: true };
 
 /** What the server takes (server/src/classes/integration/RecurrenceRule.ts), as one pattern. */
 const SERVER_LINE =
-  /^RRULE:FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)(;INTERVAL=[1-9]\d{0,2})?(;BYDAY=(MO|TU|WE|TH|FR|SA|SU)(,(MO|TU|WE|TH|FR|SA|SU))*)?(;COUNT=[1-9]\d{0,2}|;UNTIL=\d{8}(T\d{6}Z)?)?$/;
+  /^RRULE:FREQ=(DAILY|WEEKLY|MONTHLY|YEARLY)(;INTERVAL=[1-9]\d{0,2})?(;BYDAY=(MO|TU|WE|TH|FR|SA|SU)(,(MO|TU|WE|TH|FR|SA|SU))*)?(;WKST=(SU|MO))?(;COUNT=[1-9]\d{0,2}|;UNTIL=\d{8}(T\d{6}Z)?)?$/;
 
 describe('buildRecurrence', () => {
   it('does not repeat: nothing to send', () => {
@@ -47,7 +52,7 @@ describe('buildRecurrence', () => {
         on({ preset: 'custom', interval: 2, frequency: 'WEEKLY', days: ['TU'] }),
         timed,
       ),
-      ['RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,WE'],
+      ['RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,WE;WKST=SU'],
     );
     assert.deepEqual(
       buildRecurrence(on({ preset: 'custom', interval: 1, frequency: 'DAILY' }), timed),
@@ -67,6 +72,30 @@ describe('buildRecurrence', () => {
         timed,
       ),
       ['RRULE:FREQ=MONTHLY;INTERVAL=6'],
+    );
+  });
+
+  it('every N weeks names the workspace’s week start (WKST), which decides the weeks counted', () => {
+    // Every 2 weeks on Sunday and Tuesday from Sun 22 Nov 2026.
+    const biweekly = on({ preset: 'custom', interval: 2, frequency: 'WEEKLY', days: ['TU'] });
+    const sunday = { ...timed, dueDate: '2026-11-22' };
+    assert.deepEqual(buildRecurrence(biweekly, sunday), [
+      'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=SU',
+    ]);
+    assert.deepEqual(buildRecurrence(biweekly, { ...sunday, weekStart: 'mon' }), [
+      'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=MO',
+    ]);
+    // Before COUNT or UNTIL, in the order the server writes the parts.
+    assert.deepEqual(buildRecurrence({ ...biweekly, end: { kind: 'after', count: 6 } }, sunday), [
+      'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TU,SU;WKST=SU;COUNT=6',
+    ]);
+    // Every week, or every N days, months or years: the week start changes nothing, so none.
+    assert.deepEqual(buildRecurrence(on({ preset: 'weekly', days: ['TU'] }), sunday), [
+      'RRULE:FREQ=WEEKLY;BYDAY=TU,SU',
+    ]);
+    assert.deepEqual(
+      buildRecurrence(on({ preset: 'custom', interval: 2, frequency: 'DAILY' }), sunday),
+      ['RRULE:FREQ=DAILY;INTERVAL=2'],
     );
   });
 

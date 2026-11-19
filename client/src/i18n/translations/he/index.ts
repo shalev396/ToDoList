@@ -26,6 +26,9 @@ import { agentKeys, connect, templates } from './connect.js';
 import { editor } from './editor.js';
 import { logic } from './logic.js';
 import { pageVars, views } from './views.js';
+import { colours } from './colours.js';
+import { scheduled } from './scheduled.js';
+import { travel } from './travel.js';
 
 export const he = {
   ...common,
@@ -60,4 +63,7 @@ export const he = {
   logic,
   views,
   pageVars,
+  colours,
+  scheduled,
+  travel,
 };

@@ -116,6 +116,64 @@
   --status-serious: #ec835a;
   --status-critical: #d03b3b;
 
+  /* Topic colours: a family per topic (or subject), a step per role, and the ink on the solid
+     steps (validated on the light card, see DESIGN.md "Topic colours"). Painted through
+     features/colours/palette.ts only. */
+  --tc-gray-scheduled: #675f50;
+  --tc-gray-scheduled-ink: #fffdf9;
+  --tc-gray-work: #3b3426;
+  --tc-gray-work-ink: #fffdf9;
+  --tc-gray-travel: #86837c;
+  --tc-gray-area: #e8e5e0;
+  --tc-red-scheduled: #d03b3b;
+  --tc-red-scheduled-ink: #fffdf9;
+  --tc-red-work: #9b0015;
+  --tc-red-work-ink: #fffdf9;
+  --tc-red-travel: #cc8882;
+  --tc-red-area: #fce3dd;
+  --tc-orange-scheduled: #eb6834;
+  --tc-orange-scheduled-ink: #1f1a12;
+  --tc-orange-work: #ad3c00;
+  --tc-orange-work-ink: #fffdf9;
+  --tc-orange-travel: #e2a58f;
+  --tc-orange-area: #ffe9de;
+  --tc-amber-scheduled: #eda100;
+  --tc-amber-scheduled-ink: #1f1a12;
+  --tc-amber-work: #b27800;
+  --tc-amber-work-ink: #1f1a12;
+  --tc-amber-travel: #b69568;
+  --tc-amber-area: #fdf1df;
+  --tc-green-scheduled: #008300;
+  --tc-green-scheduled-ink: #fffdf9;
+  --tc-green-work: #006400;
+  --tc-green-work-ink: #fffdf9;
+  --tc-green-travel: #729c6e;
+  --tc-green-area: #e0ecd9;
+  --tc-teal-scheduled: #1baf7a;
+  --tc-teal-scheduled-ink: #1f1a12;
+  --tc-teal-work: #007952;
+  --tc-teal-work-ink: #fffdf9;
+  --tc-teal-travel: #8dbea5;
+  --tc-teal-area: #e5f2e7;
+  --tc-blue-scheduled: #2674d2;
+  --tc-blue-scheduled-ink: #fffdf9;
+  --tc-blue-work: #004f9f;
+  --tc-blue-work-ink: #fffdf9;
+  --tc-blue-travel: #7b9bc6;
+  --tc-blue-area: #e1eaf5;
+  --tc-violet-scheduled: #6250d6;
+  --tc-violet-scheduled-ink: #fffdf9;
+  --tc-violet-work: #4b31b7;
+  --tc-violet-work-ink: #fffdf9;
+  --tc-violet-travel: #8787c3;
+  --tc-violet-area: #e6e6f7;
+  --tc-pink-scheduled: #e87ba4;
+  --tc-pink-scheduled-ink: #1f1a12;
+  --tc-pink-work: #b14a74;
+  --tc-pink-work-ink: #fffdf9;
+  --tc-pink-travel: #ab7b8b;
+  --tc-pink-area: #feebed;
+
   --sidebar: #f7f4ee;
   --sidebar-foreground: #1f1a12;
   --sidebar-primary: #7a4f00;
@@ -164,6 +222,64 @@
   --chart-5: #d55181;
   --chart-6: #008300;
   --chart-7: #9085e9;
+
+  /* Topic colours: a family per topic (or subject), a step per role, and the ink on the solid
+     steps (validated on the dark card, see DESIGN.md "Topic colours"). Painted through
+     features/colours/palette.ts only. */
+  --tc-gray-scheduled: #b0a691;
+  --tc-gray-scheduled-ink: #1e1a14;
+  --tc-gray-work: #918773;
+  --tc-gray-work-ink: #1e1a14;
+  --tc-gray-travel: #6f6b62;
+  --tc-gray-area: #3d382e;
+  --tc-red-scheduled: #e05252;
+  --tc-red-scheduled-ink: #1e1a14;
+  --tc-red-work: #be3136;
+  --tc-red-work-ink: #f3ede0;
+  --tc-red-travel: #814744;
+  --tc-red-area: #482922;
+  --tc-orange-scheduled: #db5b28;
+  --tc-orange-scheduled-ink: #1e1a14;
+  --tc-orange-work: #b63e00;
+  --tc-orange-work-ink: #f3ede0;
+  --tc-orange-travel: #7e4937;
+  --tc-orange-area: #472a1c;
+  --tc-amber-scheduled: #c98500;
+  --tc-amber-scheduled-ink: #1e1a14;
+  --tc-amber-work: #8b5a00;
+  --tc-amber-work-ink: #f3ede0;
+  --tc-amber-travel: #694e29;
+  --tc-amber-area: #42311a;
+  --tc-green-scheduled: #279723;
+  --tc-green-scheduled-ink: #1e1a14;
+  --tc-green-work: #007800;
+  --tc-green-work-ink: #f3ede0;
+  --tc-green-travel: #345b31;
+  --tc-green-area: #27351b;
+  --tc-teal-scheduled: #199e70;
+  --tc-teal-scheduled-ink: #1e1a14;
+  --tc-teal-work: #007a54;
+  --tc-teal-work-ink: #f3ede0;
+  --tc-teal-travel: #355f4c;
+  --tc-teal-area: #273728;
+  --tc-blue-scheduled: #3987e5;
+  --tc-blue-scheduled-ink: #1e1a14;
+  --tc-blue-work: #1468c3;
+  --tc-blue-work-ink: #f3ede0;
+  --tc-blue-travel: #3b597f;
+  --tc-blue-area: #283341;
+  --tc-violet-scheduled: #9085e9;
+  --tc-violet-scheduled-ink: #1e1a14;
+  --tc-violet-work: #6b5dbd;
+  --tc-violet-work-ink: #f3ede0;
+  --tc-violet-travel: #59567f;
+  --tc-violet-area: #363241;
+  --tc-pink-scheduled: #d85484;
+  --tc-pink-scheduled-ink: #1e1a14;
+  --tc-pink-work: #b63467;
+  --tc-pink-work-ink: #f3ede0;
+  --tc-pink-travel: #7e4758;
+  --tc-pink-area: #46292c;
 
   --sidebar: #16130e;
   --sidebar-foreground: #f3ede0;
@@ -533,8 +649,10 @@
 
 /*
  * The calendar block (FullCalendar), restyled with the theme's tokens: a hairline grid on the card,
- * the sunken wash for today, an ink now-line, and events tinted by their source colour (a wash and
- * a solid edge on the leading side, as the public calendar does). Colour only encodes the source.
+ * the sunken wash for today and an ink now-line. Events are painted in their topic colour (fill and
+ * ink set per event from features/colours, never the source's); travel is hatched (`--tc-hatch`,
+ * set per event) with its label on a plate of its fill; an area is a band in its tint behind
+ * everything, edged in its Scheduled step (`--tc-edge`) and labelled at the top.
  */
 .todolist-calendar .fc {
   --fc-border-color: var(--border);
@@ -544,6 +662,11 @@
   --fc-now-indicator-color: var(--foreground);
   --fc-list-event-hover-bg-color: var(--sunken);
   --fc-event-text-color: var(--foreground);
+  /* Only a drag across free time (the span of a new block, `selectMirror`) has no colour of its
+     own: it takes the primary one. */
+  --fc-event-bg-color: var(--primary);
+  --fc-event-border-color: var(--primary);
+  --fc-highlight-color: rgba(var(--primary-rgb), 0.12);
   --fc-small-font-size: 0.75rem;
   font-size: 0.8125rem;
   color: var(--foreground);
@@ -575,45 +698,86 @@
 .todolist-calendar .fc .fc-list-event td {
   border-color: var(--border);
 }
-.todolist-calendar .fc .fc-event {
-  --src: var(--color-source-local);
+.todolist-calendar .fc .fc-timegrid-event,
+.todolist-calendar .fc .fc-daygrid-event {
   border: 0;
-  border-inline-start: 3px solid var(--src);
   border-radius: 4px;
-  background: color-mix(in oklab, var(--src) 16%, var(--card));
-  color: var(--foreground);
+}
+.todolist-calendar .fc .fc-event:not(.fc-bg-event) {
   cursor: pointer;
 }
 .todolist-calendar .fc .fc-event:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
-.todolist-calendar .fc .fc-event.fc-due {
-  border-inline-start-style: dashed;
+.todolist-calendar .fc .tc-travel:not(.fc-list-event) {
+  background-image: var(--tc-hatch);
 }
-.todolist-calendar .fc .fc-list-event-dot {
-  border-color: var(--src);
+/* In a list, travel's dot is hatched inside a ring of its fill. */
+.todolist-calendar .fc .fc-list-event.tc-travel .fc-list-event-dot {
+  border-width: 2px;
+  padding: 3px;
+  background-image: var(--tc-hatch);
 }
-.todolist-calendar .fc .fc-src-jira {
-  --src: var(--color-source-jira);
+/* A leg that can't be made in time: a red edge along its start and a hairline round it (and the
+   words "You can't make it", which the red alone never replaces). A leg that is over is dimmed. */
+.todolist-calendar .fc .tc-conflict {
+  box-shadow:
+    inset 4px 0 0 var(--destructive),
+    inset 0 0 0 1px var(--destructive);
 }
-.todolist-calendar .fc .fc-src-moodle {
-  --src: var(--color-source-moodle);
+.todolist-calendar[dir='rtl'] .fc .tc-conflict {
+  box-shadow:
+    inset -4px 0 0 var(--destructive),
+    inset 0 0 0 1px var(--destructive);
 }
-.todolist-calendar .fc .fc-src-google_calendar {
-  --src: var(--color-source-google-calendar);
+.todolist-calendar .fc .tc-past {
+  opacity: 0.55;
 }
-.todolist-calendar .fc .fc-src-clickup {
-  --src: var(--color-source-clickup);
+/* A leg whose trip has no length yet (drawn with the placeholder until he sets it): dashed. */
+.todolist-calendar .fc .tc-unset {
+  outline: 1.5px dashed color-mix(in oklab, var(--foreground) 65%, transparent);
+  outline-offset: -2px;
 }
-.todolist-calendar .fc .fc-src-github {
-  --src: var(--color-source-github);
+/* A short event has no room for the words: the warning in its label and the edge still say it. */
+.todolist-calendar .fc .fc-timegrid-event-short .tc-leg-words {
+  display: none;
 }
-.todolist-calendar .fc .fc-src-linear {
-  --src: var(--color-source-linear);
+.todolist-calendar .fc .tc-area {
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px var(--tc-edge, var(--border));
 }
-.todolist-calendar .fc .fc-src-local {
-  --src: var(--color-source-local);
+.todolist-calendar .fc .tc-area-label {
+  overflow: hidden;
+  padding: 2px 4px;
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* In the week grid, events would cover a label at the band's top: a day with an area keeps a rail
+   along its start, clear of events, and the label runs down it. */
+.todolist-calendar .fc .fc-timegrid-col:has(.tc-area) .fc-timegrid-col-events {
+  margin-inline-start: 18px;
+}
+.todolist-calendar .fc .fc-timegrid-col .tc-area-label {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  display: flex;
+  justify-content: center;
+  width: 18px;
+  padding: 4px 0;
+}
+.todolist-calendar .fc .fc-timegrid-col .tc-area-label > [aria-hidden] {
+  max-height: 100%;
+  overflow: hidden;
+  /* Line-left is the top in a vertical line, in either direction: the label starts at the top. */
+  text-align: left;
+  text-overflow: ellipsis;
+  writing-mode: vertical-rl;
 }
 .todolist-calendar .fc .fc-daygrid-more-link {
   color: var(--muted-foreground);

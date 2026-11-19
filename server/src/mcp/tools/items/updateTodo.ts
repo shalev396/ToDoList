@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
-import { Item, ItemEdit } from '../../../classes/item/index.js';
+import { Item, ItemEdit, TimeBlock, TravelLeg } from '../../../classes/item/index.js';
 import { AppError } from '../../../errors/AppError.js';
+import { ValidationError } from '../../../errors/ValidationError.js';
 import { UpdateItemBody } from '../../../services/itemSchemas.js';
 import { PROVIDERS_CREATE_SCOPE } from '../../../types/providerCreate.js';
 import { confirmField } from '../../middleware/confirm.js';
@@ -19,11 +20,23 @@ import { toDate } from './createTodo.js';
 
 const field = UpdateItemBody.shape;
 
+/** A time block or a travel leg is reserved time with its own edit tool: 400 naming it. */
+function assertTodoShaped(item: Item): void {
+  if (item instanceof TimeBlock) {
+    throw new ValidationError(
+      'update_todo does not change a time block or an area: use edit_time_block',
+    );
+  }
+  if (item instanceof TravelLeg) {
+    throw new ValidationError('update_todo does not change travel: use travel_edit_leg');
+  }
+}
+
 export const updateTodo = defineTool({
   name: 'update_todo',
   title: 'Update an item',
   description:
-    'Changes an item, by its id. A local to-do: its title, note, due date (allDay: no time of day), start, end, topic (a slug; null: Unsorted), container, priority or status (null clears a note, a date, a container or a priority; a to-do title and status cannot be null). A mirrored item: the fields its provider takes for its kind are written there (only by the owner of its integration, and only while that integration is read & write); the fields its provider lacks (title, status, due date, start, priority) are kept in TodoList as local overrides (null clears one: title, status, dates or priority; a field the provider takes cannot be cleared, only changed); anything else (note, topic, container) is edited at its source: the answer is an error with its Open in link. A change written to the provider needs the providers:create scope and confirm: true (nothing is sent without them); local changes need neither. An event with other guests needs notifyGuests. Use complete_todo to mark a to-do done.',
+    'Changes an item, by its id. A local to-do: its title, note, due date (allDay: no time of day), start, end, topic (a slug; null: Unsorted), container, priority or status (null clears a note, a date, a container or a priority; a to-do title and status cannot be null). A mirrored item: the fields its provider takes for its kind are written there (only by the owner of its integration, and only while that integration is read & write); the fields its provider lacks (title, status, due date, start, priority) are kept in TodoList as local overrides (null clears one: title, status, dates or priority; a field the provider takes cannot be cleared, only changed); anything else (note, topic, container) is edited at its source: the answer is an error with its Open in link. A change written to the provider needs the providers:create scope and confirm: true (nothing is sent without them); local changes need neither. An event with other guests needs notifyGuests. Use complete_todo to mark a to-do done. A time block or an area is changed with edit_time_block, a travel leg with travel_edit_leg.',
   toolset: 'items',
   inputSchema: z
     .strictObject({
@@ -65,6 +78,7 @@ export const updateTodo = defineTool({
     const { id, topic, confirm, ...change } = input;
     const caller = itemCaller(ctx);
     const item = await Item.find(caller, id);
+    assertTodoShaped(item);
     const edit = ItemEdit.of({
       ...change,
       dueAt: toDate(change.dueAt),

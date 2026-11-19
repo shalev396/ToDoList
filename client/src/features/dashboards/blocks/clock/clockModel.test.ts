@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { angleForTime, dayArcAngles, zonedParts, zonedTime } from './ClockRing.math.ts';
 import { buildClockModel } from './clockModel.ts';
 import type { TimeRow } from '../time/occurrences.ts';
+import type { ItemColour } from '@api-types/colours.ts';
 
 const TZ = 'Asia/Jerusalem';
 const at = (y: number, m: number, d: number, h = 0, min = 0): Date =>
@@ -121,6 +122,125 @@ describe('buildClockModel', () => {
     const a = defined(dayArcAngles(defined(model.timed[0]), springNow, TZ));
     assert.ok(Math.abs(a.startAngle - 135) < 0.01);
     assert.ok(Math.abs(a.endAngle - 150) < 0.01);
+  });
+
+  it('turns area rows into areas, never arcs, Now or Next', () => {
+    const studying: ItemColour = {
+      family: 'teal',
+      role: 'area',
+      from: 'topic',
+      subject: null,
+      topicId: 'college',
+    };
+    const colourOf = (rowId: string): ItemColour =>
+      rowId === 'studying' ? studying : { ...studying, role: 'scheduled' };
+    const model = buildClockModel(
+      [
+        row('studying', {
+          kind: 'block',
+          startAt: at(2026, 11, 12, 12),
+          endAt: at(2026, 11, 12, 17),
+        }),
+        row('lecture', { startAt: at(2026, 11, 12, 14), endAt: at(2026, 11, 12, 15) }),
+      ],
+      now,
+      TZ,
+      colourOf,
+    );
+    assert.deepEqual(
+      model.timed.map((e) => e.id),
+      ['lecture'],
+    );
+    assert.equal(model.current, null);
+    assert.equal(model.next?.row.id, 'lecture');
+    assert.equal(model.areas.length, 1);
+    const area = defined(model.areas[0]);
+    assert.equal(area.title, 'studying');
+    assert.equal(area.start.getTime(), at(2026, 11, 12, 12).getTime());
+    assert.equal(area.end.getTime(), at(2026, 11, 12, 17).getTime());
+    assert.deepEqual(area.colour, studying);
+  });
+
+  it('area goes to areas (with its topic), block to arcs', () => {
+    const colours: Record<string, ItemColour> = {
+      studying: { family: 'teal', role: 'area', from: 'topic', subject: null, topicId: 'college' },
+      focus: { family: 'teal', role: 'work', from: 'topic', subject: null, topicId: 'college' },
+    };
+    const model = buildClockModel(
+      [
+        row('studying', {
+          kind: 'block',
+          startAt: at(2026, 11, 12, 12),
+          endAt: at(2026, 11, 12, 17),
+          props: { layer: 'area' },
+        }),
+        row('focus', {
+          kind: 'block',
+          startAt: at(2026, 11, 12, 14),
+          endAt: at(2026, 11, 12, 15),
+          props: { layer: 'block' },
+        }),
+      ],
+      now,
+      TZ,
+      (rowId) => defined(colours[rowId]),
+    );
+    assert.deepEqual(
+      model.areas.map((a) => [a.title, a.topicId]),
+      [['studying', 'college']],
+    );
+    assert.deepEqual(
+      model.timed.map((e) => [e.title, e.colour?.role]),
+      [['focus', 'work']],
+    );
+    assert.equal(model.next?.row.id, 'focus');
+  });
+
+  it('gives each arc its row colour', () => {
+    const colours: Record<string, ItemColour> = {
+      lecture: {
+        family: 'violet',
+        role: 'scheduled',
+        from: 'subject',
+        subject: 'Calculus',
+        topicId: 'c',
+      },
+      bus: { family: 'teal', role: 'travel', from: 'topic', subject: null, topicId: 'c' },
+    };
+    const model = buildClockModel(
+      [
+        row('lecture', { startAt: at(2026, 11, 12, 13), endAt: at(2026, 11, 12, 14) }),
+        row('bus', { kind: 'travel', startAt: at(2026, 11, 12, 12), endAt: at(2026, 11, 12, 13) }),
+      ],
+      now,
+      TZ,
+      (rowId) => defined(colours[rowId]),
+    );
+    assert.deepEqual(
+      model.timed.map((e) => [e.id, e.colour]),
+      [
+        ['bus', colours['bus']],
+        ['lecture', colours['lecture']],
+      ],
+    );
+  });
+
+  it('without colours, draws every row as an arc in its source colour', () => {
+    const model = buildClockModel(
+      [
+        row('studying', {
+          kind: 'block',
+          startAt: at(2026, 11, 12, 12),
+          endAt: at(2026, 11, 12, 17),
+        }),
+      ],
+      now,
+      TZ,
+    );
+    assert.deepEqual(model.areas, []);
+    assert.equal(model.timed.length, 1);
+    assert.equal('colour' in defined(model.timed[0]), false);
+    assert.equal(defined(model.timed[0]).source, 'google_calendar');
   });
 
   it('is right on the 25-hour fall DST day', () => {

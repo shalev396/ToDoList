@@ -15,6 +15,13 @@ export interface Ctx {
   /** A second workspace whose owner is the throwaway user (deleted with the account). */
   throwawayWid: string;
   itemId: string;
+  /** A weekly time block of the workspace owner's (Sundays 13:00–17:00 in Jerusalem). */
+  timeBlockId: string;
+  /**
+   * The owner's travel: a place of theirs (not Home), a where-rule, and a leg of the time block
+   * (every occurrence of it is marked for travel).
+   */
+  travel: { placeId: string; ruleId: string; legId: string };
   dashboardId: string;
   /** Kept current by the runner from every answer about the dashboard. */
   dashboardVersion: number;
@@ -252,6 +259,12 @@ export const MANIFEST: readonly Entry[] = [
     expect: [2, 4],
     noBadInput: true,
   },
+  {
+    method: 'POST',
+    path: `${W}/attributes/subject/match-counts`,
+    body: () => ({ subjects: [{ name: 'Calculus', patterns: ['*calc*'] }] }),
+    expect: [2],
+  },
 
   // ── items and facets ──────────────────────────────────────────────────────
   { method: 'GET', path: `${W}/items`, query: 'q=lin_api', expect: [2] },
@@ -304,6 +317,133 @@ export const MANIFEST: readonly Entry[] = [
     }),
     expect: [2, 4],
   },
+  // Time blocks: the seeded block is weekly from Sunday 22 November 2026, 13:00 in Jerusalem.
+  {
+    method: 'POST',
+    path: `${W}/time-blocks`,
+    body: () => ({
+      subject: 'Manifest subject',
+      startAt: '2026-11-23T08:00:00.000Z',
+      endAt: '2026-11-23T09:00:00.000Z',
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'],
+      idempotencyKey: 'manifest-block-1',
+    }),
+    expect: [2],
+  },
+  {
+    method: 'PATCH',
+    path: `${W}/time-blocks/:id`,
+    params: (c) => ({ id: c.timeBlockId }),
+    body: () => ({
+      scope: 'this',
+      originalStart: '2026-11-29T11:00:00.000Z',
+      startAt: '2026-11-29T12:00:00.000Z',
+      endAt: '2026-11-29T14:00:00.000Z',
+    }),
+    expect: [2],
+  },
+  {
+    method: 'POST',
+    path: `${W}/time-blocks/:id/skip`,
+    params: (c) => ({ id: c.timeBlockId }),
+    body: () => ({ originalStart: '2026-12-06T11:00:00.000Z' }),
+    expect: [2],
+  },
+  // Travel: the owner's own. A leg may have gone with the occurrence skipped above (a 409 to edit).
+  { method: 'GET', path: `${W}/travel/places`, expect: [2] },
+  {
+    method: 'POST',
+    path: `${W}/travel/places`,
+    body: () => ({ name: 'Technion', address: 'Technion City, Haifa' }),
+    expect: [2],
+  },
+  {
+    method: 'PATCH',
+    path: `${W}/travel/places/:id`,
+    params: (c) => ({ id: c.travel.placeId }),
+    body: () => ({ aliases: ['ORT Braude'] }),
+    expect: [2],
+  },
+  { method: 'GET', path: `${W}/travel/rules`, expect: [2] },
+  {
+    method: 'POST',
+    path: `${W}/travel/rules`,
+    body: (c) => ({
+      scope: { kind: 'item', itemId: c.itemId, occurrence: 'single' },
+      mode: 'drive',
+      direction: 'there',
+    }),
+    expect: [2],
+  },
+  {
+    method: 'PATCH',
+    path: `${W}/travel/rules/:id`,
+    params: (c) => ({ id: c.travel.ruleId }),
+    body: () => ({ mode: 'drive' }),
+    expect: [2],
+  },
+  { method: 'GET', path: `${W}/travel/settings`, expect: [2] },
+  {
+    method: 'PATCH',
+    path: `${W}/travel/settings`,
+    body: () => ({ goHome: { enabled: true } }),
+    expect: [2],
+  },
+  {
+    method: 'PUT',
+    path: `${W}/travel/container-places/:containerId`,
+    params: () => ({ containerId: 'cal-braude' }),
+    body: (c) => ({ placeId: c.travel.placeId }),
+    expect: [2],
+  },
+  {
+    method: 'PUT',
+    path: `${W}/travel/item-places/:itemId`,
+    params: (c) => ({ itemId: c.itemId }),
+    body: (c) => ({ placeId: c.travel.placeId }),
+    expect: [2],
+  },
+  {
+    method: 'POST',
+    path: `${W}/travel/items/:itemId`,
+    params: (c) => ({ itemId: c.timeBlockId }),
+    body: (c) => ({ every: true, mode: 'transit', direction: 'both', placeId: c.travel.placeId }),
+    expect: [2],
+  },
+  {
+    method: 'POST',
+    path: `${W}/travel/preview`,
+    body: (c) => ({ mode: 'drive', toPlaceId: c.travel.placeId, arriveBy: '2026-11-29T11:00:00Z' }),
+    expect: [2],
+  },
+  {
+    method: 'PATCH',
+    path: `${W}/travel/legs/:id`,
+    params: (c) => ({ id: c.travel.legId }),
+    body: () => ({ minutes: 30 }),
+    expect: [2, 4],
+  },
+  {
+    method: 'GET',
+    path: `${W}/travel/legs/:id/links`,
+    params: (c) => ({ id: c.travel.legId }),
+    expect: [2],
+  },
+  {
+    method: 'POST',
+    path: `${W}/travel/legs/:id/skip`,
+    params: (c) => ({ id: c.travel.legId }),
+    expect: [2],
+    noBadInput: true,
+  },
+  {
+    method: 'POST',
+    path: `${W}/travel/legs/:id/reset`,
+    params: (c) => ({ id: c.travel.legId }),
+    expect: [2],
+    noBadInput: true,
+  },
+  { method: 'GET', path: `${W}/travel/days`, query: 'from=2026-11-22&to=2026-11-28', expect: [2] },
   { method: 'GET', path: `${W}/facets`, expect: [2] },
   { method: 'POST', path: `${W}/query`, body: () => ({ draft: { source: 'items' } }), expect: [2] },
 
@@ -500,6 +640,14 @@ export const MANIFEST: readonly Entry[] = [
     expect: [2],
     noBadInput: true,
   },
+  // File under: a container that is not there is 404, and nothing is written.
+  {
+    method: 'PUT',
+    path: `${W}/integrations/:iid/containers/:cid/file-under`,
+    params: (c) => ({ iid: c.integrations.jira, cid: 'no-such-container' }),
+    body: () => ({ topicId: null }),
+    expect: [4],
+  },
   // Only a Google Calendar pushes events: 400 for the Jira one (and nothing is removed).
   {
     method: 'POST',
@@ -546,6 +694,28 @@ export const MANIFEST: readonly Entry[] = [
   },
 
   // ── destructive: last, on what the suite created for it ───────────────────
+  {
+    method: 'DELETE',
+    path: `${W}/travel/items/:itemId`,
+    params: (c) => ({ itemId: c.timeBlockId }),
+    query: 'every=true',
+    expect: [2],
+    noBadInput: true,
+  },
+  {
+    method: 'DELETE',
+    path: `${W}/travel/rules/:id`,
+    params: (c) => ({ id: c.travel.ruleId }),
+    expect: [2],
+    noBadInput: true,
+  },
+  {
+    method: 'DELETE',
+    path: `${W}/travel/places/:id`,
+    params: (c) => ({ id: c.travel.placeId }),
+    expect: [2],
+    noBadInput: true,
+  },
   {
     method: 'DELETE',
     path: `${W}/items/:id`,

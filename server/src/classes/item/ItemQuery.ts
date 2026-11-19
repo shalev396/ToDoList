@@ -14,13 +14,26 @@ import mongoose from 'mongoose';
 
 import type { Caller } from '../base/Caller.js';
 import { ItemPolicy } from '../policies/ItemPolicy.js';
+import { AttributeDefinitions } from '../workspace/AttributeDefinitions.js';
 import { AppError } from '../../errors/AppError.js';
 import { getContainerRepository, getItemRepository } from '../../models/index.js';
 import type { CompileContext } from '../../builder/compile.js';
+import { registryOf } from '../../builder/providerFields.js';
 import { runQuery, type RunQueryDeps } from '../../builder/run.js';
 import { logger } from '../../services/logger.js';
-import { LOCAL_CONNECTOR, type Query, type QueryResult } from '../../types/builder.js';
-import type { ItemKind, ItemStatus, Provider } from '../../types/domain.js';
+import {
+  CAPS,
+  LOCAL_CONNECTOR,
+  type BlockType,
+  type Query,
+  type QueryResult,
+} from '../../types/builder.js';
+import {
+  SCHEDULED_KINDS,
+  type ItemKind,
+  type ItemStatus,
+  type Provider,
+} from '../../types/domain.js';
 import type {
   FacetsResponseData,
   ItemDetail,
@@ -28,18 +41,24 @@ import type {
   ListItemsQuery,
   ListItemsResponseData,
 } from '../../types/items.js';
-// Every item class registers as its module loads: a list made here is Todos, TaskItems, pull
-// requests and events whoever imported this module first.
-import './CalendarEvent.js';
+// Every item class registers as its module loads: a list made here is Todos, time blocks, areas,
+// travel legs, TaskItems, pull requests and events whoever imported this module first.
+import { CalendarEvent } from './CalendarEvent.js';
 import './PullRequest.js';
 import './TaskItem.js';
+import './TimeArea.js';
+import './TimeBlock.js';
 import './Todo.js';
+import './TravelLeg.js';
 import { Container } from './Container.js';
 import { Copies, type LiveStatuses } from './Copies.js';
 import { Item } from './Item.js';
 import { Overrides } from './Overrides.js';
+import { ProviderFields } from './ProviderFields.js';
 
 export const DEFAULT_PAGE_SIZE = 50;
+/** The most rows a server draft reads (runDraft): past the public cap, still bounded. */
+export const DRAFT_ROWS_MAX = 1000;
 /** MongoDB's MaxTimeMSExpired. */
 const MAX_TIME_MS_EXPIRED = 50;
 
@@ -148,14 +167,17 @@ export class ItemQuery {
 
   /**
    * One page of the items the caller may see, sorted by due date (none first), then id; the
-   * status and due-date filters, the sort and the cursor read effective values. 400 for a bad
-   * cursor.
+   * status and due-date filters, the sort and the cursor read effective values. A task-shaped
+   * list: time blocks, areas and travel legs only when `kind` names them. 400 for a bad cursor.
    */
   async list(query: ItemListQuery): Promise<ListItemsResponseData> {
     const caller = this.#caller;
     const limit = query.limit ?? DEFAULT_PAGE_SIZE;
     const sourceFilters: Doc = {
-      ...matchOneOrMany('kind', query.kind),
+      // Task-shaped (Decision 7): reserved time only when a kind is named.
+      ...(query.kind === undefined
+        ? { kind: { $nin: [...SCHEDULED_KINDS] } }
+        : matchOneOrMany('kind', query.kind)),
       ...matchOneOrMany('source.provider', query.provider),
       ...matchOneOrMany('topicId', query.topicId),
       ...(query.containerId === undefined ? {} : { containerId: query.containerId }),
@@ -212,16 +234,31 @@ export class ItemQuery {
     return this.detail(await Item.find(this.#caller, id), { live: true });
   }
 
-  /** An item's full view for the caller (`live`: with its copies' provider statuses). */
+  /**
+   * An item's full view for the caller (`live`: with its copies' provider statuses). A moved
+   * occurrence of a repeating event also names its series and original start
+   * (`seriesOccurrence`), as travel keys its marks.
+   */
   async detail(item: Item, options: { live?: boolean } = {}): Promise<ItemDetail> {
     const liveStatuses =
       options.live === true && !item.copies.isEmpty
         ? await this.#liveStatuses([item.id])
         : undefined;
-    return item.toView(this.#caller, {
+    const view = item.toView(this.#caller, {
       ...(liveStatuses === undefined ? {} : { liveStatuses }),
       editing: await item.editing(this.#caller),
     });
+    const occurrence =
+      item instanceof CalendarEvent ? await item.seriesOccurrence(this.#caller) : null;
+    return occurrence === null
+      ? view
+      : {
+          ...view,
+          seriesOccurrence: {
+            seriesId: occurrence.seriesId,
+            originalStart: occurrence.originalStart.toISOString(),
+          },
+        };
   }
 
   /**
@@ -276,7 +313,11 @@ export class ItemQuery {
           providers: [{ $group: { _id: '$source.provider' } }],
           topics: [{ $group: { _id: '$topicId' } }],
           kinds: [{ $group: { _id: '$kind' } }],
-          statuses: [{ $group: { _id: '$status' } }],
+          // Reserved time has no status to filter by: whatever it stores is not one.
+          statuses: [
+            { $match: { kind: { $nin: [...SCHEDULED_KINDS] } } },
+            { $group: { _id: '$status' } },
+          ],
         },
       },
     ]);
@@ -337,6 +378,45 @@ export class ItemQuery {
       }
       throw error;
     }
+  }
+
+  /**
+   * A query the server drafts itself (travel's anchors and where-rules), run as `runWorkspaceQuery`
+   * runs a request's, minus the request's parts: the caller's access, `ws` from `caller.context`,
+   * the workspace's attributes (and synced fields, when the draft reads `props.*`), no connectors
+   * and no `$page` variables. Its limit may pass the public cap (CAPS.maxLimit), up to
+   * DRAFT_ROWS_MAX: no request ever reaches this. 400-worthy drafts throw QueryValidationError.
+   */
+  async runDraft(
+    draft: Query,
+    options: { now: Date; blockType?: BlockType },
+  ): Promise<QueryResult> {
+    const caller = this.#caller;
+    const ws = caller.context;
+    const { limit, ...capped } = draft;
+    const wide = limit !== undefined && limit > CAPS.maxLimit;
+    const query: Query = wide ? capped : draft;
+    const ctx: CompileContext = {
+      ws,
+      userId: caller.userId,
+      access: this.#policy.access,
+      vars: {},
+      now: options.now,
+      timeZone: ws.settings.timezone,
+      weekStart: ws.settings.weekStart,
+      preview: false,
+      attributes: AttributeDefinitions.of(ws.settings).toJSON(),
+      ...(JSON.stringify(query).includes('props.')
+        ? {
+            fieldRegistry: registryOf(
+              await ProviderFields.of(ws, caller.userId, options.now.getTime()),
+            ),
+          }
+        : {}),
+      ...(options.blockType === undefined ? {} : { blockType: options.blockType }),
+      ...(wide ? { rowLimit: Math.min(limit, DRAFT_ROWS_MAX) } : {}),
+    };
+    return this.run(query, ctx);
   }
 
   // ─── Helpers ──────────────────────────────────────────────────────────────

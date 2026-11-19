@@ -88,7 +88,5 @@ export async function updateOverlay(
 
 export async function deleteItem(ws: WorkspaceContext, userId: string, id: string): Promise<void> {
   const caller = callerOf(ws, userId);
-  const item = await Item.find(caller, id);
-  if (!(item instanceof Todo)) throw new MirroredItemError(item.provider, item.sourceUrl);
-  await item.delete(caller);
+  await (await Item.find(caller, id)).deletable().delete(caller);
 }

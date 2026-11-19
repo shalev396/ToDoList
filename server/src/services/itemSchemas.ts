@@ -34,6 +34,12 @@ export const CreateItemBody = z.strictObject({
   priority: Priority.nullable().optional(),
   idempotencyKey: z.string().min(1).max(200).optional(),
   /**
+   * When it happens (a to-do needs a start for travel): `endAt` needs `startAt` and is not before
+   * it (Todo.create checks both). Not with `recurrence`.
+   */
+  startAt: Iso.optional(),
+  endAt: Iso.optional(),
+  /**
    * A recurring to-do (plan Addendum A3): an array of 1 to 5 strings (an event's `recurrence`
    * field), of which RecurrenceRule takes exactly one `RRULE:` line (400 for any other). It is
    * created in the workspace's primary calendar only.

@@ -108,7 +108,8 @@ export const TMP_OBJECT_EXPIRATION_DAYS = 1;
 /**
  * Direct-invoke events `{ action }` the API function handles besides HTTP. They are reachable
  * only through lambda:InvokeFunction (CI, or anyone with AWS credentials for the account), never
- * through the HTTP API. No schedule invokes any of them for now.
+ * through the HTTP API. Only `sync-dispatch` is scheduled (hourly, SYNC_DISPATCH_SCHEDULE); the
+ * others run only when invoked directly.
  */
 /** Sync the database schema (every deploy, every stage). */
 export const SYNC_DB_ACTION = 'sync-db';
@@ -116,6 +117,8 @@ export const SYNC_DB_ACTION = 'sync-db';
 export const RESET_DB_ACTION = 'reset-db';
 /** Start one background sync run per dispatchable integration. */
 export const SYNC_DISPATCH_ACTION = 'sync-dispatch';
+/** Every whole hour (UTC), through the stack's one EventBridge rule. */
+export const SYNC_DISPATCH_SCHEDULE = 'cron(0 * * * ? *)';
 /** Start one background Google Calendar push + pull per eligible OAuth integration. */
 export const GCAL_DISPATCH_ACTION = 'gcal-dispatch';
 /** Hard-delete items and containers soft-deleted more than 30 days ago; end dead sync runs. */

@@ -9,6 +9,7 @@ import { Compute } from './constructs/compute.js';
 import { Edge } from './constructs/edge.js';
 import { Email } from './constructs/email.js';
 import { Kms } from './constructs/kms.js';
+import { HourlySync } from './constructs/schedule.js';
 import { Storage } from './constructs/storage.js';
 
 export interface TodoListStackProps extends StackProps {
@@ -25,8 +26,9 @@ export interface TodoListStackProps extends StackProps {
  *          the distribution takes long enough to create for SES to verify it)
  *         → Compute (one function, two layers, one role) → Api routes
  *
- * No queue, no worker function and no schedule: background syncs are async invocations of the
- * function by itself, and emails go straight to SES from the request that sends them.
+ * No queue and no worker function: background syncs are async invocations of the function by
+ * itself, started every hour by one EventBridge rule, and emails go straight to SES from the
+ * request that sends them.
  */
 export class TodoListStack extends Stack {
   constructor(scope: Construct, id: string, props: TodoListStackProps) {
@@ -86,6 +88,7 @@ export class TodoListStack extends Stack {
       credentialsKey: kms.key,
     });
     kms.grantCredentialEnvelope(compute.role);
+    new HourlySync(this, 'Schedule', { config, function: compute.function });
 
     api.addRoutes({
       handler: compute.function,

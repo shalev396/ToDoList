@@ -9,13 +9,13 @@ import { createApp } from './app.js';
 import { initDB } from './config/database.js';
 import { AppError } from './errors/AppError.js';
 import { purgeDeleted } from './jobs/purge.js';
+import { runScheduledTick } from './jobs/scheduledTick.js';
 import { seedStage } from './jobs/seed.js';
 import { logger } from './services/logger.js';
 import { resetStage, syncSchema } from './services/stageMaintenance.js';
 import { parseSyncJob } from './services/syncJobs.js';
-import { dispatchAllSyncs } from './sync/dispatcher.js';
 import { dispatchGcalSyncs } from './sync/gcalDispatcher.js';
-import { runSyncJob } from './sync/worker.js';
+import { runSyncJobWithin } from './sync/worker.js';
 import {
   API_ACTIONS,
   GCAL_DISPATCH_ACTION,
@@ -41,12 +41,13 @@ import {
  * - a maintenance action, `{ "action": … }`:
  *   - `sync-db`       from `npm run deploy:backend` (every stage)
  *   - `reset-db`      from `npm run reset:db` before the test suites (refused on prod)
- *   - `sync-dispatch` one background sync run per dispatchable integration
+ *   - `sync-dispatch` one background sync run per dispatchable integration, then the
+ *                    after-dispatch passes (jobs/scheduledTick.ts)
  *   - `gcal-dispatch` one background Google Calendar push + pull per OAuth integration
  *   - `purge`         hard-delete rows soft-deleted more than 30 days ago, end dead sync runs
  *   - `seed`          demo data, dev only (refused elsewhere)
- *   No schedule invokes them for now: they run when the function is invoked directly. A refused
- *   action answers with its AppError's status code.
+ *   `sync-dispatch` also runs hourly from the stack's one EventBridge rule; the others run only
+ *   when invoked directly. A refused action answers with its AppError's status code.
  * Only lambda:InvokeFunction reaches the jobs and the actions, never the HTTP API: API Gateway
  * events always carry `requestContext`, so HTTP traffic can never take those branches.
  */
@@ -75,7 +76,7 @@ function isApiAction(action: unknown): action is ApiAction {
 const ACTIONS: Record<ApiAction, () => Promise<unknown>> = {
   [SYNC_DB_ACTION]: syncSchema,
   [RESET_DB_ACTION]: resetStage,
-  [SYNC_DISPATCH_ACTION]: () => dispatchAllSyncs('schedule'),
+  [SYNC_DISPATCH_ACTION]: () => runScheduledTick(),
   [GCAL_DISPATCH_ACTION]: () => dispatchGcalSyncs(),
   [PURGE_ACTION]: () => purgeDeleted(),
   [SEED_ACTION]: () => seedStage(),
@@ -97,21 +98,32 @@ async function runAction(action: ApiAction): Promise<ActionResult> {
   }
 }
 
-/** One background job. A throw is deliberate: Lambda then retries the async invocation. */
-async function runJob(event: unknown): Promise<ActionResult> {
+/** The function's time left, in ms; null for a context without it (a test's, a local run). */
+export function remainingMsOf(
+  context: Partial<Pick<Context, 'getRemainingTimeInMillis'>>,
+): number | null {
+  const remaining = context.getRemainingTimeInMillis?.();
+  return typeof remaining === 'number' && Number.isFinite(remaining) ? remaining : null;
+}
+
+/**
+ * One background job, within the function's time left (travel after a sync stops in time). A
+ * throw is deliberate: Lambda then retries the async invocation.
+ */
+async function runJob(event: unknown, context: Context): Promise<ActionResult> {
   const job = parseSyncJob(event);
   if (job === null) {
     // Never retried: the same payload would be malformed again.
     logger.warn('background job dropped: malformed');
     return { statusCode: 400, body: JSON.stringify({ error: 'Malformed job' }) };
   }
-  await runSyncJob(job);
+  await runSyncJobWithin(job, remainingMsOf(context));
   return { statusCode: 200, body: JSON.stringify({ ok: true }) };
 }
 
 export const handler = async (event: unknown, context: Context): Promise<unknown> => {
   const action = directAction(event);
-  if (action === SYNC_RUN_ACTION || action === GCAL_RUN_ACTION) return runJob(event);
+  if (action === SYNC_RUN_ACTION || action === GCAL_RUN_ACTION) return runJob(event, context);
   if (isApiAction(action)) return runAction(action);
   return http(event as object, context);
 };

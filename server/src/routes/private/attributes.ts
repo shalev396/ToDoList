@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import { AttributesController } from '../../controllers/index.js';
 import { requireWorkspace } from '../../middlewares/requireWorkspace.js';
-import type { AttributeDef, AttributePatch, NewAttribute } from '../../types/attributes.js';
+import type {
+  AttributeDef,
+  AttributePatch,
+  NewAttribute,
+  SubjectMatchCountsInput,
+} from '../../types/attributes.js';
 
 /**
  * Custom attributes (H4): fields every item of the workspace can carry, with the built-in
@@ -30,7 +35,10 @@ router.post('/workspaces/:wid/attributes', requireWorkspace('editor'), Attribute
 
 // ─── PATCH /api/private/workspaces/:wid/attributes/:key ─────────────────────
 
-/** Editor. Rename (the built-in too), or change a select's options or a number's range. */
+/**
+ * Editor. Rename (the built-in too), or change a select's options (with `renames`, which move the
+ * stored values), its looks, or a number's range. The Subject select's options always have a look.
+ */
 export type UpdateAttributeRequestBody = AttributePatch;
 export type UpdateAttributeResponseData = AttributeDef;
 
@@ -51,6 +59,25 @@ router.delete(
   '/workspaces/:wid/attributes/:key',
   requireWorkspace('editor'),
   AttributesController.remove,
+);
+
+// ─── POST /api/private/workspaces/:wid/attributes/subject/match-counts ───────
+
+/**
+ * Viewer. How many of the caller's items each subject would take, in the order given (an item's
+ * own Subject value first, else the first subject whose pattern matches its title). At most 30
+ * subjects of 10 patterns of 100 characters; `capped` when the scan stopped at its limit.
+ */
+export type SubjectMatchCountsRequestBody = SubjectMatchCountsInput;
+export interface SubjectMatchCountsResponseData {
+  counts: number[];
+  capped: boolean;
+}
+
+router.post(
+  '/workspaces/:wid/attributes/subject/match-counts',
+  requireWorkspace('viewer'),
+  AttributesController.matchCounts,
 );
 
 export { router as attributesRouter };

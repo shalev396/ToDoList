@@ -26,6 +26,18 @@ export const connect = {
     clickup: 'Tasks and due dates from ClickUp.',
     linear: 'Issues and cycles from Linear.',
   },
+  fileUnder: {
+    label: 'File under',
+    none: 'None (Unsorted)',
+    hint: 'Items you filed by hand keep their topic.',
+    saved: 'Items from this connection now go under {{topic}}.',
+    containers_one: 'Calendars and projects ({{count}})',
+    containers_other: 'Calendars and projects ({{count}})',
+    sameAsConnection: 'Same as the connection ({{topic}})',
+    savedContainer_one: '{{name}} is filed under {{topic}} ({{count}} item moved).',
+    savedContainer_other: '{{name}} is filed under {{topic}} ({{count}} items moved).',
+    error: 'The topic couldn’t be saved. Try again.',
+  },
   card: {
     connect: 'Connect',
     test: 'Test connection',

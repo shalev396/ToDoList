@@ -12,6 +12,7 @@ const SECTIONS = [
   'secrets',
   'agents',
   'sharing',
+  'travel',
   'retention',
   'processors',
   'promises',

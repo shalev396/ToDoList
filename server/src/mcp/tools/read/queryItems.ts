@@ -20,7 +20,7 @@ export const queryItems = defineTool({
   name: 'query_items',
   title: 'Query items',
   description:
-    'Runs a query through the Logic Bridge, as a dashboard block does: a saved view (savedQueryId), a dashboard block (dashboardId and blockId), or a draft query (the schema is in todolist://schema/query). vars set the $page.* cross-block filters. Answers rows (each item row with source and openIn) or groups, the total, the variables used and any warnings.',
+    'Runs a query through the Logic Bridge, as a dashboard block does: a saved view (savedQueryId), a dashboard block (dashboardId and blockId), or a draft query (the schema is in todolist://schema/query). vars set the $page.* cross-block filters. A draft reads as a task view (no time blocks, areas or travel legs) unless a rule asks for them by name (kind = block, or kind in a list holding block or travel) or blockType is a time view (calendar, clock, timeline, agenda, workload). Answers rows (each item row with source and openIn) or groups, the total, the variables used and any warnings.',
   toolset: 'read',
   inputSchema: QueryRequestSchema.safeExtend({
     topic: TopicList.describe(

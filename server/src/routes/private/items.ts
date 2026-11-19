@@ -38,7 +38,8 @@ router.get('/workspaces/:wid/items', requireWorkspace('viewer'), ItemsController
  * Editor. Creates a local to-do: 201. The same `idempotencyKey` from the same user (permanent, unique
  * per owner) answers 200 with the item already created. `topicId` (a topic of the workspace, or
  * null for Unsorted) defaults to the workspace's `personal` topic when it has one; an unknown
- * topic is 400.
+ * topic is 400. `startAt` and `endAt` time it (a to-do needs a start for travel): an end needs a
+ * start and is not before it (400).
  *
  * With `recurrence` (one `RRULE:` line, plan Addendum A3) it is a recurring to-do instead: a
  * recurring event created in the workspace's primary calendar only (409 `primary_calendar_unset`
@@ -58,6 +59,10 @@ export interface CreateItemRequestBody {
   containerId?: string | null;
   priority?: number | null;
   idempotencyKey?: string;
+  /** ISO 8601 with an offset. Not with `recurrence`. */
+  startAt?: string;
+  /** Needs `startAt`, and is not before it. */
+  endAt?: string;
   /** A recurring to-do: one `RRULE:` line. */
   recurrence?: string[];
 }

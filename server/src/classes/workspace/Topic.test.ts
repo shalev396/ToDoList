@@ -355,3 +355,39 @@ describe('topic lookups', () => {
     await assert.rejects(Topic.assertOf(other.id, personal.id), { statusCode: 400 });
   });
 });
+
+describe('topic families', () => {
+  it('gives new topics the next unused family in sidebar order', async () => {
+    const ws = await workspace();
+    const defaults = await Topic.ensureDefaults(ws.id, ['work', 'college', 'personal'], 'en');
+    assert.deepEqual(
+      defaults.map((topic) => topic.colour),
+      ['blue', 'orange', 'teal'],
+    );
+    const fourth = await Topic.create(callerOf(ws, EDITOR), { name: 'Fourth' });
+    assert.equal(fourth.colour, 'amber');
+  });
+
+  it('keeps a family chosen by hand and re-assigns on null', async () => {
+    const ws = await workspace();
+    await Topic.ensureDefaults(ws.id, ['work'], 'en');
+    const chosen = await Topic.create(callerOf(ws, EDITOR), { name: 'Chosen', colour: 'gray' });
+    assert.equal(chosen.colour, 'gray');
+    const other = await Topic.create(callerOf(ws, EDITOR), { name: 'Other' });
+    assert.equal(other.colour, 'orange');
+    const again = await Topic.update(callerOf(ws, EDITOR), chosen.id, { colour: null });
+    // blue and orange are taken by the others; gray does not count.
+    assert.equal(again.colour, 'teal');
+  });
+
+  it('reuses blue for the ninth topic and never picks gray', async () => {
+    const ws = await workspace();
+    const colours: (string | null)[] = [];
+    for (let index = 1; index <= 9; index += 1) {
+      const topic = await Topic.create(callerOf(ws, EDITOR), { name: `Topic ${String(index)}` });
+      colours.push(topic.colour);
+    }
+    assert.equal(colours[8], 'blue');
+    assert.ok(colours.every((colour) => colour !== 'gray'));
+  });
+});

@@ -184,7 +184,8 @@ describe('templates: content (BUILDER.md §7, FRONTEND.md §1)', () => {
     });
 
     const clock = only(draft, 'clock');
-    assert.ok(hasRule(clock.query, 'kind', '=', 'event'));
+    // Today's events, time blocks, areas and travel legs.
+    assert.ok(hasRule(clock.query, 'kind', 'in', ['event', 'block', 'travel']));
     assert.equal(clock.query?.dateRange, 'today');
 
     const donut = only(draft, 'chart');

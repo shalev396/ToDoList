@@ -173,6 +173,7 @@ describe('ItemPolicy', () => {
     topicId: 't-1',
     deletedAt: null,
     source: { provider: 'local', url: '' },
+    kind: 'todo',
   };
   const jira: ItemFacts = {
     ...base,
@@ -180,6 +181,7 @@ describe('ItemPolicy', () => {
     ownerUserId: null,
     visibility: 'workspace',
     source: { provider: 'jira', url: 'https://example.invalid/browse/A-1' },
+    kind: 'issue',
   };
 
   it('reads the items of its access: own and shared integrations, its to-dos, shared to-dos', () => {
@@ -250,7 +252,7 @@ describe('ItemPolicy', () => {
     assert.deepEqual(list['$or'], [
       { integrationId: { $in: ['i-mine', 'i-shared'] } },
       { integrationId: null, ownerUserId: 'u-me' },
-      { integrationId: null, visibility: 'workspace' },
+      { integrationId: null, visibility: 'workspace', kind: { $ne: 'travel' } },
     ]);
     assert.ok('$nor' in list);
     assert.ok(!('$nor' in policy.itemFilterUnabsorbed(ws)));
@@ -262,6 +264,38 @@ describe('ItemPolicy', () => {
       topicId: { $in: ['t-1'] },
       integrationId: { $in: ['i-mine', 'i-shared'] },
     });
+  });
+
+  it('a travel leg is its member’s only, and is skipped, never deleted (409 not_deletable)', () => {
+    const leg: ItemFacts = { ...base, kind: 'travel', visibility: 'workspace' };
+    const theirs: ItemFacts = { ...leg, ownerUserId: 'u-other' };
+    // Another member's leg is not theirs to see, even stored workspace-visible.
+    assert.ok(!policy.canRead(caller('owner'), theirs));
+    assert.ok(policy.refusal(caller('owner'), 'manage', theirs) instanceof NotFoundError);
+    // Its member reads and edits it (its times), but never deletes it.
+    assert.ok(policy.canRead(caller('editor'), leg));
+    assert.ok(policy.canEdit(caller('editor'), leg));
+    assert.ok(!policy.canManage(caller('editor'), leg));
+    assert.ok(!policy.canManage(caller('owner'), leg));
+    const refused = policy.refusal(caller('editor'), 'manage', leg);
+    assert.deepEqual(
+      [refused.statusCode, refused.code, refused.message],
+      [409, 'not_deletable', 'Travel is skipped, not deleted'],
+    );
+    // A viewer is refused as a viewer.
+    assert.equal(
+      policy.refusal(caller('viewer'), 'manage', leg).message,
+      'Only an editor can do this',
+    );
+    // A time block is a to-do's equal here: shared ones are seen, editors delete them.
+    const block: ItemFacts = {
+      ...base,
+      kind: 'block',
+      ownerUserId: 'u-other',
+      visibility: 'workspace',
+    };
+    assert.ok(policy.canRead(caller('viewer'), block));
+    assert.ok(policy.canManage(caller('editor'), block));
   });
 
   it('a block that reads two integrations of one account dedups, preferring its first', () => {

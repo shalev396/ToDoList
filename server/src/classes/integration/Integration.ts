@@ -57,6 +57,7 @@ import type { SyncRunOptions, TriggeredSyncOptions } from '../sync/SyncOptions.j
 import { skippedRun, zeroCounts } from '../sync/syncRecords.js';
 import { SyncRun } from '../sync/SyncRun.js';
 import { Topic } from '../workspace/Topic.js';
+import type { FileUnderResult, RefileCounts } from '../../types/topicRules.js';
 import { Dashboard } from '../dashboard/Dashboard.js';
 import '../../sync/providers/index.js';
 import { getAdapter } from '../../sync/registry.js';
@@ -649,16 +650,75 @@ export abstract class Integration<
       patch.config = await this.checkSelection(config);
     }
     if (input.expiresAt !== undefined) patch.expiresAt = input.expiresAt;
-    const changed = Object.keys(patch);
-    if (changed.length === 0) {
+    if (Object.keys(patch).length === 0) {
       throw new AppError(400, EMPTY_UPDATE_MESSAGE);
     }
+    const updated = await this.#save(caller, patch);
+    // Its topic is every record's default: what is stored follows at once (File under).
+    if (patch.topicId !== undefined) await Integration.#refile(updated);
+    return updated;
+  }
+
+  /** The one write of an owner's change: stored, then audited by the names of the changed fields. */
+  async #save(caller: Caller, patch: IntegrationPatch): Promise<Integration> {
     const updated = await (
       await getIntegrationRepository()
     ).update(this.workspaceId, this.id, patch);
     if (updated === null) throw new NotFoundError();
-    await AuditLog.record(caller, Integration.Audit.update, this, { changed });
+    await AuditLog.record(caller, Integration.Audit.update, this, { changed: Object.keys(patch) });
     return Integration.from(updated);
+  }
+
+  static async #refile(integration: Integration): Promise<RefileCounts> {
+    const { Refiling } = await import('../item/Refiling.js');
+    return Refiling.integration(integration);
+  }
+
+  /**
+   * Its owner files the whole connection under `topicId` (null: Unsorted): the default of every
+   * container and item that has no rule or override of its own. What is stored follows at once,
+   * through the workspace's rules, with no call to the provider. Audited as `integration.update`
+   * (`changed: ['topicId']`).
+   */
+  async fileUnder(
+    caller: Caller,
+    topicId: string | null,
+  ): Promise<{ integration: Integration; refiled: RefileCounts }> {
+    this.assertOwner(caller);
+    if (topicId !== null) await Topic.assertOf(this.workspaceId, topicId);
+    const integration = await this.#save(caller, { topicId });
+    return { integration, refiled: await Integration.#refile(integration) };
+  }
+
+  /**
+   * Its owner, who is also the workspace's owner, files one of its calendars or projects under
+   * `topicId`, or back to the connection's topic (null): the container's name rule
+   * (Workspace#setNameRule), then what is stored follows. 404 unless the container is one of this
+   * integration's live ones; 403 for an owner of the integration who does not own the workspace.
+   */
+  async fileContainerUnder(
+    caller: Caller,
+    containerId: string,
+    topicId: string | null,
+  ): Promise<FileUnderResult> {
+    this.assertOwner(caller);
+    caller.require('owner');
+    const { Container } = await import('../item/Container.js');
+    const { Workspace } = await import('../workspace/Workspace.js');
+    const container = (await Container.listOf(this.workspaceId, this.id)).find(
+      ({ id }) => id === containerId,
+    );
+    if (container === undefined) throw new NotFoundError();
+    if (topicId !== null) await Topic.assertOf(this.workspaceId, topicId);
+    const workspace = await Workspace.load(caller);
+    return workspace.setNameRule(caller, container.matchKey, topicId);
+  }
+
+  /** The workspace's live integrations, oldest first: only Refiling calls it. */
+  static async listIn(workspaceId: string): Promise<Integration[]> {
+    return (await (await getIntegrationRepository()).list(workspaceId)).map((data) =>
+      Integration.from(data),
+    );
   }
 
   /**

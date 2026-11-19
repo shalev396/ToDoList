@@ -14,6 +14,8 @@ import { Topic } from '../../classes/workspace/index.js';
 import { toolCaller } from '../auth/principal.js';
 import type { ToolContext } from '../tool.js';
 import { ITEM_KINDS, ITEM_STATUSES, PROVIDERS } from '../../types/domain.js';
+import type { Occurrence } from '../../types/recurrence/occurrences.js';
+import { BLOCK_LAYERS, layerOf } from '../../types/scheduled.js';
 import { TOPICS_PER_WORKSPACE_MAX } from '../../types/topics.js';
 
 const Iso = z.string().nullable().describe('ISO 8601, or null');
@@ -77,6 +79,28 @@ export const ItemSummaryView = z.object({
     attrs: z.record(z.string(), z.unknown()).describe('Custom attribute values by key'),
   }),
   lastSeenAt: Iso,
+  layer: z
+    .enum(BLOCK_LAYERS)
+    .optional()
+    .describe('A time block’s layer: block, or area (painted time for a part of life)'),
+  occurrence: z
+    .object({
+      seriesId: z.string().describe('The id of the item that holds the repeating series'),
+      originalStart: z
+        .string()
+        .describe('The slot this entry fills in its series (its start before any move), ISO 8601'),
+    })
+    .nullable()
+    .optional()
+    .describe(
+      'In time answers: the series this entry is one occurrence of; null if it does not repeat',
+    ),
+  busy: z
+    .boolean()
+    .optional()
+    .describe(
+      'In time answers: whether it takes the time. Events (unless shown as free), time blocks and travel are busy; areas, to-dos and tasks are not',
+    ),
 });
 export type ItemSummaryView = z.infer<typeof ItemSummaryView>;
 
@@ -151,6 +175,51 @@ export function toItemSummaryView(item: ItemSummary): ItemSummaryView {
       attrs: { ...item.overlay.attrs },
     },
     lastSeenAt: iso(item.lastSeenAt),
+    ...(item.layer === undefined ? {} : { layer: item.layer }),
+  };
+}
+
+/**
+ * Whether an entry of a time answer takes the time, as an agent planning around it reads it
+ * (docs/superpowers/specs/2026-11-17-time-blocks-design.md, "Areas"; travel spec, "How it shows"):
+ * travel and time blocks do, an area does not (it is a plan, not a commitment), an event does
+ * unless it is shown as free (Google's `transparent`), and a to-do or task does not (it is work to
+ * fit into time). An entry placed at its due date never does.
+ */
+function isBusy(summary: ItemSummaryView, dueOnly: boolean): boolean {
+  if (dueOnly) return false;
+  switch (summary.kind) {
+    case 'travel':
+      return true;
+    case 'block':
+      return layerOf(summary) !== 'area';
+    case 'event':
+      return summary.props['transparency'] !== 'transparent';
+    default:
+      return false;
+  }
+}
+
+/**
+ * One occurrence of an item, as the time tools answer with it: the item's summary, with
+ * `occurrence` (the series and the slot it fills; null for an item that does not repeat) and
+ * `busy`. An occurrence expanded from the item's own series takes that occurrence's start and
+ * end; any other entry (a single item, a moved Google occurrence, a due-only one) is at its own.
+ */
+export function toOccurrenceView(
+  summary: ItemSummaryView,
+  occurrence: Occurrence,
+): ItemSummaryView {
+  const series =
+    occurrence.seriesRowId === null || occurrence.originalStart === null
+      ? null
+      : { seriesId: occurrence.seriesRowId, originalStart: occurrence.originalStart.toISOString() };
+  const expanded = occurrence.seriesRowId === occurrence.row.id;
+  return {
+    ...summary,
+    ...(expanded ? { startAt: occurrence.start.toISOString(), endAt: iso(occurrence.end) } : {}),
+    occurrence: series,
+    busy: isBusy(summary, occurrence.dueOnly),
   };
 }
 

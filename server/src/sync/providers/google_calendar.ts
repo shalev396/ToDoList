@@ -12,8 +12,9 @@
  *   is deleted, older ones keep their history.
  * - Bounded: a listing of more than MAX_EVENT_PAGES pages, or one naming a page token twice, fails
  *   its resource (nothing swept, no state saved; googleListing.ts).
- * - Recurring events stay series (`singleEvents=false`): the master carries `props.recurrence`, an
- *   exception its `recurringEventId` and `originalStartAt`, for expansion in the client. A
+ * - Recurring events stay series (`singleEvents=false`): the master carries `props.recurrence` (and
+ *   `props.recurrenceEnd`, when its last occurrence ends; null: never), an exception its
+ *   `recurringEventId` and `originalStartAt`, for the shared expansion (types/recurrence). A
  *   cancelled occurrence stays live as `status: cancelled` (the client hides that occurrence).
  * - Auth: the integration's strategy (`ctx.auth`, classes/integration/auth) hands each resource
  *   its headers:
@@ -35,6 +36,7 @@ import type { Provider } from '../../types/domain.js';
 import { createReadOnlyClient, ProviderHttpError } from '../http.js';
 import { googleEndpoints } from './googleEndpoints.js';
 import { registerAdapter } from '../registry.js';
+import { isSeriesRow, recurrenceEndOf } from '../../types/recurrence/occurrences.js';
 import { zonedTime } from '../transports/fixtureDates.js';
 import type {
   AdapterContext,
@@ -230,14 +232,19 @@ export function mapCalendarEvent(
         .filter((line): line is string => typeof line === 'string')
         .sort()
     : null;
+  const startAt = start?.at ?? originalStart?.at ?? null;
+  const endAt = end?.at ?? null;
+  // A master: when its last occurrence ends (null: never), so a query's range after it does not
+  // read the series (builder/compile.ts, the series branch).
+  const master = recurrence !== null && isSeriesRow({ props: { recurrence } });
 
   return {
     kind: 'event',
     title: text(raw.summary) ?? eventId ?? '',
     status: cancelled || declined ? 'cancelled' : 'open',
     statusRaw: declined ? 'declined' : text(raw.status),
-    startAt: start?.at ?? originalStart?.at ?? null,
-    endAt: end?.at ?? null,
+    startAt,
+    endAt,
     allDay: start?.allDay ?? false,
     closedAt: declined || cancelled ? updated : null,
     containerExternalId: ctx.calendarId,
@@ -248,6 +255,11 @@ export function mapCalendarEvent(
       meetLink: meetLinkOf(raw),
       recurringEventId,
       recurrence,
+      ...(master
+        ? {
+            recurrenceEnd: recurrenceEndOf({ startAt, endAt, props: { recurrence } }, ctx.timeZone),
+          }
+        : {}),
       originalStartAt: originalStart?.at.toISOString() ?? null,
       attendeesCount: attendees.filter((attendee) => attendee.resource !== true).length,
       // Guests beyond the calendar's owner: moving or deleting such an event changes it for them.

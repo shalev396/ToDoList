@@ -3,7 +3,10 @@
 # The local API reads Cognito/S3 wiring from the stage stack outputs, so it needs
 # AWS credentials plus the stage's DOMAIN_NAME and DATABASE_URL — nothing else.
 # Each job first empties the stage (DB, S3 user uploads, Cognito users) with `npm run reset:db`,
-# a direct Lambda invoke: there is no HTTP reset route.
+# a direct Lambda invoke: there is no HTTP reset route. The reset re-syncs the schema through the
+# DEPLOYED function (the last merge's code), so each job then syncs the indexes and validators with
+# THIS branch's code (`npm run sync:schema:local`: the same syncDB, never the data migrations), or
+# a branch that changes a validator (a new item kind) would be refused by the old one until deployed.
 # The local API starts with --no-rate-limits: every request comes from 127.0.0.1, so the in-app
 # limits (per user or per address, 15-minute windows) would answer most of the suite with 429.
 # The flag exists on the local entry only (server/src/local.ts); the deployed Lambda keeps them.
@@ -58,6 +61,9 @@ jobs:
         working-directory: server
       - name: Reset the ${{ inputs.environment }} stage
         run: npm run reset:db -- ${{ inputs.environment }}
+        working-directory: server
+      - name: Sync the ${{ inputs.environment }} schema with this branch
+        run: npm run sync:schema:local -- ${{ inputs.environment }}
         working-directory: server
       - name: Start local API and run Postman
         run: |
@@ -114,6 +120,9 @@ jobs:
         working-directory: client
       - name: Reset the ${{ inputs.environment }} stage
         run: npm run reset:db -- ${{ inputs.environment }}
+        working-directory: server
+      - name: Sync the ${{ inputs.environment }} schema with this branch
+        run: npm run sync:schema:local -- ${{ inputs.environment }}
         working-directory: server
       - name: Start local API and Vite, run Playwright
         run: |

@@ -1,4 +1,4 @@
-import type { ItemKind, ItemStatus, Visibility } from '../../types/domain.js';
+import type { ItemKind, ItemStatus, ScheduledKind, Visibility } from '../../types/domain.js';
 export { OVERRIDABLE_FIELDS, type OverridableField } from '../../types/items.js';
 import type {
   AggregateOptions,
@@ -162,11 +162,10 @@ export interface CreateLocalItemInput {
   visibility?: Visibility;
 }
 
-/** What may change on a local item. */
+/** What may change on a local to-do (its kind never: a to-do stays a to-do). */
 export interface LocalItemPatch {
   title?: string;
   topicId?: string | null;
-  kind?: ItemKind;
   bodyPreview?: string | null;
   status?: ItemStatus;
   priority?: number | null;
@@ -181,6 +180,63 @@ export interface LocalItemPatch {
   props?: Record<string, unknown>;
   visibility?: Visibility;
   closedAt?: Date | null;
+}
+
+/**
+ * What may change on TodoList's own reserved time (a time block, an area, a travel leg): its
+ * title, topic, note, times and `props` (its layer, rule, exceptions, travel), written whole.
+ */
+export interface ScheduledItemPatch {
+  title?: string;
+  topicId?: string | null;
+  bodyPreview?: string | null;
+  startAt?: Date;
+  endAt?: Date;
+  props?: Record<string, unknown>;
+}
+
+/**
+ * A travel leg as travel storage writes it (TravelLeg.applyPlan, its reset): a local item of kind
+ * `travel`, private to `ownerUserId`, keyed by `props.travelKey`. `travel` is its TravelLegProps
+ * (types/travel.ts), written whole.
+ */
+export interface TravelLegWrite {
+  ownerUserId: string;
+  title: string;
+  topicId: string | null;
+  startAt: Date;
+  endAt: Date;
+  travel: Record<string, unknown>;
+}
+
+/** What an upsert of a leg did: made it, changed it (a tombstone made live too), or nothing. */
+export type TravelLegUpsertOutcome = 'created' | 'updated' | 'unchanged' | 'refused';
+
+/**
+ * When a stored leg may be written over: every condition given must hold of it at the moment of the
+ * write (one conditional write, so a change made since it was read can't be overwritten). A stored
+ * leg that fails one is left as it is (`refused`).
+ */
+export interface TravelLegGuard {
+  /** Its `updatedAt` is still this: nobody changed it since it was read. */
+  unchangedSince?: Date;
+  /** It is (true) or is not (false) a leg the member edited by hand (`props.travel.edited`). */
+  edited?: boolean;
+  /** It is not a skipped tombstone (only Reset brings a skip back). */
+  notSkipped?: boolean;
+  /** It is not a live leg that started before this (a leg under way or done is history). */
+  notStartedBefore?: Date;
+}
+
+/** Which of one member's legs (those with a `props.travelKey`) to list. */
+export interface TravelLegFilter {
+  ownerUserId: string;
+  /** Legs that start in [from, to). */
+  from?: Date;
+  to?: Date;
+  ids?: readonly string[];
+  /** Tombstones (removed or skipped legs, soft-deleted) too. Default: live legs only. */
+  includeRemoved?: boolean;
 }
 
 /**
@@ -278,8 +334,57 @@ export interface IItemRepository {
     inputs: readonly CreateLocalItemInput[],
     at?: Date,
   ): Promise<ItemData[]>;
-  /** Local items only: a mirrored item throws MirroredItemError (edit it at the source). */
+  /**
+   * Local to-dos only: a mirrored item throws MirroredItemError (edit it at the source); reserved
+   * time (a time block, an area, a travel leg) is not found here (updateScheduled changes it).
+   */
   updateLocal(workspaceId: string, id: string, patch: LocalItemPatch): Promise<ItemData | null>;
+  /**
+   * TodoList's own reserved time of `kind` only (never a to-do, never a mirrored item). With
+   * `unchangedSince`, only while the item's `updatedAt` is still that value: a write made on a
+   * stale read finds nothing (null), so the caller reads again and retries. Null when there is no
+   * such item.
+   */
+  updateScheduled(
+    workspaceId: string,
+    id: string,
+    kind: ScheduledKind,
+    patch: ScheduledItemPatch,
+    options?: { unchangedSince?: Date },
+  ): Promise<ItemData | null>;
+  /**
+   * Travel storage's write of one leg, by its key (`props.travelKey`, unique per workspace): a new
+   * one is created (kind `travel`, visibility `private`, owned by `leg.ownerUserId`); a stored one
+   * (a tombstone too, which is made live again) gets the title, topic, times and `props.travel`
+   * given. Writing what is stored already writes nothing (its `updatedAt` stays), so applying one
+   * plan twice changes nothing. With a guard, a stored leg is written over only while the guard
+   * holds of it (`refused` otherwise, the leg as it is).
+   */
+  upsertTravelLeg(
+    workspaceId: string,
+    key: string,
+    leg: TravelLegWrite,
+    guard?: TravelLegGuard,
+  ): Promise<{ item: ItemData; outcome: TravelLegUpsertOutcome }>;
+  /** One member's legs, by start then id; live ones only unless `includeRemoved`. */
+  listTravelLegs(workspaceId: string, filter: TravelLegFilter): Promise<ItemData[]>;
+  /**
+   * A live leg becomes a tombstone: `deletedAt` (default now) and `props.travel.removedReason`.
+   * The tombstone, or null when there is no such live leg.
+   */
+  removeTravelLeg(
+    workspaceId: string,
+    id: string,
+    reason: string,
+    at?: Date,
+  ): Promise<ItemData | null>;
+  /**
+   * A membership ended: every live leg of the member is soft-deleted, and every one of its legs
+   * (its tombstones too) is marked `skipped`, the reason a guarded write (`notSkipped`) never
+   * writes over, so a regeneration that raced the leave brings none back. Returns how many live
+   * legs it removed.
+   */
+  removeTravelLegsOf(workspaceId: string, ownerUserId: string, at?: Date): Promise<number>;
   /**
    * A write-back on a live mirrored item of `integrationId` (never a local one): only the fields
    * given change. With `resync`, its `source.hash` is cleared, so the next sync of the record
@@ -312,7 +417,8 @@ export interface IItemRepository {
   /**
    * H5: records a copy on a local to-do. False when a copy with this `requestId` exists already
    * (a repeat), when (unless `allowActive`) a copy at the same integration is pending, created
-   * or unknown (the claim is atomic per to-do and integration), or the item is not a live local one.
+   * or unknown (the claim is atomic per to-do and integration), or the item is not a live local
+   * to-do (reserved time, a time block or a travel leg, is never copied).
    */
   addCopy(
     workspaceId: string,
@@ -336,7 +442,8 @@ export interface IItemRepository {
   softDeleteForWorkspace(workspaceId: string): Promise<number>;
   /**
    * Local items marked private whose owner is none of `memberIds` (former members' to-dos,
-   * PERMISSIONS-V2 ruling 6), not deleted: how many. Never their content.
+   * PERMISSIONS-V2 ruling 6), not deleted, travel legs left out (travel storage removes those):
+   * how many. Never their content.
    */
   countPrivateLocalOfFormerMembers(
     workspaceId: string,
@@ -409,11 +516,28 @@ export interface IItemRepository {
    * overlays filing an item under it are cleared. Nothing else changes. Returns how many items.
    */
   unsetTopic(workspaceId: string, topicId: string): Promise<number>;
+  /**
+   * Files an integration's live items under topics (File under), one write: each assignment moves
+   * the items of that container (`null`: the ones with no container) to `topicId`. Only `topicId`
+   * is written, never an overlay; items that already have it are not counted. Returns how many.
+   */
+  refileByContainer(
+    workspaceId: string,
+    integrationId: string,
+    assignments: readonly { containerId: string | null; topicId: string | null }[],
+  ): Promise<number>;
   /** Clears one attribute's value on every item of the workspace. Returns how many items held it. */
   clearAttribute(workspaceId: string, key: string): Promise<number>;
   /**
+   * Moves the value `from` to `to` of one attribute on every item of the workspace (a renamed
+   * select option). Returns how many items held `from`.
+   */
+  renameAttributeValue(workspaceId: string, key: string, from: string, to: string): Promise<number>;
+  /**
    * GLOBAL, every workspace: the purge job (jobs/purge.ts) only. Hard-deletes items
-   * soft-deleted before `date`. Returns how many.
+   * soft-deleted before `date`, except a travel leg's tombstone whose leg ended at or after
+   * `date`: the day panel shows why a leg went at least through its day, however long the purge
+   * waits. Returns how many.
    */
   purgeDeletedBefore(date: Date): Promise<number>;
   /**

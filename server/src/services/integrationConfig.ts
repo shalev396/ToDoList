@@ -87,6 +87,9 @@ export const UpdateIntegrationBody = z
     EMPTY_UPDATE_MESSAGE,
   );
 
+/** File under, one container: a topic of the workspace, or null (back to the connection's). */
+export const FileUnderBody = z.strictObject({ topicId: z.string().min(1).max(100).nullable() });
+
 // ─── Views of the provider definitions ──────────────────────────────────────
 
 /** A provider that is listed but not open yet (Moodle): 400 `provider_coming_soon`. */

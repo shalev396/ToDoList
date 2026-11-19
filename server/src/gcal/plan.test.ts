@@ -216,3 +216,35 @@ describe('the push plan reads the effective values (Phase 4a overrides)', () => 
     assert.ok(!plan.entries.some((entry) => entry.itemId === theirs.id));
   });
 });
+
+describe('the push set leaves out TodoList’s own reserved time (Ruling 26)', () => {
+  it('blocks and travel are never in the workspace calendar push set', async () => {
+    const start = new Date(NOW.getTime() + 2 * DAY);
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    const timed = { dueAt: null, startAt: start, endAt: end };
+    const block = await fx.item('Study: Math', 0, { ...timed, kind: 'block' });
+    const area = await fx.item('Studying', 0, {
+      ...timed,
+      kind: 'block',
+      props: { layer: 'area' },
+    });
+    const leg = await fx.item('Bus to Braude', 0, {
+      ...timed,
+      kind: 'travel',
+      visibility: 'private',
+    });
+    // Asking for it on the item changes nothing (the item sheet's "send to the calendar").
+    await (
+      await fx.models.getItemRepository()
+    ).setOverlay(fx.workspaceId, block.id, { calendarSync: true });
+    // Not vacuous: a to-do at the same time is pushed.
+    const todo = await fx.item('Hand in the essay', 0, timed);
+
+    const plan = await loadPlan(await integration(), NOW);
+    const planned = new Set(plan.entries.map((entry) => entry.itemId));
+    assert.ok(planned.has(todo.id), 'a timed to-do is pushed');
+    for (const item of [block, area, leg]) {
+      assert.equal(planned.has(item.id), false, item.title);
+    }
+  });
+});
