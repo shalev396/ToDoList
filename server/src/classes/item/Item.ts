@@ -185,6 +185,11 @@ export abstract class Item
     return this.data.kind;
   }
 
+  /** The title the provider (or its creator) gave it, whatever his own override says. */
+  get providerTitle(): string {
+    return this.data.title;
+  }
+
   /** The source values the overrides may stand in for. */
   protected get sourceValues(): OverridableValues {
     const { title, status, dueAt, allDay, startAt, priority } = this.data;

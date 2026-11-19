@@ -197,6 +197,53 @@ describe('the travel tools', () => {
     }
   });
 
+  it('travel_edit_leg with mode changes how he goes (this day, or every: true); not with minutes', async () => {
+    const client = await h.connect(key);
+    const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.notEqual(result.isError, true, `${name}: ${errorText(result)}`);
+      return structured(result);
+    };
+    const todo = (await call('create_todo', {
+      title: 'Seminar',
+      startAt: at(11, 15).toISOString(),
+      endAt: at(11, 16).toISOString(),
+    })) as { item: { id: string } };
+    const { legs } = (await call('travel_mark_item', {
+      itemId: todo.item.id,
+      mode: 'drive',
+      direction: 'both',
+      place: 'Technion',
+    })) as { legs: (Entry & { props: { travel: { mode: string; direction: string } } })[] };
+    const there = legs.find((leg) => leg.props.travel.direction === 'there');
+    assert.ok(there);
+    assert.equal(there.props.travel.mode, 'drive');
+
+    const walked = (await call('travel_edit_leg', { legId: there.id, mode: 'transit' })) as {
+      leg: { id: string; props: { travel: { mode: string } } } | null;
+      marked: number;
+    };
+    assert.equal(walked.marked, 1);
+    assert.equal(walked.leg?.id, there.id);
+    assert.equal(walked.leg.props.travel.mode, 'transit');
+    const every = (await call('travel_edit_leg', {
+      legId: there.id,
+      mode: 'walk',
+      every: true,
+    })) as { leg: { props: { travel: { mode: string } } } | null; marked: number };
+    assert.equal(every.marked, 1);
+    assert.equal(every.leg?.props.travel.mode, 'walk');
+
+    for (const args of [
+      { legId: there.id, mode: 'walk', minutes: 20 },
+      { legId: there.id, mode: 'walk', startAt: at(11, 13).toISOString() },
+      { legId: there.id, every: true },
+    ]) {
+      const refused = await client.callTool({ name: 'travel_edit_leg', arguments: args });
+      assert.equal(refused.isError, true, JSON.stringify(args));
+    }
+  });
+
   it('travel_mark_item marks an area: legs there and back are busy, the area itself is not', async () => {
     const client = await h.connect(key);
     const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {

@@ -50,6 +50,8 @@ export interface ITravelRuleRepository {
   delete(workspaceId: string, ownerUserId: string, id: string): Promise<boolean>;
   /** A place was removed: the owner's rules naming it name none. Returns how many. */
   clearPlace(workspaceId: string, ownerUserId: string, placeId: string): Promise<number>;
+  /** Containers were removed: the repeats rules of these calendars or projects go. How many. */
+  deleteRepeatsIn(workspaceId: string, containerIds: readonly string[]): Promise<number>;
   /** A membership ended: every rule of the member, hard-deleted. Returns how many. */
   deleteForMember(workspaceId: string, ownerUserId: string): Promise<number>;
   /** The workspace was deleted: every rule in it. Returns how many. */
