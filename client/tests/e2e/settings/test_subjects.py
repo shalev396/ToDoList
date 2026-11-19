@@ -42,6 +42,15 @@ def _section(page: Page):
     return page.locator("[data-subjects]")
 
 
+def _loaded(page: Page, topics: tuple = ()) -> None:
+    """Waits until the page has read what the section starts from: the topics (a new subject takes
+    the next free family) and the saved subjects. A subject added before then is built on an empty
+    list, and what is read after it never reaches the form."""
+    for topic in topics:
+        expect(page.get_by_role("link", name=topic, exact=True).first).to_be_visible(timeout=NORMAL_TIMEOUT)
+    page.wait_for_load_state("networkidle")
+
+
 def _add(page: Page, name: str, add_label: str, name_label: str) -> None:
     form = _section(page).locator("form")
     form.get_by_label(name_label).fill(name)
@@ -65,6 +74,7 @@ def test_add_subject_with_live_count_and_save(
     # left to what _seed happens to create.
     ensure_topics(api_base_url, user, workspace["id"], ["work", "college"])
     open_as(page, base_url, user, "/en/settings", h1="Settings")
+    _loaded(page, ("Personal", "Work", "College"))
 
     _add(page, "Calculus", "Add subject", "Subject name")
     row = page.locator('[data-subject="Calculus"]')
@@ -90,6 +100,9 @@ def test_reorder_and_rename(page: Page, base_url: str, api_base_url: str, fresh_
     _seed(api_base_url, user, workspace)
     _create_subjects(api_base_url, user, workspace, [("Calculus", "blue", ["*calculus*"])])
     open_as(page, base_url, user, "/en/settings", h1="Settings")
+    # Calculus is read from the server: History is added to it, not to an empty list.
+    expect(page.locator('[data-subject="Calculus"]')).to_be_visible(timeout=NORMAL_TIMEOUT)
+    _loaded(page)
 
     _add(page, "History", "Add subject", "Subject name")
     history = page.locator('[data-subject="History"]')

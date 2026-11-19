@@ -11,6 +11,7 @@ import { FormError } from '@/components/auth/auth-ui';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { SelectField } from '@/components/ui/select';
 import { FamilySwatch } from '@/features/colours/FamilySwatch';
 import { useColourContext } from '@/features/colours/useColours';
@@ -20,6 +21,7 @@ import { TOPIC_COLOURS, type TopicColour } from '@api-types/topics';
 import {
   addSubject,
   draftOf,
+  editedRows,
   issuesOf,
   moveSubject,
   parsePatterns,
@@ -245,8 +247,14 @@ export function SubjectsSection({
       : t('settings.subjects.matches', { count: value });
   };
 
+  // Nothing is edited before the saved subjects are read (editedRows): a draft built on the empty
+  // list would replace them when saved.
+  const ready = attributes.data !== undefined;
   const edit = (change: (rows: SubjectDraft[]) => SubjectDraft[]) => {
-    setEdited(change(draft));
+    const next = editedRows(ready, saved, edited, change);
+    if (next !== null) {
+      setEdited(next);
+    }
   };
   const reset = () => {
     setEdited(null);
@@ -284,7 +292,13 @@ export function SubjectsSection({
       layout="stacked"
     >
       <div data-subjects className="flex flex-col gap-3">
-        {draft.length === 0 ? (
+        {!ready ? (
+          attributes.isError ? (
+            <FormError>{t('settings.subjects.loadFailed')}</FormError>
+          ) : (
+            <Skeleton className="h-24 rounded-lg" data-subjects-loading />
+          )
+        ) : draft.length === 0 ? (
           <p className="text-sm text-muted-foreground">{t('settings.subjects.empty')}</p>
         ) : (
           <ul className="flex flex-col gap-3">
@@ -309,7 +323,7 @@ export function SubjectsSection({
             ))}
           </ul>
         )}
-        {canEdit ? (
+        {canEdit && ready ? (
           <form
             className="flex flex-wrap items-end gap-3"
             onSubmit={(event) => {
@@ -353,7 +367,7 @@ export function SubjectsSection({
           <FormError>{t('settings.subjects.countFailed')}</FormError>
         ) : null}
         {error === null ? null : <FormError>{error}</FormError>}
-        {canEdit ? (
+        {canEdit && ready ? (
           <div className="flex flex-wrap items-center gap-2" data-subjects-bar>
             <Button
               type="button"

@@ -90,6 +90,20 @@ export function addSubject(
   return [...draft, { key: freshKey(draft), name: trimmed, savedName: null, family, patterns: [] }];
 }
 
+/**
+ * The rows after an edit, built over what is saved (or what he has already edited). Before the
+ * saved subjects are read there is nothing to build on: the edit is refused (null), because a
+ * draft started from the empty list would replace the saved subjects when it is saved.
+ */
+export function editedRows(
+  loaded: boolean,
+  saved: AttributeDef | undefined,
+  edited: SubjectDraft[] | null,
+  change: (rows: SubjectDraft[]) => SubjectDraft[],
+): SubjectDraft[] | null {
+  return loaded ? change(edited ?? draftOf(saved)) : null;
+}
+
 /** One place up (-1) or down (1); the same draft at an edge. */
 export function moveSubject(draft: SubjectDraft[], key: string, by: -1 | 1): SubjectDraft[] {
   const from = draft.findIndex((subject) => subject.key === key);

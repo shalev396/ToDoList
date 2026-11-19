@@ -31,6 +31,21 @@ def _open_panel(page: Page, base_url: str, user, workspace_id: str, locale: str 
     return panel
 
 
+def _connection_under(page: Page, panel, name: str) -> None:
+    """Files the connection under `name` through its select, whatever it was under before. The
+    module's workspace is shared by its tests, which may run in any order and on any worker, so no
+    test can count on what another left (choosing the page it is already on sends nothing)."""
+    connection = panel.locator("[data-file-under-connection]")
+    expect(connection).to_be_visible(timeout=NORMAL_TIMEOUT)
+    if name in connection.inner_text():
+        return
+    with page.expect_response(
+        lambda r: r.request.method == "PATCH" and "/integrations/" in r.url
+    ) as saved:
+        choose(connection, name)
+    assert saved.value.status == 200
+
+
 def _calendars(api_base_url: str, user, workspace_id: str) -> list:
     response = requests.get(
         f"{api_base_url}/private/workspaces/{workspace_id}/facets",
@@ -53,6 +68,8 @@ def test_connection_file_under_moves_its_items(page: Page, base_url: str, api_ba
     work = topic_id(api_base_url, user, workspace["id"], "work")
     page.set_viewport_size(DESKTOP_VIEWPORT)
     panel = _open_panel(page, base_url, user, workspace["id"])
+    # Start from another page, so choosing Work is a change whatever the connection was under.
+    _connection_under(page, panel, "Personal")
     with page.expect_response(
         lambda r: r.request.method == "PATCH" and "/integrations/" in r.url
     ) as saved:
@@ -76,6 +93,8 @@ def test_calendar_file_under_writes_a_rule_and_back(page: Page, base_url: str, a
     page.set_viewport_size(DESKTOP_VIEWPORT)
     panel = _open_panel(page, base_url, user, workspace["id"])
     panel.locator("[data-file-under-containers] summary").click()
+    # "Same as the connection (Work)" below needs the connection under Work.
+    _connection_under(page, panel, "Work")
     row = panel.locator(f"[data-file-under-container='{calendar['id']}']")
     expect(row).to_be_visible(timeout=NORMAL_TIMEOUT)
 
