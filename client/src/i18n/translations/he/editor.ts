@@ -219,6 +219,7 @@ export const editor = {
       legend: 'מקרא',
       needle: 'מחוג',
       showNext: 'להציג מה הבא',
+      showTomorrow: 'להציג את מחר',
       showDelta: 'להציג את השינוי',
       overdueOnTop: 'באיחור למעלה',
       field: 'סינון לפי',

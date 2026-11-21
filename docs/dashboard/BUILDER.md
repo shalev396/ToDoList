@@ -77,7 +77,7 @@ items|containers   where (AND/OR), dateRange,       groupBy ≤3, aggregate     
 
 | Type | Purpose | Required query bits | Defaults |
 |---|---|---|---|
-| `clock` | 24h ring of today's events with a **now-needle**, plus "now / next" | `source: items`, `kind in [event, block, travel]`, `dateRange: today` | `calendars: from integration`, refreshes every 60 s |
+| `clock` | 24h ring of today's events with a **now-needle**, plus "now / next". `viz.showTomorrow: true` (default off) also reads tomorrow and draws a second, smaller ring (no needle) with its colour key and items: beside today's when the block is wide, below it when narrow; only a `dateRange: today` is widened | `source: items`, `kind in [event, block, travel]`, `dateRange: today` | `calendars: from integration`, refreshes every 60 s |
 | `chart` | donut, bar, line or number | `groupBy` + `aggregate` | **Donut by `source.provider`** with a total count and area chips |
 | `calendar` | FullCalendar week/month/list | items with `startAt` or `dueAt` | **`view: "week"`** (`timeGridWeek`), with Month as a toggle saved per block |
 | `deadlines` | due-soon list, soonest first | `dueAt` not null, `status` open | `dateRange: next_14d`, overdue items on top |
@@ -132,7 +132,7 @@ The registry pattern is FRONTEND.md §5: adding a type means **one catalog entry
 ```json
 { "id": "blk_clock", "type": "clock", "title": "Today",
   "query": { "source": "items", "where": { "combinator": "and", "rules": [{ "field": "kind", "operator": "=", "value": "event" }] }, "dateRange": "today" },
-  "viz": { "kind": "clock24", "needle": "now", "showNext": true } }
+  "viz": { "kind": "clock24", "needle": "now", "showNext": true, "showTomorrow": false } }
 { "id": "blk_cal", "type": "calendar", "title": "Week",
   "query": { "source": "items", "dateRange": "$page.range", "where": { "combinator": "or", "rules": [
       { "field": "startAt", "operator": "notNull" }, { "field": "dueAt", "operator": "notNull" } ] } },

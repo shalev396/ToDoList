@@ -715,6 +715,34 @@ describe('compileQuery: filters', () => {
     );
   });
 
+  it('a clock that shows tomorrow reads the end of tomorrow too, only for a today range', () => {
+    const both = { $gte: new Date('2026-11-10T22:00:00Z'), $lt: new Date('2026-11-12T22:00:00Z') };
+    const todayOnly = {
+      $gte: new Date('2026-11-10T22:00:00Z'),
+      $lt: new Date('2026-11-11T22:00:00Z'),
+    };
+    const clock = (overrides: Partial<CompileContext>): CompileContext =>
+      context({ blockType: 'clock', ...overrides });
+    assert.deepEqual(
+      filterOf(
+        compileQuery({ source: 'items', dateRange: 'today' }, clock({ includeTomorrow: true })),
+      ),
+      { $or: [{ startAt: both }, ...timeBranches(both)] },
+    );
+    // Off (or absent): today only, exactly as before.
+    assert.deepEqual(filterOf(compileQuery({ source: 'items', dateRange: 'today' }, clock({}))), {
+      $or: [{ startAt: todayOnly }, ...timeBranches(todayOnly)],
+    });
+    // Another range is read as it is.
+    const week = { $gte: new Date('2026-11-07T22:00:00Z'), $lt: new Date('2026-11-14T22:00:00Z') };
+    assert.deepEqual(
+      filterOf(
+        compileQuery({ source: 'items', dateRange: 'this_week' }, clock({ includeTomorrow: true })),
+      ),
+      { $or: [{ startAt: week }, ...timeBranches(week)] },
+    );
+  });
+
   it("dateField 'any': a start in range, or no start and a due date in range, or a series begun before it", () => {
     const week = { $gte: new Date('2026-11-07T22:00:00Z'), $lt: new Date('2026-11-14T22:00:00Z') };
     const anyInWeek = { $or: [{ startAt: week }, { startAt: null, dueAt: week }] };
