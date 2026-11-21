@@ -16,6 +16,11 @@ export const timeBlocks = {
     startsAt: 'Starts at',
     areaLabel: 'Area: {{title}}, {{when}}',
     saveFailed: 'The calendar view wasn’t saved. Try again.',
+    chooser: {
+      label: 'Add or open',
+      newHere: 'New to-do here',
+      openArea: 'Open area: {{title}}',
+    },
   },
   clock: {
     summary_one: 'Today, {{date}}: {{count}} event. {{status}}',
@@ -36,6 +41,13 @@ export const timeBlocks = {
     moreTopics: '+{{count}} more',
     empty: 'No events today',
     moreAllDay: '+{{count}} more all-day',
+    tomorrow: 'Tomorrow',
+    tomorrowSummary_one: 'Tomorrow, {{date}}: {{count}} event.',
+    tomorrowSummary_other: 'Tomorrow, {{date}}: {{count}} events.',
+    tomorrowSummaryNone: 'Tomorrow, {{date}}: no events.',
+    tomorrowEventList: 'Tomorrow’s events',
+    tomorrowEmpty: 'No events tomorrow',
+    moreTomorrow: '+{{count}} more',
   },
   agenda: {
     overdue: 'Overdue',

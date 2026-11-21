@@ -21,6 +21,8 @@ export interface QueryTargetData {
   /** Page-variable defaults: the dashboard's vars. */
   readonly vars: Readonly<Record<string, unknown>>;
   readonly blockType?: BlockType;
+  /** A clock block whose viz asks for tomorrow too (`showTomorrow`): its `today` range widens. */
+  readonly includeTomorrow?: boolean;
   /** The block's (or the draft's) connectors: only these sources are read (empty: none). */
   readonly connectors?: readonly string[];
   /** The block's (or the draft's) connector scopes: the containers a connector narrows to. */
@@ -89,6 +91,9 @@ export class QueryTarget {
       vars,
       importance,
       ...(blockType === undefined ? {} : { blockType }),
+      ...(blockType === 'clock' && json.viz['showTomorrow'] === true
+        ? { includeTomorrow: true }
+        : {}),
       ...(connectors === undefined ? {} : { connectors }),
       ...(connectorScopes === undefined ? {} : { connectorScopes }),
     };

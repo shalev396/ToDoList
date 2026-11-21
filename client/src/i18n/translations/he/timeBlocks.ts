@@ -16,6 +16,11 @@ export const timeBlocks = {
     startsAt: 'מתחיל ב־',
     areaLabel: 'אזור: {{title}}, {{when}}',
     saveFailed: 'תצוגת היומן לא נשמרה. כדאי לנסות שוב.',
+    chooser: {
+      label: 'הוספה או פתיחה',
+      newHere: 'משימה חדשה כאן',
+      openArea: 'פתיחת האזור: {{title}}',
+    },
   },
   clock: {
     summary_one: 'היום, {{date}}: אירוע אחד. {{status}}',
@@ -37,6 +42,14 @@ export const timeBlocks = {
     moreTopics: 'ועוד {{count}}',
     empty: 'אין אירועים היום',
     moreAllDay: '+{{count}} נוספים לכל היום',
+    tomorrow: 'מחר',
+    tomorrowSummary_one: 'מחר, {{date}}: אירוע אחד.',
+    tomorrowSummary_two: 'מחר, {{date}}: שני אירועים.',
+    tomorrowSummary_other: 'מחר, {{date}}: {{count}} אירועים.',
+    tomorrowSummaryNone: 'מחר, {{date}}: אין אירועים.',
+    tomorrowEventList: 'האירועים של מחר',
+    tomorrowEmpty: 'אין אירועים מחר',
+    moreTomorrow: '+{{count}} נוספים',
   },
   agenda: {
     overdue: 'באיחור',

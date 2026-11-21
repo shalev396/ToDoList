@@ -221,6 +221,7 @@ export const editor = {
       legend: 'Legend',
       needle: 'Needle',
       showNext: 'Show what’s next',
+      showTomorrow: 'Show tomorrow',
       showDelta: 'Show the change',
       overdueOnTop: 'Overdue on top',
       field: 'Filter by',

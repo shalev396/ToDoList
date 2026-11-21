@@ -96,6 +96,11 @@ export interface CompileContext {
   /** The block the query belongs to: it picks the default dateField. */
   blockType?: BlockType;
   /**
+   * A clock block with `viz.showTomorrow`: a `today` date range also reads tomorrow, so the
+   * block has the next local day to draw. Any other range is read as it is.
+   */
+  includeTomorrow?: boolean;
+  /**
    * Items only: each row also carries `sourceTitle`, the title the provider gave it (a server
    * read for travel's repeats; never a block's or an API's).
    */
@@ -675,7 +680,12 @@ class Compilation {
       if (resolved === UNSET) return null;
       ({ value, label } = resolved);
     }
-    const { from, to } = this.bounds(value, '/dateRange', label);
+    const bounds = this.bounds(value, '/dateRange', label);
+    const { from } = bounds;
+    const to =
+      this.ctx.includeTomorrow === true && value === 'today'
+        ? this.preset('tomorrow').to
+        : bounds.to;
     const window = (): Filter => ({ $gte: from, $lt: to });
     if (field === 'dueAt') return { dueAt: window() };
     // A start in range; for `any`, also no start (null or missing) and a due date in range.

@@ -6,6 +6,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import listPlugin from '@fullcalendar/list';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import heLocale from '@fullcalendar/core/locales/he';
+import type { DateClickArg } from '@fullcalendar/interaction';
 import type {
   DateSelectArg,
   DateSpanApi,
@@ -23,6 +24,7 @@ import { sourceNameKey } from '@/components/items/sources';
 import { colourVar, hatchBackground, paintOf } from '@/features/colours/palette';
 import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
+import type { NewItemPreset } from '@/features/items/create/timeBlockDraft';
 import { presetFromSelection } from '@/features/items/scheduled/dragPreset';
 import { useItemParam } from '@/features/items/useItemParam';
 import { ConflictMark, LegModeIcon } from '@/features/travel/LegMark';
@@ -41,10 +43,12 @@ import { applyDisplayRules } from '../../rules/applyDisplayRules';
 import { usePageVars } from '../../variables/pageVars';
 import { zonedParts, zonedTime } from '../clock/ClockRing.math';
 import { ringProvider } from '../clock/clockModel';
+import { areasAt } from '../time/areaHit';
 import { isolateLtr, splitAreas } from '../time/areas';
 import { ToneMark } from '../time/ToneMark';
 import {
   expandOccurrences,
+  type Occurrence,
   visibleRange,
   wallDate,
   wallString,
@@ -63,6 +67,7 @@ import {
 } from './calendarEvents';
 import {
   READABLE_PX,
+  SLOT_MINUTES,
   SLOT_PX,
   TIME_GRID_LAYOUT,
   chipLayout,
@@ -71,6 +76,7 @@ import {
   tapReach,
   type ChipLayout,
 } from './chipLayout';
+import { AreaChooser } from './AreaChooser';
 import { readStartHour, slotTime, startScrollTop } from './startHour';
 import { useSaveCalendarViz } from './useSaveCalendarViz';
 
@@ -91,6 +97,27 @@ const LONGEST_DRAG_MS = 24 * 3600_000;
 
 /** FullCalendar's `UTC` dates hold the workspace's wall clock: `2026-11-22T13:00:00`. */
 const wallOf = (date: Date): string => date.toISOString().slice(0, 19);
+
+/** A second tap or click on the same slot within this is the same gesture (select + dateClick). */
+const SAME_TAP_MS = 600;
+
+/** Where a mouse or touch event happened, in viewport px (a touch end has no `clientX`). */
+function pointOf(event: Event | null | undefined): { x: number; y: number } | null {
+  if (event === null || event === undefined) {
+    return null;
+  }
+  const touch = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : undefined;
+  const source = touch ?? (event as MouseEvent);
+  return typeof source.clientX === 'number' ? { x: source.clientX, y: source.clientY } : null;
+}
+
+/** What the area chooser was opened for: the tap's point, and the create preset at its time. */
+interface ChooserState {
+  id: number;
+  point: { x: number; y: number };
+  preset: NewItemPreset;
+  areas: Occurrence[];
+}
 
 /** A drag on the week grid's hours (not the all-day row), a day at most, makes a block. */
 function blockSpanAllowed(span: DateSpanApi): boolean {
@@ -282,15 +309,63 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     [areas, displayed],
   );
   const selectable = canWrite && !editing && viewName === 'timeGridWeek';
+  const [chooser, setChooser] = useState<ChooserState | null>(null);
+  const lastTap = useRef({ at: 0, start: '' });
+  const closeChooser = useCallback(() => {
+    // A tap on the same slot right after dismissing it is a new tap, not a duplicate.
+    lastTap.current = { at: 0, start: '' };
+    setChooser(null);
+  }, []);
+
+  /**
+   * A click (or a tap) on free time, or a drag across it (`startWall`..`endWall`, wall clock). A
+   * drag, or a tap on time no area covers, opens the New sheet as ever. A click or tap on one
+   * slot that painted areas cover first asks (AreaChooser): a new to-do there, or one of the
+   * areas. A mouse click arrives as a selection and as a date click, a long-press on touch the
+   * same: the second one is ignored.
+   */
+  const openAt = (startWall: string, endWall: string, jsEvent: Event | null | undefined) => {
+    const nowMs = Date.now();
+    if (lastTap.current.start === startWall && nowMs - lastTap.current.at < SAME_TAP_MS) {
+      return;
+    }
+    lastTap.current = { at: nowMs, start: startWall };
+    const selection = { startWall, endWall };
+    const preset = presetFromSelection(selection, shown, timeZone);
+    const point = pointOf(jsEvent);
+    const oneSlot =
+      preset.start !== undefined &&
+      preset.end !== undefined &&
+      preset.end.getTime() - preset.start.getTime() <= SLOT_MINUTES * 60_000;
+    const covering =
+      oneSlot && preset.start !== undefined && preset.end !== undefined
+        ? areasAt(areas, preset.start, preset.end)
+        : [];
+    if (point === null || covering.length === 0) {
+      setChooser(null);
+      openNewItem(preset);
+      return;
+    }
+    setChooser({ id: nowMs, point, preset, areas: covering });
+  };
   const createFromSelection = (arg: DateSelectArg) => {
     arg.view.calendar.unselect();
-    openNewItem(
-      presetFromSelection(
-        { startWall: wallOf(arg.start), endWall: wallOf(arg.end) },
-        shown,
-        timeZone,
-      ),
-    );
+    openAt(wallOf(arg.start), wallOf(arg.end), arg.jsEvent);
+  };
+  /**
+   * A tap with a finger: FullCalendar selects on touch only after a long press, so a tap is a
+   * date click. It does what a mouse click does. A mouse's date click is left to its selection.
+   */
+  const tapOnGrid = (arg: DateClickArg) => {
+    const isTouch = arg.jsEvent.type.startsWith('touch');
+    if (!selectable || arg.allDay || !isTouch) {
+      return;
+    }
+    const end = new Date(arg.date.getTime() + SLOT_MINUTES * 60_000);
+    openAt(wallOf(arg.date), wallOf(end), arg.jsEvent);
+  };
+  const openArea = (occurrence: { row: { id: string }; originalStart: Date | null }) => {
+    openItem(occurrence.row.id, occurrence.originalStart ?? undefined);
   };
 
   const title = useMemo(() => {
@@ -674,6 +749,7 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             selectMirror
             selectAllow={blockSpanAllowed}
             select={createFromSelection}
+            dateClick={tapOnGrid}
             events={events}
             eventContent={renderEvent}
             dayHeaderContent={(arg) => {
@@ -705,6 +781,11 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             eventDidMount={describe}
             eventClick={(arg) => {
               arg.jsEvent.preventDefault();
+              // An editor's click on an area's band is a click on its time: the grid's selection
+              // (or tap) asks what to do there (AreaChooser). Opening the area too would race it.
+              if (selectable && arg.event.display === 'background') {
+                return;
+              }
               const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
               // Every event's click. FullCalendar's click listener covers background events too
               // (EventClicking: '.fc-event', "on both fg and bg events"), so a click on an area's
@@ -721,6 +802,24 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         </div>
         <SourceCount occurrences={displayed} />
       </div>
+      {chooser === null ? null : (
+        <AreaChooser
+          key={chooser.id}
+          point={chooser.point}
+          rtl={language === 'he'}
+          areas={chooser.areas.map((area) => ({
+            key: area.key,
+            title: area.row.title,
+            onOpen: () => {
+              openArea(area);
+            },
+          }))}
+          onNew={() => {
+            openNewItem(chooser.preset);
+          }}
+          onClose={closeChooser}
+        />
+      )}
     </BlockFrame>
   );
 }

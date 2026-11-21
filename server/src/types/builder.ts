@@ -532,6 +532,8 @@ export const VIZ_SCHEMAS = {
     kind: z.literal('clock24'),
     needle: z.literal('now').optional(),
     showNext: z.boolean().optional(),
+    /** Also read and draw tomorrow (a second, smaller ring); today only unless set. */
+    showTomorrow: z.boolean().optional(),
   }),
   counter: z.strictObject({ kind: z.literal('counter'), showDelta: z.boolean().optional() }),
   deadlines: z.strictObject({
