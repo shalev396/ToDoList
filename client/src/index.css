@@ -805,12 +805,14 @@
 }
 /*
  * The timesheet's week (TimesheetBlock), on the calendar's styles. A planned to-do is a chip in its
- * colour with a hairline of its own ink, so it reads apart from a time block; it drags. While a
+ * colour with a dashed line of its own ink inside it (a plan, not reserved time), so it reads apart
+ * from a time block; it drags. While a
  * to-do or a chip is dragged anywhere on the page, the painted time is edged stronger: guidance
  * for where to drop, never a rule.
  */
 .todolist-calendar .fc .tc-planned {
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, currentColor 45%, transparent);
+  outline: 1px dashed color-mix(in oklab, currentColor 70%, transparent);
+  outline-offset: -2px;
 }
 .todolist-calendar .fc .tc-planned.fc-event-draggable {
   cursor: grab;

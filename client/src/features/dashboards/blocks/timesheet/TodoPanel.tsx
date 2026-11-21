@@ -138,7 +138,8 @@ function TodoRow({
   onOpen: (itemId: string) => void;
   onUnschedule: (itemId: string) => void;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const pageStart = i18n.dir() === 'rtl' ? 'right' : 'left';
   const { row, colour, plannedText, dueText } = todo;
   const provider = ringProvider(row.source.provider);
   const meta =
@@ -172,7 +173,9 @@ function TodoRow({
         <ColourDot colour={colour} />
         <SourceIcon source={provider} className="shrink-0" />
         <span className="flex min-w-0 flex-col">
-          <span dir="auto" className="truncate" data-todo-title="">
+          {/* In its own direction (so it reads, and is cut, the right way round), on the page's
+              start side: a Hebrew title in an English page lines up with the others. */}
+          <span dir="auto" className="truncate" style={{ textAlign: pageStart }} data-todo-title="">
             {row.title}
           </span>
           {meta === null ? null : (
