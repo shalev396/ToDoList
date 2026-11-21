@@ -49,7 +49,10 @@ export async function syncSchema(
     // The migrations wait: they write documents the new validators accept.
     return { provider, results: indexes.lines, done: false, pending: indexes.pending };
   }
-  const migrations = await migrateDB(new Date(), budget, SYNC_DB_RESERVE_MS);
+  // qa is reset before every test run against it: an empty record there is a fresh database.
+  const migrations = await migrateDB(new Date(), budget, SYNC_DB_RESERVE_MS, {
+    freshIfUnrecorded: environment.env === 'qa',
+  });
   return {
     provider,
     results: [...indexes.lines, ...migrations.lines],

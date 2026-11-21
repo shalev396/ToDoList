@@ -1,5 +1,6 @@
 import { environment } from './environment.js';
 import type { TimeBudget } from '../classes/integration/calendar/TimeBudget.js';
+import type { MigrationOptions } from '../migrations/index.js';
 
 let shutdownRegistered = false;
 
@@ -66,13 +67,14 @@ export async function migrateDB(
   now: Date = new Date(),
   budget: TimeBudget | null = null,
   reserveMs = 0,
+  options: MigrationOptions = {},
 ): Promise<{ lines: string[]; pending: string[] }> {
   if (environment.databaseProvider !== 'mongoose') return { lines: [], pending: [] };
   const mongoose = (await import('mongoose')).default;
   const db = mongoose.connection.db;
   if (db === undefined) throw new Error('migrate: MongoDB is not connected');
   const { runMigrationsWithin } = await import('../migrations/index.js');
-  return runMigrationsWithin(db, now, budget, reserveMs);
+  return runMigrationsWithin(db, now, budget, reserveMs, options);
 }
 
 /** Closes the connection: the end of a one-off script (a server keeps it open). */
