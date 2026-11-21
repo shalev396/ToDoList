@@ -222,7 +222,9 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
 
   const calendar = useRef<FullCalendar>(null);
   const panel = useRef<HTMLElement>(null);
-  const list = useRef<HTMLDivElement>(null);
+  // State, not a ref: the panel mounts only once the data has loaded (the frame shows a skeleton
+  // until then), and the Draggable must attach to it then.
+  const [list, setList] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
     // After the commit: FullCalendar renders a new date with flushSync, which React refuses
@@ -240,11 +242,10 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
 
   // The panel's to-dos drag onto the grid (FullCalendar's Draggable, touch with a long press).
   useEffect(() => {
-    const element = list.current;
-    if (!canWrite || element === null) {
+    if (!canWrite || list === null) {
       return;
     }
-    const draggable = new Draggable(element, {
+    const draggable = new Draggable(list, {
       itemSelector: '[data-timesheet-todo]',
       longPressDelay: LONG_PRESS_MS,
       eventData: (el) => ({
@@ -257,7 +258,7 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
     return () => {
       draggable.destroy();
     };
-  }, [canWrite]);
+  }, [canWrite, list]);
 
   const onDrop = (arg: DropArg) => {
     const itemId = arg.draggedEl.getAttribute('data-todo-id');
@@ -492,7 +493,7 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
         <div className="flex min-h-0 flex-1 flex-col gap-3 @min-[60rem]:flex-row">
           <TodoPanel
             ref={panel}
-            listRef={list}
+            listRef={setList}
             todos={panelTodos}
             canWrite={canWrite}
             onOpen={(itemId) => {
