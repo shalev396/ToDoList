@@ -387,6 +387,8 @@ describe('which items take travel, and their mark', () => {
       mode: 'transit',
       direction: 'both',
       placeId: null,
+      arriveEarlyMinutes: null,
+      lengths: null,
       createdAt: '2026-11-18T00:00:00.000Z',
     });
     const series = rule({ kind: 'series', itemId: 'lecture' });
@@ -412,6 +414,8 @@ describe('which items take travel, and their mark', () => {
       mode: 'walk' as const,
       direction: 'both' as const,
       placeId: null,
+      arriveEarlyMinutes: null,
+      lengths: null,
       createdAt: '2026-11-18T00:00:00.000Z',
     };
     const zone = 'Asia/Jerusalem';
@@ -436,6 +440,8 @@ describe('which items take travel, and their mark', () => {
       mode: 'transit',
       direction: 'both',
       placeId: null,
+      arriveEarlyMinutes: null,
+      lengths: null,
       createdAt: '2026-11-18T00:00:00.000Z',
     });
     // Its own row ("lecture_moved"), moved from 14:00 to 16:00; the series is "lecture".

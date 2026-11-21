@@ -9,6 +9,7 @@ import { useRemoveTravelRule, useSaveTravelRule, useTravelRules } from '@/api/qu
 import { FormError } from '@/components/auth/auth-ui';
 import { dateLocale } from '@/components/items/format';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { SelectField } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SentenceFilter } from '@/features/editor/SentenceFilter';
@@ -29,15 +30,21 @@ import {
 } from '@api-types/travel.ts';
 import { ConfirmRemove } from './PlacesSection';
 import {
+  digitsOf,
   NEW_RULE,
   newRuleRequestOf,
   queryOfScope,
+  RULE_TIME_BOUNDS,
+  ruleMinutesOf,
   ruleScopeOf,
+  timingDraftOf,
+  timingRequestOf,
   type NewRuleDraft,
+  type RuleTimingDraft,
 } from './travelForms';
 
-/** A rule as edited: its sentence (a where-rule's), mode, trips and place. */
-interface RuleDraft {
+/** A rule as edited: its sentence (a where-rule's), mode, trips, place and exact times. */
+interface RuleDraft extends RuleTimingDraft {
   query: Query;
   mode: TravelMode;
   direction: RuleDirection;
@@ -50,6 +57,7 @@ function draftOf(rule: TravelRuleView): RuleDraft {
     mode: rule.mode,
     direction: rule.direction,
     placeId: rule.placeId,
+    ...timingDraftOf(rule),
   };
 }
 
@@ -186,7 +194,65 @@ function RuleFields({
           }}
         />
       </div>
+      <RuleTimes draft={draft} onChange={onChange} />
     </div>
+  );
+}
+
+/**
+ * A rule's exact times, in whole minutes, all optional: how early the "there" leg arrives, and how
+ * long the legs it draws take (they win over the trip's own length, so each weekday can be exact).
+ * Empty is the usual. The digits read left to right in both languages.
+ */
+function RuleTimes({
+  draft,
+  onChange,
+}: {
+  draft: RuleDraft;
+  onChange: (patch: Partial<RuleDraft>) => void;
+}) {
+  const { t } = useTranslation();
+  const id = useId();
+  const fields = [
+    { field: 'arriveEarly', bounds: RULE_TIME_BOUNDS.arriveEarly },
+    { field: 'there', bounds: RULE_TIME_BOUNDS.length },
+    { field: 'back', bounds: RULE_TIME_BOUNDS.length },
+  ] as const;
+  return (
+    <fieldset data-rule-times className="flex min-w-0 flex-col gap-2 border-0 p-0">
+      <legend className="sr-only">{t('travel.rules.times.title')}</legend>
+      <div className="flex flex-wrap gap-x-6 gap-y-3">
+        {fields.map(({ field, bounds }) => (
+          <div key={field} className="flex flex-col gap-1.5">
+            <label htmlFor={`${id}-${field}`} className="text-sm">
+              {t(`travel.rules.times.${field}`)}
+            </label>
+            <span dir="ltr" className="inline-flex items-center gap-1.5">
+              <Input
+                id={`${id}-${field}`}
+                dir="ltr"
+                inputMode="numeric"
+                placeholder={t('travel.rules.times.usual')}
+                className="w-24 text-end tabular-nums max-md:h-11"
+                value={draft[field]}
+                onChange={(event) => {
+                  onChange({ [field]: digitsOf(event.target.value) });
+                }}
+                onBlur={() => {
+                  // Shown as kept: within the bounds, an arrival of 0 minutes early as none.
+                  const kept = ruleMinutesOf(draft[field], bounds);
+                  onChange({ [field]: kept === null ? '' : String(kept) });
+                }}
+              />
+              <span aria-hidden="true" className="text-sm text-muted-foreground">
+                {t('travel.settings.minutes')}
+              </span>
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className="text-[13px] text-muted-foreground">{t('travel.rules.times.hint')}</p>
+    </fieldset>
   );
 }
 
@@ -199,7 +265,13 @@ function requestOf(
   if (where === null) {
     return null;
   }
-  return { scope: where, mode: draft.mode, direction: draft.direction, placeId: draft.placeId };
+  return {
+    scope: where,
+    mode: draft.mode,
+    direction: draft.direction,
+    placeId: draft.placeId,
+    ...timingRequestOf(draft),
+  };
 }
 
 function RuleCard({

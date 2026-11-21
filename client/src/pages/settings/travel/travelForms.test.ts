@@ -5,6 +5,7 @@ import { DEFAULT_TRAVEL_SETTINGS } from '@api-types/travel.ts';
 import {
   addDays,
   dayLink,
+  digitsOf,
   goHomeFromInput,
   horizonOf,
   neighbourAfterRemoval,
@@ -15,9 +16,12 @@ import {
   placePatchOf,
   placeRequestOf,
   queryOfScope,
+  ruleMinutesOf,
   ruleScopeOf,
   sameSettings,
   settingsDraftOf,
+  timingDraftOf,
+  timingRequestOf,
 } from './travelForms.ts';
 
 describe('places', () => {
@@ -182,9 +186,57 @@ describe('the new rule', () => {
       mode: 'drive',
       direction: 'both',
       placeId: null,
+      arriveEarlyMinutes: null,
+      lengths: null,
     });
     // Without a condition there is no rule to add.
     assert.equal(newRuleRequestOf(NEW_RULE, 'drive'), null);
+  });
+});
+
+describe('a rule’s exact times', () => {
+  it('whole minutes within the bounds; empty or 0 is the usual', () => {
+    const early = { min: 0, max: 240 };
+    const length = { min: 1, max: 1440 };
+    assert.equal(digitsOf(' 9a5 '), '95');
+    assert.equal(ruleMinutesOf('20', early), 20);
+    assert.equal(ruleMinutesOf('999', early), 240);
+    assert.equal(ruleMinutesOf('0', early), null);
+    assert.equal(ruleMinutesOf('', length), null);
+    assert.equal(ruleMinutesOf('0', length), null);
+    assert.equal(ruleMinutesOf('99999', length), 1440);
+  });
+
+  it('the request carries them; null clears one, and no length is null', () => {
+    assert.deepEqual(timingRequestOf({ arriveEarly: '20', there: '95', back: '' }), {
+      arriveEarlyMinutes: 20,
+      lengths: { there: 95 },
+    });
+    assert.deepEqual(timingRequestOf({ arriveEarly: '', there: '', back: '' }), {
+      arriveEarlyMinutes: null,
+      lengths: null,
+    });
+  });
+
+  it('a saved rule shows its values; one stored without them shows empty fields', () => {
+    const rule = {
+      id: 'r',
+      scope: { kind: 'series', itemId: 'i' },
+      mode: 'transit',
+      direction: 'both',
+      placeId: null,
+      createdAt: '2026-11-21T00:00:00.000Z',
+    } as const;
+    assert.deepEqual(timingDraftOf({ ...rule, arriveEarlyMinutes: 20, lengths: { back: 120 } }), {
+      arriveEarly: '20',
+      there: '',
+      back: '120',
+    });
+    assert.deepEqual(timingDraftOf({ ...rule, arriveEarlyMinutes: null, lengths: null }), {
+      arriveEarly: '',
+      there: '',
+      back: '',
+    });
   });
 });
 
