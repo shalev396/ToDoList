@@ -354,7 +354,7 @@ Goal: an agent can do in Elytra what Remi did in Notion. That covers creating th
 | `builder_connect_blocks` | Wire a cross-filter: the source block sets a variable, the targets `listen` | `builder:write` | D=false, I |
 | `builder_apply_patch` | Power tool: an RFC 6902 JSON Patch on the draft | `builder:write` | D=false |
 | `builder_apply_template` | `mode: merge|replace` (`replace` needs `confirm`) | `builder:write` | D (replace) |
-| `builder_add_view` | Add a view (H3): a rigid `type` (list, board, timeline, calendar, table, agenda, workload), a blank `dashboard`, or a view template by `templateKey`; `config` seeds a rigid view's block | `builder:write` | D=false |
+| `builder_add_view` | Add a view (H3): a rigid `type` (list, board, timeline, calendar, table, agenda, workload, timesheet), a blank `dashboard`, or a view template by `templateKey`; `config` seeds a rigid view's block. On a topic page a `timesheet` reads that topic (`topic = $page.topic`); `config: {viz: {showBlocks: false}}` shows areas only | `builder:write` | D=false |
 | `builder_update_view` | Rename and/or move a view among the views after the Summary (the Summary is fixed) | `builder:write` | D=false, I |
 | `builder_remove_view` | Remove a view and its blocks; needs `confirm` (the Summary can't be removed) | `builder:write` | D |
 | `builder_instantiate_persona` | Create a persona's topics, pages and views (H6); idempotent per topic slug; `dryRun` names what would become shared | `builder:write` | D=false, I |

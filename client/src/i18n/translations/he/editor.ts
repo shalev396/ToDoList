@@ -224,6 +224,13 @@ export const editor = {
       overdueOnTop: 'באיחור למעלה',
       field: 'סינון לפי',
       multi: 'לאפשר כמה בחירות',
+      showBlocks: 'להציג גם בלוקי זמן, לא רק אזורים',
+    },
+    timesheet: {
+      topic: 'עמוד',
+      topicPage: 'העמוד הזה',
+      topicAll: 'כל העמודים',
+      topicHint: 'של מי הזמן הצבוע והמשימות שמוצגים. בלוח הראשי, "העמוד הזה" הוא כל העמודים.',
     },
     values: {
       list: 'רשימה',
