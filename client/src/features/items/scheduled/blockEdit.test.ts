@@ -176,6 +176,7 @@ describe('blockSaveOf', () => {
       title: 'Calculus',
       subject: 'Calculus',
       topicId: 't-college',
+      note: '',
       start: new Date('2026-11-01T11:00:00.000Z'),
       end: new Date('2026-11-01T15:00:00.000Z'),
     });
@@ -215,6 +216,33 @@ describe('blockSaveOf', () => {
     assert.equal(save.asksScope, false);
     assert.deepEqual(save.all, [{ scope: 'all', title: 'Analysis', subject: null, topicId: null }]);
     assert.deepEqual(blockSaveOf(item, view, base, { ...base }, ZONE).all, []);
+  });
+
+  it('the block’s own note is read into the draft and saved for the whole series', () => {
+    const item = weekly({}, { bodyPreview: 'Bring the formula sheet' });
+    const { view, base } = draftAt(item, NOV_22);
+    assert.equal(base.note, 'Bring the formula sheet');
+    // Unchanged (even with stray whitespace): nothing is sent.
+    assert.deepEqual(
+      blockSaveOf(item, view, base, { ...base, note: ' Bring the formula sheet ' }, ZONE).all,
+      [],
+    );
+    // Changed: the series' note, without asking which occurrence.
+    const changed = blockSaveOf(item, view, base, { ...base, note: 'Room 204' }, ZONE);
+    assert.equal(changed.asksScope, false);
+    assert.deepEqual(changed.all, [{ scope: 'all', note: 'Room 204' }]);
+    // Emptied: cleared (null), as the PATCH takes it.
+    const cleared = blockSaveOf(item, view, base, { ...base, note: '  ' }, ZONE);
+    assert.deepEqual(cleared.all, [{ scope: 'all', note: null }]);
+  });
+
+  it('a block with no note has an empty draft note, and adding one sends it', () => {
+    const item = weekly();
+    const { view, base } = draftAt(item, NOV_22);
+    assert.equal(base.note, '');
+    assert.equal(blockDraftOf({ ...item, bodyPreview: null }, view).note, '');
+    const added = blockSaveOf(item, view, base, { ...base, note: 'New' }, ZONE);
+    assert.deepEqual(added.all, [{ scope: 'all', note: 'New' }]);
   });
 
   it('a new time on one occurrence asks: this one moves it, all moves the series', () => {
