@@ -495,6 +495,8 @@ The `sync-db` action (`config/providers/mongoose.ts`) creates these indexes and 
 
 Data migrations (`server/src/migrations`, in this order, each recorded once in `Migrations` and idempotent; they log counts only, never a value) bring stored documents to what the code reads. They are frozen raw scripts and may touch the database directly (the class boundary exempts them).
 
+On qa, an empty `Migrations` record means a fresh database: sync-db records every migration as applied and runs none. Every PR check that tests against qa resets it first (reset-db drops the database, records included), and what it holds afterwards was written by the code being released. Prod and dev run whatever is pending, as always.
+
 | Id | What it does |
 |---|---|
 | `2026-11-13-drop-area-scope` | Drops member `areaScope` from memberships and pending invites. |

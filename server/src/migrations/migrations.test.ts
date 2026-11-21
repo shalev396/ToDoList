@@ -112,3 +112,44 @@ describe('sync-db in rounds (the deadline)', () => {
     assert.deepEqual(await migrations.pendingMigrationIds(raw), []);
   });
 });
+
+describe('a fresh database (qa after a reset)', () => {
+  const WORKSPACE = 'ws-fresh-record';
+
+  it('records every migration without running one when none is recorded yet', async () => {
+    await raw.collection(migrations.MIGRATIONS_COLLECTION).deleteMany({});
+    // A workspace without topics: introduce-topics, if it ran, would give it the default three.
+    await raw.collection('Workspaces').insertOne({ _id: WORKSPACE as never, name: 'Fresh' });
+    const run = await migrations.runMigrationsWithin(raw, NOW, null, 0, {
+      freshIfUnrecorded: true,
+    });
+    assert.deepEqual(run.pending, []);
+    assert.deepEqual(
+      run.lines,
+      migrations.MIGRATIONS.map(({ id }) => `${id}: recorded without running (fresh database)`),
+    );
+    assert.deepEqual(await migrations.pendingMigrationIds(raw), []);
+    assert.equal(await raw.collection('Topics').countDocuments({ workspaceId: WORKSPACE }), 0);
+    await raw.collection('Workspaces').deleteOne({ _id: WORKSPACE as never });
+  });
+
+  it('runs the pending ones as usual once any migration is recorded', async () => {
+    const records = raw.collection(migrations.MIGRATIONS_COLLECTION);
+    await records.deleteMany({});
+    const [first] = migrations.MIGRATIONS;
+    assert.ok(first);
+    await records.insertOne({ _id: first.id as never, appliedAt: NOW, counts: {} });
+    const run = await migrations.runMigrationsWithin(raw, NOW, null, 0, {
+      freshIfUnrecorded: true,
+    });
+    assert.equal(run.lines[0], `${first.id}: already applied`);
+    assert.ok(run.lines.slice(1).every((line) => line.includes(': applied')));
+  });
+
+  it('runs every migration on an empty record without the option (prod, dev)', async () => {
+    await raw.collection(migrations.MIGRATIONS_COLLECTION).deleteMany({});
+    const run = await migrations.runMigrationsWithin(raw, NOW, null, 0);
+    assert.ok(run.lines.every((line) => line.includes(': applied')));
+    assert.deepEqual(await migrations.pendingMigrationIds(raw), []);
+  });
+});
