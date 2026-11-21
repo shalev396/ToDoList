@@ -16,6 +16,13 @@
  * the member's legs at once; a length he typed becomes the length of the trips its legs take, and
  * times he typed move its legs as hand edits. An unmark removes the rules and regenerates (their
  * legs go, as no longer matching).
+ *
+ * A rule may also say how exact its legs are, for the legs it draws and on every scope: `arrive
+ * EarlyMinutes` (its "there" leg arrives that long before the anchor starts) and `lengths` (`there`
+ * and `back` minutes that win over the trip key's length, so a Sunday bus of 95 minutes and a
+ * Monday one of 100 can both be exact). Neither changes which legs there are or their identity
+ * (LegKey); a leg whose times he set by hand keeps them. They are optional: a rule stored without
+ * them reads as none.
  */
 import { parseQuery } from '../../builder/compile.js';
 import { QueryValidationError } from '../../builder/errors.js';
@@ -36,11 +43,14 @@ import {
 } from '../../types/travelRepeats.js';
 import { addLocalDays, startOfZonedDay } from '../../types/recurrence/zoned.js';
 import {
+  ARRIVE_EARLY_MAX,
   RULE_DIRECTIONS,
   TRAVEL_HORIZON_DAYS,
   TRAVEL_MODES,
   TRIP_MINUTES_MAX,
   type RuleDirection,
+  type RuleLengths,
+  type RuleLengthsInput,
   type SpanInput,
   type TravelDirection,
   type TravelMode,
@@ -68,6 +78,17 @@ export interface NewTravelRule {
   direction: RuleDirection;
   /** One of the caller's places; null or absent: the anchor's own place applies. */
   placeId?: string | null | undefined;
+  /**
+   * Whole minutes, 0 to ARRIVE_EARLY_MAX: the "there" leg this rule draws arrives that long before
+   * its anchor starts (null or absent: 0, on the anchor's start).
+   */
+  arriveEarlyMinutes?: number | null | undefined;
+  /**
+   * Trip lengths for the legs this rule draws, in whole minutes (more than 0, at most
+   * TRIP_MINUTES_MAX): `there` for the leg that gets him to the anchor, `back` for its way back.
+   * They win over the trip's own length; a side left out (or null for all) takes it.
+   */
+  lengths?: RuleLengthsInput | null | undefined;
 }
 
 /** A change to a rule: any of it; what is left out stays as it is. */
@@ -87,6 +108,10 @@ export interface MarkItemInput {
   direction: RuleDirection;
   /** One of the caller's places; null or absent: the item's own place. */
   placeId?: string | null | undefined;
+  /** The rule's `arriveEarlyMinutes`: null clears it, absent keeps it (NewTravelRule). */
+  arriveEarlyMinutes?: number | null | undefined;
+  /** The rule's `lengths`: null clears them, absent keeps them (NewTravelRule). */
+  lengths?: RuleLengthsInput | null | undefined;
   /** With `every`: this occurrence's own item mark (its slot, or `single`) goes too. */
   dropItemMark?: string | undefined;
   /**
@@ -135,6 +160,55 @@ function itemIdOf(value: unknown): string {
     throw new ValidationError('scope.itemId: an item id');
   }
   return value;
+}
+
+/** A rule's arrive-early minutes as stored: a whole number, 0 to ARRIVE_EARLY_MAX; null as is. */
+function earlyOf(value: unknown): number | null {
+  if (value === null) return null;
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 0 ||
+    value > ARRIVE_EARLY_MAX
+  ) {
+    throw new ValidationError(
+      `arriveEarlyMinutes: a whole number, 0 to ${String(ARRIVE_EARLY_MAX)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * A rule's lengths as stored: `there` and `back`, each a whole number of minutes more than 0 and
+ * at most TRIP_MINUTES_MAX (a side that is null or left out takes the trip's own length). None
+ * left (`{}`, or null) is null.
+ */
+function lengthsOf(value: unknown): RuleLengths | null {
+  if (value === null) return null;
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new ValidationError('lengths: there and back, in minutes');
+  }
+  const given = value as Record<string, unknown>;
+  const stored: RuleLengths = {};
+  for (const key of Object.keys(given)) {
+    if (key !== 'there' && key !== 'back') {
+      throw new ValidationError('lengths: only there and back');
+    }
+    const minutes = given[key];
+    if (minutes === null || minutes === undefined) continue;
+    if (
+      typeof minutes !== 'number' ||
+      !Number.isInteger(minutes) ||
+      minutes <= 0 ||
+      minutes > TRIP_MINUTES_MAX
+    ) {
+      throw new ValidationError(
+        `lengths.${key}: a whole number of minutes, more than 0 and at most ${String(TRIP_MINUTES_MAX)}`,
+      );
+    }
+    stored[key] = minutes;
+  }
+  return stored.there === undefined && stored.back === undefined ? null : stored;
 }
 
 /** An occurrence: `single`, or its original start as an ISO instant (stored normalized). */
@@ -294,6 +368,16 @@ export class TravelRule
     return this.data.placeId;
   }
 
+  /** Whole minutes the "there" leg it draws arrives before its anchor; 0 when none. */
+  get arriveEarlyMinutes(): number {
+    return this.data.arriveEarlyMinutes ?? 0;
+  }
+
+  /** The trip lengths it sets for the legs it draws (win over the trip's own); null: none. */
+  get lengths(): RuleLengths | null {
+    return this.data.lengths ?? null;
+  }
+
   get createdAt(): Date {
     return this.data.createdAt;
   }
@@ -310,6 +394,8 @@ export class TravelRule
       mode: this.mode,
       direction: this.direction,
       placeId: this.placeId,
+      arriveEarlyMinutes: this.data.arriveEarlyMinutes ?? null,
+      lengths: this.lengths === null ? null : { ...this.lengths },
       createdAt: this.createdAt.toISOString(),
     };
   }
@@ -324,6 +410,8 @@ export class TravelRule
     const direction = oneOf(RULE_DIRECTIONS, input.direction, 'direction');
     const placeId = input.placeId ?? null;
     if (placeId !== null) await Place.assertOwn(caller, placeId);
+    const arriveEarlyMinutes = earlyOf(input.arriveEarlyMinutes ?? null);
+    const lengths = lengthsOf(input.lengths ?? null);
     const rules = await getTravelRuleRepository();
     const count = await rules.countOwn(caller.workspaceId, caller.userId);
     if (count >= PLAN_LIMITS.travelRulesPerMember) {
@@ -338,6 +426,8 @@ export class TravelRule
         mode,
         direction,
         placeId,
+        arriveEarlyMinutes,
+        lengths,
       }),
     );
     await TravelProfile.noteRules(caller, true);
@@ -345,7 +435,10 @@ export class TravelRule
     return rule;
   }
 
-  /** Editors, on their own rule: a new scope, mode, direction or place (null: none). */
+  /**
+   * Editors, on their own rule: a new scope, mode, direction or place (null: none), arrive-early
+   * minutes or lengths (null clears them).
+   */
   async update(caller: Caller, patch: TravelRuleChange): Promise<TravelRule> {
     this.#authorize(caller);
     const change: TravelRulePatch = {};
@@ -358,6 +451,10 @@ export class TravelRule
       if (patch.placeId !== null) await Place.assertOwn(caller, patch.placeId);
       change.placeId = patch.placeId;
     }
+    if (patch.arriveEarlyMinutes !== undefined) {
+      change.arriveEarlyMinutes = earlyOf(patch.arriveEarlyMinutes);
+    }
+    if (patch.lengths !== undefined) change.lengths = lengthsOf(patch.lengths);
     const row = await (
       await getTravelRuleRepository()
     ).update(this.workspaceId, this.ownerUserId, this.id, change);
@@ -446,6 +543,7 @@ export class TravelRule
       mode: input.mode,
       direction: input.direction,
       placeId: input.placeId ?? null,
+      ...TravelRule.#values(input),
     };
     const marked = (await TravelRule.listOwn(caller)).find((rule) => sameMark(rule.scope, scope));
     const rule =
@@ -523,6 +621,8 @@ export class TravelRule
       mode: TravelMode;
       direction: RuleDirection;
       placeId?: string | null;
+      arriveEarlyMinutes?: number | null | undefined;
+      lengths?: RuleLengthsInput | null | undefined;
       dropItemMark?: string | undefined;
     },
   ): Promise<TravelRule> {
@@ -555,7 +655,12 @@ export class TravelRule
       ...slot,
       from: item.startAt.toISOString(),
     };
-    const choice = { mode: input.mode, direction: input.direction, placeId: input.placeId ?? null };
+    const choice = {
+      mode: input.mode,
+      direction: input.direction,
+      placeId: input.placeId ?? null,
+      ...TravelRule.#values(input),
+    };
     const known = (await TravelRule.listOwn(caller)).find((rule) => sameMark(rule.scope, scope));
     const rule =
       known === undefined
@@ -566,6 +671,19 @@ export class TravelRule
     }
     await TravelPlanner.afterOwnChange(caller, 'mark');
     return rule;
+  }
+
+  /** The arrive-early and length values a mark carries; what it leaves out stays on its rule. */
+  static #values(input: {
+    arriveEarlyMinutes?: number | null | undefined;
+    lengths?: RuleLengthsInput | null | undefined;
+  }): Pick<NewTravelRule, 'arriveEarlyMinutes' | 'lengths'> {
+    return {
+      ...(input.arriveEarlyMinutes === undefined
+        ? {}
+        : { arriveEarlyMinutes: input.arriveEarlyMinutes }),
+      ...(input.lengths === undefined ? {} : { lengths: input.lengths }),
+    };
   }
 
   /** The member's own item mark of one occurrence (or `single`) goes, when there is one. */

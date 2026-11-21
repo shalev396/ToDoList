@@ -338,8 +338,15 @@ export class TravelLeg extends ScheduledItem {
    *   flag clears.
    * Either way its source is `set`. 400 for nothing to change, or anything that isn't a span of
    * more than 0 and at most a day.
+   *
+   * `tripLength: false` leaves the trip's stored length alone: the length typed went to the rule
+   * that draws this leg instead (TravelSetup#editLeg, when that rule sets its own `lengths`).
    */
-  async editTimes(caller: Caller, change: LegTimesChange): Promise<TravelLeg> {
+  async editTimes(
+    caller: Caller,
+    change: LegTimesChange,
+    options: { tripLength?: boolean } = {},
+  ): Promise<TravelLeg> {
     this.#authorize(caller);
     if (this.isDeleted) {
       throw new AppError(409, 'This travel was skipped or removed: reset it before editing it');
@@ -349,14 +356,20 @@ export class TravelLeg extends ScheduledItem {
     if (!byHand && minutes === undefined) {
       throw new ValidationError('minutes: give minutes, startAt or endAt');
     }
-    if (minutes !== undefined && !(minutes > 0 && minutes <= TRIP_MINUTES_MAX)) {
-      throw new ValidationError(`minutes: more than 0 and at most ${String(TRIP_MINUTES_MAX)}`);
+    // Whole minutes, whether the length goes to the trip or to the rule that draws this leg.
+    if (
+      minutes !== undefined &&
+      !(Number.isInteger(minutes) && minutes > 0 && minutes <= TRIP_MINUTES_MAX)
+    ) {
+      throw new ValidationError(
+        `minutes: a whole number, more than 0 and at most ${String(TRIP_MINUTES_MAX)}`,
+      );
     }
     const trip = this.travel;
     if (trip === null) throw new ValidationError('travel: this leg has no travel to edit');
     // The span is checked before anything is stored: a refused change leaves the trip as it was.
     this.#spanAfter(change, trip);
-    if (minutes !== undefined) {
+    if (minutes !== undefined && options.tripLength !== false) {
       // The trip's length first: it is what he asked for, and the next regeneration applies it.
       const key = DayPlanner.tripKey(trip.fromPlaceId, trip.toPlaceId, trip.mode);
       await (await TravelProfile.of(caller)).setTripLength(caller, key, minutes);

@@ -7,7 +7,8 @@
  * - Rows: what the member may read, as a calendar reads it (ItemQuery#runDraft, `blockType:
  *   'calendar'`, so a series that began weeks ago is read too): a start, any kind but travel, in
  *   the range, at most ANCHOR_ROWS_MAX. Series are expanded on the workspace's wall clock; all-day
- *   and due-only occurrences never anchor. A painted area anchors like a block (the owner's ruling
+ *   and due-only occurrences never anchor, nor does an event Google shows as Free
+ *   (`transparency: 'transparent'`). A painted area anchors like a block (the owner's ruling
  *   of 2026-11-18), marked `area`: the day plan nests the items inside it (DayPlanner).
  * - Rule (Ruling 11): the item rule of that occurrence, else the series rule of its series, else
  *   the repeats rule an event that doesn't repeat falls under (the one
@@ -101,6 +102,12 @@ const anchorKey = (itemId: string, occurrence: string): string => `${itemId}|${o
 /** Painted time (an area): travelled to like a block; the items inside it nest. */
 const isArea = (row: ItemQueryRow): boolean =>
   row.kind === 'block' && row.props['layer'] === 'area';
+
+/**
+ * A Google Calendar event shown as Free (`props.transparency` `transparent`: Hanukkah, a
+ * semester's end marker) anchors no travel. Any other value, or none, is busy.
+ */
+const isFree = (row: ItemQueryRow): boolean => row.props['transparency'] === 'transparent';
 
 /** A Google series' key, `calendarId|eventId` (its exceptions name it by `recurringEventId`). */
 function googleSeries(
@@ -202,6 +209,12 @@ export class TravelAnchors {
     const slot =
       occurrence.originalStart === null ? 'single' : occurrence.originalStart.toISOString();
     const key = anchorKey(itemId, slot);
+    if (isFree(row)) {
+      // "Show as: Free": a marker (a holiday, a semester's end), never somewhere he goes. A leg
+      // made for it before it was marked free goes, as no longer matching.
+      this.#fate(key, 'no_longer_matches');
+      return null;
+    }
     const rule = this.#ruleFor(row, itemId, slot, matches);
     if (rule === null) {
       this.#fate(key, 'no_longer_matches');
@@ -222,6 +235,8 @@ export class TravelAnchors {
       there: rule.direction !== 'back',
       back: rule.direction !== 'there',
       area: isArea(row),
+      ...(rule.arriveEarlyMinutes > 0 ? { early: rule.arriveEarlyMinutes } : {}),
+      ...(rule.lengths === null ? {} : { lengths: rule.lengths }),
     };
   }
 
