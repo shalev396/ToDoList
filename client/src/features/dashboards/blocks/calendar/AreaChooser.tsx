@@ -68,7 +68,6 @@ export function AreaChooser({ point, areas, onNew, onClose, rtl }: AreaChooserPr
 
   useEffect(() => {
     openedAt.current = performance.now();
-    rows()[0]?.focus({ preventScroll: true });
     const away = (event: Event) => {
       if (settled() && !(event.target instanceof Node && menu.current?.contains(event.target))) {
         closeRef.current();
@@ -79,11 +78,25 @@ export function AreaChooser({ point, areas, onNew, onClose, rtl }: AreaChooserPr
         closeRef.current();
       }
     };
+    // Esc closes it wherever focus is (the menu's own handler never sees a key pressed elsewhere).
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        closeRef.current();
+        const back = returnTo.current;
+        if (back instanceof HTMLElement && back.isConnected) {
+          back.focus({ preventScroll: true });
+        }
+      }
+    };
+    document.addEventListener('keydown', escape, true);
     document.addEventListener('pointerdown', away, true);
     window.addEventListener('resize', dismiss);
     window.addEventListener('blur', dismiss);
     document.addEventListener('scroll', dismiss, true);
     return () => {
+      document.removeEventListener('keydown', escape, true);
       document.removeEventListener('pointerdown', away, true);
       window.removeEventListener('resize', dismiss);
       window.removeEventListener('blur', dismiss);
@@ -91,12 +104,13 @@ export function AreaChooser({ point, areas, onNew, onClose, rtl }: AreaChooserPr
     };
   }, []);
 
-  const close = (restoreFocus: boolean) => {
-    onClose();
-    if (restoreFocus && returnTo.current instanceof HTMLElement && returnTo.current.isConnected) {
-      returnTo.current.focus({ preventScroll: true });
+  // Focus goes in once the menu is visible: a hidden (not yet placed) element cannot take it.
+  const placed = place !== null;
+  useEffect(() => {
+    if (placed) {
+      rows()[0]?.focus({ preventScroll: true });
     }
-  };
+  }, [placed]);
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const items = rows();
@@ -106,11 +120,6 @@ export function AreaChooser({ point, areas, onNew, onClose, rtl }: AreaChooserPr
       items[(index + items.length) % items.length]?.focus();
     };
     switch (event.key) {
-      case 'Escape':
-        event.preventDefault();
-        event.stopPropagation();
-        close(true);
-        break;
       case 'ArrowDown':
         go(at + 1);
         break;

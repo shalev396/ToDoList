@@ -312,6 +312,8 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   const [chooser, setChooser] = useState<ChooserState | null>(null);
   const lastTap = useRef({ at: 0, start: '' });
   const closeChooser = useCallback(() => {
+    // A tap on the same slot right after dismissing it is a new tap, not a duplicate.
+    lastTap.current = { at: 0, start: '' };
     setChooser(null);
   }, []);
 
