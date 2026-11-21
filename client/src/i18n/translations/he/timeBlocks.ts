@@ -16,6 +16,11 @@ export const timeBlocks = {
     startsAt: 'מתחיל ב־',
     areaLabel: 'אזור: {{title}}, {{when}}',
     saveFailed: 'תצוגת היומן לא נשמרה. כדאי לנסות שוב.',
+    chooser: {
+      label: 'הוספה או פתיחה',
+      newHere: 'משימה חדשה כאן',
+      openArea: 'פתיחת האזור: {{title}}',
+    },
   },
   clock: {
     summary_one: 'היום, {{date}}: אירוע אחד. {{status}}',

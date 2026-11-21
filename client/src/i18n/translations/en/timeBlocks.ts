@@ -16,6 +16,11 @@ export const timeBlocks = {
     startsAt: 'Starts at',
     areaLabel: 'Area: {{title}}, {{when}}',
     saveFailed: 'The calendar view wasn’t saved. Try again.',
+    chooser: {
+      label: 'Add or open',
+      newHere: 'New to-do here',
+      openArea: 'Open area: {{title}}',
+    },
   },
   clock: {
     summary_one: 'Today, {{date}}: {{count}} event. {{status}}',
