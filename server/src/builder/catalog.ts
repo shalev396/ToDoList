@@ -261,6 +261,8 @@ const OPEN: Rule = { field: 'status', operator: 'in', value: ['open', 'in_progre
 const EVENT: Rule = { field: 'kind', operator: '=', value: 'event' };
 /** Timed things: events, plus the time blocks, areas and travel legs TodoList keeps. */
 const TIMED: Rule = { field: 'kind', operator: 'in', value: ['event', ...SCHEDULED_KINDS] };
+/** What a timesheet lists to schedule: local to-dos, and mirrored tasks and issues. */
+export const TIMESHEET_TODO_KINDS = ['todo', 'task', 'issue'] as const;
 
 export const BLOCK_CATALOG: Readonly<Record<BlockType, BlockCatalogEntry>> = {
   list: {
@@ -439,6 +441,49 @@ export const BLOCK_CATALOG: Readonly<Record<BlockType, BlockCatalogEntry>> = {
         limit: 200,
       },
       viz: { kind: 'workload', capacityHours: 8 },
+    },
+  },
+  timesheet: {
+    size: { w: 12, h: 14 },
+    requiredQuery: true,
+    allowedViz: ['timesheet'],
+    vizSchema: VIZ_SCHEMAS.timesheet,
+    // The page's topic (`$page.topic`; unset on the main page: every topic): its time blocks and
+    // areas over the visible week (`$page.range`, set by the grid), and its open to-dos whatever
+    // their dates (compile.ts: a timesheet's range narrows only timed rows). Reserved time first,
+    // so the row cap never cuts an area for a to-do.
+    defaults: {
+      query: {
+        source: 'items',
+        where: {
+          combinator: 'and',
+          rules: [
+            { field: 'topic', operator: '=', value: '$page.topic' },
+            {
+              combinator: 'or',
+              rules: [
+                { field: 'kind', operator: '=', value: 'block' },
+                {
+                  combinator: 'and',
+                  rules: [
+                    { field: 'kind', operator: 'in', value: [...TIMESHEET_TODO_KINDS] },
+                    OPEN,
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        dateRange: '$page.range',
+        dateField: 'any',
+        sort: [
+          { field: 'kind', dir: 'asc' },
+          { field: 'dueAt', dir: 'asc' },
+        ],
+        limit: 200,
+      },
+      viz: { kind: 'timesheet', showBlocks: true },
+      listen: ['$page.range', '$page.topic'],
     },
   },
 };

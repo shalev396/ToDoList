@@ -32,6 +32,7 @@ import {
   RowBlock,
   TableBlock,
   TimelineBlock,
+  TimesheetBlock,
   UnknownBlock,
   WorkloadBlock,
   type BlockCapability,
@@ -68,6 +69,7 @@ const CLASSES: Readonly<Record<BlockType, unknown>> = {
   timeline: TimelineBlock,
   agenda: AgendaBlock,
   workload: WorkloadBlock,
+  timesheet: TimesheetBlock,
 };
 
 describe('BlockRegistry and Block.from', () => {
@@ -195,6 +197,8 @@ describe('capability contracts', () => {
       assert.deepEqual(row(type), [true, false, false], type);
     }
     assert.deepEqual(row('calendar'), [true, true, false]);
+    // The timesheet draws the visible week, as the calendar does.
+    assert.deepEqual(row('timesheet'), [true, true, false]);
     // The clock reads a query (the catalog requires one): a data block too, unlike the plan's table.
     assert.deepEqual(row('clock'), [true, true, false]);
     assert.deepEqual(row('filter'), [false, false, true]);
@@ -215,7 +219,16 @@ describe('capability contracts', () => {
     const rows = BLOCK_TYPES.filter((type) => Block.from(jsonOf(type)) instanceof RowBlock);
     assert.deepEqual(
       [...rows].sort(),
-      ['agenda', 'calendar', 'deadlines', 'kanban', 'list', 'table', 'timeline'].sort(),
+      [
+        'agenda',
+        'calendar',
+        'deadlines',
+        'kanban',
+        'list',
+        'table',
+        'timeline',
+        'timesheet',
+      ].sort(),
     );
   });
 });
@@ -273,6 +286,9 @@ describe('the contracts', () => {
     assert.ok(isTimeBlock(calendar) && isTimeBlock(clock));
     assert.equal(calendar.range, '$page.range');
     assert.equal(clock.range, 'today');
+    const timesheet = Block.from(jsonOf('timesheet'));
+    assert.ok(isTimeBlock(timesheet));
+    assert.equal(timesheet.range, '$page.range');
     const viewed = Block.from(jsonOf('calendar', { query: undefined, savedViewId: 'view-1' }));
     assert.ok(isTimeBlock(viewed));
     assert.equal(viewed.range, null);

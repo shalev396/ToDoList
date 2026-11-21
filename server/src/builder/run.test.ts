@@ -4,9 +4,10 @@ import assert from 'node:assert/strict';
 import type { AggregateOptions } from '../models/definitions/common.js';
 import type { ContainerUpsert } from '../models/definitions/Container.js';
 import type { IContainerRepository, IItemRepository } from '../models/index.js';
-import type { ItemUpsert } from '../models/definitions/Item.js';
+import type { CreateLocalItemInput, ItemUpsert } from '../models/definitions/Item.js';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
 import type { ContainerQueryRow, ItemQueryRow, Query, QueryResult } from '../types/builder.js';
+import { BLOCK_CATALOG } from './catalog.js';
 import type { CompileContext } from './compile.js';
 import type { RunQueryDeps } from './run.js';
 
@@ -438,5 +439,128 @@ describe('runQuery', () => {
       rows.find((row) => row.source.provider === 'local')?.overlay.note,
       'note [REDACTED:github_token]',
     );
+  });
+});
+
+describe('runQuery: a timesheet (a topic’s painted time and its open to-dos)', () => {
+  /** The week of NOW in Asia/Jerusalem, Sunday to Sunday, as the grid sets `$page.range`. */
+  const WEEK = { from: '2026-11-07T22:00:00Z', to: '2026-11-14T22:00:00Z' };
+  const timesheetQuery = (): Query => {
+    const query = BLOCK_CATALOG.timesheet.defaults.query;
+    assert.ok(query !== undefined);
+    return query;
+  };
+  const titles = (result: QueryResult): string[] =>
+    ((result.rows ?? []) as ItemQueryRow[]).map((row) => row.title).sort();
+  let plannedId = '';
+
+  before(async () => {
+    const block = (
+      title: string,
+      startAt: string,
+      endAt: string,
+      props: Record<string, unknown>,
+    ): CreateLocalItemInput => ({
+      ownerUserId: 'u-1',
+      title,
+      topicId: 'work',
+      kind: 'block' as const,
+      startAt: new Date(startAt),
+      endAt: new Date(endAt),
+      props: { ...props },
+    });
+    // An area painted every Tuesday since October: one series row, weeks before the range.
+    await items.createLocal(
+      'w-t',
+      block('TLVTech', '2026-10-20T06:00:00Z', '2026-10-20T14:00:00Z', {
+        layer: 'area',
+        recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=TU'],
+      }),
+    );
+    await items.createLocal(
+      'w-t',
+      block('Deep work', '2026-11-12T07:00:00Z', '2026-11-12T09:00:00Z', { layer: 'block' }),
+    );
+    await items.createLocal(
+      'w-t',
+      block('Next week block', '2026-11-19T07:00:00Z', '2026-11-19T09:00:00Z', { layer: 'block' }),
+    );
+    const planned = await items.createLocal('w-t', {
+      ownerUserId: 'u-1',
+      title: 'Write the report',
+      topicId: 'work',
+    });
+    plannedId = planned.id;
+    await items.setOverlay('w-t', planned.id, { plannedAt: '2026-11-10T10:30' });
+    await items.createLocal('w-t', {
+      ownerUserId: 'u-1',
+      title: 'Due in December',
+      topicId: 'work',
+      status: 'in_progress',
+      dueAt: new Date('2026-12-20T10:00:00Z'),
+    });
+    await items.createLocal('w-t', {
+      ownerUserId: 'u-1',
+      title: 'Already done',
+      topicId: 'work',
+      status: 'done',
+    });
+    await items.createLocal('w-t', { ownerUserId: 'u-1', title: 'Buy milk', topicId: 'personal' });
+    await items.bulkUpsert('w-t', [
+      mirrored('jira', 't1', { title: 'Fix the login' }),
+      mirrored('jira', 't2', { title: 'Shipped issue', status: 'done' }),
+      mirrored('google_calendar', 't3', {
+        title: 'Standup',
+        topicId: 'work',
+        startAt: new Date('2026-11-11T07:00:00Z'),
+      }),
+    ]);
+  });
+
+  it('reads the topic’s areas and blocks in the week, and its open to-dos whatever their dates', async () => {
+    const result = await runQuery(
+      timesheetQuery(),
+      context({ ws: { id: 'w-t' }, blockType: 'timesheet', vars: { topic: 'work', range: WEEK } }),
+      deps,
+    );
+    assert.deepEqual(titles(result), [
+      'Deep work',
+      'Due in December',
+      'Fix the login',
+      'TLVTech',
+      'Write the report',
+    ]);
+    const rows = (result.rows ?? []) as ItemQueryRow[];
+    // Reserved time first (sorted by kind), so the row cap never cuts an area for a to-do.
+    assert.deepEqual(
+      rows.map((row) => row.kind),
+      ['block', 'block', 'issue', 'todo', 'todo'],
+    );
+    const area = rows.find((row) => row.title === 'TLVTech');
+    assert.equal(area?.props['layer'], 'area');
+    assert.deepEqual(area.props['recurrence'], ['RRULE:FREQ=WEEKLY;BYDAY=TU']);
+    // A planned to-do carries its plan, a wall time in the workspace's zone.
+    assert.equal(rows.find((row) => row.id === plannedId)?.overlay.plannedAt, '2026-11-10T10:30');
+    assert.deepEqual(result.appliedVars, { '$page.topic': 'work', '$page.range': WEEK });
+  });
+
+  it('on the main page (no topic set) reads every topic', async () => {
+    const result = await runQuery(
+      timesheetQuery(),
+      context({ ws: { id: 'w-t' }, blockType: 'timesheet', vars: { range: WEEK } }),
+      deps,
+    );
+    assert.ok(titles(result).includes('Buy milk'));
+    assert.ok(!titles(result).includes('Already done'));
+    assert.ok(!titles(result).includes('Standup'));
+  });
+
+  it('as any other block, the same range narrows the to-dos too', async () => {
+    const result = await runQuery(
+      timesheetQuery(),
+      context({ ws: { id: 'w-t' }, blockType: 'calendar', vars: { topic: 'work', range: WEEK } }),
+      deps,
+    );
+    assert.deepEqual(titles(result), ['Deep work', 'TLVTech']);
   });
 });

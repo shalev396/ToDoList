@@ -90,11 +90,48 @@ describe('views: add_view', () => {
       { op: 'add_view', type: 'timeline' },
       { op: 'add_view', type: 'agenda' },
       { op: 'add_view', type: 'workload' },
+      { op: 'add_view', type: 'timesheet' },
     );
     assert.deepEqual(
       next.blocks.map((block) => block.type),
-      ['kanban', 'timeline', 'agenda', 'workload'],
+      ['kanban', 'timeline', 'agenda', 'workload', 'timesheet'],
     );
+  });
+
+  it('a Timesheet view on a topic page reads that topic: one topic rule, the page variable set', () => {
+    const next = run(emptyDraft(), { op: 'add_view', type: 'timesheet' });
+    const view = head(next.views);
+    assert.equal(view?.type, 'timesheet');
+    assert.equal(view.title, 'Timesheet');
+    const block = head(next.blocks);
+    assert.equal(block?.type, 'timesheet');
+    assert.deepEqual(block.viz, { kind: 'timesheet', showBlocks: true });
+    // The catalog's own topic rule is the one bound: never a second.
+    const rules = block.query?.where?.rules ?? [];
+    assert.deepEqual(
+      rules.filter((rule) => 'field' in rule && rule.field === 'topic'),
+      [{ field: 'topic', operator: '=', value: '$page.topic' }],
+    );
+    assert.deepEqual(block.query?.where, BLOCK_CATALOG.timesheet.defaults.query?.where);
+    assert.deepEqual(block.listen, ['$page.range', '$page.topic']);
+    assert.equal(next.vars['topic'], 't1');
+    // showBlocks off, from config.
+    const quiet = run(emptyDraft(), {
+      op: 'add_view',
+      type: 'timesheet',
+      config: { viz: { showBlocks: false } },
+    });
+    assert.deepEqual(head(quiet.blocks)?.viz, { kind: 'timesheet', showBlocks: false });
+  });
+
+  it('a Timesheet view on the main page reads every topic: no page variable is set', () => {
+    const main: DashboardDraft = {
+      ...emptyDraft(),
+      scope: { topicId: null, containerId: null, page: 'topic' },
+    };
+    const next = run(main, { op: 'add_view', type: 'timesheet' });
+    assert.equal(Object.hasOwn(next.vars, 'topic'), false);
+    assert.deepEqual(head(next.blocks)?.query, BLOCK_CATALOG.timesheet.defaults.query);
   });
 
   it('takes the sources, filter, sort and group from config', () => {

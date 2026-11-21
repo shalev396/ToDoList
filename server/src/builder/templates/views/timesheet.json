@@ -1,0 +1,81 @@
+{
+  "key": "timesheet@1",
+  "version": 1,
+  "titles": {
+    "en": "Timesheet",
+    "he": "גיליון שעות"
+  },
+  "type": "timesheet",
+  "vars": {},
+  "blocks": [
+    {
+      "id": "blk_timesheet",
+      "type": "timesheet",
+      "titles": {
+        "en": "Timesheet",
+        "he": "גיליון שעות"
+      },
+      "query": {
+        "source": "items",
+        "where": {
+          "combinator": "and",
+          "rules": [
+            {
+              "field": "topic",
+              "operator": "=",
+              "value": "$page.topic"
+            },
+            {
+              "combinator": "or",
+              "rules": [
+                {
+                  "field": "kind",
+                  "operator": "=",
+                  "value": "block"
+                },
+                {
+                  "combinator": "and",
+                  "rules": [
+                    {
+                      "field": "kind",
+                      "operator": "in",
+                      "value": ["todo", "task", "issue"]
+                    },
+                    {
+                      "field": "status",
+                      "operator": "in",
+                      "value": ["open", "in_progress"]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        "dateRange": "$page.range",
+        "dateField": "any",
+        "sort": [
+          {
+            "field": "kind",
+            "dir": "asc"
+          },
+          {
+            "field": "dueAt",
+            "dir": "asc"
+          }
+        ],
+        "limit": 200
+      },
+      "viz": {
+        "kind": "timesheet",
+        "showBlocks": true
+      },
+      "listen": ["$page.range", "$page.topic"]
+    }
+  ],
+  "layouts": {
+    "lg": [],
+    "md": [],
+    "sm": []
+  }
+}
