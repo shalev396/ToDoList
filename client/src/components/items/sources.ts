@@ -72,6 +72,14 @@ export const SOURCE_STYLES: Record<Provider, SourceStyle> = {
   },
 };
 
+/**
+ * The source's colour as a CSS value, for code that paints at run time (a chart segment). The
+ * variable is always defined: index.css writes every source colour out (`@theme … static`).
+ */
+export function sourceColourVar(source: Provider): string {
+  return `var(--color-source-${source.replaceAll('_', '-')})`;
+}
+
 /** Sort comparator that puts sources in slot order. */
 export function bySlot(a: Provider, b: Provider): number {
   return SOURCE_SLOT_ORDER.indexOf(a) - SOURCE_SLOT_ORDER.indexOf(b);

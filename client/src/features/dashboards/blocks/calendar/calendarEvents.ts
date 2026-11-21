@@ -11,6 +11,7 @@ import { layerOf, type BlockLayer } from '@api-types/scheduled.ts';
 import type { TravelMode } from '@api-types/travel.ts';
 import { colourVar, paintOf } from '../../../colours/palette.ts';
 import type { LegMarks } from '../../../travel/legView.ts';
+import type { TapReach, TimedSpan } from './chipLayout.ts';
 import { wallDate, wallString, type Occurrence } from '../time/occurrences.ts';
 import type { Tone } from '../../rules/applyDisplayRules.ts';
 
@@ -53,6 +54,19 @@ export interface CalendarEventProps {
   anchorMoved: boolean;
   /** A leg whose trip has no length yet: drawn dashed. */
   lengthUnset: boolean;
+  /**
+   * Shorter than a line of text, with free time after it: drawn a line tall (`tc-stretch`, CSS
+   * only; chipLayout.ts `stretchedEvents`).
+   */
+  stretched: boolean;
+  /** A tiny chip's invisible hit area into the free time around it (chipLayout.ts `tapReach`). */
+  tap: TapReach | null;
+}
+
+/** How a short event is drawn beyond its time (chipLayout.ts); never part of the overlap math. */
+export interface ShortEventDrawing {
+  stretched?: boolean;
+  tap?: TapReach | undefined;
 }
 
 /**
@@ -66,9 +80,9 @@ export interface CalendarAreaProps {
   originalStart: string | null;
 }
 
-function addDay(date: string): string {
+function addDay(date: string, days = 1): string {
   const [y, m, d] = date.split('-').map(Number) as [number, number, number];
-  return new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
 /** A point's slot ends at midnight at the latest, so a 23:59 due date stays on its own day. */
@@ -93,11 +107,16 @@ function timing(o: Occurrence, timeZone: string): EventInput {
   return { allDay: false, start: wallString(o.start, timeZone), ...(end === null ? {} : { end }) };
 }
 
-/** A solid fill under its ink; travel is hatched over its muted fill (`tc-travel`). */
+/**
+ * A solid fill under its ink; travel is hatched over its muted fill (`tc-travel`). A short event
+ * may be drawn a line tall over the free time after it (`stretched`, `tc-stretch`), or keep its
+ * height with a hit area into the free time around it (`tap`).
+ */
 export function toEventInput(
   item: DisplayedOccurrence,
   timeZone: string,
   colour: ItemColour,
+  { stretched = false, tap }: ShortEventDrawing = {},
 ): EventInput {
   const { occurrence: o } = item;
   const paint = paintOf(colour);
@@ -118,33 +137,40 @@ export function toEventInput(
     legMode: item.leg?.mode ?? null,
     anchorMoved: item.leg?.moved ?? false,
     lengthUnset: item.leg?.unset ?? false,
+    stretched,
+    tap: tap ?? null,
   };
-  // FullCalendar sets an event's attributes once, when its element is made (`eventDidMount`). A leg's
-  // marks change under it (a conflict clears, the day moves on, he edits its times), so they are
-  // part of its id: a leg that reads differently is drawn again.
-  const legId =
-    item.leg === undefined
-      ? o.key
-      : [
-          o.key,
-          o.start.getTime(),
-          o.end?.getTime(),
-          item.leg.conflict,
-          item.leg.past,
-          item.leg.moved,
-          item.leg.unset,
-        ]
-          .map(String)
-          .join('|');
+  // FullCalendar sets an event's attributes once, when its element is made (`eventDidMount`), and
+  // reuses the element while the id stays. Its name and tooltip carry its times (the chip shows
+  // none), its title, tone and badges, and a leg's marks; all of them change under it (a moved
+  // occurrence keeps its key, a conflict clears, the day moves on), so they are part of its id: an
+  // event that reads differently is drawn again.
+  const title = item.leg?.title ?? o.row.title;
+  const drawnId = [
+    o.key,
+    o.start.getTime(),
+    o.end?.getTime(),
+    title,
+    item.tone,
+    item.badges.join(','),
+    colour.family,
+    colour.role,
+    ...(item.leg === undefined
+      ? []
+      : [item.leg.conflict, item.leg.past, item.leg.moved, item.leg.unset, item.leg.mode]),
+  ]
+    .map(String)
+    .join('|');
   return {
-    id: legId,
-    title: item.leg?.title ?? o.row.title,
+    id: drawnId,
+    title,
     classNames: [
       ...(colour.role === 'travel' ? ['tc-travel'] : []),
       ...(item.leg?.conflict === true ? ['tc-conflict'] : []),
       ...(item.leg?.past === true ? ['tc-past'] : []),
       ...(item.leg?.unset === true ? ['tc-unset'] : []),
       ...(o.dueOnly ? ['fc-due'] : []),
+      ...(stretched ? ['tc-stretch'] : []),
     ],
     backgroundColor: paint.fill,
     borderColor: paint.fill,
@@ -152,6 +178,20 @@ export function toEventInput(
     extendedProps,
     ...timing(o, timeZone),
   };
+}
+
+/**
+ * The timed events' spans (instants, ms) for `stretchedEvents`: one without an end lasts as long
+ * as it is drawn (a due date's point, FullCalendar's default length).
+ */
+export function timedSpans(items: readonly DisplayedOccurrence[]): TimedSpan[] {
+  return items
+    .filter(({ occurrence }) => !occurrence.allDay)
+    .map(({ occurrence: o }) => ({
+      key: o.key,
+      start: o.start.getTime(),
+      end: o.end?.getTime() ?? o.start.getTime() + POINT_MINUTES * 60_000,
+    }));
 }
 
 /** An area: a band in its family's tint behind every event, its title on top (`tc-area`). */
@@ -175,6 +215,66 @@ export function toAreaEventInput(
     extendedProps,
     ...timing(occurrence, timeZone),
   };
+}
+
+/**
+ * An area named in the week grid's day header. Its band behind the events carries no visible label
+ * (events would cover it, and a rail beside them took their width): the header does, and opens it.
+ */
+export interface AreaTag {
+  key: string;
+  rowId: string;
+  title: string;
+  family: ColourFamily;
+  /** As `CalendarAreaProps.originalStart`: opens the sheet on this occurrence. */
+  originalStart: string | null;
+  /** Its wall-clock times (`HH:MM`); null for an all-day area. */
+  from: string | null;
+  to: string | null;
+}
+
+/** The days (`YYYY-MM-DD`, wall clock) an area's band covers, first to last. */
+function daysCovered(o: Occurrence, timeZone: string): string[] {
+  const { start, end } = timing(o, timeZone) as { start: string; end?: string };
+  const first = start.slice(0, 10);
+  let last = first;
+  if (o.allDay && end !== undefined) {
+    // The end is the exclusive midnight after the last day.
+    last = new Date(Date.parse(`${end}T00:00:00Z`) - 1).toISOString().slice(0, 10);
+  } else if (end !== undefined && end > start) {
+    // An end at midnight closes the day before.
+    last = end.slice(11) === '00:00:00' ? addDay(end.slice(0, 10), -1) : end.slice(0, 10);
+  }
+  const days: string[] = [];
+  for (let day = first; day <= last && days.length < 62; day = addDay(day)) {
+    days.push(day);
+  }
+  return days;
+}
+
+/** The areas each day of the grid shows in its header, in order of start. */
+export function areaTagsByDay(
+  areas: readonly Occurrence[],
+  colourOf: (rowId: string) => ItemColour,
+  timeZone: string,
+): Map<string, AreaTag[]> {
+  const byDay = new Map<string, AreaTag[]>();
+  const sorted = [...areas].sort((a, b) => a.start.getTime() - b.start.getTime());
+  for (const o of sorted) {
+    const tag: AreaTag = {
+      key: o.key,
+      rowId: o.row.id,
+      title: o.row.title,
+      family: colourOf(o.row.id).family,
+      originalStart: o.originalStart?.toISOString() ?? null,
+      from: o.allDay ? null : wallString(o.start, timeZone).slice(11, 16),
+      to: o.allDay || o.end === null ? null : wallString(o.end, timeZone).slice(11, 16),
+    };
+    for (const day of daysCovered(o, timeZone)) {
+      byDay.set(day, [...(byDay.get(day) ?? []), tag]);
+    }
+  }
+  return byDay;
 }
 
 /**

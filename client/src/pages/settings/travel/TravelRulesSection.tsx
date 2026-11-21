@@ -7,11 +7,14 @@ import { useBuilderCatalog } from '@/api/queries/builder';
 import { useFacets, useItem } from '@/api/queries/items';
 import { useRemoveTravelRule, useSaveTravelRule, useTravelRules } from '@/api/queries/travel';
 import { FormError } from '@/components/auth/auth-ui';
+import { dateLocale } from '@/components/items/format';
 import { Button } from '@/components/ui/button';
 import { SelectField } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { SentenceFilter } from '@/features/editor/SentenceFilter';
+import { weekdayName } from '@/features/travel/travelPanel';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
+import { useLanguage } from '@/hooks/useLanguage';
 import { SettingsSection } from '@/pages/settings/SettingsLayout';
 import type { CatalogDescription, Query } from '@api-types/builder';
 import {
@@ -61,8 +64,24 @@ interface SentenceContext {
 /** "Every occurrence of …" or "One occurrence of …": a rule made by marking an event. */
 function MarkedItem({ workspaceId, scope }: { workspaceId: string; scope: TravelRuleScope }) {
   const { t } = useTranslation();
-  const itemId = scope.kind === 'where' ? null : scope.itemId;
+  const { language } = useLanguage();
+  const itemId = scope.kind === 'series' || scope.kind === 'item' ? scope.itemId : null;
   const item = useItem(workspaceId, itemId);
+  if (scope.kind === 'repeats') {
+    return (
+      <p className="text-sm" data-rule-item>
+        <Trans
+          i18nKey="travel.rules.repeats"
+          values={{
+            title: scope.title,
+            weekday: weekdayName(scope.weekday, dateLocale(language)),
+            time: `⁦${scope.startTime}⁩`,
+          }}
+          components={{ name: <bdi className="font-medium" /> }}
+        />
+      </p>
+    );
+  }
   const title = item.data?.title ?? t('travel.rules.unknownItem');
   return (
     <p className="text-sm" data-rule-item>

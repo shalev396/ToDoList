@@ -95,6 +95,11 @@ export interface CompileContext {
   preview: boolean;
   /** The block the query belongs to: it picks the default dateField. */
   blockType?: BlockType;
+  /**
+   * Items only: each row also carries `sourceTitle`, the title the provider gave it (a server
+   * read for travel's repeats; never a block's or an API's).
+   */
+  sourceTitle?: boolean;
   /** The workspace's custom attributes: `attr.<key>` fields are checked against them. */
   attributes?: readonly AttributeDef[];
   /** The workspace's synced `props.*` paths: a `props.*` field must be one of them. */
@@ -768,7 +773,12 @@ class Compilation {
       order[path] = entry.dir === 'asc' ? 1 : -1;
     });
     order['_id'] = 1;
-    const projection = Object.fromEntries(ROW_FIELDS[this.source].map((path) => [path, 1]));
+    const projection = Object.fromEntries(
+      [
+        ...ROW_FIELDS[this.source],
+        ...(this.source === 'items' && this.ctx.sourceTitle === true ? ['sourceTitle'] : []),
+      ].map((path) => [path, 1]),
+    );
     return [
       { $addFields: nullFlags },
       { $sort: order },
@@ -985,7 +995,16 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
     ...(taskShaped ? [{ $match: TASK_SHAPED_SCOPE }] : []),
     ...(prefilter === null ? [] : [{ $match: prefilter }]),
     // The effective values right after the access filter: everything below reads them.
-    ...(source === 'items' ? [{ $addFields: Overrides.projection() }] : []),
+    ...(source === 'items'
+      ? [
+          {
+            $addFields: {
+              ...Overrides.projection(),
+              ...(ctx.sourceTitle === true ? { sourceTitle: '$title' } : {}),
+            },
+          },
+        ]
+      : []),
     ...(Object.keys(computed).length === 0 ? [] : [{ $addFields: computed }]),
     ...(filter === null ? [] : [{ $match: filter }]),
     ...dedup,

@@ -13,6 +13,7 @@ import {
   DaysQuery,
   EmptyBody,
   LegEditBody,
+  LegModeBody,
   MarkItemBody,
   PlacePinBody,
   PreviewBody,
@@ -25,6 +26,7 @@ import { optionalTime } from '../services/timeBlockSchemas.js';
 import type { WorkspaceRequest } from '../types/express.js';
 import type { ItemDetail } from '../types/items.js';
 import type {
+  LegModeResponse,
   MarkItemResponse,
   PlaceView,
   TravelDaysResponse,
@@ -180,6 +182,18 @@ const editLeg: RequestHandler = async (req, res): Promise<void> => {
   res.success(data);
 };
 
+const changeLegMode: RequestHandler = async (req, res): Promise<void> => {
+  const { mode, scope } = parseOr400(LegModeBody, req.body);
+  const { caller } = req as WorkspaceRequest;
+  const { marked, leg } = await TravelSetup.of(caller).changeLegMode(routeParam(req, 'id'), {
+    mode,
+    scope,
+  });
+  const reads = await ItemQuery.for(caller);
+  const data: LegModeResponse = { marked, leg: leg === null ? null : await reads.detail(leg) };
+  res.success(data);
+};
+
 const skipLeg: RequestHandler = async (req, res): Promise<void> => {
   parseOr400(EmptyBody, req.body);
   const { caller } = req as WorkspaceRequest;
@@ -226,6 +240,7 @@ export const TravelController = {
   unmarkItem,
   preview,
   editLeg,
+  changeLegMode,
   skipLeg,
   resetLeg,
   legLinks,

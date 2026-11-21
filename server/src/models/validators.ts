@@ -95,7 +95,7 @@ export const TRAVEL_RULES_VALIDATOR = {
       scope: {
         bsonType: 'object',
         required: ['kind'],
-        properties: { kind: { enum: ['where', 'series', 'item'] } },
+        properties: { kind: { enum: ['where', 'series', 'item', 'repeats'] } },
       },
       mode: { enum: [...TRAVEL_MODES] },
       direction: { enum: [...RULE_DIRECTIONS] },

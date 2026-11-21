@@ -16,7 +16,8 @@ const travelRuleSchema = new mongoose.Schema<TravelRuleFields>(
     _id: uuidIdField,
     workspaceId: { type: String, required: true },
     ownerUserId: { type: String, required: true },
-    // `{kind: 'where', where}`, `{kind: 'series', itemId}` or `{kind: 'item', itemId, occurrence}`.
+    // `{kind: 'where', where}`, `{kind: 'series', itemId}` or `{kind: 'item', itemId, occurrence}` or
+    // `{kind: 'repeats', containerId, title, weekday, startTime, from}`.
     scope: { type: mongoose.Schema.Types.Mixed, required: true },
     mode: { type: String, enum: TRAVEL_MODES, required: true },
     direction: { type: String, enum: RULE_DIRECTIONS, required: true },
@@ -102,6 +103,16 @@ export const TravelRuleRepository: ITravelRuleRepository = {
       { $set: { placeId: null } },
     );
     return result.modifiedCount;
+  },
+
+  async deleteRepeatsIn(workspaceId, containerIds) {
+    if (containerIds.length === 0) return 0;
+    const result = await TravelRuleMongoModel.deleteMany({
+      workspaceId,
+      'scope.kind': 'repeats',
+      'scope.containerId': { $in: [...containerIds] },
+    });
+    return result.deletedCount;
   },
 
   async deleteForMember(workspaceId, ownerUserId) {

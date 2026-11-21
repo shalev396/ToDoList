@@ -20,6 +20,7 @@ import { z } from 'zod';
 
 import type { RuleGroup } from './builder.js';
 import type { ItemDetail, ItemSummary } from './items.js';
+import type { RepeatsScope } from './travelRepeats.js';
 
 export const TRAVEL_MODES = ['walk', 'drive', 'transit'] as const;
 export type TravelMode = (typeof TRAVEL_MODES)[number];
@@ -83,14 +84,17 @@ export interface TravelSettingsPatch {
 
 /**
  * What a travel rule applies to (plan Ruling 11): the items a where-group (the dashboards' logic
- * builder) matches, every occurrence of one series (keyed on its master item), or one item or
- * occurrence (`occurrence`: its original start as ISO, or `single`). Precedence: item, then
- * series, then where-rules oldest first.
+ * builder) matches, every occurrence of one series (keyed on its master item), one item or
+ * occurrence (`occurrence`: its original start as ISO, or `single`), or the repeats of an event
+ * that doesn't repeat by itself (`repeats`: the events of one calendar or project with one title
+ * on one weekday at one local time, from one start on, later imports too). Precedence: item, then
+ * series, then repeats, then where-rules oldest first.
  */
 export type TravelRuleScope =
   | { kind: 'where'; where: RuleGroup }
   | { kind: 'series'; itemId: string }
-  | { kind: 'item'; itemId: string; occurrence: string };
+  | { kind: 'item'; itemId: string; occurrence: string }
+  | RepeatsScope;
 
 export type TravelRuleScopeKind = TravelRuleScope['kind'];
 
@@ -369,6 +373,30 @@ export interface MarkItemResponse {
    * not stored, since the item's own place isn't known yet; null when none was typed.
    */
   lengthStored: boolean | null;
+}
+
+/** How far a mode change reaches: this trip's event only, or every repeat of it. */
+export const LEG_MODE_SCOPES = ['this', 'repeats'] as const;
+export type LegModeScope = (typeof LEG_MODE_SCOPES)[number];
+
+/**
+ * `PUT …/travel/legs/:id/mode`: how he goes on this leg's event. `this`: that one occurrence;
+ * `repeats`: every occurrence of a repeating event, or, for an event that doesn't repeat (an
+ * imported timetable), it and every later event of the same calendar or project with the same
+ * title, weekday and local start time.
+ */
+export interface LegModeRequest {
+  mode: TravelMode;
+  scope: LegModeScope;
+}
+
+/**
+ * How many rules were stored (1: "every repeat" is one rule, however many events it reaches; 0 when a rule of the same pattern and way already makes the trip), and the leg as it is after the legs were made again (the same
+ * anchor, occurrence and direction); null when there is none now.
+ */
+export interface LegModeResponse {
+  marked: number;
+  leg: ItemDetail | null;
 }
 
 /**
