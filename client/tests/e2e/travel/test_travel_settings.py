@@ -193,6 +193,9 @@ def test_rule_with_sentence_filter_saves(page: Page, base_url: str, api_base_url
         "mode": "drive",
         "direction": "there",
         "placeId": braude["id"],
+        # Arrive early and the rule's own lengths were left blank: the form sends null (none).
+        "arriveEarlyMinutes": None,
+        "lengths": None,
     }
 
     card = page.locator("[data-travel-rule]")
