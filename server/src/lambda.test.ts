@@ -118,6 +118,24 @@ describe('lambda handler: maintenance actions', () => {
     assert.equal(result.statusCode, 200);
     assert.equal((JSON.parse(result.body) as { timedOutRuns: unknown }).timedOutRuns, 0);
   });
+
+  it("sync-db stops on the function's own clock: done:false when little time is left, done:true with plenty", async () => {
+    const answer = async (remainingMs: number): Promise<{ done: boolean; pending: string[] }> => {
+      const result = (await handler({ action: 'sync-db' }, {
+        getRemainingTimeInMillis: () => remainingMs,
+      } as Context)) as { statusCode: number; body: string };
+      assert.equal(result.statusCode, 200);
+      return JSON.parse(result.body) as { done: boolean; pending: string[] };
+    };
+    // Under the 60 s reserve: nothing starts, everything is pending.
+    const short = await answer(10_000);
+    assert.equal(short.done, false);
+    assert.ok(short.pending.length > 0);
+    // Plenty of time: a full run.
+    const full = await answer(290_000);
+    assert.equal(full.done, true);
+    assert.deepEqual(full.pending, []);
+  });
 });
 
 describe('lambda handler: scheduled tick', () => {

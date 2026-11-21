@@ -2,6 +2,14 @@ import mongoose from 'mongoose';
 import { environment } from '../environment.js';
 import { mongoPoolSize } from '../localSwitches.js';
 import { COLLECTION_VALIDATORS } from '../../models/validators.js';
+import type { TimeBudget } from '../../classes/integration/calendar/TimeBudget.js';
+
+export interface MongoSync {
+  /** One line per collection done. */
+  lines: string[];
+  /** The collections not reached because the time ran out first; empty for a full run. */
+  pending: string[];
+}
 
 export async function connectMongo(): Promise<void> {
   const state = mongoose.connection.readyState;
@@ -68,8 +76,15 @@ function errorCode(error: unknown): string {
  * and install its `$jsonSchema` validator, if it has one (models/validators.ts). Running it again
  * changes nothing. Returns one line per collection, e.g. `Items: indexes ok (8), validator ok`:
  * names and counts only, never a value.
+ *
+ * With a `budget`, a collection's step starts only while `reserveMs` is still left: the pass then
+ * stops cleanly and answers the collections it did not reach (a rerun redoes the done ones as
+ * no-ops).
  */
-export async function syncMongo(): Promise<string[]> {
+export async function syncMongoWithin(
+  budget: TimeBudget | null,
+  reserveMs: number,
+): Promise<MongoSync> {
   await connectMongo();
   await registerModels();
   const db = mongoose.connection.db;
@@ -80,10 +95,16 @@ export async function syncMongo(): Promise<string[]> {
   );
   const lines = new Map<string, string>();
   const failures: string[] = [];
+  const stopped = new Set<string>();
+  const outOfTime = (): boolean => budget !== null && !budget.canStart(reserveMs);
 
   // Pass 1: indexes for EVERY model, so one broken collection never leaves the others unindexed.
   for (const model of models) {
     const name = model.collection.collectionName;
+    if (outOfTime()) {
+      stopped.add(name);
+      continue;
+    }
     try {
       await model.init();
       await model.createCollection();
@@ -103,6 +124,10 @@ export async function syncMongo(): Promise<string[]> {
     const validator = COLLECTION_VALIDATORS[name];
     const line = lines.get(name);
     if (validator === undefined || line === undefined) continue;
+    if (outOfTime()) {
+      stopped.add(name);
+      continue;
+    }
     try {
       await db.command({
         collMod: name,
@@ -120,7 +145,21 @@ export async function syncMongo(): Promise<string[]> {
   if (failures.length > 0) {
     throw new Error(`sync-db: failed for ${failures.join(', ')}`);
   }
-  return models.map((model) => lines.get(model.collection.collectionName) ?? '');
+  // A collection that was not reached has no line (or only its index line, its validator pending).
+  const pending = models
+    .map((model) => model.collection.collectionName)
+    .filter((name) => stopped.has(name));
+  return {
+    lines: models
+      .filter((model) => !stopped.has(model.collection.collectionName))
+      .map((model) => lines.get(model.collection.collectionName) ?? ''),
+    pending,
+  };
+}
+
+/** Every collection, with no deadline (a test's, a local run). */
+export async function syncMongo(): Promise<string[]> {
+  return (await syncMongoWithin(null, 0)).lines;
 }
 
 export async function clearAllMongo(): Promise<void> {

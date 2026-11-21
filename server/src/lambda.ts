@@ -39,7 +39,9 @@ import {
  *   this function by itself (services/syncJobs.ts), run by sync/worker.ts. It throws when a retry
  *   may help, so Lambda's async invocation runs it again. A malformed job is dropped (400).
  * - a maintenance action, `{ "action": … }`:
- *   - `sync-db`       from `npm run deploy:backend` (every stage)
+ *   - `sync-db`       from `npm run deploy:backend` (every stage), in rounds: it stops before the
+ *                    step that would leave less than 60 s of the function's time and answers
+ *                    `done: false` with what is pending; the script asks again until `done: true`
  *   - `reset-db`      from `npm run reset:db` before the test suites (refused on prod)
  *   - `sync-dispatch` one background sync run per dispatchable integration, then the
  *                    after-dispatch passes (jobs/scheduledTick.ts)
@@ -73,8 +75,8 @@ function isApiAction(action: unknown): action is ApiAction {
   return (API_ACTIONS as readonly unknown[]).includes(action);
 }
 
-const ACTIONS: Record<ApiAction, () => Promise<unknown>> = {
-  [SYNC_DB_ACTION]: syncSchema,
+const ACTIONS: Record<ApiAction, (context: Context) => Promise<unknown>> = {
+  [SYNC_DB_ACTION]: (context) => syncSchema(remainingMsOf(context)),
   [RESET_DB_ACTION]: resetStage,
   [SYNC_DISPATCH_ACTION]: () => runScheduledTick(),
   [GCAL_DISPATCH_ACTION]: () => dispatchGcalSyncs(),
@@ -82,10 +84,10 @@ const ACTIONS: Record<ApiAction, () => Promise<unknown>> = {
   [SEED_ACTION]: () => seedStage(),
 };
 
-async function runAction(action: ApiAction): Promise<ActionResult> {
+async function runAction(action: ApiAction, context: Context): Promise<ActionResult> {
   // No disconnect afterwards: the container is reused for HTTP requests.
   try {
-    const result = await ACTIONS[action]();
+    const result = await ACTIONS[action](context);
     return { statusCode: 200, body: JSON.stringify(result) };
   } catch (error) {
     if (error instanceof AppError) {
@@ -124,6 +126,6 @@ async function runJob(event: unknown, context: Context): Promise<ActionResult> {
 export const handler = async (event: unknown, context: Context): Promise<unknown> => {
   const action = directAction(event);
   if (action === SYNC_RUN_ACTION || action === GCAL_RUN_ACTION) return runJob(event, context);
-  if (isApiAction(action)) return runAction(action);
+  if (isApiAction(action)) return runAction(action, context);
   return http(event as object, context);
 };
