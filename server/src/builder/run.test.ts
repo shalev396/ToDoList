@@ -542,18 +542,17 @@ describe('runQuery: a timesheet (a topic’s painted time and its open to-dos)',
     const rows = (result.rows ?? []) as ItemQueryRow[];
     // The time first (so the row cap never cuts it), then the to-dos, tasks, issues and
     // assignments: soonest due first, undated last, a plan first among the undated.
-    assert.deepEqual(
-      rows.map((row) => row.title),
-      [
-        'TLVTech',
-        'Deep work',
-        'Ship the beta',
-        'Calculus homework',
-        'Due in December',
-        'Write the report',
-        'Fix the login',
-      ],
-    );
+    // The two time rows tie on the sort (their order between them is the store's), so they are
+    // compared as a set.
+    const titles = rows.map((row) => row.title);
+    assert.deepEqual(titles.slice(0, 2).sort(), ['Deep work', 'TLVTech']);
+    assert.deepEqual(titles.slice(2), [
+      'Ship the beta',
+      'Calculus homework',
+      'Due in December',
+      'Write the report',
+      'Fix the login',
+    ]);
     assert.equal(result.total, 7);
     const area = rows.find((row) => row.title === 'TLVTech');
     assert.equal(area?.props['layer'], 'area');
@@ -569,10 +568,9 @@ describe('runQuery: a timesheet (a topic’s painted time and its open to-dos)',
       context({ ws: { id: 'w-t' }, blockType: 'timesheet', vars: { topic: 'work', range: WEEK } }),
       deps,
     );
-    assert.deepEqual(
-      ((result.rows ?? []) as ItemQueryRow[]).map((row) => row.title),
-      ['TLVTech', 'Deep work', 'Ship the beta', 'Calculus homework'],
-    );
+    const titles = ((result.rows ?? []) as ItemQueryRow[]).map((row) => row.title);
+    assert.deepEqual(titles.slice(0, 2).sort(), ['Deep work', 'TLVTech']);
+    assert.deepEqual(titles.slice(2), ['Ship the beta', 'Calculus homework']);
     // The total still counts every match: the panel says how many are not listed.
     assert.equal(result.total, 7);
   });
