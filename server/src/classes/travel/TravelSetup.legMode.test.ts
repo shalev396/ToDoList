@@ -767,6 +767,88 @@ describe('exact trip times per rule (arriveEarlyMinutes, lengths)', () => {
     assert.deepEqual((await classes.TravelRule.findOwn(ws.a, ruleId)).lengths, { back: 90 });
   });
 
+  it('a refused edit leaves the rule as it was; minutes are whole for a ruled leg and any other', async () => {
+    const { ws, item, ruleId } = await exactWeek();
+    const there = legOf(await legs(ws), item, 'there');
+    const setup = classes.TravelSetup.of(ws.a);
+    const lengthsOf = async (): Promise<unknown> =>
+      (await classes.TravelRule.findOwn(ws.a, ruleId)).lengths;
+    const before = await lengthsOf();
+    assert.deepEqual(before, { there: 95, back: 110 });
+    // Not whole, out of bounds, and a span that is none (the end before the start).
+    for (const change of [
+      { minutes: 12.5 },
+      { minutes: 0 },
+      { minutes: 1441 },
+      {
+        minutes: 100,
+        startAt: new Date('2026-12-01T10:00:00.000Z'),
+        endAt: new Date('2026-12-01T09:00:00.000Z'),
+      },
+    ]) {
+      await assert.rejects(
+        setup.editLeg(there.id, change),
+        ValidationError,
+        JSON.stringify(change),
+      );
+      assert.deepEqual(await lengthsOf(), before);
+    }
+    // The same refusal where the rule sets no length (the trip's length is what would be set).
+    const plain = await workspace();
+    const first = await lecture(plain, 'l1', local(1, 10, 30));
+    await regenerate(plain);
+    await assert.rejects(
+      classes.TravelSetup.of(plain.a).editLeg(legOf(await legs(plain), first, 'there').id, {
+        minutes: 12.5,
+      }),
+      ValidationError,
+    );
+  });
+
+  it('a series rule takes the typed length too; a leg between two places never writes a rule', async () => {
+    const ws = await workspace();
+    const series = await lecture(ws, 'series', local(2, 10, 30), {
+      props: { recurrence: ['RRULE:FREQ=WEEKLY;COUNT=4'] },
+    });
+    const rule = await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'series', itemId: series },
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.braudeId,
+      lengths: { back: 70 },
+    });
+    await regenerate(ws);
+    const setup = classes.TravelSetup.of(ws.a);
+    const tripKey = classes.DayPlanner.tripKey(ws.homeId, ws.braudeId, 'transit');
+    const tripOf = async (key: string): Promise<number> =>
+      (await classes.TravelProfile.of(ws.a)).tripLength(key).minutes;
+    // `back` is the rule's: it takes 85. `there` is not: it sets the trip.
+    await setup.editLeg(legOf(await legs(ws), series, 'back').id, { minutes: 85 });
+    assert.deepEqual((await classes.TravelRule.findOwn(ws.a, rule.id)).lengths, { back: 85 });
+    await setup.editLeg(legOf(await legs(ws), series, 'there').id, { minutes: 45 });
+    assert.deepEqual((await classes.TravelRule.findOwn(ws.a, rule.id)).lengths, { back: 85 });
+    assert.equal(await tripOf(tripKey), 45);
+
+    // A second item elsewhere the same day: the leg between is its own trip.
+    const gym = await classes.Place.create(ws.a, { name: 'Gym' });
+    const other = await lecture(ws, 'other', local(2, 14, 0));
+    await setup.pinItemPlace(other, gym.id);
+    const [where] = (await classes.TravelRule.listOwn(ws.a)).filter(
+      (one) => one.scopeKind === 'where',
+    );
+    assert.ok(where);
+    await where.update(ws.a, { lengths: { there: 40, back: 50 } });
+    await regenerate(ws);
+    const between = (await legs(ws)).find((leg) => leg.travel?.direction === 'between');
+    assert.ok(between, 'a leg between the two places');
+    await setup.editLeg(between.id, { minutes: 33 });
+    assert.deepEqual((await classes.TravelRule.findOwn(ws.a, where.id)).lengths, {
+      there: 40,
+      back: 50,
+    });
+    assert.equal(await tripOf(classes.DayPlanner.tripKey(ws.braudeId, gym.id, 'transit')), 33);
+  });
+
   it('changing the mode keeps arriveEarlyMinutes and drops lengths', async () => {
     const { ws, item, ruleId } = await exactWeek();
     const there = legOf(await legs(ws), item, 'there');

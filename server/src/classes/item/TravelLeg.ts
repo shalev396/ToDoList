@@ -356,8 +356,14 @@ export class TravelLeg extends ScheduledItem {
     if (!byHand && minutes === undefined) {
       throw new ValidationError('minutes: give minutes, startAt or endAt');
     }
-    if (minutes !== undefined && !(minutes > 0 && minutes <= TRIP_MINUTES_MAX)) {
-      throw new ValidationError(`minutes: more than 0 and at most ${String(TRIP_MINUTES_MAX)}`);
+    // Whole minutes, whether the length goes to the trip or to the rule that draws this leg.
+    if (
+      minutes !== undefined &&
+      !(Number.isInteger(minutes) && minutes > 0 && minutes <= TRIP_MINUTES_MAX)
+    ) {
+      throw new ValidationError(
+        `minutes: a whole number, more than 0 and at most ${String(TRIP_MINUTES_MAX)}`,
+      );
     }
     const trip = this.travel;
     if (trip === null) throw new ValidationError('travel: this leg has no travel to edit');

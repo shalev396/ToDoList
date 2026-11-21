@@ -135,9 +135,14 @@ export class TravelSetup {
   async editLeg(id: string, change: LegTimesChange): Promise<TravelLeg> {
     const caller = this.#caller;
     const own = await TravelLeg.findOwn(caller, id);
-    const ruled =
-      change.minutes === undefined ? null : await this.#ruleLengthOf(own, change.minutes);
+    const ruled = change.minutes === undefined ? null : await this.#ruleSetting(own);
     const leg = await own.editTimes(caller, change, { tripLength: ruled === null });
+    // Only once the edit was accepted: a refused one leaves the rule as it was.
+    if (ruled !== null && change.minutes !== undefined) {
+      await ruled.rule.update(caller, {
+        lengths: { ...ruled.rule.lengths, [ruled.side]: change.minutes },
+      });
+    }
     if (change.minutes === undefined) return leg;
     await this.#regenerate('length');
     return TravelLeg.findOwn(caller, id);
@@ -278,10 +283,11 @@ export class TravelSetup {
   // ─── Inside ───────────────────────────────────────────────────────────────
 
   /**
-   * Stores `minutes` as the rule's length for the leg's side when its rule has one there; the rule
-   * (null when it has none, and nothing changed).
+   * The rule that draws the leg and the side of it the leg's length belongs to, when that rule
+   * sets its own length for that side; null when it has none (the trip's length is the leg's).
+   * Reads only.
    */
-  async #ruleLengthOf(leg: TravelLeg, minutes: number): Promise<TravelRule | null> {
+  async #ruleSetting(leg: TravelLeg): Promise<{ rule: TravelRule; side: 'there' | 'back' } | null> {
     const caller = this.#caller;
     const travel = leg.travel;
     if (travel === null || leg.isDeleted) return null;
@@ -302,7 +308,7 @@ export class TravelSetup {
     );
     const side = travel.direction;
     if (found?.rule.lengths?.[side] === undefined) return null;
-    return found.rule.update(caller, { lengths: { ...found.rule.lengths, [side]: minutes } });
+    return { rule: found.rule, side };
   }
 
   /** The live leg with the key of `before`, as the regeneration left it; null when none. */

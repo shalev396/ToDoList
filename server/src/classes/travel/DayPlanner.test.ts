@@ -1254,6 +1254,82 @@ describe('DayPlanner: exact trip times per rule', () => {
   });
 });
 
+describe('DayPlanner: decisions are sized as the legs are drawn', () => {
+  const direction = (leg: PlannedLeg): string =>
+    `${leg.key.direction} ${leg.fromPlaceId}→${leg.toPlaceId}`;
+  const placeholders = estimates([
+    [HOME, BRAUDE, 'transit', 30],
+    [BRAUDE, HOME, 'transit', 30],
+    [BRAUDE, GYM, 'transit', 30],
+    [GYM, BRAUDE, 'transit', 30],
+    [HOME, GYM, 'transit', 30],
+    [GYM, HOME, 'transit', 30],
+  ]);
+
+  it('go home in a window: the rule’s lengths and early arrival count, not the trip key’s', () => {
+    const lectures = (rule: Partial<Anchor>): Anchor[] => [
+      anchor({ itemId: 'one', start: at('08:00'), end: at('09:00'), ...rule }),
+      anchor({ itemId: 'two', start: at('13:00'), end: at('14:00'), ...rule }),
+    ];
+    const plan = (rule: Partial<Anchor>): string[] =>
+      DayPlanner.plan(input(lectures(rule), { settings: goHomeOn }), placeholders).map(direction);
+    // A 240-minute window and 30-minute trips: 180 minutes at home, so he goes.
+    assert.deepEqual(plan({}), [
+      'there home→braude',
+      'back braude→home',
+      'there home→braude',
+      'back braude→home',
+    ]);
+    // The rule says 120 back and 95 there: 240 - 215 leaves 25, less than an hour: he stays.
+    assert.deepEqual(plan({ lengths: { there: 95, back: 120 } }), [
+      'there home→braude',
+      'back braude→home',
+    ]);
+    // Early counts too: 30 + 30 + 20 early leaves 160, still enough; 120 + 30 + 100 early does not.
+    assert.equal(plan({ early: 20 }).length, 4);
+    assert.equal(plan({ early: 100, lengths: { back: 120 } }).length, 2);
+  });
+
+  it('back into an area: whether it fits is decided on the leg’s own length', () => {
+    const area = anchor({
+      itemId: 'studying',
+      area: true,
+      start: at('08:00'),
+      end: at('18:00'),
+    });
+    const gym = (key: string, from: string, to: string, rule: Partial<Anchor> = {}): Anchor =>
+      anchor({ itemId: key, placeId: GYM, start: at(from), end: at(to), ...rule });
+    const plan = (rule: Partial<Anchor>): string[] =>
+      DayPlanner.plan(
+        input([area, gym('gym-1', '10:00', '11:00', rule), gym('gym-2', '12:30', '13:30')]),
+        placeholders,
+      )
+        // The leg that leaves the first gym item, as it ends.
+        .filter((leg) => hhmm(leg.startAt) === '11:00')
+        .map(direction);
+    // 30 back into Braude from 11:00, 30 on to the gym by 12:30: it fits, so he goes back.
+    assert.ok(plan({}).includes('back gym→braude'));
+    // The first gym item's rule says 120 back: 13:00 is past the part, so he goes straight on.
+    assert.equal(plan({ lengths: { back: 120 } }).includes('back gym→braude'), false);
+  });
+
+  it('the leg back into an area is drawn long as its rule says, and the leg after waits for it', () => {
+    const area = anchor({ itemId: 'studying', area: true, start: at('08:00'), end: at('18:00') });
+    const gym = anchor({
+      itemId: 'gym-1',
+      placeId: GYM,
+      start: at('10:00'),
+      end: at('11:00'),
+      lengths: { back: 90 },
+    });
+    const legs = DayPlanner.plan(input([area, gym]), placeholders);
+    const back = legs.find((leg) => line(leg).startsWith('back gym→braude'));
+    assert.equal(back === undefined ? null : line(back), 'back gym→braude transit 11:00–12:30');
+    // Home from the area leaves once he is there and the area ends, never sooner.
+    assert.ok(legs.every((leg) => !leg.conflict));
+  });
+});
+
 describe('travel settings', () => {
   it('the defaults are valid, and the bounds hold', () => {
     assert.ok(TravelSettingsSchema.safeParse(DEFAULT_TRAVEL_SETTINGS).success);
