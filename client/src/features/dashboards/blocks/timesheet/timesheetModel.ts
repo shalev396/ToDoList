@@ -190,6 +190,22 @@ export function plannedEventInput(row: ItemQueryRow, colour: ItemColour): EventI
   };
 }
 
+/**
+ * How many to-dos the row cap left out of the result: the to-dos shown and the to-dos that match,
+ * or null when nothing is missing. The cap never cuts a timesheet's timed rows (the compiler sorts
+ * them first), so every row `total` counts beyond the rows returned is a to-do.
+ */
+export function truncatedTodos(
+  result: Pick<QueryResult, 'rows' | 'total'> | undefined,
+): { shown: number; total: number } | null {
+  const rows = result?.rows ?? [];
+  if (result === undefined || result.total <= rows.length) {
+    return null;
+  }
+  const shown = rows.filter((row) => 'kind' in row && isTodoRow(row)).length;
+  return { shown, total: shown + result.total - rows.length };
+}
+
 /** The block's cached result with one to-do's plan changed: the optimistic write. */
 export function withPlan(
   data: QueryResult | undefined,

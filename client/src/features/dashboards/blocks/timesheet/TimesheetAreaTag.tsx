@@ -19,6 +19,8 @@ export function TimesheetAreaTag({ tag, onOpen }: { tag: AreaTag; onOpen: () => 
     <button
       type="button"
       data-area-tag={tag.rowId}
+      // In the title's own direction, so a long title is cut at its end, not its start.
+      dir="auto"
       aria-label={name}
       title={name}
       onClick={onOpen}
@@ -28,7 +30,7 @@ export function TimesheetAreaTag({ tag, onOpen }: { tag: AreaTag; onOpen: () => 
         borderColor: colourVar(tag.family, 'scheduled'),
       }}
     >
-      <span dir="auto">{tag.title}</span>
+      {tag.title}
     </button>
   );
 }

@@ -4,7 +4,13 @@ import { Switch } from '@/components/ui/switch';
 import { FormRow } from '@/features/editor/FormRow';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import type { Block, Query } from '@api-types/builder';
-import { showsBlocks, topicChoiceOf, withTopicChoice, type TopicChoice } from './timesheetTopic';
+import {
+  showsBlocks,
+  topicChoiceOf,
+  withTopicChoice,
+  withTopicListen,
+  type TopicChoice,
+} from './timesheetTopic';
 
 const PAGE = '$page';
 const ALL = '$all';
@@ -14,6 +20,7 @@ interface TimesheetDraft {
   query?: Query | undefined;
   viz: Record<string, unknown>;
   listen: string[];
+  rules?: readonly unknown[];
 }
 
 function choiceValue(choice: TopicChoice): string {
@@ -64,13 +71,8 @@ export function TimesheetFields({
             if (draft.query === undefined) {
               return;
             }
-            const next = choiceOf(value);
-            onChange({
-              query: withTopicChoice(draft.query, next),
-              ...(next.kind === 'page' && !draft.listen.includes('$page.topic')
-                ? { listen: [...draft.listen, '$page.topic'] }
-                : {}),
-            });
+            const query = withTopicChoice(draft.query, choiceOf(value));
+            onChange({ query, listen: withTopicListen(draft.listen, query, draft.rules) });
           }}
         />
       </FormRow>

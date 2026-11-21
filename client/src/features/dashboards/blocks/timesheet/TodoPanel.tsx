@@ -25,6 +25,8 @@ interface TodoPanelProps {
   /** The element FullCalendar's Draggable listens on (its items are `[data-timesheet-todo]`). */
   listRef: Ref<HTMLDivElement>;
   todos: readonly PanelTodo[];
+  /** The row cap left to-dos out: how many show, of how many (timesheetModel `truncatedTodos`). */
+  truncated: { shown: number; total: number } | null;
   /** Editors drag and unschedule; everyone opens. */
   canWrite: boolean;
   onOpen: (itemId: string) => void;
@@ -37,7 +39,15 @@ interface TodoPanelProps {
  * opens its sheet on a tap. Beside the week on a wide block; above it on a narrow one (the iPad
  * upright), as wrapping chips under a heading that folds them away.
  */
-export function TodoPanel({ ref, listRef, todos, canWrite, onOpen, onUnschedule }: TodoPanelProps) {
+export function TodoPanel({
+  ref,
+  listRef,
+  todos,
+  truncated,
+  canWrite,
+  onOpen,
+  onUnschedule,
+}: TodoPanelProps) {
   const { t } = useTranslation();
   const headingId = useId();
   const listId = useId();
@@ -95,6 +105,16 @@ export function TodoPanel({ ref, listRef, todos, canWrite, onOpen, onUnschedule 
         />
         {t('timeBlocks.timesheet.panelToggle', { count: todos.length })}
       </button>
+      {truncated === null ? null : (
+        // Outside the list, so it shows while the strip is folded too.
+        <p
+          role="status"
+          className="text-[12px] text-muted-foreground"
+          data-timesheet-truncated={`${String(truncated.shown)}/${String(truncated.total)}`}
+        >
+          {t('timeBlocks.timesheet.truncated', truncated)}
+        </p>
+      )}
       <div
         ref={listRef}
         id={listId}
@@ -138,8 +158,7 @@ function TodoRow({
   onOpen: (itemId: string) => void;
   onUnschedule: (itemId: string) => void;
 }) {
-  const { t, i18n } = useTranslation();
-  const pageStart = i18n.dir() === 'rtl' ? 'right' : 'left';
+  const { t } = useTranslation();
   const { row, colour, plannedText, dueText } = todo;
   const provider = ringProvider(row.source.provider);
   const meta =
@@ -148,6 +167,12 @@ function TodoRow({
       : dueText !== null
         ? t('timeBlocks.timesheet.due', { when: dueText })
         : null;
+  // The plan or due date is in the name too: a screen reader hears it, and on a narrow strip
+  // (where the line under the title is hidden) the tooltip shows it.
+  const name = [
+    t('timeBlocks.timesheet.open', { title: row.title, source: t(sourceNameKey(provider)) }),
+    ...(meta === null ? [] : [meta]),
+  ].join(', ');
   return (
     <li
       data-timesheet-todo=""
@@ -162,25 +187,25 @@ function TodoRow({
       <button
         type="button"
         className="flex min-h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-start focus-visible:outline-2 focus-visible:outline-ring pointer-coarse:min-h-11"
-        aria-label={t('timeBlocks.timesheet.open', {
-          title: row.title,
-          source: t(sourceNameKey(provider)),
-        })}
+        aria-label={name}
+        title={name}
         onClick={() => {
           onOpen(row.id);
         }}
       >
         <ColourDot colour={colour} />
         <SourceIcon source={provider} className="shrink-0" />
-        <span className="flex min-w-0 flex-col">
-          {/* In its own direction (so it reads, and is cut, the right way round), on the page's
-              start side: a Hebrew title in an English page lines up with the others. */}
-          <span dir="auto" className="truncate" style={{ textAlign: pageStart }} data-todo-title="">
+        {/* Each line keeps its own direction (so it reads, and is cut, the right way round) and
+            sits on the page's start side (items-start): a Hebrew title in an English page lines
+            up with the others. */}
+        <span className="flex min-w-0 flex-col items-start">
+          <span dir="auto" className="max-w-full truncate" data-todo-title="">
             {row.title}
           </span>
           {meta === null ? null : (
             <span
-              className="hidden truncate text-[11px] text-muted-foreground @min-[60rem]:block"
+              dir="auto"
+              className="hidden max-w-full truncate text-[11px] text-muted-foreground @min-[60rem]:block"
               data-todo-meta=""
             >
               {meta}

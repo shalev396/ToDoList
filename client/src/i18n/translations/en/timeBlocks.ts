@@ -88,6 +88,8 @@ export const timeBlocks = {
     panel: 'To schedule',
     panelToggle: 'To schedule ({{count}})',
     panelEmpty: 'Nothing to schedule',
+    truncated:
+      'Showing {{shown}} of {{total}} to-dos: the undated and those due latest aren’t listed.',
     dragHint: 'Drag a to-do onto the week to plan it.',
     dragHintTouch: 'Press and hold a to-do, then drag it onto the week.',
     unplannedGroup: 'Not planned',

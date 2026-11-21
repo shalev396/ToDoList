@@ -11,9 +11,16 @@ import {
   plannedEventInput,
   plannedInRange,
   selectionPreset,
+  truncatedTodos,
   withPlan,
 } from './timesheetModel.ts';
-import { showsBlocks, timesheetTopicId, topicChoiceOf, withTopicChoice } from './timesheetTopic.ts';
+import {
+  showsBlocks,
+  timesheetTopicId,
+  topicChoiceOf,
+  withTopicChoice,
+  withTopicListen,
+} from './timesheetTopic.ts';
 
 const TZ = 'Asia/Jerusalem';
 const at = (y: number, m: number, d: number, h = 0, min = 0): Date =>
@@ -241,6 +248,29 @@ describe('plannedEventInput: a planned to-do as a chip', () => {
   });
 });
 
+describe('truncatedTodos: the panel says when the row cap left to-dos out', () => {
+  const area = row('area', { kind: 'block', props: { layer: 'area' } });
+  const block = row('block', { kind: 'block', props: { layer: 'block' } });
+  const result = (rows: ItemQueryRow[], total: number): QueryResult => ({
+    rows,
+    total,
+    appliedVars: {},
+    warnings: [],
+  });
+
+  it('nothing when every match is here', () => {
+    assert.equal(truncatedTodos(result([area, row('a'), row('b')], 3)), null);
+    assert.equal(truncatedTodos(result([], 0)), null);
+    assert.equal(truncatedTodos(undefined), null);
+  });
+
+  it('counts only to-dos: the time is never cut, so every missing row is a to-do', () => {
+    // 200 rows came back of 230 matches: 2 of them time, 198 to-dos; 30 to-dos left out.
+    const rows = [area, block, ...Array.from({ length: 198 }, (_, i) => row(`t${String(i)}`))];
+    assert.deepEqual(truncatedTodos(result(rows, 230)), { shown: 198, total: 228 });
+  });
+});
+
 describe('withPlan: the optimistic write', () => {
   it('changes the one to-do’s plan in the cached result, and nothing else', () => {
     const data: QueryResult = {
@@ -369,6 +399,20 @@ describe('the topic the timesheet reads (its query’s topic rule)', () => {
       combinator: 'and',
       rules: [{ field: 'topic', operator: '=', value: '$page.topic' }, either.where],
     });
+  });
+
+  it('listens to $page.topic exactly while something of the block reads it', () => {
+    const page = withTopicChoice(base, { kind: 'page' });
+    const one = withTopicChoice(base, { kind: 'topic', id: 't2' });
+    assert.deepEqual(withTopicListen(['$page.range'], page), ['$page.range', '$page.topic']);
+    assert.deepEqual(withTopicListen(['$page.topic', '$page.range'], page), [
+      '$page.topic',
+      '$page.range',
+    ]);
+    assert.deepEqual(withTopicListen(['$page.range', '$page.topic'], one), ['$page.range']);
+    // A display rule that still reads it keeps it.
+    const rules = [{ if: { field: 'topic', operator: '=', value: '$page.topic' } }];
+    assert.deepEqual(withTopicListen(['$page.topic'], one, rules), ['$page.topic']);
   });
 
   it('a new area takes the page’s topic, the one picked, or none', () => {

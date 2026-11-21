@@ -82,6 +82,20 @@ export function timesheetTopicId(
   return choice.kind === 'page' && typeof page === 'string' && page !== '' ? page : null;
 }
 
+/**
+ * The block's `listen` with `$page.topic` in it exactly when something of the block still reads
+ * it (its query, its display rules): picking one topic, or every topic, takes it off.
+ */
+export function withTopicListen(listen: readonly string[], ...readers: unknown[]): string[] {
+  const reads = readers.some((reader) =>
+    JSON.stringify(reader ?? null).includes(JSON.stringify(PAGE_TOPIC)),
+  );
+  if (reads) {
+    return listen.includes(PAGE_TOPIC) ? [...listen] : [...listen, PAGE_TOPIC];
+  }
+  return listen.filter((variable) => variable !== PAGE_TOPIC);
+}
+
 /** Whether the time blocks show: on unless the block turns them off. */
 export function showsBlocks(viz: Readonly<Record<string, unknown>>): boolean {
   return viz['showBlocks'] !== false;

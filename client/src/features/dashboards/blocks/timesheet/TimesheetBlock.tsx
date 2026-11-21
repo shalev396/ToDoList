@@ -61,6 +61,7 @@ import {
   plannedAtFromDrop,
   plannedEventInput,
   selectionPreset,
+  truncatedTodos,
   type PlannedEventProps,
 } from './timesheetModel';
 import { showsBlocks, timesheetTopicId } from './timesheetTopic';
@@ -72,7 +73,11 @@ const EVENT_TIME = { hour: '2-digit', minute: '2-digit', hour12: false } as cons
 const SCROLL_TIME = '07:00:00';
 /** The longest span a drag across the grid paints: a day. */
 const LONGEST_DRAG_MS = 24 * 3600_000;
-/** A press this long starts a drag on a touch screen (FullCalendar's default is a second). */
+/**
+ * A press this long starts dragging a to-do or a chip on a touch screen (FullCalendar's default is
+ * a second). Painting across the grid keeps FullCalendar's second, as in the calendar block, so a
+ * finger resting before a scroll or a slow tap on an area never starts one.
+ */
 const LONG_PRESS_MS = 300;
 /** A mouse moves this far before a press becomes a selection, so a click opens what it hits. */
 const SELECT_MIN_PX = 6;
@@ -495,6 +500,7 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
             ref={panel}
             listRef={setList}
             todos={panelTodos}
+            truncated={truncatedTodos(data.data)}
             canWrite={canWrite}
             onOpen={(itemId) => {
               openItem(itemId);
@@ -556,7 +562,6 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
                 eventDrop={onEventDrop}
                 eventDragStop={onEventDragStop}
                 eventLongPressDelay={LONG_PRESS_MS}
-                selectLongPressDelay={LONG_PRESS_MS}
                 selectable={canWrite}
                 selectMirror
                 selectMinDistance={SELECT_MIN_PX}

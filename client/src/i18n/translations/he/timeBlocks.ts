@@ -92,6 +92,8 @@ export const timeBlocks = {
     panel: 'לתזמון',
     panelToggle: 'לתזמון ({{count}})',
     panelEmpty: 'אין מה לתזמן',
+    truncated:
+      'מוצגות {{shown}} מתוך {{total}} משימות: אלה שבלי מועד ואלה שמועדן הכי מאוחר לא מופיעות.',
     dragHint: 'גררו משימה אל השבוע כדי לתכנן אותה.',
     dragHintTouch: 'לחצו לחיצה ארוכה על משימה וגררו אותה אל השבוע.',
     unplannedGroup: 'לא מתוכננות',

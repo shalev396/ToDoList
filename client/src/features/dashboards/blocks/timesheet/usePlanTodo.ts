@@ -20,8 +20,8 @@ export interface PlanChange {
  * Plans a to-do from the timesheet (or takes its plan off) through the overlay route ItemSheet's
  * "Planned for" uses (`PATCH …/items/:id/overlay {plannedAt}`): never written to its provider. The
  * block's cached results take the new plan at once, so the chip moves under the finger; a refusal
- * puts them back and says so. Afterwards the blocks and the item read again, unless the workspace
- * changed while it ran.
+ * puts them back and says so. Afterwards (after the last of several quick ones) the blocks and the
+ * item read again, unless the workspace changed while it ran.
  */
 export function usePlanTodo(workspaceId: string, dashboardId: string, blockId: string) {
   const { t } = useTranslation();
@@ -29,7 +29,9 @@ export function usePlanTodo(workspaceId: string, dashboardId: string, blockId: s
   const store = useStore<RootState>();
   const generation = () => store.getState().workspace.generation;
   const blockKey = workspaceKey(workspaceId, 'block', dashboardId, blockId);
+  const mutationKey = ['timesheet-plan', workspaceId, dashboardId, blockId];
   return useMutation({
+    mutationKey,
     mutationFn: async ({ itemId, plannedAt }: PlanChange) => {
       const response = await updateOverlay(
         workspaceId,
@@ -62,7 +64,9 @@ export function usePlanTodo(workspaceId: string, dashboardId: string, blockId: s
       }
     },
     onSettled: (_data, _error, _change, context) => {
-      if (context?.generation === generation()) {
+      // Read again only after the last of several quick plans: a read in between would bring a
+      // stale plan back under a chip that has already moved on.
+      if (context?.generation === generation() && queryClient.isMutating({ mutationKey }) === 1) {
         refreshAfterChange(queryClient, workspaceId);
       }
     },
