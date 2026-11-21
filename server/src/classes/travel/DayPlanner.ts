@@ -12,9 +12,11 @@
  * - Legs: Home to the first stay (when its first anchor asks for `there`), one between each two
  *   stays (always, in the destination's mode), and the last stay back Home (when its last anchor
  *   asks for `back`).
- * - A leg there arrives as its anchor starts; a leg back leaves as its stay ends. A leg between two
- *   stays that can't fit leaves as the first ends and is marked a conflict: the plan never moves
- *   an event.
+ * - A leg there arrives as its anchor starts (or `early` minutes before, when its rule says so); a
+ *   leg back leaves as its stay ends. A leg between two stays that can't fit (by the earlier
+ *   arrival) leaves as the first ends and is marked a conflict: the plan never moves an event.
+ * - A rule may set the length of the legs it draws (`lengths`: `there` from Home, `back`); that
+ *   beats the length of the trip key, for those legs only.
  * - A painted area (`area`, "Studying 8–16 at Braude") anchors like any item, and the items inside
  *   it nest (the owner's ruling of 2026-11-18):
  *   - an inner item with a place of its own is there for its own time: the area is cut around it
@@ -61,6 +63,13 @@ export interface Anchor {
   back: boolean;
   /** A painted area: the items inside it nest (see the top of this file). */
   area: boolean;
+  /**
+   * What its rule says about the legs it draws (TravelRule): whole minutes the "there" leg arrives
+   * before `start` (absent: 0), and trip lengths for `there` and `back` that win over the trip
+   * key's. A leg the rule does not draw (a hosted item makes none) never reads them.
+   */
+  early?: number;
+  lengths?: { there?: number; back?: number };
 }
 
 export interface DayPlanInput {
@@ -170,7 +179,14 @@ type Stop = Stay | HomeWindow;
  * its stay to end.
  */
 interface Departure {
-  leaves: readonly { at: Date; after: readonly TripKey[] }[];
+  leaves: readonly { at: Date; after: readonly Step[] }[];
+}
+
+/** A leg that has to be made first, sized as it is drawn (#sized): its trip, way and anchor. */
+interface Step {
+  trip: TripKey;
+  direction: TravelDirection;
+  anchor: Anchor;
 }
 
 /**
@@ -192,6 +208,9 @@ interface Window {
   /** Home in the mode of what closes the stay before the window, back in that of the one after. */
   home: TripKey;
   back: TripKey;
+  /** Whose way home the trip home is (what closes the stay before), and whose there the trip back is. */
+  closer: Anchor;
+  opener: Anchor;
 }
 
 const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -454,7 +473,9 @@ export class DayPlanner {
    * last stay he goes to owes the area's way home (`wayHome`).
    */
   #visited(length: (trip: TripKey) => Estimate): Stay[] {
-    const minutes = (trip: TripKey): number => length(trip).minutes * MS_PER_MINUTE;
+    // The legs as they are drawn (#sized): the rule's lengths, and its early arrival.
+    const ms = (direction: TravelDirection, anchor: Anchor, trip: TripKey): number =>
+      DayPlanner.#sized(direction, anchor, length(trip)).minutes * MS_PER_MINUTE;
     const visited: Stay[] = [];
     // When he gets back into an area part he left an item for: he leaves it no sooner.
     const arrivals = new Map<Stay, number>();
@@ -472,15 +493,25 @@ export class DayPlanner {
         (time): time is number => time !== undefined,
       );
       const leaves = known.length === 0 ? previous.start.getTime() : Math.max(...known);
-      const arrives = leaves + minutes(this.#legTrip(previous, stay));
+      const arrives = leaves + ms('back', previous.last.anchor, this.#legTrip(previous, stay));
       const next = this.#stays[index + 1];
+      // The leg on is back into an area (late only for an appointment waiting there), else a leg
+      // between two places that arrives `early` before the stay starts.
       const deadline =
-        next === undefined ? null : next.first.softStart ? next.hardStart : next.start;
+        next === undefined
+          ? null
+          : next.first.softStart
+            ? next.hardStart
+            : new Date(next.start.getTime() - (next.first.anchor.early ?? 0) * MS_PER_MINUTE);
+      const onMs =
+        next === undefined
+          ? 0
+          : next.first.softStart
+            ? ms('back', stay.last.anchor, this.#legTrip(stay, next))
+            : ms('between', next.first.anchor, this.#legTrip(stay, next));
       const fits =
         arrives < stay.end.getTime() &&
-        (next === undefined ||
-          deadline === null ||
-          arrives + minutes(this.#legTrip(stay, next)) <= deadline.getTime());
+        (next === undefined || deadline === null || arrives + onMs <= deadline.getTime());
       if (fits || !isResumedOnly(stay)) {
         visited.push(stay);
         arrivals.set(stay, arrives);
@@ -561,6 +592,8 @@ export class DayPlanner {
         minutes,
         home: DayPlanner.tripKey(stay.placeId, this.#homeId, closes.anchor.mode),
         back: DayPlanner.tripKey(this.#homeId, stay.placeId, after.anchor.mode),
+        closer: closes.anchor,
+        opener: after.anchor,
       });
     });
     return windows;
@@ -569,10 +602,14 @@ export class DayPlanner {
   /** A stay, split by a trip home in each window that leaves enough time at home. */
   #homeInWindows(stay: Stay, length: (trip: TripKey) => Estimate): Stop[] {
     const { minAtHomeMinutes } = this.#input.settings.goHome;
+    // The trips as they are drawn: the closing item's way home, the opening item's way there
+    // (arriving `early` before it starts), each with its rule's length.
+    const spent = (w: Window): number =>
+      DayPlanner.#sized('back', w.closer, length(w.home)).minutes +
+      DayPlanner.#sized('there', w.opener, length(w.back)).minutes +
+      (w.opener.early ?? 0);
     const cuts = this.#windowsIn(stay)
-      .filter(
-        (w) => w.minutes - length(w.home).minutes - length(w.back).minutes >= minAtHomeMinutes,
-      )
+      .filter((w) => w.minutes - spent(w) >= minAtHomeMinutes)
       .map((w) => w.index);
     if (cuts.length === 0) return [stay];
     const stops: Stop[] = [];
@@ -657,7 +694,10 @@ export class DayPlanner {
       const trip = DayPlanner.tripKey(into.from, into.to, into.mode);
       return {
         leaves: [
-          ...into.leaves.map(({ at, after }) => ({ at, after: [...after, trip] })),
+          ...into.leaves.map(({ at, after }) => ({
+            at,
+            after: [...after, { trip, direction: into.direction, anchor: into.anchor }],
+          })),
           ...(stay.hardEnd === null ? [] : [{ at: stay.hardEnd, after: [] }]),
         ],
       };
@@ -687,35 +727,48 @@ export class DayPlanner {
   }
 
   /**
-   * A leg with its length. There: it arrives as its anchor starts. Back: it leaves as its stay
+   * A leg with its length. There: it arrives as its anchor starts (less its `early`). Back: it leaves as its stay
    * ends (a conflict when it reaches an appointment in the area it returns to late). Between: it
    * arrives by the next stay's start when it can, else it leaves as the stay before ends and is a
    * conflict.
    */
   #timed(spec: LegSpec, length: (trip: TripKey) => Estimate): PlannedLeg {
     const { anchor, from, to, mode } = spec;
-    const estimate = length(DayPlanner.tripKey(from, to, mode));
+    const estimate = DayPlanner.#sized(
+      spec.direction,
+      anchor,
+      length(DayPlanner.tripKey(from, to, mode)),
+    );
     const span = estimate.minutes * MS_PER_MINUTE;
     const leaves = (departure: Departure): number =>
       Math.max(
         ...departure.leaves.map(({ at, after }) =>
-          after.reduce((time, trip) => time + length(trip).minutes * MS_PER_MINUTE, at.getTime()),
+          after.reduce(
+            (time, step) =>
+              time +
+              DayPlanner.#sized(step.direction, step.anchor, length(step.trip)).minutes *
+                MS_PER_MINUTE,
+            at.getTime(),
+          ),
         ),
       );
     let start: number;
     let conflict = false;
     switch (spec.direction) {
       case 'there':
-        start = spec.arriveBy.getTime() - span;
+        start = spec.arriveBy.getTime() - (anchor.early ?? 0) * MS_PER_MINUTE - span;
         break;
       case 'back':
         start = leaves(spec);
         conflict = spec.arriveBy !== null && start + span > spec.arriveBy.getTime();
         break;
-      case 'between':
-        start = Math.max(spec.arriveBy.getTime() - span, leaves(spec));
-        conflict = start + span > spec.arriveBy.getTime();
+      case 'between': {
+        // Early, as a there leg: the earlier arrival is the one that has to be made.
+        const arrives = spec.arriveBy.getTime() - (anchor.early ?? 0) * MS_PER_MINUTE;
+        start = Math.max(arrives - span, leaves(spec));
+        conflict = start + span > arrives;
         break;
+      }
     }
     const startAt = new Date(start);
     return {
@@ -738,6 +791,18 @@ export class DayPlanner {
       topicId: anchor.topicId,
       title: this.#title(mode, to, anchor),
     };
+  }
+
+  /**
+   * A leg's length: the one its anchor's rule sets for it (`there` for the leg that gets him there
+   * from Home, `back` for the way back, home or back into the area around it), else its trip's
+   * own. A leg between two places elsewhere is another trip (not Home's), so it keeps its trip's
+   * length. A length the rule sets is his, so the leg is `set`.
+   */
+  static #sized(direction: TravelDirection, anchor: Anchor, trip: Estimate): Estimate {
+    if (direction === 'between') return trip;
+    const own = anchor.lengths?.[direction];
+    return own === undefined ? trip : { minutes: own, source: 'set' };
   }
 
   /** "Bus to Braude", "Drive home": the place's name, or its anchor's title if it has none. */

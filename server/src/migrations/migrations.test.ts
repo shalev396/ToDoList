@@ -88,3 +88,27 @@ describe('drop member area scoping', () => {
     );
   });
 });
+
+describe('sync-db in rounds (the deadline)', () => {
+  it('stops before the next migration when less than the reserve is left, then finishes', async () => {
+    const { TimeBudget } = await import('../classes/integration/calendar/TimeBudget.js');
+    await raw.collection(migrations.MIGRATIONS_COLLECTION).deleteMany({});
+    // A fake clock that moves 100 ms each time it is read: the budget (read once, at its start)
+    // has 250 ms, each migration's check reads it once more, and the reserve is 100 ms.
+    let clock = -100;
+    const budget = TimeBudget.start(250, () => (clock += 100));
+    const stopped = await migrations.runMigrationsWithin(raw, NOW, budget, 100);
+    // Checks at 150 ms left (run), then 50 ms left (stop): one migration done.
+    assert.equal(stopped.lines.length, 1);
+    assert.deepEqual(
+      stopped.pending,
+      migrations.MIGRATIONS.slice(1).map(({ id }) => id),
+    );
+    assert.deepEqual(await migrations.pendingMigrationIds(raw), stopped.pending);
+    // The next round, with time to spare, does the rest and answers nothing pending.
+    const next = await migrations.runMigrationsWithin(raw, NOW, null, 0);
+    assert.deepEqual(next.pending, []);
+    assert.equal(next.lines.length, migrations.MIGRATIONS.length);
+    assert.deepEqual(await migrations.pendingMigrationIds(raw), []);
+  });
+});

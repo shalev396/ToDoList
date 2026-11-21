@@ -22,9 +22,9 @@ export const PlaceAgentViewSchema = z.object({
 export const RuleViewSchema = z.object({
   id: z.string(),
   scope: z
-    .looseObject({ kind: z.enum(['where', 'series', 'item']) })
+    .looseObject({ kind: z.enum(['where', 'series', 'item', 'repeats']) })
     .describe(
-      'What it applies to: a where-group, every occurrence of a series (itemId), or one item or occurrence (itemId, occurrence)',
+      'What it applies to: a where-group, every occurrence of a series (itemId), one item or occurrence (itemId, occurrence), or the repeats of an event that does not repeat itself (containerId, title, weekday 0-6, startTime HH:mm, from)',
     ),
   mode: z.enum(TRAVEL_MODES),
   direction: z.enum(RULE_DIRECTIONS),
@@ -32,6 +32,14 @@ export const RuleViewSchema = z.object({
     .string()
     .nullable()
     .describe('The name of the place it sends the member to; null: the item’s own place'),
+  arriveEarlyMinutes: z
+    .number()
+    .nullable()
+    .describe('Minutes the there leg arrives before the item starts; null: on its start'),
+  lengths: z
+    .object({ there: z.number().optional(), back: z.number().optional() })
+    .nullable()
+    .describe('Minutes the there and back legs take, winning over the trip’s own; null: none'),
   createdAt: z.string(),
 });
 export type RuleViewOut = z.infer<typeof RuleViewSchema>;
@@ -49,10 +57,12 @@ export function toRuleView(rule: TravelRule, places: readonly Place[]): RuleView
   const place = places.find((candidate) => candidate.id === view.placeId);
   return {
     id: view.id,
-    scope: view.scope,
+    scope: { ...view.scope },
     mode: view.mode,
     direction: view.direction,
     place: place?.name ?? null,
+    arriveEarlyMinutes: view.arriveEarlyMinutes,
+    lengths: view.lengths === null ? null : { ...view.lengths },
     createdAt: view.createdAt,
   };
 }

@@ -51,6 +51,16 @@ describe('the catalog rules', () => {
     ]);
   });
 
+  it('vizIssues: a clock takes showTomorrow as a boolean, and a clock without it is unchanged', () => {
+    const clock = (viz: Record<string, unknown>): Block => blockOf('clock', { viz });
+    assert.deepEqual(vizIssues(clock({ kind: 'clock24', needle: 'now', showNext: true })), []);
+    assert.deepEqual(vizIssues(clock({ kind: 'clock24', showTomorrow: true })), []);
+    assert.deepEqual(vizIssues(clock({ kind: 'clock24', showTomorrow: false })), []);
+    assert.deepEqual(vizIssues(clock({ kind: 'clock24', showTomorrow: 'yes' })), [
+      { pointer: '/viz/showTomorrow', message: 'Invalid input: expected boolean, received string' },
+    ]);
+  });
+
   it('queryRuleIssues: a data block reads a query or a saved view; any other takes no query', () => {
     assert.deepEqual(queryRuleIssues(blockOf('list')), []);
     assert.deepEqual(queryRuleIssues(blockOf('list', { query: undefined })), [

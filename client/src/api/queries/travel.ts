@@ -15,6 +15,7 @@ import {
 import {
   createPlace,
   createTravelRule,
+  changeLegMode,
   editLeg,
   getLegLinks,
   getTravelDays,
@@ -42,6 +43,7 @@ import type {
   CreatePlaceRequest,
   CreateTravelRuleRequest,
   LegEditRequest,
+  LegModeRequest,
   MarkItemRequest,
   TravelPreviewRequest,
   TravelSettingsResponse,
@@ -341,6 +343,25 @@ export function useEditLeg(workspaceId: string) {
     },
     (queryClient, leg) => {
       storeLeg(queryClient, workspaceId, leg);
+    },
+  );
+}
+
+/**
+ * How he goes on a leg's event, this day or every repeat. The answer's leg (null when the trip is
+ * gone now) is stored; the days, blocks and legs are read again.
+ */
+export function useChangeLegMode(workspaceId: string) {
+  return useTravelChange(
+    workspaceId,
+    async ({ legId, body }: { legId: string; body: LegModeRequest }) => {
+      const response = await changeLegMode(workspaceId, legId, body, { suppressErrorToast: true });
+      return response.data;
+    },
+    (queryClient, answer) => {
+      if (answer.leg !== null) {
+        storeLeg(queryClient, workspaceId, answer.leg);
+      }
     },
   );
 }

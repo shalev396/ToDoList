@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import FullCalendar from '@fullcalendar/react';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -6,6 +6,7 @@ import interactionPlugin from '@fullcalendar/interaction';
 import listPlugin from '@fullcalendar/list';
 import timeGridPlugin from '@fullcalendar/timegrid';
 import heLocale from '@fullcalendar/core/locales/he';
+import type { DateClickArg } from '@fullcalendar/interaction';
 import type {
   DateSelectArg,
   DateSpanApi,
@@ -23,6 +24,7 @@ import { sourceNameKey } from '@/components/items/sources';
 import { colourVar, hatchBackground, paintOf } from '@/features/colours/palette';
 import { useRowColours } from '@/features/colours/useColours';
 import { SourceLink } from '@/features/items/SourceLink';
+import type { NewItemPreset } from '@/features/items/create/timeBlockDraft';
 import { presetFromSelection } from '@/features/items/scheduled/dragPreset';
 import { useItemParam } from '@/features/items/useItemParam';
 import { ConflictMark, LegModeIcon } from '@/features/travel/LegMark';
@@ -41,23 +43,40 @@ import { applyDisplayRules } from '../../rules/applyDisplayRules';
 import { usePageVars } from '../../variables/pageVars';
 import { zonedParts, zonedTime } from '../clock/ClockRing.math';
 import { ringProvider } from '../clock/clockModel';
-import { splitAreas } from '../time/areas';
+import { areasAt } from '../time/areaHit';
+import { isolateLtr, splitAreas } from '../time/areas';
 import { ToneMark } from '../time/ToneMark';
 import {
   expandOccurrences,
+  type Occurrence,
   visibleRange,
   wallDate,
   wallString,
   type WeekStart,
 } from '../time/occurrences';
 import {
+  areaTagsByDay,
+  timedSpans,
   toAreaEventInput,
   toAreaPeriodEventInput,
   toEventInput,
+  type AreaTag,
   type CalendarAreaProps,
   type CalendarEventProps,
   type DisplayedOccurrence,
 } from './calendarEvents';
+import {
+  READABLE_PX,
+  SLOT_MINUTES,
+  SLOT_PX,
+  TIME_GRID_LAYOUT,
+  chipLayout,
+  chipMinutes,
+  stretchedEvents,
+  tapReach,
+  type ChipLayout,
+} from './chipLayout';
+import { AreaChooser } from './AreaChooser';
 import { readStartHour, slotTime, startScrollTop } from './startHour';
 import { useSaveCalendarViz } from './useSaveCalendarViz';
 
@@ -71,11 +90,34 @@ const START_HOURS = Array.from({ length: 24 }, (_, hour) => {
   return { value: String(hour), label: <span dir="ltr">{label}</span> };
 });
 const EVENT_TIME = { hour: '2-digit', minute: '2-digit', hour12: false } as const;
+/** A chip outside the week grid's hours (month, lists, the all-day row): one line. */
+const INLINE_CHIP: ChipLayout = { kind: 'inline', titleLines: 1 };
 /** The longest span a drag makes a block of: a block lasts at most a day. */
 const LONGEST_DRAG_MS = 24 * 3600_000;
 
 /** FullCalendar's `UTC` dates hold the workspace's wall clock: `2026-11-22T13:00:00`. */
 const wallOf = (date: Date): string => date.toISOString().slice(0, 19);
+
+/** A second tap or click on the same slot within this is the same gesture (select + dateClick). */
+const SAME_TAP_MS = 600;
+
+/** Where a mouse or touch event happened, in viewport px (a touch end has no `clientX`). */
+function pointOf(event: Event | null | undefined): { x: number; y: number } | null {
+  if (event === null || event === undefined) {
+    return null;
+  }
+  const touch = 'changedTouches' in event ? (event as TouchEvent).changedTouches[0] : undefined;
+  const source = touch ?? (event as MouseEvent);
+  return typeof source.clientX === 'number' ? { x: source.clientX, y: source.clientY } : null;
+}
+
+/** What the area chooser was opened for: the tap's point, and the create preset at its time. */
+interface ChooserState {
+  id: number;
+  point: { x: number; y: number };
+  preset: NewItemPreset;
+  areas: Occurrence[];
+}
 
 /** A drag on the week grid's hours (not the all-day row), a day at most, makes a block. */
 function blockSpanAllowed(span: DateSpanApi): boolean {
@@ -186,8 +228,13 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   // FullCalendar draws no background events in the month grid or a list: there an area is a
   // plain event, in the area's style, that opens its sheet.
   const areasAsEvents = viewName !== 'timeGridWeek';
-  const events = useMemo(
-    () => [
+  const events = useMemo(() => {
+    // A chip shorter than a line is drawn a line tall only over free time; one that can't be
+    // keeps its height, its icon only, and a hit area into the free time around it (chipLayout.ts).
+    const spans = timedSpans(displayed);
+    const stretched = stretchedEvents(spans);
+    const reach = tapReach(spans, stretched);
+    return [
       ...areas.map((occurrence) =>
         (areasAsEvents ? toAreaPeriodEventInput : toAreaEventInput)(
           occurrence,
@@ -195,9 +242,18 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
           timeZone,
         ),
       ),
-      ...displayed.map((item) => toEventInput(item, timeZone, colourOf(item.occurrence.row.id))),
-    ],
-    [areas, areasAsEvents, displayed, timeZone, colourOf],
+      ...displayed.map((item) =>
+        toEventInput(item, timeZone, colourOf(item.occurrence.row.id), {
+          stretched: stretched.has(item.occurrence.key),
+          tap: reach.get(item.occurrence.key),
+        }),
+      ),
+    ];
+  }, [areas, areasAsEvents, displayed, timeZone, colourOf]);
+  // The week grid names each day's areas in its header (the bands behind the events have no room).
+  const areaTags = useMemo(
+    () => (areasAsEvents ? new Map<string, AreaTag[]>() : areaTagsByDay(areas, colourOf, timeZone)),
+    [areas, areasAsEvents, colourOf, timeZone],
   );
 
   const calendar = useRef<FullCalendar>(null);
@@ -253,15 +309,63 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     [areas, displayed],
   );
   const selectable = canWrite && !editing && viewName === 'timeGridWeek';
+  const [chooser, setChooser] = useState<ChooserState | null>(null);
+  const lastTap = useRef({ at: 0, start: '' });
+  const closeChooser = useCallback(() => {
+    // A tap on the same slot right after dismissing it is a new tap, not a duplicate.
+    lastTap.current = { at: 0, start: '' };
+    setChooser(null);
+  }, []);
+
+  /**
+   * A click (or a tap) on free time, or a drag across it (`startWall`..`endWall`, wall clock). A
+   * drag, or a tap on time no area covers, opens the New sheet as ever. A click or tap on one
+   * slot that painted areas cover first asks (AreaChooser): a new to-do there, or one of the
+   * areas. A mouse click arrives as a selection and as a date click, a long-press on touch the
+   * same: the second one is ignored.
+   */
+  const openAt = (startWall: string, endWall: string, jsEvent: Event | null | undefined) => {
+    const nowMs = Date.now();
+    if (lastTap.current.start === startWall && nowMs - lastTap.current.at < SAME_TAP_MS) {
+      return;
+    }
+    lastTap.current = { at: nowMs, start: startWall };
+    const selection = { startWall, endWall };
+    const preset = presetFromSelection(selection, shown, timeZone);
+    const point = pointOf(jsEvent);
+    const oneSlot =
+      preset.start !== undefined &&
+      preset.end !== undefined &&
+      preset.end.getTime() - preset.start.getTime() <= SLOT_MINUTES * 60_000;
+    const covering =
+      oneSlot && preset.start !== undefined && preset.end !== undefined
+        ? areasAt(areas, preset.start, preset.end)
+        : [];
+    if (point === null || covering.length === 0) {
+      setChooser(null);
+      openNewItem(preset);
+      return;
+    }
+    setChooser({ id: nowMs, point, preset, areas: covering });
+  };
   const createFromSelection = (arg: DateSelectArg) => {
     arg.view.calendar.unselect();
-    openNewItem(
-      presetFromSelection(
-        { startWall: wallOf(arg.start), endWall: wallOf(arg.end) },
-        shown,
-        timeZone,
-      ),
-    );
+    openAt(wallOf(arg.start), wallOf(arg.end), arg.jsEvent);
+  };
+  /**
+   * A tap with a finger: FullCalendar selects on touch only after a long press, so a tap is a
+   * date click. It does what a mouse click does. A mouse's date click is left to its selection.
+   */
+  const tapOnGrid = (arg: DateClickArg) => {
+    const isTouch = arg.jsEvent.type.startsWith('touch');
+    if (!selectable || arg.allDay || !isTouch) {
+      return;
+    }
+    const end = new Date(arg.date.getTime() + SLOT_MINUTES * 60_000);
+    openAt(wallOf(arg.date), wallOf(end), arg.jsEvent);
+  };
+  const openArea = (occurrence: { row: { id: string }; originalStart: Date | null }) => {
+    openItem(occurrence.row.id, occurrence.originalStart ?? undefined);
   };
 
   const title = useMemo(() => {
@@ -304,50 +408,57 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       );
     }
     if ('area' in props) {
+      // The band behind the events: its name is in the day's header (AreaTagButton), where no
+      // event covers it; here only for screen readers moving through the grid.
       const when = arg.event.allDay
         ? t('timeBlocks.calendar.allDay')
         : `${wallTime(arg.event.start)}–${wallTime(arg.event.end)}`;
       return (
-        <div className="tc-area-label">
-          <span aria-hidden="true" dir="auto">
-            {arg.event.title}
-          </span>
-          <span className="sr-only">
-            {t('timeBlocks.calendar.areaLabel', { title: arg.event.title, when })}
-          </span>
-        </div>
+        <span className="sr-only">
+          {t('timeBlocks.calendar.areaLabel', { title: arg.event.title, when })}
+        </span>
       );
     }
+    // No time of day on the chip (the owner's ruling of 2026-11-19): its name and tooltip say it.
+    // In the week grid a chip tall enough has its icon on the first line and the title on the
+    // lines below, as many as fit (chipLayout.ts); a shorter one, and every month or list row, has
+    // the icon and the title on one line. The icon sits at the start: on the right in Hebrew.
     // On a fill the source icon takes the fill's ink; in a list (no fill) it stays muted. Travel's
     // label sits on a plate of its own fill, never on the stripes (a list row has none).
     const list = arg.view.type.startsWith('list');
     const plate = props.role === 'travel' && !list;
-    return (
-      <div
-        className={cn(
-          'flex min-w-0 items-center gap-1 px-1 text-[11px] leading-4',
-          plate && 'w-fit max-w-full rounded-sm',
-        )}
-        style={plate ? { backgroundColor: paintOf(props).fill } : undefined}
-      >
-        {props.dueOnly ? (
+    const layout =
+      arg.view.type === 'timeGridWeek' && !arg.event.allDay && arg.event.start !== null
+        ? chipLayout(
+            chipMinutes(arg.event.start, arg.event.end, arg.isStart, arg.isEnd),
+            props.stretched,
+          )
+        : INLINE_CHIP;
+    // A tiny chip (shorter than a line, kept at its true height) shows its icon only, as tall as
+    // the chip allows (`--tc-icon`); its title and time are in its name and tooltip.
+    const tiny = layout.kind === 'tiny';
+    const lead = (
+      <>
+        {props.dueOnly && !tiny ? (
           <CalendarClock aria-hidden="true" className="size-3 shrink-0" data-due-marker />
         ) : null}
-        {props.tone === undefined ? null : <ToneMark tone={props.tone} />}
-        {arg.timeText === '' || arg.event.allDay ? null : (
-          <span className="shrink-0 font-medium tabular-nums">{arg.timeText}</span>
-        )}
+        {props.tone === undefined || tiny ? null : <ToneMark tone={props.tone} />}
         {props.legMode === null ? (
           <SourceIcon
             source={ringProvider(props.provider)}
-            className={cn('shrink-0', !list && '[&>svg]:text-current')}
+            className={cn(
+              'shrink-0',
+              tiny ? '[&>svg]:size-(--tc-icon)' : '[&>svg]:size-3',
+              !list && '[&>svg]:text-current',
+            )}
           />
         ) : (
-          <LegModeIcon mode={props.legMode} />
+          <LegModeIcon mode={props.legMode} className={tiny ? 'size-(--tc-icon)' : 'size-3'} />
         )}
-        <span dir="auto" className="min-w-0 truncate">
-          {arg.event.title}
-        </span>
+      </>
+    );
+    const extras = (
+      <>
         {props.conflict ? <ConflictMark wordsClassName="tc-leg-words" /> : null}
         {/* A badge has its own surface: the page ink, not the event's fill ink, reads on it. */}
         {props.badges.map((badge) => (
@@ -358,6 +469,77 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             {badge}
           </span>
         ))}
+      </>
+    );
+    const chip = cn(
+      'tc-chip max-h-full min-w-0 overflow-hidden px-1 py-px text-[11px] leading-[13px]',
+      plate && 'w-fit max-w-full rounded-sm',
+    );
+    const fill = plate ? { backgroundColor: paintOf(props).fill } : undefined;
+    if (layout.kind === 'stacked') {
+      return (
+        <div className={cn(chip, 'flex flex-col')} style={fill} data-chip-layout="stacked">
+          <span className="flex h-3.5 shrink-0 items-center gap-1 overflow-hidden">
+            {lead}
+            {extras}
+          </span>
+          <span
+            dir="auto"
+            className="tc-chip-title min-w-0 overflow-hidden [overflow-wrap:anywhere]"
+            style={{
+              display: '-webkit-box',
+              WebkitBoxOrient: 'vertical',
+              WebkitLineClamp: layout.titleLines,
+            }}
+            data-chip-title=""
+          >
+            {arg.event.title}
+          </span>
+        </div>
+      );
+    }
+    if (layout.kind === 'tiny') {
+      const icon = Math.min(12, Math.max(4, layout.linePx));
+      return (
+        <>
+          {props.tap === null ? null : (
+            // The finger's target: invisible, reaching only into free time (never another event).
+            <span
+              aria-hidden="true"
+              className="absolute inset-x-0"
+              style={{ top: -props.tap.above, bottom: -props.tap.below }}
+              data-chip-tap=""
+            />
+          )}
+          <div
+            className={cn(chip, 'flex items-center py-0')}
+            style={
+              { ...fill, height: layout.linePx, '--tc-icon': `${String(icon)}px` } as CSSProperties
+            }
+            data-chip-layout="tiny"
+          >
+            {lead}
+            <span className="sr-only" data-chip-title="">
+              {arg.event.title}
+            </span>
+          </div>
+        </>
+      );
+    }
+    return (
+      <div
+        className={cn(chip, 'flex items-center gap-1', !plate && '@container')}
+        style={fill}
+        data-chip-layout="inline"
+      >
+        {/* A chip narrower than 64px (56px inside its padding; a half-width lane) gives the icon's room to the title. */}
+        <span className={cn('flex shrink-0 items-center gap-1', !plate && '@max-[56px]:hidden')}>
+          {lead}
+        </span>
+        <span dir="auto" className="min-w-0 truncate" data-chip-title="">
+          {arg.event.title}
+        </span>
+        {extras}
       </div>
     );
   };
@@ -380,7 +562,13 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     if (stripe !== null) {
       arg.el.style.setProperty('--tc-hatch', hatchBackground(stripe));
     }
-    const when = arg.event.allDay ? t('timeBlocks.calendar.allDay') : wallTime(arg.event.start);
+    // The chip shows no time: its name and its tooltip carry it, the whole span when it has one
+    // (kept left to right, so it reads in order inside Hebrew).
+    const when = arg.event.allDay
+      ? t('timeBlocks.calendar.allDay')
+      : props.dueOnly || arg.event.end === null
+        ? wallTime(arg.event.start)
+        : isolateLtr(`${wallTime(arg.event.start)}–${wallTime(arg.event.end)}`);
     const source = t(sourceNameKey(props.provider as never));
     const label = t(
       props.dueOnly ? 'timeBlocks.calendar.dueLabel' : 'timeBlocks.calendar.eventLabel',
@@ -394,12 +582,18 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       arg.el.setAttribute('data-anchor-moved', String(props.anchorMoved));
       arg.el.setAttribute('data-length-unset', String(props.lengthUnset));
     }
-    // A leg says what is wrong with it, or that its trip has no length yet, in its name too.
+    // What the chip's marks say, in its name and tooltip too (a tiny chip shows its icon only):
+    // a display rule's tone and badges, then what is wrong with a leg, or that its trip has no
+    // length yet (last). A due date's mark is the label's own ("Due: ...").
     const flags = [
+      props.tone === undefined ? null : t(`timeBlocks.tone.${props.tone}`),
+      ...props.badges,
       props.conflict ? t('travel.leg.conflict') : null,
       props.lengthUnset ? t('travel.leg.setLength') : null,
     ].filter((flag) => flag !== null);
-    arg.el.setAttribute('aria-label', [label, ...flags].join('. '));
+    const name = [label, ...flags].join('. ');
+    arg.el.setAttribute('aria-label', name);
+    arg.el.setAttribute('title', name);
   };
 
   const status = data.isLoading ? 'loading' : data.isError ? 'error' : 'ready';
@@ -513,6 +707,13 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
           aria-label={t('timeBlocks.calendar.scrollRegion')}
           className="todolist-calendar min-h-0 flex-1 overflow-auto focus-visible:ring-2 focus-visible:ring-ring"
           dir={language === 'he' ? 'rtl' : 'ltr'}
+          style={
+            {
+              '--tc-slot': `${String(SLOT_PX)}px`,
+              // A stretched chip's height: a line, less the gap under every event.
+              '--tc-line': `${String(READABLE_PX - 1)}px`,
+            } as CSSProperties
+          }
         >
           <FullCalendar
             ref={calendar}
@@ -531,7 +732,9 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             expandRows
             allDaySlot
             allDayText={t('timeBlocks.calendar.allDay')}
-            slotDuration="00:30:00"
+            // Half-hour rows tall enough for a quarter hour's line, overlapping events side by
+            // side, touching ones not (chipLayout.ts).
+            {...TIME_GRID_LAYOUT}
             viewDidMount={scrollSoon}
             datesSet={scrollSoon}
             defaultTimedEventDuration="00:30:00"
@@ -546,13 +749,49 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
             selectMirror
             selectAllow={blockSpanAllowed}
             select={createFromSelection}
+            dateClick={tapOnGrid}
             events={events}
             eventContent={renderEvent}
+            dayHeaderContent={(arg) => {
+              const tags =
+                arg.view.type === 'timeGridWeek'
+                  ? areaTags.get(arg.date.toISOString().slice(0, 10))
+                  : undefined;
+              if (tags === undefined) {
+                return arg.text;
+              }
+              return (
+                <span className="flex min-w-0 flex-col gap-0.5" data-area-tags="">
+                  <span className="truncate">{arg.text}</span>
+                  {tags.map((tag) => (
+                    <AreaTagButton
+                      key={tag.key}
+                      tag={tag}
+                      onOpen={() => {
+                        openItem(
+                          tag.rowId,
+                          tag.originalStart === null ? undefined : new Date(tag.originalStart),
+                        );
+                      }}
+                    />
+                  ))}
+                </span>
+              );
+            }}
             eventDidMount={describe}
             eventClick={(arg) => {
               arg.jsEvent.preventDefault();
+              // An editor's click on an area's band is a click on its time: the grid's selection
+              // (or tap) asks what to do there (AreaChooser). Opening the area too would race it.
+              if (selectable && arg.event.display === 'background') {
+                return;
+              }
               const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
-              // A background area is the time behind the events and never gets here.
+              // Every event's click. FullCalendar's click listener covers background events too
+              // (EventClicking: '.fc-event', "on both fg and bg events"), so a click on an area's
+              // band may open the area, unless FullCalendar took it as the start of a selection
+              // (an editor's drag across free time: the New sheet). This branch leaves that as it
+              // was; the dependable way in is the tag in the day's header (AreaTagButton).
               openItem(
                 props.rowId,
                 props.originalStart === null ? undefined : new Date(props.originalStart),
@@ -563,7 +802,55 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         </div>
         <SourceCount occurrences={displayed} />
       </div>
+      {chooser === null ? null : (
+        <AreaChooser
+          key={chooser.id}
+          point={chooser.point}
+          rtl={language === 'he'}
+          areas={chooser.areas.map((area) => ({
+            key: area.key,
+            title: area.row.title,
+            onOpen: () => {
+              openArea(area);
+            },
+          }))}
+          onNew={() => {
+            openNewItem(chooser.preset);
+          }}
+          onClose={closeChooser}
+        />
+      )}
     </BlockFrame>
+  );
+}
+
+/**
+ * An area named in its day's header in the week grid: a tag in the area's tint and edge, which
+ * opens its sheet. The band behind the events keeps no label of its own: events would cover it at
+ * the top, and a rail beside them took their width.
+ */
+function AreaTagButton({ tag, onOpen }: { tag: AreaTag; onOpen: () => void }) {
+  const { t } = useTranslation();
+  const when =
+    tag.from === null
+      ? t('timeBlocks.calendar.allDay')
+      : isolateLtr(tag.to === null ? tag.from : `${tag.from}–${tag.to}`);
+  const name = t('timeBlocks.calendar.areaLabel', { title: tag.title, when });
+  return (
+    <button
+      type="button"
+      data-area-tag={tag.rowId}
+      aria-label={name}
+      title={name}
+      onClick={onOpen}
+      className="block min-h-5 w-full min-w-0 cursor-pointer truncate rounded-sm border px-1 text-[11px] leading-4 font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring pointer-coarse:min-h-6"
+      style={{
+        backgroundColor: colourVar(tag.family, 'area'),
+        borderColor: colourVar(tag.family, 'scheduled'),
+      }}
+    >
+      <span dir="auto">{tag.title}</span>
+    </button>
   );
 }
 

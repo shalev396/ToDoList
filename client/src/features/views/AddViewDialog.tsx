@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   CalendarCheck,
   CalendarDays,
+  CalendarRange,
   GanttChart,
   Gauge,
   LayoutGrid,
@@ -38,6 +39,7 @@ const TYPE_ICONS: Readonly<Record<ViewType, LucideIcon>> = {
   table: Table2,
   agenda: CalendarCheck,
   workload: Gauge,
+  timesheet: CalendarRange,
   dashboard: LayoutGrid,
 };
 

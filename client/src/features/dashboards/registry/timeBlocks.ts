@@ -1,5 +1,5 @@
 import { lazy } from 'react';
-import { CalendarCheck, CalendarDays, Clock, Gauge, GanttChart } from 'lucide-react';
+import { CalendarCheck, CalendarDays, CalendarRange, Clock, Gauge, GanttChart } from 'lucide-react';
 import type { BlockRegistryPart } from './types';
 
 /**
@@ -11,12 +11,13 @@ const ClockBlock = lazy(() => import('../blocks/clock/ClockBlock'));
 const AgendaBlock = lazy(() => import('../blocks/agenda/AgendaBlock'));
 const TimelineBlock = lazy(() => import('../blocks/timeline/TimelineBlock'));
 const WorkloadBlock = lazy(() => import('../blocks/workload/WorkloadBlock'));
+const TimesheetBlock = lazy(() => import('../blocks/timesheet/TimesheetBlock'));
 
 /** The clock's and the calendar's refresh (FRONTEND.md §6 "Freshness"). */
 const EVERY_MINUTE_MS = 60_000;
 
 export const timeBlocks: BlockRegistryPart<
-  'calendar' | 'clock' | 'agenda' | 'timeline' | 'workload'
+  'calendar' | 'clock' | 'agenda' | 'timeline' | 'workload' | 'timesheet'
 > = {
   calendar: {
     component: CalendarBlock,
@@ -51,6 +52,13 @@ export const timeBlocks: BlockRegistryPart<
     icon: Gauge,
     defaultSize: { w: 8, h: 8 },
     minSize: { w: 4, h: 6 },
+    refetchIntervalMs: EVERY_MINUTE_MS,
+  },
+  timesheet: {
+    component: TimesheetBlock,
+    icon: CalendarRange,
+    defaultSize: { w: 12, h: 14 },
+    minSize: { w: 6, h: 8 },
     refetchIntervalMs: EVERY_MINUTE_MS,
   },
 };

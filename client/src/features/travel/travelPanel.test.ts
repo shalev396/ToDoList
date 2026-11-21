@@ -29,6 +29,7 @@ import {
   outcomeOf,
   outcomeText,
   ownPlaceOf,
+  repeatsRuleOf,
   panelPreview,
   panelSpan,
   previewFill,
@@ -386,6 +387,8 @@ describe('which items take travel, and their mark', () => {
       mode: 'transit',
       direction: 'both',
       placeId: null,
+      arriveEarlyMinutes: null,
+      lengths: null,
       createdAt: '2026-11-18T00:00:00.000Z',
     });
     const series = rule({ kind: 'series', itemId: 'lecture' });
@@ -397,6 +400,39 @@ describe('which items take travel, and their mark', () => {
     assert.equal(markOf([single], 'todo', null)?.id, 'item');
   });
 
+  it('repeatsRuleOf: an event that doesn’t repeat falls under its repeats rule', () => {
+    const repeats = {
+      id: 'repeats',
+      scope: {
+        kind: 'repeats' as const,
+        containerId: 'cal',
+        title: 'Calculus',
+        weekday: 4,
+        startTime: '10:30',
+        from: '2026-11-19T08:30:00.000Z',
+      },
+      mode: 'walk' as const,
+      direction: 'both' as const,
+      placeId: null,
+      arriveEarlyMinutes: null,
+      lengths: null,
+      createdAt: '2026-11-18T00:00:00.000Z',
+    };
+    const zone = 'Asia/Jerusalem';
+    const thursday = new Date('2026-11-26T08:30:00.000Z');
+    const event = { containerId: 'cal', title: 'Calculus', startAt: thursday };
+    assert.equal(repeatsRuleOf([repeats], event, zone)?.id, 'repeats');
+    assert.equal(repeatsRuleOf([repeats], { ...event, title: 'Physics' }, zone), null);
+    assert.equal(
+      repeatsRuleOf([repeats], { ...event, startAt: new Date('2026-11-26T09:30:00.000Z') }, zone),
+      null,
+    );
+    assert.equal(
+      repeatsRuleOf([repeats], { ...event, startAt: new Date('2026-11-12T08:30:00.000Z') }, zone),
+      null,
+    );
+  });
+
   it("a moved occurrence's mark is found under its series and original start, as the server keeps it", () => {
     const rule = (scope: TravelRuleView['scope']): TravelRuleView => ({
       id: scope.kind,
@@ -404,6 +440,8 @@ describe('which items take travel, and their mark', () => {
       mode: 'transit',
       direction: 'both',
       placeId: null,
+      arriveEarlyMinutes: null,
+      lengths: null,
       createdAt: '2026-11-18T00:00:00.000Z',
     });
     // Its own row ("lecture_moved"), moved from 14:00 to 16:00; the series is "lecture".

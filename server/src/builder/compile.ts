@@ -95,6 +95,16 @@ export interface CompileContext {
   preview: boolean;
   /** The block the query belongs to: it picks the default dateField. */
   blockType?: BlockType;
+  /**
+   * A clock block with `viz.showTomorrow`: a `today` date range also reads tomorrow, so the
+   * block has the next local day to draw. Any other range is read as it is.
+   */
+  includeTomorrow?: boolean;
+  /**
+   * Items only: each row also carries `sourceTitle`, the title the provider gave it (a server
+   * read for travel's repeats; never a block's or an API's).
+   */
+  sourceTitle?: boolean;
   /** The workspace's custom attributes: `attr.<key>` fields are checked against them. */
   attributes?: readonly AttributeDef[];
   /** The workspace's synced `props.*` paths: a `props.*` field must be one of them. */
@@ -248,6 +258,7 @@ export const TIME_SHAPED_BLOCKS: ReadonlySet<BlockType> = new Set<BlockType>([
   'timeline',
   'agenda',
   'workload',
+  'timesheet',
 ]);
 
 function isTimeShaped(blockType: BlockType | undefined): boolean {
@@ -269,6 +280,22 @@ export function namesKind(group: RuleGroup | undefined): boolean {
 /** What a task-shaped result leaves out: TodoList's reserved time, which is not work. */
 const TASK_SHAPED_SCOPE: Filter = { kind: { $nin: [...SCHEDULED_KINDS] } };
 
+/**
+ * The rows a timesheet's date range never narrows: everything but timed rows (events, time blocks,
+ * areas, travel legs). Its to-dos are listed to schedule whatever their dates, and a planned one
+ * may sit in any week; its where rule decides which.
+ */
+const TIMESHEET_UNDATED: Filter = { kind: { $nin: ['event', ...SCHEDULED_KINDS] } };
+
+/**
+ * A timesheet's rows sort its timed rows (events, blocks, areas, legs) first, before whatever its
+ * query sorts by: the row cap then cuts its to-dos, never its painted time.
+ */
+const TIMESHEET_TIMED_FIRST = '__timedFirst';
+const TIMESHEET_TIMED_RANK: Filter = {
+  $cond: [{ $in: ['$kind', ['event', ...SCHEDULED_KINDS]] }, 0, 1],
+};
+
 /** The kinds a compiled `=` or `in` rule on `kind` asks for (`{kind: 'x'}`, `{kind: {$in}}`). */
 function kindsAskedFor(filter: Filter): unknown[] {
   const value = filter['kind'];
@@ -287,7 +314,8 @@ export function defaultDateField(blockType: BlockType | undefined): DateField {
     blockType === 'calendar' ||
     blockType === 'timeline' ||
     blockType === 'agenda' ||
-    blockType === 'workload'
+    blockType === 'workload' ||
+    blockType === 'timesheet'
   ) {
     return 'any';
   }
@@ -670,7 +698,19 @@ class Compilation {
       if (resolved === UNSET) return null;
       ({ value, label } = resolved);
     }
-    const { from, to } = this.bounds(value, '/dateRange', label);
+    const bounds = this.bounds(value, '/dateRange', label);
+    const { from } = bounds;
+    const to =
+      this.ctx.includeTomorrow === true && value === 'today'
+        ? this.preset('tomorrow').to
+        : bounds.to;
+    const timed = this.timedRange(from, to, field);
+    // A timesheet's range narrows its timed rows only (TIMESHEET_UNDATED).
+    return this.ctx.blockType === 'timesheet' ? combine([timed, TIMESHEET_UNDATED], '$or') : timed;
+  }
+
+  /** The window `[from, to)` on `field`, with a time view's series and moved occurrences. */
+  private timedRange(from: Date, to: Date, field: DateField): Filter {
     const window = (): Filter => ({ $gte: from, $lt: to });
     if (field === 'dueAt') return { dueAt: window() };
     // A start in range; for `any`, also no start (null or missing) and a due date in range.
@@ -699,7 +739,7 @@ class Compilation {
           { 'props.originalStartAt': { $gte: from.toISOString(), $lt: to.toISOString() } },
         ]
       : [];
-    return combine([...dated, ...series], '$or');
+    return combine([...dated, ...series], '$or') ?? { startAt: window() };
   }
 
   /** Group fields, checked: whitelisted and not lists. */
@@ -741,6 +781,10 @@ class Compilation {
   rowStages(sort: NonNullable<Query['sort']>, limit: number): PipelineStage[] {
     const nullFlags: Filter = {};
     const order: Record<string, 1 | -1> = {};
+    if (this.ctx.blockType === 'timesheet' && this.source === 'items') {
+      nullFlags[TIMESHEET_TIMED_FIRST] = TIMESHEET_TIMED_RANK;
+      order[TIMESHEET_TIMED_FIRST] = 1;
+    }
     sort.forEach((entry, index) => {
       const spec = this.field(entry.field, `/sort/${String(index)}/field`);
       if (spec.type === 'array') {
@@ -768,7 +812,12 @@ class Compilation {
       order[path] = entry.dir === 'asc' ? 1 : -1;
     });
     order['_id'] = 1;
-    const projection = Object.fromEntries(ROW_FIELDS[this.source].map((path) => [path, 1]));
+    const projection = Object.fromEntries(
+      [
+        ...ROW_FIELDS[this.source],
+        ...(this.source === 'items' && this.ctx.sourceTitle === true ? ['sourceTitle'] : []),
+      ].map((path) => [path, 1]),
+    );
     return [
       { $addFields: nullFlags },
       { $sort: order },
@@ -985,7 +1034,16 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
     ...(taskShaped ? [{ $match: TASK_SHAPED_SCOPE }] : []),
     ...(prefilter === null ? [] : [{ $match: prefilter }]),
     // The effective values right after the access filter: everything below reads them.
-    ...(source === 'items' ? [{ $addFields: Overrides.projection() }] : []),
+    ...(source === 'items'
+      ? [
+          {
+            $addFields: {
+              ...Overrides.projection(),
+              ...(ctx.sourceTitle === true ? { sourceTitle: '$title' } : {}),
+            },
+          },
+        ]
+      : []),
     ...(Object.keys(computed).length === 0 ? [] : [{ $addFields: computed }]),
     ...(filter === null ? [] : [{ $match: filter }]),
     ...dedup,

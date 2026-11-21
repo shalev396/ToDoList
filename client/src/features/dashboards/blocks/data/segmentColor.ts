@@ -1,3 +1,4 @@
+import { sourceColourVar } from '../../../../components/items/sources.ts';
 import { colourVar } from '../../../colours/palette.ts';
 import type { ColourFamily } from '@api-types/colours.ts';
 import type { Segment } from './chartData.ts';
@@ -17,7 +18,7 @@ export function segmentColor(
     return colourVar(topicFamily(segment.key === '' ? null : segment.key), 'scheduled');
   }
   if (segment.provider !== undefined) {
-    return `var(--color-source-${segment.provider.replaceAll('_', '-')})`;
+    return sourceColourVar(segment.provider);
   }
   return `var(--chart-${String((index % SLOT_COUNT) + 1)})`;
 }

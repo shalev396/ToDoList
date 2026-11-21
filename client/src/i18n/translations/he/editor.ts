@@ -219,10 +219,18 @@ export const editor = {
       legend: 'מקרא',
       needle: 'מחוג',
       showNext: 'להציג מה הבא',
+      showTomorrow: 'להציג את מחר',
       showDelta: 'להציג את השינוי',
       overdueOnTop: 'באיחור למעלה',
       field: 'סינון לפי',
       multi: 'לאפשר כמה בחירות',
+      showBlocks: 'להציג גם בלוקי זמן, לא רק אזורים',
+    },
+    timesheet: {
+      topic: 'עמוד',
+      topicPage: 'העמוד הזה',
+      topicAll: 'כל העמודים',
+      topicHint: 'של מי הזמן הצבוע והמשימות שמוצגים. בלוח הראשי, "העמוד הזה" הוא כל העמודים.',
     },
     values: {
       list: 'רשימה',
