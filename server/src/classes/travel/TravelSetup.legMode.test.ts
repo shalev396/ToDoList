@@ -675,3 +675,169 @@ describe('TravelSetup#changeLegMode', () => {
     assert.deepEqual(await marks(ws), []);
   });
 });
+
+describe('exact trip times per rule (arriveEarlyMinutes, lengths)', () => {
+  const minutes = (from: Date | null, to: Date | null): number | null =>
+    from === null || to === null ? null : (to.getTime() - from.getTime()) / 60_000;
+
+  /** A lecture with its own item rule: transit to Braude, early 20, there 95, back 110. */
+  async function exactWeek(): Promise<{ ws: Ws; item: string; start: Date; ruleId: string }> {
+    const ws = await workspace();
+    const start = local(2, 10, 30);
+    const item = await lecture(ws, 'exact', start);
+    const profile = await classes.TravelProfile.of(ws.a);
+    // The trip key's own length: what the rule's must beat.
+    await profile.setTripLength(
+      ws.a,
+      classes.DayPlanner.tripKey(ws.homeId, ws.braudeId, 'transit'),
+      120,
+    );
+    const rule = await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'item', itemId: item, occurrence: 'single' },
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.braudeId,
+      arriveEarlyMinutes: 20,
+      lengths: { there: 95, back: 110 },
+    });
+    await regenerate(ws);
+    return { ws, item, start, ruleId: rule.id };
+  }
+
+  it('plans the legs from the rule: there arrives 20 early and takes 95, back takes 110', async () => {
+    const { ws, item, start } = await exactWeek();
+    const all = await legs(ws);
+    const there = legOf(all, item, 'there');
+    const back = legOf(all, item, 'back');
+    assert.equal(there.endAt?.getTime(), start.getTime() - 20 * 60_000);
+    assert.equal(minutes(there.startAt, there.endAt), 95);
+    assert.equal(there.travel?.minutes, 95);
+    assert.equal(there.travel.lengthUnset, false);
+    assert.equal(back.startAt?.getTime(), start.getTime() + 110 * 60_000);
+    assert.equal(minutes(back.startAt, back.endAt), 110);
+  });
+
+  it('a leg whose times he set by hand keeps them when the rule changes', async () => {
+    const { ws, item, ruleId } = await exactWeek();
+    const there = legOf(await legs(ws), item, 'there');
+    assert.ok(there.startAt && there.endAt);
+    const startAt = new Date(there.startAt.getTime() - 10 * 60_000);
+    const endAt = new Date(there.endAt.getTime() - 10 * 60_000);
+    await classes.TravelSetup.of(ws.a).editLeg(there.id, { startAt, endAt });
+
+    await classes.TravelSetup.of(ws.a).changeRule(ruleId, {
+      arriveEarlyMinutes: 45,
+      lengths: { there: 60, back: 60 },
+    });
+
+    const all = await legs(ws);
+    const kept = legOf(all, item, 'there');
+    assert.deepEqual([kept.startAt, kept.endAt], [startAt, endAt]);
+    assert.equal(kept.travel?.edited, true);
+    // The leg he didn't touch follows the new rule.
+    assert.equal(minutes(legOf(all, item, 'back').startAt, legOf(all, item, 'back').endAt), 60);
+  });
+
+  it('a length typed on a leg goes to its rule when the rule sets that side; else to the trip', async () => {
+    const { ws, item, start, ruleId } = await exactWeek();
+    const tripKey = classes.DayPlanner.tripKey(ws.homeId, ws.braudeId, 'transit');
+    const tripOf = async (): Promise<number | null> =>
+      (await classes.TravelProfile.of(ws.a)).tripLength(tripKey).minutes;
+    const setup = classes.TravelSetup.of(ws.a);
+
+    // The rule sets `there` (95): the typed 100 becomes the rule's, the trip's 120 stays.
+    const there = legOf(await legs(ws), item, 'there');
+    const edited = await setup.editLeg(there.id, { minutes: 100 });
+    assert.equal(edited.travel?.minutes, 100);
+    const rule = await classes.TravelRule.findOwn(ws.a, ruleId);
+    assert.deepEqual(rule.lengths, { there: 100, back: 110 });
+    assert.equal(await tripOf(), 120);
+    const planned = legOf(await legs(ws), item, 'there');
+    assert.equal(minutes(planned.startAt, planned.endAt), 100);
+    assert.equal(planned.endAt?.getTime(), start.getTime() - 20 * 60_000);
+
+    // A rule with no `there` length: today's behaviour, the trip's length is set.
+    await rule.update(ws.a, { lengths: { back: 110 } });
+    await regenerate(ws);
+    await setup.editLeg(legOf(await legs(ws), item, 'there').id, { minutes: 80 });
+    assert.deepEqual((await classes.TravelRule.findOwn(ws.a, ruleId)).lengths, { back: 110 });
+    assert.equal(await tripOf(), 80);
+    // The back side is the rule's own.
+    await setup.editLeg(legOf(await legs(ws), item, 'back').id, { minutes: 90 });
+    assert.deepEqual((await classes.TravelRule.findOwn(ws.a, ruleId)).lengths, { back: 90 });
+  });
+
+  it('changing the mode keeps arriveEarlyMinutes and drops lengths', async () => {
+    const { ws, item, ruleId } = await exactWeek();
+    const there = legOf(await legs(ws), item, 'there');
+    const answer = await classes.TravelSetup.of(ws.a).changeLegMode(there.id, {
+      mode: 'drive',
+      scope: 'this',
+    });
+    assert.equal(answer.leg?.travel?.mode, 'drive');
+    const rule = await classes.TravelRule.findOwn(ws.a, ruleId);
+    assert.deepEqual([rule.mode, rule.arriveEarlyMinutes, rule.lengths], ['drive', 20, null]);
+    // No trip length for the drive: the placeholder, arriving 20 early.
+    assert.equal(answer.leg.travel.lengthUnset, true);
+  });
+
+  it('this day only: the new item rule copies arriveEarlyMinutes from the rule it came from, and not lengths', async () => {
+    const ws = await workspace();
+    const first = await lecture(ws, 'l1', local(1, 10, 30));
+    // The where-rule of the calendar gets values.
+    const [where] = (await classes.TravelRule.listOwn(ws.a)).filter(
+      (rule) => rule.scopeKind === 'where',
+    );
+    assert.ok(where);
+    await where.update(ws.a, { arriveEarlyMinutes: 15, lengths: { there: 40 } });
+    await regenerate(ws);
+    const there = legOf(await legs(ws), first, 'there');
+    assert.equal(there.travel?.minutes, 40);
+
+    await classes.TravelSetup.of(ws.a).changeLegMode(there.id, { mode: 'walk', scope: 'this' });
+
+    const item = (await classes.TravelRule.listOwn(ws.a)).find((rule) => rule.scopeKind === 'item');
+    assert.deepEqual([item?.arriveEarlyMinutes, item?.lengths], [15, null]);
+  });
+
+  it('refuses values out of bounds, and stores none; a rule with neither reads as none', async () => {
+    const ws = await workspace();
+    const scope = { kind: 'series', itemId: 'some-series' } as const;
+    const base = { scope, mode: 'transit', direction: 'both' } as const;
+    const bad: Record<string, unknown>[] = [
+      { arriveEarlyMinutes: -1 },
+      { arriveEarlyMinutes: 241 },
+      { arriveEarlyMinutes: 1.5 },
+      { arriveEarlyMinutes: '20' },
+      { lengths: { there: 0 } },
+      { lengths: { back: -5 } },
+      { lengths: { there: 1441 } },
+      { lengths: { there: 10.5 } },
+      { lengths: { sideways: 10 } },
+      { lengths: [] },
+    ];
+    for (const extra of bad) {
+      await assert.rejects(
+        classes.TravelRule.create(ws.a, { ...base, ...extra }),
+        ValidationError,
+        JSON.stringify(extra),
+      );
+    }
+    assert.equal((await classes.TravelRule.listOwn(ws.a)).length, 1); // only the where-rule
+    const edge = await classes.TravelRule.create(ws.a, {
+      ...base,
+      arriveEarlyMinutes: 240,
+      lengths: { there: 1440, back: 1 },
+    });
+    assert.deepEqual([edge.arriveEarlyMinutes, edge.lengths], [240, { there: 1440, back: 1 }]);
+    const plain = await classes.TravelRule.create(ws.a, {
+      ...base,
+      scope: { ...scope, itemId: 'x' },
+    });
+    assert.deepEqual([plain.toView().arriveEarlyMinutes, plain.toView().lengths], [null, null]);
+    // Cleared by null (an empty lengths is none).
+    const cleared = await edge.update(ws.a, { arriveEarlyMinutes: null, lengths: {} });
+    assert.deepEqual([cleared.toView().arriveEarlyMinutes, cleared.toView().lengths], [null, null]);
+    await assert.rejects(edge.update(ws.a, { arriveEarlyMinutes: 300 }), ValidationError);
+  });
+});

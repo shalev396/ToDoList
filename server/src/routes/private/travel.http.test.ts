@@ -351,6 +351,8 @@ describe('marking an item', () => {
       mode: 'transit',
       direction: 'both',
       placeId: braudeId,
+      arriveEarlyMinutes: null,
+      lengths: null,
       createdAt: answer.rule.createdAt,
     });
     // Days 2 and 9 of the horizon (day 16 is past it), there and back.

@@ -22,6 +22,9 @@ const travelRuleSchema = new mongoose.Schema<TravelRuleFields>(
     mode: { type: String, enum: TRAVEL_MODES, required: true },
     direction: { type: String, enum: RULE_DIRECTIONS, required: true },
     placeId: { type: String, default: null },
+    // Optional: a rule stored before they existed has neither, and reads as null.
+    arriveEarlyMinutes: { type: Number, default: null },
+    lengths: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   // minimize: false keeps an empty where-group's objects as they are.
   { timestamps: true, collection: TRAVEL_RULE_TABLE_NAME, minimize: false },
@@ -34,7 +37,14 @@ export const TravelRuleMongoModel = mongoose.model<TravelRuleFields>(
   travelRuleSchema,
 );
 
-const PATCH_KEYS: readonly (keyof TravelRulePatch)[] = ['scope', 'mode', 'direction', 'placeId'];
+const PATCH_KEYS: readonly (keyof TravelRulePatch)[] = [
+  'scope',
+  'mode',
+  'direction',
+  'placeId',
+  'arriveEarlyMinutes',
+  'lengths',
+];
 
 function toTravelRuleData(doc: TravelRuleFields): TravelRuleData {
   return {
@@ -45,6 +55,8 @@ function toTravelRuleData(doc: TravelRuleFields): TravelRuleData {
     mode: doc.mode,
     direction: doc.direction,
     placeId: doc.placeId ?? null,
+    arriveEarlyMinutes: doc.arriveEarlyMinutes ?? null,
+    lengths: doc.lengths ?? null,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -59,6 +71,8 @@ export const TravelRuleRepository: ITravelRuleRepository = {
       mode: input.mode,
       direction: input.direction,
       placeId: input.placeId,
+      arriveEarlyMinutes: input.arriveEarlyMinutes,
+      lengths: input.lengths,
     });
     return toTravelRuleData(doc);
   },

@@ -126,10 +126,18 @@ export class TravelSetup {
    * One of the caller's legs, changed (TravelLeg#editTimes; 404 for anyone else's). A length is
    * how long its trip takes, every time: the legs are made again, so every leg of that trip takes
    * it (but the ones whose times he set by hand). Times move this leg only. The leg as it is now.
+   *
+   * When the rule that draws the leg sets its own length for that side (`lengths.there` for a leg
+   * there, `lengths.back` for a leg back), the length he types is that rule's: it is stored in the
+   * rule, not in the trip, because the rule's length is the one the leg uses. Otherwise (no rule
+   * length for that side, a leg between two places) the trip's length is set, as ever.
    */
   async editLeg(id: string, change: LegTimesChange): Promise<TravelLeg> {
     const caller = this.#caller;
-    const leg = await (await TravelLeg.findOwn(caller, id)).editTimes(caller, change);
+    const own = await TravelLeg.findOwn(caller, id);
+    const ruled =
+      change.minutes === undefined ? null : await this.#ruleLengthOf(own, change.minutes);
+    const leg = await own.editTimes(caller, change, { tripLength: ruled === null });
     if (change.minutes === undefined) return leg;
     await this.#regenerate('length');
     return TravelLeg.findOwn(caller, id);
@@ -152,7 +160,9 @@ export class TravelSetup {
    * rule that makes the leg now is found as the planner finds it (TravelAnchors.ruleOf: item mark,
    * series mark, repeats rule, oldest where-rule); its way (`there`, `back`, `both`: a rule that
    * only goes there never gains a trip back) and place (the rule's, else the event's resolved
-   * place, else the leg's event side) are kept, with the new mode.
+   * place, else the leg's event side) are kept, with the new mode. Its `arriveEarlyMinutes` is kept
+   * too (copied onto an item rule or repeats rule made from it); its `lengths` are dropped, as a
+   * length belongs to its mode.
    *
    * `this`: that occurrence's item mark (an event that doesn't repeat: itself). `repeats`: a
    * repeating event's series mark; an event that doesn't repeat: ONE `repeats` rule (same calendar
@@ -200,7 +210,15 @@ export class TravelSetup {
       found.rule.placeId ??
       found.anchor.placeId ??
       (travel.direction === 'back' ? travel.fromPlaceId : travel.toPlaceId);
-    const choice = { mode: change.mode, direction: found.rule.direction, placeId };
+    // The arrive-early minutes stay with the event; a length belongs to its mode, so none is kept.
+    const early = found.rule.arriveEarlyMinutes;
+    const choice = {
+      mode: change.mode,
+      direction: found.rule.direction,
+      placeId,
+      arriveEarlyMinutes: early === 0 ? null : early,
+      lengths: null,
+    };
     const occurrence = travel.occurrence === 'single' ? undefined : new Date(travel.occurrence);
     let marked: number;
     if (change.scope === 'this') {
@@ -258,6 +276,34 @@ export class TravelSetup {
   }
 
   // ─── Inside ───────────────────────────────────────────────────────────────
+
+  /**
+   * Stores `minutes` as the rule's length for the leg's side when its rule has one there; the rule
+   * (null when it has none, and nothing changed).
+   */
+  async #ruleLengthOf(leg: TravelLeg, minutes: number): Promise<TravelRule | null> {
+    const caller = this.#caller;
+    const travel = leg.travel;
+    if (travel === null || leg.isDeleted) return null;
+    if (travel.direction !== 'there' && travel.direction !== 'back') return null;
+    const [profile, rules, places] = await Promise.all([
+      TravelProfile.of(caller),
+      TravelRule.listOwn(caller),
+      Place.listOwn(caller),
+    ]);
+    const found = await TravelAnchors.ruleOf(
+      caller,
+      { profile, rules, places, now: new Date() },
+      {
+        itemId: travel.anchorItemId,
+        occurrence: travel.occurrence,
+        near: new Date(travel.anchorStart),
+      },
+    );
+    const side = travel.direction;
+    if (found?.rule.lengths?.[side] === undefined) return null;
+    return found.rule.update(caller, { lengths: { ...found.rule.lengths, [side]: minutes } });
+  }
 
   /** The live leg with the key of `before`, as the regeneration left it; null when none. */
   async #legNow(before: TravelLeg): Promise<TravelLeg | null> {

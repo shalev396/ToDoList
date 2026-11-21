@@ -547,3 +547,80 @@ describe('TravelAnchors.gather', () => {
     for (const start of wednesdays) assert.equal(fates.get(`${studying.id}|${start}`), 'present');
   });
 });
+
+describe('TravelAnchors.gather: exact times and free events', () => {
+  it('the anchor carries what its rule says: arrive early, and the there and back lengths', async () => {
+    const ws = await workspace();
+    const { block: studying } = await classes.TimeBlock.create(ws.a, {
+      layer: 'area',
+      title: 'Studying',
+      startAt: new Date('2026-11-25T07:00:00.000Z'),
+      endAt: new Date('2026-11-25T15:00:00.000Z'),
+    });
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'series', itemId: studying.id },
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.places.braude.id,
+      arriveEarlyMinutes: 20,
+      lengths: { there: 95, back: 120 },
+    });
+    const { anchors } = await gather(ws);
+    assert.deepEqual(
+      anchors.map((anchor) => [anchor.early, anchor.lengths]),
+      [[20, { there: 95, back: 120 }]],
+    );
+  });
+
+  it('a rule with neither field leaves the anchor as it was', async () => {
+    const ws = await workspace();
+    const exam = await event(ws, 'exam', {
+      title: 'Exam',
+      startAt: '2026-11-26T07:00:00.000Z',
+      endAt: '2026-11-26T09:00:00.000Z',
+      containerId: 'cal-braude',
+    });
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'item', itemId: exam, occurrence: 'single' },
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.places.braude.id,
+      arriveEarlyMinutes: 0,
+    });
+    const { anchors } = await gather(ws);
+    assert.equal(anchors.length, 1);
+    assert.equal('early' in (anchors[0] ?? {}), false);
+    assert.equal('lengths' in (anchors[0] ?? {}), false);
+  });
+
+  it('an event shown as Free anchors no travel, though a rule matches it', async () => {
+    const ws = await workspace();
+    const free = await event(ws, 'hanukkah', {
+      title: 'Hanukkah',
+      startAt: '2026-11-30T07:00:00.000Z',
+      endAt: '2026-11-30T08:00:00.000Z',
+      containerId: 'cal-braude',
+      props: { transparency: 'transparent' },
+    });
+    const busy = await event(ws, 'exam', {
+      title: 'Exam',
+      startAt: '2026-11-26T07:00:00.000Z',
+      endAt: '2026-11-26T09:00:00.000Z',
+      containerId: 'cal-braude',
+      props: { transparency: 'opaque' },
+    });
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'where', where: onCalendar('cal-braude') },
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.places.braude.id,
+    });
+    const { anchors, fates } = await gather(ws);
+    assert.deepEqual(
+      anchors.map((anchor) => anchor.itemId),
+      [busy],
+    );
+    // A leg made for it before it was marked free goes as no longer matching.
+    assert.equal(fates.get(`${free}|single`), 'no_longer_matches');
+  });
+});

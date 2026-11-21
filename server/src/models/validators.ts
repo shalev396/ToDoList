@@ -4,7 +4,7 @@
  * (DATA.md §3.6). Every validated collection also requires `workspaceId`.
  */
 import { CONTAINER_TYPES, ITEM_KINDS, ITEM_STATUSES, PROVIDERS } from '../types/domain.js';
-import { RULE_DIRECTIONS, TRAVEL_MODES } from '../types/travel.js';
+import { ARRIVE_EARLY_MAX, RULE_DIRECTIONS, TRAVEL_MODES } from '../types/travel.js';
 import { CONTAINER_TABLE_NAME } from './definitions/Container.js';
 import { CREDENTIAL_TABLE_NAME } from './definitions/Credential.js';
 import { ITEM_TABLE_NAME } from './definitions/Item.js';
@@ -99,6 +99,13 @@ export const TRAVEL_RULES_VALIDATOR = {
       },
       mode: { enum: [...TRAVEL_MODES] },
       direction: { enum: [...RULE_DIRECTIONS] },
+      // Optional: rules stored before them have neither.
+      arriveEarlyMinutes: {
+        bsonType: ['int', 'long', 'double', 'null'],
+        minimum: 0,
+        maximum: ARRIVE_EARLY_MAX,
+      },
+      lengths: { bsonType: ['object', 'null'] },
     },
   },
 };

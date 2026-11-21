@@ -12,9 +12,11 @@
  * - Legs: Home to the first stay (when its first anchor asks for `there`), one between each two
  *   stays (always, in the destination's mode), and the last stay back Home (when its last anchor
  *   asks for `back`).
- * - A leg there arrives as its anchor starts; a leg back leaves as its stay ends. A leg between two
- *   stays that can't fit leaves as the first ends and is marked a conflict: the plan never moves
- *   an event.
+ * - A leg there arrives as its anchor starts (or `early` minutes before, when its rule says so); a
+ *   leg back leaves as its stay ends. A leg between two stays that can't fit (by the earlier
+ *   arrival) leaves as the first ends and is marked a conflict: the plan never moves an event.
+ * - A rule may set the length of the legs it draws (`lengths`: `there` from Home, `back`); that
+ *   beats the length of the trip key, for those legs only.
  * - A painted area (`area`, "Studying 8–16 at Braude") anchors like any item, and the items inside
  *   it nest (the owner's ruling of 2026-11-18):
  *   - an inner item with a place of its own is there for its own time: the area is cut around it
@@ -61,6 +63,13 @@ export interface Anchor {
   back: boolean;
   /** A painted area: the items inside it nest (see the top of this file). */
   area: boolean;
+  /**
+   * What its rule says about the legs it draws (TravelRule): whole minutes the "there" leg arrives
+   * before `start` (absent: 0), and trip lengths for `there` and `back` that win over the trip
+   * key's. A leg the rule does not draw (a hosted item makes none) never reads them.
+   */
+  early?: number;
+  lengths?: { there?: number; back?: number };
 }
 
 export interface DayPlanInput {
@@ -687,14 +696,14 @@ export class DayPlanner {
   }
 
   /**
-   * A leg with its length. There: it arrives as its anchor starts. Back: it leaves as its stay
+   * A leg with its length. There: it arrives as its anchor starts (less its `early`). Back: it leaves as its stay
    * ends (a conflict when it reaches an appointment in the area it returns to late). Between: it
    * arrives by the next stay's start when it can, else it leaves as the stay before ends and is a
    * conflict.
    */
   #timed(spec: LegSpec, length: (trip: TripKey) => Estimate): PlannedLeg {
     const { anchor, from, to, mode } = spec;
-    const estimate = length(DayPlanner.tripKey(from, to, mode));
+    const estimate = DayPlanner.#lengthOf(spec, length(DayPlanner.tripKey(from, to, mode)));
     const span = estimate.minutes * MS_PER_MINUTE;
     const leaves = (departure: Departure): number =>
       Math.max(
@@ -706,16 +715,19 @@ export class DayPlanner {
     let conflict = false;
     switch (spec.direction) {
       case 'there':
-        start = spec.arriveBy.getTime() - span;
+        start = spec.arriveBy.getTime() - (anchor.early ?? 0) * MS_PER_MINUTE - span;
         break;
       case 'back':
         start = leaves(spec);
         conflict = spec.arriveBy !== null && start + span > spec.arriveBy.getTime();
         break;
-      case 'between':
-        start = Math.max(spec.arriveBy.getTime() - span, leaves(spec));
-        conflict = start + span > spec.arriveBy.getTime();
+      case 'between': {
+        // Early, as a there leg: the earlier arrival is the one that has to be made.
+        const arrives = spec.arriveBy.getTime() - (anchor.early ?? 0) * MS_PER_MINUTE;
+        start = Math.max(arrives - span, leaves(spec));
+        conflict = start + span > arrives;
         break;
+      }
     }
     const startAt = new Date(start);
     return {
@@ -738,6 +750,18 @@ export class DayPlanner {
       topicId: anchor.topicId,
       title: this.#title(mode, to, anchor),
     };
+  }
+
+  /**
+   * A leg's length: the one its anchor's rule sets for it (`there` for the leg that gets him there
+   * from Home, `back` for the way back, home or back into the area around it), else its trip's
+   * own. A leg between two places elsewhere is another trip (not Home's), so it keeps its trip's
+   * length. A length the rule sets is his, so the leg is `set`.
+   */
+  static #lengthOf(spec: LegSpec, trip: Estimate): Estimate {
+    if (spec.direction === 'between') return trip;
+    const own = spec.anchor.lengths?.[spec.direction];
+    return own === undefined ? trip : { minutes: own, source: 'set' };
   }
 
   /** "Bus to Braude", "Drive home": the place's name, or its anchor's title if it has none. */
