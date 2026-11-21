@@ -212,4 +212,29 @@ describe('syncMongoWithin (the deadline)', () => {
     // Lines are names and counts, as before.
     assert.ok(full.results.some((line) => line.startsWith('Items: indexes ok')));
   });
+
+  it('syncSchema on qa records the migrations without running them when none is recorded', async () => {
+    const { syncSchema } = await import('../../services/stageMaintenance.js');
+    const { MIGRATIONS_COLLECTION } = await import('../../migrations/index.js');
+    const records = connection.db?.collection(MIGRATIONS_COLLECTION);
+    assert.ok(records);
+    const stage = process.env.ENV;
+    try {
+      await records.deleteMany({});
+      process.env.ENV = 'qa';
+      const qa = await syncSchema(null);
+      assert.equal(qa.done, true);
+      assert.ok(
+        qa.results.some((line) => line.endsWith(': recorded without running (fresh database)')),
+      );
+      assert.ok(!qa.results.some((line) => line.includes(': applied')));
+      // dev (the tests' stage) runs them, as prod does.
+      await records.deleteMany({});
+      process.env.ENV = stage;
+      const dev = await syncSchema(null);
+      assert.ok(dev.results.some((line) => line.includes(': applied')));
+    } finally {
+      process.env.ENV = stage;
+    }
+  });
 });

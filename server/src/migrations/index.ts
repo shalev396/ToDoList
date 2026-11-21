@@ -80,6 +80,32 @@ export interface MigrationRun {
   pending: string[];
 }
 
+export interface MigrationOptions {
+  /**
+   * An empty `Migrations` record means a fresh database: every migration is recorded as applied
+   * and none runs. True on qa only (stageMaintenance.syncSchema): every PR check that tests against
+   * qa resets it first (reset-db drops the database, records included), and what it holds
+   * afterwards was written by the code being released, so there is nothing to migrate. Replaying
+   * every migration over the e2e data would not fit one invoke.
+   */
+  freshIfUnrecorded?: boolean;
+}
+
+/** Records every migration as applied without running it; one line each. */
+async function recordAllUnrun(db: Db, now: Date): Promise<string[]> {
+  const records = db.collection<MigrationRecord>(MIGRATIONS_COLLECTION);
+  try {
+    await records.insertMany(
+      MIGRATIONS.map(({ id }) => ({ _id: id, appliedAt: now, counts: {} })),
+      { ordered: false },
+    );
+  } catch (error) {
+    // Another server recorded some meanwhile: the rest went in (unordered).
+    if (!isDuplicateKey(error)) throw error;
+  }
+  return MIGRATIONS.map(({ id }) => `${id}: recorded without running (fresh database)`);
+}
+
 /**
  * Runs the pending migrations in order and records each. One line per migration: names and counts
  * only, never a value. With a `budget`, a migration starts only while `reserveMs` is still left:
@@ -90,9 +116,16 @@ export async function runMigrationsWithin(
   now: Date,
   budget: TimeBudget | null,
   reserveMs: number,
+  options: MigrationOptions = {},
 ): Promise<MigrationRun> {
-  const pending = new Set(await pendingMigrationIds(db));
   const records = db.collection<MigrationRecord>(MIGRATIONS_COLLECTION);
+  if (
+    options.freshIfUnrecorded === true &&
+    (await records.countDocuments({}, { limit: 1 })) === 0
+  ) {
+    return { lines: await recordAllUnrun(db, now), pending: [] };
+  }
+  const pending = new Set(await pendingMigrationIds(db));
   const lines: string[] = [];
   for (const [index, migration] of MIGRATIONS.entries()) {
     if (!pending.has(migration.id)) {
