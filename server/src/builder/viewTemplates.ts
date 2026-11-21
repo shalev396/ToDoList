@@ -23,6 +23,7 @@ import deadlinesAgenda from './templates/views/deadlines-agenda.json' with { typ
 import myOpenWork from './templates/views/my-open-work.json' with { type: 'json' };
 import studyDashboard from './templates/views/study-dashboard.json' with { type: 'json' };
 import thisWeek from './templates/views/this-week.json' with { type: 'json' };
+import timesheet from './templates/views/timesheet.json' with { type: 'json' };
 import workloadThisWeek from './templates/views/workload-this-week.json' with { type: 'json' };
 import type { TemplateLanguage } from './templates.js';
 
@@ -65,12 +66,18 @@ type ViewTemplateFile = z.infer<typeof ViewTemplateFileSchema>;
 
 /** In gallery order. A malformed file fails at import, loudly (the tests import every one). */
 const VIEW_TEMPLATES: ReadonlyMap<string, ViewTemplateFile> = new Map(
-  [myOpenWork, byStatus, thisWeek, deadlinesAgenda, workloadThisWeek, studyDashboard].map(
-    (file) => {
-      const parsed = ViewTemplateFileSchema.parse(file);
-      return [parsed.key, parsed];
-    },
-  ),
+  [
+    myOpenWork,
+    byStatus,
+    thisWeek,
+    deadlinesAgenda,
+    workloadThisWeek,
+    timesheet,
+    studyDashboard,
+  ].map((file) => {
+    const parsed = ViewTemplateFileSchema.parse(file);
+    return [parsed.key, parsed];
+  }),
 );
 
 export function listViewTemplates(): ViewTemplateSummary[] {

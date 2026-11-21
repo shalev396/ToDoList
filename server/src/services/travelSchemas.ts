@@ -8,7 +8,14 @@
 import { z } from 'zod';
 
 import { RuleGroupSchema } from '../types/builder.js';
-import { RULE_DIRECTIONS, TRAVEL_MODES, TRIP_MINUTES_MAX } from '../types/travel.js';
+import {
+  LEG_MODE_SCOPES,
+  RULE_DIRECTIONS,
+  TRAVEL_MODES,
+  TRIP_MINUTES_MAX,
+  ARRIVE_EARLY_MAX,
+} from '../types/travel.js';
+import { REPEATS_TITLE_MAX } from '../types/travelRepeats.js';
 
 const Iso = z.iso.datetime({ offset: true });
 const Id = z.string().min(1).max(200);
@@ -47,13 +54,34 @@ const Scope = z.discriminatedUnion('kind', [
     itemId: Id,
     occurrence: z.union([z.literal('single'), Iso]),
   }),
+  /** The repeats of an event that doesn't repeat (TravelRule checks it whole). */
+  z.strictObject({
+    kind: z.literal('repeats'),
+    containerId: Id,
+    title: z.string().min(1).max(REPEATS_TITLE_MAX),
+    weekday: z.number().int().min(0).max(6),
+    startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    from: Iso,
+  }),
 ]);
+
+/** Whole minutes a "there" leg arrives early (0 to ARRIVE_EARLY_MAX); null clears it. */
+const ArriveEarly = z.number().int().min(0).max(ARRIVE_EARLY_MAX).nullable();
+/** A rule's trip lengths, whole minutes; a side that is null takes the trip's own length. */
+const RuleLengthsBody = z
+  .strictObject({
+    there: z.number().int().positive().max(TRIP_MINUTES_MAX).nullable().optional(),
+    back: z.number().int().positive().max(TRIP_MINUTES_MAX).nullable().optional(),
+  })
+  .nullable();
 
 const RuleFields = z.strictObject({
   scope: Scope,
   mode: Mode,
   direction: Direction,
   placeId: Id.nullable().optional(),
+  arriveEarlyMinutes: ArriveEarly.optional(),
+  lengths: RuleLengthsBody.optional(),
 });
 
 export const CreateRuleBody = RuleFields;
@@ -100,6 +128,8 @@ export const MarkItemBody = z.strictObject({
   mode: Mode,
   direction: Direction,
   placeId: Id.nullable().optional(),
+  arriveEarlyMinutes: ArriveEarly.optional(),
+  lengths: RuleLengthsBody.optional(),
   there: Span.optional(),
   back: Span.optional(),
 });
@@ -130,6 +160,12 @@ export const LegEditBody = z.strictObject({
   startAt: Iso.optional(),
   endAt: Iso.optional(),
   minutes: Minutes.optional(),
+});
+
+/** How he goes on a leg's event, for this day or every repeat (LegModeRequest). */
+export const LegModeBody = z.strictObject({
+  mode: Mode,
+  scope: z.enum(LEG_MODE_SCOPES),
 });
 
 /** Skip and reset take no body. */

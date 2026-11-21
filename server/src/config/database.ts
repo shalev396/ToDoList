@@ -1,4 +1,6 @@
 import { environment } from './environment.js';
+import type { TimeBudget } from '../classes/integration/calendar/TimeBudget.js';
+import type { MigrationOptions } from '../migrations/index.js';
 
 let shutdownRegistered = false;
 
@@ -38,27 +40,41 @@ export async function initDB(): Promise<void> {
 }
 
 export async function syncDB(): Promise<string[]> {
+  return (await syncDBWithin(null, 0)).lines;
+}
+
+/** syncDB within a time budget (sync-db in rounds): what is done, and what is still pending. */
+export async function syncDBWithin(
+  budget: TimeBudget | null,
+  reserveMs: number,
+): Promise<{ lines: string[]; pending: string[] }> {
   if (environment.databaseProvider === 'mongoose') {
-    const { syncMongo } = await import('./providers/mongoose.js');
-    return await syncMongo();
+    const { syncMongoWithin } = await import('./providers/mongoose.js');
+    return await syncMongoWithin(budget, reserveMs);
   } else {
     const { syncSequelize } = await import('./providers/sequelize.js');
-    return syncSequelize();
+    return { lines: await syncSequelize(), pending: [] };
   }
 }
 
 /**
  * The data migrations (migrations/index.ts) not applied yet, run after sync-db (indexes and
  * validators first: a migration writes documents the new validators accept). MongoDB only. One
- * line per migration, names and counts only.
+ * line per migration, names and counts only. Within a time budget, it stops before the migration
+ * that would not end in time and answers the ids still pending.
  */
-export async function migrateDB(now: Date = new Date()): Promise<string[]> {
-  if (environment.databaseProvider !== 'mongoose') return [];
+export async function migrateDB(
+  now: Date = new Date(),
+  budget: TimeBudget | null = null,
+  reserveMs = 0,
+  options: MigrationOptions = {},
+): Promise<{ lines: string[]; pending: string[] }> {
+  if (environment.databaseProvider !== 'mongoose') return { lines: [], pending: [] };
   const mongoose = (await import('mongoose')).default;
   const db = mongoose.connection.db;
   if (db === undefined) throw new Error('migrate: MongoDB is not connected');
-  const { runMigrations } = await import('../migrations/index.js');
-  return runMigrations(db, now);
+  const { runMigrationsWithin } = await import('../migrations/index.js');
+  return runMigrationsWithin(db, now, budget, reserveMs, options);
 }
 
 /** Closes the connection: the end of a one-off script (a server keeps it open). */

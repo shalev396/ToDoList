@@ -22,6 +22,7 @@ export const blocks = {
     timeline: 'Timeline',
     agenda: 'Agenda',
     workload: 'Workload',
+    timesheet: 'Timesheet',
   },
   filter: {
     label: 'Filter: {{title}}',

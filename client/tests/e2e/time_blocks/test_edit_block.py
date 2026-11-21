@@ -12,6 +12,7 @@ Each test owns a fresh workspace on Asia/Jerusalem (weeks start on Sunday) with 
 dashboard, whose week calendar reads every timed item, blocks and areas included. Blocks are seeded
 through the API; a weekly one starts the week before, so this week's is not its first.
 """
+import re
 from datetime import datetime
 
 from playwright.sync_api import Locator, Page, expect
@@ -124,13 +125,14 @@ def test_this_one_moves_only_that_occurrence(
     page.keyboard.press("Escape")
     expect(sheet).to_be_hidden()
     # This week's moved; next week's is where the series has it.
-    expect(calendar.locator(".fc-event", has_text="Calculus")).to_contain_text(
-        "14:00", timeout=NORMAL_TIMEOUT
+    # A chip shows no time of day: its name (aria-label) carries the span.
+    expect(calendar.locator(".fc-event", has_text="Calculus")).to_have_attribute(
+        "aria-label", re.compile(r"14:00.*18:00"), timeout=NORMAL_TIMEOUT
     )
     calendar.get_by_role("button", name="Next", exact=True).click()
     next_week = calendar.locator(".fc-event", has_text="Calculus")
     expect(next_week).to_have_count(1, timeout=NORMAL_TIMEOUT)
-    expect(next_week).to_contain_text("13:00")
+    expect(next_week).to_have_attribute("aria-label", re.compile(r"13:00.*17:00"))
     assert errors == []
 
 

@@ -22,6 +22,7 @@ export const blocks = {
     timeline: 'ציר זמן',
     agenda: 'סדר יום',
     workload: 'עומס',
+    timesheet: 'גיליון שעות',
   },
   filter: {
     label: 'סינון: {{title}}',

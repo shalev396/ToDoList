@@ -23,6 +23,7 @@ import type {
   ItemUpsert,
 } from '../../models/definitions/Item.js';
 import { getContainerRepository, getItemRepository } from '../../models/index.js';
+import { TravelData } from '../travel/TravelData.js';
 import type { SyncRunOwner } from './SyncRun.js';
 
 export class SyncedRows {
@@ -140,7 +141,11 @@ export class SyncedRows {
     );
   }
 
-  /** A full listing's sweep of its containers: `resource`'s not seen since `before`. */
+  /**
+   * A full listing's sweep of its containers: `resource`'s not seen since `before`. A successful
+   * response that left one out can be a permission flap that the next sync heals, so its travel
+   * rules stay (only a deselect or a disconnect drops them).
+   */
   async sweepContainers(resource: string, before: Date, options: SweepOptions): Promise<number> {
     return (await getContainerRepository()).sweepUnseen(
       this.#workspaceId,
@@ -166,11 +171,25 @@ export class SyncedRows {
     resources: readonly string[],
     options: SweepOptions,
   ): Promise<number> {
-    return (await getContainerRepository()).sweepOrphanedResources(
+    const stamped = { ...options, deletedAt: options.deletedAt ?? new Date() };
+    const swept = await (
+      await getContainerRepository()
+    ).sweepOrphanedResources(this.#workspaceId, this.#integrationId, resources, stamped);
+    await this.#forgetSwept(swept, stamped.deletedAt);
+    return swept;
+  }
+
+  /**
+   * Containers a deselect just soft-deleted (a calendar no longer selected) stop being synced:
+   * the travel rules for "every repeat" of their events go, as on a disconnect.
+   */
+  async #forgetSwept(swept: number, deletedAt: Date): Promise<void> {
+    if (swept === 0) return;
+    await TravelData.forgetContainers(
       this.#workspaceId,
-      this.#integrationId,
-      resources,
-      options,
+      await (
+        await getContainerRepository()
+      ).idsDeletedAt(this.#workspaceId, this.#integrationId, deletedAt),
     );
   }
 
@@ -182,8 +201,12 @@ export class SyncedRows {
     await (
       await getItemRepository()
     ).softDeleteForIntegration(this.#workspaceId, this.#integrationId, at);
-    await (
-      await getContainerRepository()
-    ).softDeleteForIntegration(this.#workspaceId, this.#integrationId, at);
+    const containers = await getContainerRepository();
+    // Travel rules for "every repeat" of an event name its calendar and hold its title.
+    await TravelData.forgetContainers(
+      this.#workspaceId,
+      await containers.idsForIntegration(this.#workspaceId, this.#integrationId),
+    );
+    await containers.softDeleteForIntegration(this.#workspaceId, this.#integrationId, at);
   }
 }

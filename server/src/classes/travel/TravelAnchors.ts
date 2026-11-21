@@ -7,10 +7,13 @@
  * - Rows: what the member may read, as a calendar reads it (ItemQuery#runDraft, `blockType:
  *   'calendar'`, so a series that began weeks ago is read too): a start, any kind but travel, in
  *   the range, at most ANCHOR_ROWS_MAX. Series are expanded on the workspace's wall clock; all-day
- *   and due-only occurrences never anchor. A painted area anchors like a block (the owner's ruling
+ *   and due-only occurrences never anchor, nor does an event Google shows as Free
+ *   (`transparency: 'transparent'`). A painted area anchors like a block (the owner's ruling
  *   of 2026-11-18), marked `area`: the day plan nests the items inside it (DayPlanner).
  * - Rule (Ruling 11): the item rule of that occurrence, else the series rule of its series, else
- *   the oldest where-rule that matches (each where-rule is its own draft, ANDed with the range).
+ *   the repeats rule an event that doesn't repeat falls under (the one
+ *   chosen from the latest start), else the oldest where-rule that matches (each where-rule is its
+ *   own draft, ANDed with the range).
  * - Place, in order: the member's pin of the item; the rule's place; a place named (or aliased) in
  *   the event's location, by whole words (`types/travelPlaceNames.ts`: nothing is looked up); the
  *   default place of its calendar or project. Otherwise none of its own: the day plan gives it the
@@ -32,6 +35,7 @@ import {
   type Range,
 } from '../../types/recurrence/occurrences.js';
 import type { TravelRuleScope } from '../../types/travel.js';
+import { latestRepeats } from '../../types/travelRepeats.js';
 import type { Caller } from '../base/Caller.js';
 import { ItemQuery } from '../item/ItemQuery.js';
 import type { Anchor } from './DayPlanner.js';
@@ -56,7 +60,18 @@ export interface Gathered {
   anchors: Anchor[];
   /** By `anchorItemId|occurrence` (LegKey#anchorKey). */
   fates: Map<string, AnchorFate>;
+  /** The rule that asks for each anchor's travel, by the same key (an anchor always has one). */
+  rules: Map<string, TravelRule>;
 }
+
+/** One anchor occurrence as a gather finds it now, and the rule that makes it. */
+export interface RuledAnchor {
+  anchor: Anchor;
+  rule: TravelRule;
+}
+
+/** How far around a moment `ruleOf` reads: an anchor that moved by a day or so is still found. */
+const RULE_OF_MARGIN_MS = 36 * 60 * 60 * 1000;
 
 /** A rule with its scope read once. */
 interface Scoped {
@@ -88,6 +103,12 @@ const anchorKey = (itemId: string, occurrence: string): string => `${itemId}|${o
 const isArea = (row: ItemQueryRow): boolean =>
   row.kind === 'block' && row.props['layer'] === 'area';
 
+/**
+ * A Google Calendar event shown as Free (`props.transparency` `transparent`: Hanukkah, a
+ * semester's end marker) anchors no travel. Any other value, or none, is busy.
+ */
+const isFree = (row: ItemQueryRow): boolean => row.props['transparency'] === 'transparent';
+
 /** A Google series' key, `calendarId|eventId` (its exceptions name it by `recurringEventId`). */
 function googleSeries(
   props: Readonly<Record<string, unknown>>,
@@ -113,6 +134,7 @@ export class TravelAnchors {
   readonly #defaults: ReadonlyMap<string, string>;
   readonly #rules: readonly Scoped[];
   readonly #fates = new Map<string, AnchorFate>();
+  readonly #ruled = new Map<string, TravelRule>();
 
   private constructor(caller: Caller, input: GatherInput) {
     this.#caller = caller;
@@ -135,6 +157,30 @@ export class TravelAnchors {
     return new TravelAnchors(caller, input).#gather();
   }
 
+  /**
+   * The rule and the place of ONE anchor occurrence as a gather decides them now (the item rule,
+   * else its series', else the oldest where-rule that matches: the one precedence, not a copy of
+   * it). `near` is about when it starts (a leg's `anchorStart`); the day around it is read. Null
+   * when the occurrence is no anchor any more (moved far, cancelled, no rule matches). The anchor
+   * carries the mode, the way (`there`, `back`) and its resolved place.
+   */
+  static async ruleOf(
+    caller: Caller,
+    input: Omit<GatherInput, 'range'>,
+    target: { itemId: string; occurrence: string; near: Date },
+  ): Promise<RuledAnchor | null> {
+    const range = {
+      from: new Date(target.near.getTime() - RULE_OF_MARGIN_MS),
+      to: new Date(target.near.getTime() + RULE_OF_MARGIN_MS),
+    };
+    const gathered = await TravelAnchors.gather(caller, { ...input, range });
+    const anchor = gathered.anchors.find(
+      (one) => one.itemId === target.itemId && one.occurrence === target.occurrence,
+    );
+    const rule = gathered.rules.get(anchorKey(target.itemId, target.occurrence));
+    return anchor === undefined || rule === undefined ? null : { anchor, rule };
+  }
+
   async #gather(): Promise<Gathered> {
     const reads = await ItemQuery.for(this.#caller);
     const rows = await this.#rows(reads, ANCHOR_RULES, true);
@@ -150,7 +196,7 @@ export class TravelAnchors {
       const anchor = this.#anchorOf(occurrence, matches);
       if (anchor !== null) anchors.push(anchor);
     }
-    return { anchors, fates: this.#fates };
+    return { anchors, fates: this.#fates, rules: this.#ruled };
   }
 
   /** One occurrence as an anchor; null when no rule asks for travel to it. */
@@ -163,13 +209,20 @@ export class TravelAnchors {
     const slot =
       occurrence.originalStart === null ? 'single' : occurrence.originalStart.toISOString();
     const key = anchorKey(itemId, slot);
-    const rule = this.#ruleFor(row.id, itemId, slot, matches);
+    if (isFree(row)) {
+      // "Show as: Free": a marker (a holiday, a semester's end), never somewhere he goes. A leg
+      // made for it before it was marked free goes, as no longer matching.
+      this.#fate(key, 'no_longer_matches');
+      return null;
+    }
+    const rule = this.#ruleFor(row, itemId, slot, matches);
     if (rule === null) {
       this.#fate(key, 'no_longer_matches');
       return null;
     }
     const placeId = this.#placeOf(row, itemId, rule);
     this.#fate(key, placeId === null ? 'no_place' : 'present');
+    this.#ruled.set(key, rule);
     return {
       itemId,
       occurrence: slot,
@@ -182,12 +235,14 @@ export class TravelAnchors {
       there: rule.direction !== 'back',
       back: rule.direction !== 'there',
       area: isArea(row),
+      ...(rule.arriveEarlyMinutes > 0 ? { early: rule.arriveEarlyMinutes } : {}),
+      ...(rule.lengths === null ? {} : { lengths: rule.lengths }),
     };
   }
 
   /** The item rule of the occurrence, else its series', else the oldest where-rule matching it. */
   #ruleFor(
-    rowId: string,
+    row: ItemQueryRow,
     itemId: string,
     slot: string,
     matches: ReadonlyMap<TravelRule, ReadonlySet<string>>,
@@ -200,10 +255,34 @@ export class TravelAnchors {
       ({ scope }) => scope.kind === 'series' && scope.itemId === itemId,
     );
     if (series !== undefined) return series.rule;
+    const repeats = this.#repeatsRuleFor(row, itemId, slot);
+    if (repeats !== null) return repeats;
     for (const [rule, ids] of matches) {
-      if (ids.has(rowId) || ids.has(itemId)) return rule;
+      if (ids.has(row.id) || ids.has(itemId)) return rule;
     }
     return null;
+  }
+
+  /**
+   * The repeats rule (the one from the latest start) an event that doesn't repeat (a single, never a series occurrence)
+   * is a repeat of: same calendar or project and title, same weekday and local start time, at or
+   * after the rule's `from` (so an event imported after the rule is covered too).
+   */
+  #repeatsRuleFor(row: ItemQueryRow, itemId: string, slot: string): TravelRule | null {
+    if (slot !== 'single' || itemId !== row.id || row.startAt === null || isSeriesRow(row)) {
+      return null;
+    }
+    const zone = this.#caller.settings.timezone;
+    // The event's own title, not one he renamed it to in TodoList.
+    const event = {
+      containerId: row.containerId,
+      title: row.sourceTitle ?? row.title,
+      startAt: row.startAt,
+    };
+    const repeats = this.#rules.flatMap(({ rule, scope }) =>
+      scope.kind === 'repeats' ? [{ rule, scope }] : [],
+    );
+    return latestRepeats(repeats, event, zone)?.rule ?? null;
   }
 
   /** Pin, rule's place, a place its location names, its container's default; else none. */
@@ -312,7 +391,11 @@ export class TravelAnchors {
       sort: [{ field: 'startAt', dir: 'asc' }],
       limit: ANCHOR_ROWS_MAX,
     };
-    const result = await reads.runDraft(draft, { now, blockType: 'calendar' });
+    const result = await reads.runDraft(draft, {
+      now,
+      blockType: 'calendar',
+      sourceTitle: anchors,
+    });
     const rows = (result.rows ?? []).filter((row): row is ItemQueryRow => 'kind' in row);
     if (anchors && result.total > rows.length) {
       logger.warn('travel: more timed items than one regeneration reads', {

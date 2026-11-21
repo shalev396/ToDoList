@@ -11,6 +11,7 @@ import { ConflictMark, LegModeIcon } from '@/features/travel/LegMark';
 import { legMarksOf, rowTitle, type LegMarks } from '@/features/travel/legView';
 import { useCurrentWorkspace } from '@/features/workspaces/useCurrentWorkspace';
 import { useLanguage } from '@/hooks/useLanguage';
+import { cn } from '@/lib/utils';
 import { useNow } from '@/hooks/useNow';
 import { BlockFrame } from '../../BlockFrame';
 import { blockTitle } from '../../chrome';
@@ -20,10 +21,17 @@ import { usePageVars } from '../../variables/pageVars';
 import type { ItemQueryRow, QueryRow } from '@api-types/builder';
 import type { ItemColour } from '@api-types/colours';
 import type { Occurrence } from '../time/occurrences';
-import { buildClockModel, ringProvider, type ClockArea, type ClockEvent } from './clockModel';
+import {
+  buildClockModel,
+  ringProvider,
+  tomorrowOf,
+  type ClockArea,
+  type ClockEvent,
+} from './clockModel';
 import { ClockLegend } from './ClockLegend';
 import { ClockRing } from './ClockRing';
 import { legendEntries } from './legend';
+import { TomorrowPanel } from './TomorrowPanel';
 
 /** At most this many all-day items are listed; the rest are counted. */
 const MAX_ALL_DAY = 4;
@@ -49,6 +57,8 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
   const { vars } = usePageVars();
   const data = useBlockData(dashboard, block, vars);
   const showNext = block.viz['showNext'] !== false;
+  /** Only an explicit true: a clock without the flag is today alone, as it always was. */
+  const showTomorrow = block.viz['showTomorrow'] === true;
 
   const kept = useMemo(() => {
     const rows = (data.data?.rows ?? []).filter(isTimeRow);
@@ -60,6 +70,14 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
   const model = useMemo(
     () => buildClockModel(kept, now, timeZone, colourOf, (row) => rowTitle(t, row)),
     [kept, now, timeZone, colourOf, t],
+  );
+  const tomorrowDay = useMemo(() => tomorrowOf(now, timeZone), [now, timeZone]);
+  const tomorrow = useMemo(
+    () =>
+      showTomorrow
+        ? buildClockModel(kept, now, timeZone, colourOf, (row) => rowTitle(t, row), tomorrowDay)
+        : null,
+    [showTomorrow, kept, now, timeZone, colourOf, t, tomorrowDay],
   );
   const topicNames = useMemo(
     () => new Map(topics.map((topic) => [topic.id, topic.name])),
@@ -116,6 +134,85 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
       }),
   };
 
+  const todayColumn = (
+    <div
+      className={cn(
+        'flex min-h-full flex-col items-center gap-3 pt-1',
+        // Beside tomorrow's panel the column shares the row (and may shrink).
+        showTomorrow && 'min-w-0 flex-1',
+      )}
+    >
+      <div className="flex w-full min-w-0 flex-1 items-center justify-center">
+        <ClockRing
+          events={model.timed}
+          areas={model.areas}
+          now={now}
+          timeZone={timeZone}
+          labels={labels}
+          className="w-full max-w-[260px]"
+        />
+      </div>
+      {legend.entries.length === 0 ? null : (
+        <ClockLegend entries={legend.entries} more={legend.more} />
+      )}
+      <div aria-live="polite" className="w-full min-w-0 space-y-1 text-[13px]">
+        {model.timed.length === 0 ? (
+          <p className="text-muted-foreground">{t('timeBlocks.clock.empty')}</p>
+        ) : (
+          <>
+            <SummaryLine
+              label={t('timeBlocks.clock.now')}
+              occurrence={current}
+              now={now}
+              colourOf={colourOf}
+              empty={t('timeBlocks.clock.nothingNow')}
+              detail={
+                currentEnd === null ? '' : t('timeBlocks.clock.until', { time: time(currentEnd) })
+              }
+            />
+            {showNext ? (
+              <SummaryLine
+                label={t('timeBlocks.clock.next')}
+                occurrence={next}
+                now={now}
+                colourOf={colourOf}
+                empty={t('timeBlocks.clock.nothingNext')}
+                detail={next === null ? '' : time(next.start)}
+              />
+            ) : null}
+          </>
+        )}
+      </div>
+      {model.allDay.length === 0 ? null : (
+        <section aria-label={t('timeBlocks.clock.allDay')} className="w-full space-y-1">
+          <h3 className="text-xs font-medium text-muted-foreground">
+            {t('timeBlocks.clock.allDay')}
+          </h3>
+          <ul className="space-y-0.5">
+            {model.allDay.slice(0, MAX_ALL_DAY).map((o) => (
+              <li key={o.key} className="flex min-w-0 items-center gap-2 text-[13px]">
+                <ColourDot colour={colourOf(o.row.id)} />
+                <SourceIcon source={ringProvider(o.row.source.provider)} />
+                <span dir="auto" title={o.row.title} className="min-w-0 flex-1 truncate">
+                  {o.row.title}
+                </span>
+                <SourceLink
+                  source={{ provider: o.row.source.provider, url: o.row.source.url }}
+                  title={o.row.title}
+                />
+              </li>
+            ))}
+          </ul>
+          {model.allDay.length > MAX_ALL_DAY ? (
+            <p className="text-xs text-muted-foreground">
+              {t('timeBlocks.clock.moreAllDay', { count: model.allDay.length - MAX_ALL_DAY })}
+            </p>
+          ) : null}
+        </section>
+      )}
+    </div>
+  );
+
   return (
     <BlockFrame
       title={blockTitle(block, t)}
@@ -124,76 +221,39 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
         void data.refetch();
       }}
     >
-      <div className="flex min-h-full flex-col items-center gap-3 pt-1">
-        <div className="flex w-full min-w-0 flex-1 items-center justify-center">
-          <ClockRing
-            events={model.timed}
-            areas={model.areas}
-            now={now}
-            timeZone={timeZone}
-            labels={labels}
-            className="w-full max-w-[260px]"
-          />
+      {tomorrow === null ? (
+        todayColumn
+      ) : (
+        // A container, so "beside" is decided by the block's own width, not the screen's.
+        <div className="@container min-h-full">
+          <div className="flex min-h-full flex-col gap-5 @[32rem]:flex-row @[32rem]:items-start">
+            {todayColumn}
+            <TomorrowPanel
+              model={tomorrow}
+              day={tomorrowDay}
+              timeZone={timeZone}
+              date={longDate(tomorrowDay, locale, timeZone)}
+              labelOf={labelOf}
+              colourOf={colourOf}
+              time={time}
+              labels={{
+                summary:
+                  tomorrow.timed.length === 0
+                    ? t('timeBlocks.clock.tomorrowSummaryNone', {
+                        date: longDate(tomorrowDay, locale, timeZone),
+                      })
+                    : t('timeBlocks.clock.tomorrowSummary', {
+                        count: tomorrow.timed.length,
+                        date: longDate(tomorrowDay, locale, timeZone),
+                      }),
+                eventList: t('timeBlocks.clock.tomorrowEventList'),
+                describeEvent: labels.describeEvent,
+                describeArea: labels.describeArea,
+              }}
+            />
+          </div>
         </div>
-        {legend.entries.length === 0 ? null : (
-          <ClockLegend entries={legend.entries} more={legend.more} />
-        )}
-        <div aria-live="polite" className="w-full min-w-0 space-y-1 text-[13px]">
-          {model.timed.length === 0 ? (
-            <p className="text-muted-foreground">{t('timeBlocks.clock.empty')}</p>
-          ) : (
-            <>
-              <SummaryLine
-                label={t('timeBlocks.clock.now')}
-                occurrence={current}
-                now={now}
-                colourOf={colourOf}
-                empty={t('timeBlocks.clock.nothingNow')}
-                detail={
-                  currentEnd === null ? '' : t('timeBlocks.clock.until', { time: time(currentEnd) })
-                }
-              />
-              {showNext ? (
-                <SummaryLine
-                  label={t('timeBlocks.clock.next')}
-                  occurrence={next}
-                  now={now}
-                  colourOf={colourOf}
-                  empty={t('timeBlocks.clock.nothingNext')}
-                  detail={next === null ? '' : time(next.start)}
-                />
-              ) : null}
-            </>
-          )}
-        </div>
-        {model.allDay.length === 0 ? null : (
-          <section aria-label={t('timeBlocks.clock.allDay')} className="w-full space-y-1">
-            <h3 className="text-xs font-medium text-muted-foreground">
-              {t('timeBlocks.clock.allDay')}
-            </h3>
-            <ul className="space-y-0.5">
-              {model.allDay.slice(0, MAX_ALL_DAY).map((o) => (
-                <li key={o.key} className="flex min-w-0 items-center gap-2 text-[13px]">
-                  <ColourDot colour={colourOf(o.row.id)} />
-                  <SourceIcon source={ringProvider(o.row.source.provider)} />
-                  <span dir="auto" title={o.row.title} className="min-w-0 flex-1 truncate">
-                    {o.row.title}
-                  </span>
-                  <SourceLink
-                    source={{ provider: o.row.source.provider, url: o.row.source.url }}
-                    title={o.row.title}
-                  />
-                </li>
-              ))}
-            </ul>
-            {model.allDay.length > MAX_ALL_DAY ? (
-              <p className="text-xs text-muted-foreground">
-                {t('timeBlocks.clock.moreAllDay', { count: model.allDay.length - MAX_ALL_DAY })}
-              </p>
-            ) : null}
-          </section>
-        )}
-      </div>
+      )}
     </BlockFrame>
   );
 }

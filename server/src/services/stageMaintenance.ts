@@ -1,5 +1,6 @@
 import { environment } from '../config/environment.js';
-import { closeDB, migrateDB, resetDatabase, syncDB } from '../config/database.js';
+import { closeDB, migrateDB, resetDatabase, syncDB, syncDBWithin } from '../config/database.js';
+import { TimeBudget } from '../classes/integration/calendar/TimeBudget.js';
 import { clearAllCognitoUsers } from '../utils/cognitoReset.js';
 import { clearUserUploadedAssets } from '../utils/s3Util.js';
 import type { DatabaseProvider } from '../types/env.d.ts';
@@ -10,9 +11,20 @@ import type { DatabaseProvider } from '../types/env.d.ts';
  * checkout). Never reachable over HTTP.
  */
 
+/**
+ * sync-db starts a step (a collection's indexes or validator, a migration) only while this much
+ * of the function's time is left: the longest one may take, so the run ends before Lambda kills
+ * it and the deploy script asks again (scripts/sync-db-rounds.ts).
+ */
+export const SYNC_DB_RESERVE_MS = 60_000;
+
 export interface SyncSchemaResult {
   provider: DatabaseProvider;
   results: string[];
+  /** false when the time ran out first: ask again. */
+  done: boolean;
+  /** What is still to do (collection names, migration ids); empty when done. */
+  pending: string[];
 }
 
 export interface ResetStageResult {
@@ -20,11 +32,33 @@ export interface ResetStageResult {
   message: string;
 }
 
-/** sync-db: indexes and validators, then the pending data migrations (migrations/index.ts). */
-export async function syncSchema(): Promise<SyncSchemaResult> {
-  const results = await syncDB();
-  const migrations = await migrateDB();
-  return { provider: environment.databaseProvider, results: [...results, ...migrations] };
+/**
+ * sync-db: indexes and validators, then the pending data migrations (migrations/index.ts). With
+ * `remainingMs` (the function's time left), it stops before the step that would leave less than
+ * SYNC_DB_RESERVE_MS and answers `done: false` with what is pending; each migration is recorded
+ * as it ends and every step is idempotent, so the next round loses nothing. Names and counts only.
+ */
+export async function syncSchema(
+  remainingMs: number | null = null,
+  now: () => number = Date.now,
+): Promise<SyncSchemaResult> {
+  const budget = remainingMs === null ? null : TimeBudget.start(remainingMs, now);
+  const indexes = await syncDBWithin(budget, SYNC_DB_RESERVE_MS);
+  const provider = environment.databaseProvider;
+  if (indexes.pending.length > 0) {
+    // The migrations wait: they write documents the new validators accept.
+    return { provider, results: indexes.lines, done: false, pending: indexes.pending };
+  }
+  // qa is reset before every test run against it: an empty record there is a fresh database.
+  const migrations = await migrateDB(new Date(), budget, SYNC_DB_RESERVE_MS, {
+    freshIfUnrecorded: environment.env === 'qa',
+  });
+  return {
+    provider,
+    results: [...indexes.lines, ...migrations.lines],
+    done: migrations.pending.length === 0,
+    pending: migrations.pending,
+  };
 }
 
 /**
@@ -35,7 +69,12 @@ export async function syncSchema(): Promise<SyncSchemaResult> {
  */
 export async function syncIndexesAndValidators(): Promise<SyncSchemaResult> {
   try {
-    return { provider: environment.databaseProvider, results: await syncDB() };
+    return {
+      provider: environment.databaseProvider,
+      results: await syncDB(),
+      done: true,
+      pending: [],
+    };
   } finally {
     await closeDB();
   }

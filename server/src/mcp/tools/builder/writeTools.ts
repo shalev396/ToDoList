@@ -92,12 +92,12 @@ export const builderAddBlock = defineTool({
 });
 
 const VIEWS_NOTE =
-  'A page has views after its always-first, fixed Summary (the blocks no view names; at most 20 views with the Summary, 40 blocks per grid). A rigid view (list, board, timeline, calendar, table, agenda, workload) is one full-page block: edit it with builder_update_block on its blockIds[0] (query = sources’ filter, sort and group; viz = visible fields). A dashboard view is its own grid: builder_add_block with its viewId.';
+  'A page has views after its always-first, fixed Summary (the blocks no view names; at most 20 views with the Summary, 40 blocks per grid). A rigid view (list, board, timeline, calendar, table, agenda, workload, timesheet) is one full-page block: edit it with builder_update_block on its blockIds[0] (query = sources’ filter, sort and group; viz = visible fields). A dashboard view is its own grid: builder_add_block with its viewId.';
 
 export const builderAddView = defineTool({
   name: 'builder_add_view',
   title: 'Add a view',
-  description: `Adds a view (a tab) to a page's draft: a rigid type (list, board, timeline, calendar, table, agenda, workload: one block with that type's defaults, then config on top), a blank dashboard view, or a view template by templateKey (builder_list_templates viewTemplates, e.g. my-open-work@1). On a topic page the view reads that topic. A template's data blocks read the key user's own integrations that match them; attaching one for the first time shares its items with everyone in the workspace, and the preview's shares names each. ${VIEWS_NOTE} ${CONNECTORS_NOTE} ${D12_NOTE}`,
+  description: `Adds a view (a tab) to a page's draft: a rigid type (list, board, timeline, calendar, table, agenda, workload, timesheet: one block with that type's defaults, then config on top), a blank dashboard view, or a view template by templateKey (builder_list_templates viewTemplates, e.g. my-open-work@1). On a topic page the view reads that topic. A template's data blocks read the key user's own integrations that match them; attaching one for the first time shares its items with everyone in the workspace, and the preview's shares names each. ${VIEWS_NOTE} ${CONNECTORS_NOTE} ${D12_NOTE}`,
   toolset: 'builder',
   inputSchema: z
     .strictObject({

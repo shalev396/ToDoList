@@ -88,3 +88,68 @@ describe('drop member area scoping', () => {
     );
   });
 });
+
+describe('sync-db in rounds (the deadline)', () => {
+  it('stops before the next migration when less than the reserve is left, then finishes', async () => {
+    const { TimeBudget } = await import('../classes/integration/calendar/TimeBudget.js');
+    await raw.collection(migrations.MIGRATIONS_COLLECTION).deleteMany({});
+    // A fake clock that moves 100 ms each time it is read: the budget (read once, at its start)
+    // has 250 ms, each migration's check reads it once more, and the reserve is 100 ms.
+    let clock = -100;
+    const budget = TimeBudget.start(250, () => (clock += 100));
+    const stopped = await migrations.runMigrationsWithin(raw, NOW, budget, 100);
+    // Checks at 150 ms left (run), then 50 ms left (stop): one migration done.
+    assert.equal(stopped.lines.length, 1);
+    assert.deepEqual(
+      stopped.pending,
+      migrations.MIGRATIONS.slice(1).map(({ id }) => id),
+    );
+    assert.deepEqual(await migrations.pendingMigrationIds(raw), stopped.pending);
+    // The next round, with time to spare, does the rest and answers nothing pending.
+    const next = await migrations.runMigrationsWithin(raw, NOW, null, 0);
+    assert.deepEqual(next.pending, []);
+    assert.equal(next.lines.length, migrations.MIGRATIONS.length);
+    assert.deepEqual(await migrations.pendingMigrationIds(raw), []);
+  });
+});
+
+describe('a fresh database (qa after a reset)', () => {
+  const WORKSPACE = 'ws-fresh-record';
+
+  it('records every migration without running one when none is recorded yet', async () => {
+    await raw.collection(migrations.MIGRATIONS_COLLECTION).deleteMany({});
+    // A workspace without topics: introduce-topics, if it ran, would give it the default three.
+    await raw.collection('Workspaces').insertOne({ _id: WORKSPACE as never, name: 'Fresh' });
+    const run = await migrations.runMigrationsWithin(raw, NOW, null, 0, {
+      freshIfUnrecorded: true,
+    });
+    assert.deepEqual(run.pending, []);
+    assert.deepEqual(
+      run.lines,
+      migrations.MIGRATIONS.map(({ id }) => `${id}: recorded without running (fresh database)`),
+    );
+    assert.deepEqual(await migrations.pendingMigrationIds(raw), []);
+    assert.equal(await raw.collection('Topics').countDocuments({ workspaceId: WORKSPACE }), 0);
+    await raw.collection('Workspaces').deleteOne({ _id: WORKSPACE as never });
+  });
+
+  it('runs the pending ones as usual once any migration is recorded', async () => {
+    const records = raw.collection(migrations.MIGRATIONS_COLLECTION);
+    await records.deleteMany({});
+    const [first] = migrations.MIGRATIONS;
+    assert.ok(first);
+    await records.insertOne({ _id: first.id as never, appliedAt: NOW, counts: {} });
+    const run = await migrations.runMigrationsWithin(raw, NOW, null, 0, {
+      freshIfUnrecorded: true,
+    });
+    assert.equal(run.lines[0], `${first.id}: already applied`);
+    assert.ok(run.lines.slice(1).every((line) => line.includes(': applied')));
+  });
+
+  it('runs every migration on an empty record without the option (prod, dev)', async () => {
+    await raw.collection(migrations.MIGRATIONS_COLLECTION).deleteMany({});
+    const run = await migrations.runMigrationsWithin(raw, NOW, null, 0);
+    assert.ok(run.lines.every((line) => line.includes(': applied')));
+    assert.deepEqual(await migrations.pendingMigrationIds(raw), []);
+  });
+});

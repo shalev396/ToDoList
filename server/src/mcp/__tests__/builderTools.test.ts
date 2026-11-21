@@ -559,6 +559,7 @@ describe('views and persona templates (H3, H6)', () => {
         'this-week@1',
         'deadlines-agenda@1',
         'workload-this-week@1',
+        'timesheet@1',
         'study-dashboard@1',
       ],
     );

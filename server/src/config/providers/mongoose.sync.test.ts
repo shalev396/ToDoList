@@ -183,3 +183,58 @@ describe('syncMongo (sync-db on MongoDB)', () => {
     assert.equal(indexes.filter((index) => index.name !== '_id_').length, 3);
   });
 });
+
+describe('syncMongoWithin (the deadline)', () => {
+  it('stops before the next collection when less than the reserve is left', async () => {
+    const { syncMongoWithin } = await import('./mongoose.js');
+    const { TimeBudget } = await import('../../classes/integration/calendar/TimeBudget.js');
+    // Each read of the clock moves it 100 ms: 350 ms at the start, the reserve is 100 ms.
+    let clock = -100;
+    const budget = TimeBudget.start(350, () => (clock += 100));
+    const partial = await syncMongoWithin(budget, 100);
+    assert.ok(partial.pending.length > 0);
+    assert.ok(partial.lines.length > 0);
+    // A round with time to spare finishes it all, the same lines a full run gives.
+    const full = await syncMongoWithin(null, 0);
+    assert.deepEqual(full.pending, []);
+    assert.ok(full.lines.length > partial.lines.length);
+  });
+
+  it('syncSchema answers done:false with what is pending when under the reserve, done:true after', async () => {
+    const { syncSchema } = await import('../../services/stageMaintenance.js');
+    // 10 s left is under the 60 s reserve: nothing starts.
+    const short = await syncSchema(10_000);
+    assert.equal(short.done, false);
+    assert.ok(short.pending.length > 0);
+    const full = await syncSchema(null);
+    assert.equal(full.done, true);
+    assert.deepEqual(full.pending, []);
+    // Lines are names and counts, as before.
+    assert.ok(full.results.some((line) => line.startsWith('Items: indexes ok')));
+  });
+
+  it('syncSchema on qa records the migrations without running them when none is recorded', async () => {
+    const { syncSchema } = await import('../../services/stageMaintenance.js');
+    const { MIGRATIONS_COLLECTION } = await import('../../migrations/index.js');
+    const records = connection.db?.collection(MIGRATIONS_COLLECTION);
+    assert.ok(records);
+    const stage = process.env.ENV;
+    try {
+      await records.deleteMany({});
+      process.env.ENV = 'qa';
+      const qa = await syncSchema(null);
+      assert.equal(qa.done, true);
+      assert.ok(
+        qa.results.some((line) => line.endsWith(': recorded without running (fresh database)')),
+      );
+      assert.ok(!qa.results.some((line) => line.includes(': applied')));
+      // dev (the tests' stage) runs them, as prod does.
+      await records.deleteMany({});
+      process.env.ENV = stage;
+      const dev = await syncSchema(null);
+      assert.ok(dev.results.some((line) => line.includes(': applied')));
+    } finally {
+      process.env.ENV = stage;
+    }
+  });
+});

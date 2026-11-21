@@ -80,6 +80,9 @@ function toItemRow(doc: Record<string, unknown>): ItemQueryRow {
     kind: doc['kind'] as ItemKind,
     topicId: text(doc['topicId']),
     title: redactString(text(doc['title']) ?? ''),
+    ...(typeof doc['sourceTitle'] === 'string'
+      ? { sourceTitle: redactString(doc['sourceTitle']) }
+      : {}),
     status: doc['status'] as ItemStatus,
     statusRaw: text(doc['statusRaw']),
     priority: typeof doc['priority'] === 'number' ? doc['priority'] : null,

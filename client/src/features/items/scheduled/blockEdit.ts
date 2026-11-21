@@ -40,7 +40,11 @@ export type BlockItem = Pick<
   | 'topicId'
   | 'source'
   | 'props'
-> & { overlay: Pick<ItemDetail['overlay'], 'topicOverride' | 'attrs'> };
+> & {
+  /** The block's own note (the item's body); the sheet shows and edits it. */
+  bodyPreview?: string | null;
+  overlay: Pick<ItemDetail['overlay'], 'topicOverride' | 'attrs'>;
+};
 
 export interface Span {
   start: Date;
@@ -170,6 +174,8 @@ export interface BlockDraft {
   subject: string;
   /** null = Unsorted. */
   topicId: string | null;
+  /** The block's own note ('' for none): the series', never one occurrence's. */
+  note: string;
   start: Date;
   end: Date;
 }
@@ -190,6 +196,7 @@ export function blockDraftOf(item: BlockItem, view: BlockView): BlockDraft {
     title: item.title,
     subject: subjectOf(item),
     topicId: topicOf(item),
+    note: item.bodyPreview ?? '',
     start: view.start,
     end: view.end,
   };
@@ -342,6 +349,10 @@ export function blockSaveOf(
   }
   if (subject !== base.subject.trim()) {
     fields.subject = subject === '' ? null : subject;
+  }
+  const note = draft.note.trim();
+  if (note !== base.note.trim()) {
+    fields.note = note === '' ? null : note;
   }
   const pageChanged = draft.topicId !== base.topicId;
   if (pageChanged && draft.topicId !== item.topicId) {

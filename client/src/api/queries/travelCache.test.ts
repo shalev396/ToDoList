@@ -27,6 +27,8 @@ function rule(id: string, patch: Partial<TravelRuleView> = {}): TravelRuleView {
     mode: 'transit',
     direction: 'there',
     placeId: null,
+    arriveEarlyMinutes: null,
+    lengths: null,
     createdAt: '2026-11-18T08:00:00.000Z',
     ...patch,
   };

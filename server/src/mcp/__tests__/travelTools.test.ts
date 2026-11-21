@@ -197,6 +197,53 @@ describe('the travel tools', () => {
     }
   });
 
+  it('travel_edit_leg with mode changes how he goes (this day, or every: true); not with minutes', async () => {
+    const client = await h.connect(key);
+    const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.notEqual(result.isError, true, `${name}: ${errorText(result)}`);
+      return structured(result);
+    };
+    const todo = (await call('create_todo', {
+      title: 'Seminar',
+      startAt: at(11, 15).toISOString(),
+      endAt: at(11, 16).toISOString(),
+    })) as { item: { id: string } };
+    const { legs } = (await call('travel_mark_item', {
+      itemId: todo.item.id,
+      mode: 'drive',
+      direction: 'both',
+      place: 'Technion',
+    })) as { legs: (Entry & { props: { travel: { mode: string; direction: string } } })[] };
+    const there = legs.find((leg) => leg.props.travel.direction === 'there');
+    assert.ok(there);
+    assert.equal(there.props.travel.mode, 'drive');
+
+    const walked = (await call('travel_edit_leg', { legId: there.id, mode: 'transit' })) as {
+      leg: { id: string; props: { travel: { mode: string } } } | null;
+      marked: number;
+    };
+    assert.equal(walked.marked, 1);
+    assert.equal(walked.leg?.id, there.id);
+    assert.equal(walked.leg.props.travel.mode, 'transit');
+    const every = (await call('travel_edit_leg', {
+      legId: there.id,
+      mode: 'walk',
+      every: true,
+    })) as { leg: { props: { travel: { mode: string } } } | null; marked: number };
+    assert.equal(every.marked, 1);
+    assert.equal(every.leg?.props.travel.mode, 'walk');
+
+    for (const args of [
+      { legId: there.id, mode: 'walk', minutes: 20 },
+      { legId: there.id, mode: 'walk', startAt: at(11, 13).toISOString() },
+      { legId: there.id, every: true },
+    ]) {
+      const refused = await client.callTool({ name: 'travel_edit_leg', arguments: args });
+      assert.equal(refused.isError, true, JSON.stringify(args));
+    }
+  });
+
   it('travel_mark_item marks an area: legs there and back are busy, the area itself is not', async () => {
     const client = await h.connect(key);
     const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -355,5 +402,96 @@ describe('the travel tools', () => {
     });
     assert.equal((structured(removed) as { applied: boolean }).applied, true);
     assert.equal((await rulesOf()).length, before - 1);
+  });
+});
+
+describe('the travel tools: exact times per rule', () => {
+  it('travel_set_rule and travel_mark_item take arriveEarlyMinutes and lengths; travel_list_rules returns them', async () => {
+    const own = await newTeam('travel-exact');
+    const ownKey = (
+      await insertAgentKey({
+        workspaceId: own.workspace.id,
+        userId: own.editor.id,
+        scopes: ['read', 'items:write'],
+      })
+    ).raw;
+    const client = await h.connect(ownKey);
+    const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
+      const result = await client.callTool({ name, arguments: args });
+      assert.notEqual(result.isError, true, `${name}: ${errorText(result)}`);
+      return structured(result);
+    };
+    interface RuleOut {
+      id: string;
+      arriveEarlyMinutes: number | null;
+      lengths: { there?: number; back?: number } | null;
+    }
+    await call('travel_set_place', { name: 'Home', home: true });
+    await call('travel_set_place', { name: 'Braude' });
+    const sunday = (await call('create_time_block', {
+      title: 'Sunday area',
+      startAt: at(3, 10).toISOString(),
+      endAt: at(3, 14).toISOString(),
+      recurrence: ['RRULE:FREQ=WEEKLY'],
+    })) as { item: { id: string } };
+
+    const made = (await call('travel_set_rule', {
+      seriesItemId: sunday.item.id,
+      mode: 'transit',
+      direction: 'both',
+      place: 'Braude',
+      arriveEarlyMinutes: 20,
+      lengths: { there: 95, back: 120 },
+    })) as { rule: RuleOut };
+    assert.equal(made.rule.arriveEarlyMinutes, 20);
+    assert.deepEqual(made.rule.lengths, { there: 95, back: 120 });
+
+    // Lengths are replaced whole (a side left out takes the trip's own); null clears the early minutes.
+    const changed = (await call('travel_set_rule', {
+      id: made.rule.id,
+      lengths: { there: 100 },
+      arriveEarlyMinutes: null,
+    })) as { rule: RuleOut };
+    assert.equal(changed.rule.arriveEarlyMinutes, null);
+    assert.deepEqual(changed.rule.lengths, { there: 100 });
+
+    const listed = (await call('travel_list_rules', {})) as { rules: RuleOut[] };
+    assert.deepEqual(
+      listed.rules.map((rule) => [rule.arriveEarlyMinutes, rule.lengths]),
+      [[null, { there: 100 }]],
+    );
+
+    // Marking with every creates (or updates) a series rule: it takes the two fields too.
+    const marked = (await call('travel_mark_item', {
+      itemId: sunday.item.id,
+      every: true,
+      mode: 'transit',
+      direction: 'both',
+      place: 'Braude',
+      arriveEarlyMinutes: 15,
+      lengths: { back: 90 },
+    })) as { rule: RuleOut };
+    assert.equal(marked.rule.id, made.rule.id);
+    assert.equal(marked.rule.arriveEarlyMinutes, 15);
+    assert.deepEqual(marked.rule.lengths, { back: 90 });
+
+    // The bounds: refused, nothing stored.
+    for (const bad of [
+      { arriveEarlyMinutes: 241 },
+      { arriveEarlyMinutes: -1 },
+      { arriveEarlyMinutes: 2.5 },
+      { lengths: { there: 0 } },
+      { lengths: { back: 1441 } },
+      { lengths: { there: 1.5 } },
+      { lengths: { sideways: 5 } },
+    ]) {
+      const result = await client.callTool({
+        name: 'travel_set_rule',
+        arguments: { id: made.rule.id, ...bad },
+      });
+      assert.equal(result.isError, true, JSON.stringify(bad));
+    }
+    const after = (await call('travel_list_rules', {})) as { rules: RuleOut[] };
+    assert.deepEqual(after.rules[0]?.lengths, { back: 90 });
   });
 });

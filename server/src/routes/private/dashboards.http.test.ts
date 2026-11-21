@@ -346,7 +346,8 @@ describe('builder endpoints', () => {
       blockTypes: { type: string; size: unknown }[];
       datePresets: string[];
     };
-    assert.equal(catalog.blockTypes.length, 14);
+    assert.equal(catalog.blockTypes.length, 15);
+    assert.ok(catalog.blockTypes.some((entry) => entry.type === 'timesheet'));
     assert.ok(catalog.datePresets.includes('upcoming_14d'));
     const templates = data(await call('viewer', 'GET', '/builder/templates')) as { key: string }[];
     assert.deepEqual(
@@ -368,6 +369,7 @@ describe('builder endpoints', () => {
         'this-week@1',
         'deadlines-agenda@1',
         'workload-this-week@1',
+        'timesheet@1',
         'study-dashboard@1',
       ],
     );
