@@ -226,6 +226,14 @@ export const editor = {
       overdueOnTop: 'Overdue on top',
       field: 'Filter by',
       multi: 'Allow several choices',
+      showBlocks: 'Show time blocks too, not only areas',
+    },
+    timesheet: {
+      topic: 'Page',
+      topicPage: 'This page',
+      topicAll: 'Every page',
+      topicHint:
+        'Whose painted time and to-dos it shows. On the main dashboard, “This page” is every page.',
     },
     values: {
       list: 'List',

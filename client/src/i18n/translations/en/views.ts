@@ -16,6 +16,7 @@ export const views = {
     table: 'Table',
     agenda: 'Agenda',
     workload: 'Workload',
+    timesheet: 'Timesheet',
     dashboard: 'Dashboard',
   },
   typeHints: {
@@ -26,6 +27,7 @@ export const views = {
     table: 'Rows and columns',
     agenda: 'Now, next, later today, tomorrow',
     workload: 'Hours per day this week',
+    timesheet: 'Painted time, with to-dos to drag in',
     dashboard: 'Its own grid of blocks',
   },
   add: {

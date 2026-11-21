@@ -87,7 +87,14 @@ describe('block registry', () => {
       'list',
       'table',
     ]);
-    assert.deepEqual(keys('timeBlocks'), ['agenda', 'calendar', 'clock', 'timeline', 'workload']);
+    assert.deepEqual(keys('timeBlocks'), [
+      'agenda',
+      'calendar',
+      'clock',
+      'timeline',
+      'timesheet',
+      'workload',
+    ]);
     assert.deepEqual(keys('controlBlocks'), ['action', 'filter', 'note']);
   });
 
@@ -119,7 +126,9 @@ describe('block registry', () => {
     for (const type of BLOCK_TYPES) {
       const entry = merged[type];
       assert.ok(isEntry(entry));
-      const timed = ['clock', 'calendar', 'agenda', 'timeline', 'workload'].includes(type);
+      const timed = ['clock', 'calendar', 'agenda', 'timeline', 'workload', 'timesheet'].includes(
+        type,
+      );
       const expected = timed ? 60_000 : undefined;
       assert.equal(entry.refetchIntervalMs, expected, type);
     }

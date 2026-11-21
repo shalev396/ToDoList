@@ -284,6 +284,7 @@ Unique on `(integrationId, resource)`. Example cursors: Google Calendar uses `sy
   "version": 12, "publishedVersion": 11, "updatedBy": { "userId": "u-1", "agentId": null }, "deletedAt": null }
 ```
 - `scope.topicId: null` = the main dashboard. `title` (and block titles) are the only free text.
+- Block types and their JSON are BUILDER.md §4's. The `timesheet` block (2026-11-21) stores nothing new: a to-do it plans keeps its plan in the item's own `overlay.plannedAt` (§3.6), and its chip's 30 minutes are drawn, never stored.
 - `version` is bumped on every write (optimistic concurrency via `expectedVersion`). `publishedVersion` is what the UI shows to non-editors.
 
 ### 3.12 `DashboardVersions` (history, undo)

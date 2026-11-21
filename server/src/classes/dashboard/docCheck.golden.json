@@ -159,7 +159,7 @@
         },
         {
           "pointer": "/blocks/0/type",
-          "message": "Invalid option: expected one of \"list\"|\"table\"|\"kanban\"|\"calendar\"|\"chart\"|\"clock\"|\"counter\"|\"deadlines\"|\"note\"|\"filter\"|\"action\"|\"timeline\"|\"agenda\"|\"workload\""
+          "message": "Invalid option: expected one of \"list\"|\"table\"|\"kanban\"|\"calendar\"|\"chart\"|\"clock\"|\"counter\"|\"deadlines\"|\"note\"|\"filter\"|\"action\"|\"timeline\"|\"agenda\"|\"workload\"|\"timesheet\""
         },
         {
           "pointer": "/blocks/0/title",
@@ -282,6 +282,10 @@
         {
           "pointer": "/blocks/13/viz/kind",
           "message": "Invalid input: expected \"workload\""
+        },
+        {
+          "pointer": "/blocks/14/viz/kind",
+          "message": "Invalid input: expected \"timesheet\""
         }
       ],
       "validated": {
@@ -353,6 +357,10 @@
         {
           "pointer": "/blocks/13/query",
           "message": "a workload block needs a query or a saved view"
+        },
+        {
+          "pointer": "/blocks/14/query",
+          "message": "a timesheet block needs a query or a saved view"
         }
       ],
       "validated": {
@@ -443,6 +451,10 @@
         },
         {
           "pointer": "/blocks/13/query/where/rules/0/field",
+          "message": "not a field of items"
+        },
+        {
+          "pointer": "/blocks/14/query/where/rules/0/field",
           "message": "not a field of items"
         }
       ],
@@ -1232,6 +1244,12 @@
           "severity": "error",
           "pointer": "/blocks/12/viz/showSource",
           "message": "rows always link to their source: this block cannot turn that off"
+        },
+        {
+          "code": "source_link_hidden",
+          "severity": "error",
+          "pointer": "/blocks/14/viz/showSource",
+          "message": "rows always link to their source: this block cannot turn that off"
         }
       ],
       "mcp": [
@@ -1276,6 +1294,12 @@
           "severity": "error",
           "pointer": "/blocks/12/viz/showSource",
           "message": "rows always link to their source: this block cannot turn that off"
+        },
+        {
+          "code": "source_link_hidden",
+          "severity": "error",
+          "pointer": "/blocks/14/viz/showSource",
+          "message": "rows always link to their source: this block cannot turn that off"
         }
       ],
       "ui with topics": [
@@ -1319,6 +1343,12 @@
           "code": "source_link_hidden",
           "severity": "error",
           "pointer": "/blocks/12/viz/showSource",
+          "message": "rows always link to their source: this block cannot turn that off"
+        },
+        {
+          "code": "source_link_hidden",
+          "severity": "error",
+          "pointer": "/blocks/14/viz/showSource",
           "message": "rows always link to their source: this block cannot turn that off"
         }
       ]
@@ -1408,6 +1438,12 @@
           "severity": "warning",
           "pointer": "/blocks/13/viz/kind",
           "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/14/viz/kind",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
         }
       ],
       "mcp": [
@@ -1494,6 +1530,12 @@
           "severity": "error",
           "pointer": "/blocks/13/viz/kind",
           "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "error",
+          "pointer": "/blocks/14/viz/kind",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
         }
       ],
       "ui with topics": [
@@ -1579,6 +1621,12 @@
           "code": "hardcoded_text",
           "severity": "warning",
           "pointer": "/blocks/13/viz/kind",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/14/viz/kind",
           "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
         }
       ]
@@ -1752,6 +1800,18 @@
           "severity": "error",
           "pointer": "/blocks/13/viz/field",
           "message": "a field that may hold a credential"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/14/viz/caption",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        },
+        {
+          "code": "private_field",
+          "severity": "error",
+          "pointer": "/blocks/14/viz/field",
+          "message": "a field that may hold a credential"
         }
       ],
       "mcp": [
@@ -1922,6 +1982,18 @@
           "severity": "error",
           "pointer": "/blocks/13/viz/field",
           "message": "a field that may hold a credential"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "error",
+          "pointer": "/blocks/14/viz/caption",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        },
+        {
+          "code": "private_field",
+          "severity": "error",
+          "pointer": "/blocks/14/viz/field",
+          "message": "a field that may hold a credential"
         }
       ],
       "ui with topics": [
@@ -2091,6 +2163,18 @@
           "code": "private_field",
           "severity": "error",
           "pointer": "/blocks/13/viz/field",
+          "message": "a field that may hold a credential"
+        },
+        {
+          "code": "hardcoded_text",
+          "severity": "warning",
+          "pointer": "/blocks/14/viz/caption",
+          "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+        },
+        {
+          "code": "private_field",
+          "severity": "error",
+          "pointer": "/blocks/14/viz/field",
           "message": "a field that may hold a credential"
         }
       ]
@@ -2435,7 +2519,7 @@
           {
             "code": "invalid",
             "pointer": "/blocks/0/type",
-            "message": "Invalid option: expected one of \"list\"|\"table\"|\"kanban\"|\"calendar\"|\"chart\"|\"clock\"|\"counter\"|\"deadlines\"|\"note\"|\"filter\"|\"action\"|\"timeline\"|\"agenda\"|\"workload\""
+            "message": "Invalid option: expected one of \"list\"|\"table\"|\"kanban\"|\"calendar\"|\"chart\"|\"clock\"|\"counter\"|\"deadlines\"|\"note\"|\"filter\"|\"action\"|\"timeline\"|\"agenda\"|\"workload\"|\"timesheet\""
           },
           {
             "code": "invalid",
@@ -2481,7 +2565,7 @@
           {
             "code": "invalid",
             "pointer": "/blocks/0/type",
-            "message": "Invalid option: expected one of \"list\"|\"table\"|\"kanban\"|\"calendar\"|\"chart\"|\"clock\"|\"counter\"|\"deadlines\"|\"note\"|\"filter\"|\"action\"|\"timeline\"|\"agenda\"|\"workload\""
+            "message": "Invalid option: expected one of \"list\"|\"table\"|\"kanban\"|\"calendar\"|\"chart\"|\"clock\"|\"counter\"|\"deadlines\"|\"note\"|\"filter\"|\"action\"|\"timeline\"|\"agenda\"|\"workload\"|\"timesheet\""
           },
           {
             "code": "invalid",
@@ -2657,6 +2741,11 @@
             "code": "invalid",
             "pointer": "/blocks/13/viz/kind",
             "message": "Invalid input: expected \"workload\""
+          },
+          {
+            "code": "invalid",
+            "pointer": "/blocks/14/viz/kind",
+            "message": "Invalid input: expected \"timesheet\""
           }
         ],
         "warnings": [
@@ -2728,6 +2817,11 @@
           {
             "code": "hardcoded_text",
             "pointer": "/blocks/13/viz/kind",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          },
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/14/viz/kind",
             "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
           }
         ]
@@ -2806,6 +2900,11 @@
             "message": "Invalid input: expected \"workload\""
           },
           {
+            "code": "invalid",
+            "pointer": "/blocks/14/viz/kind",
+            "message": "Invalid input: expected \"timesheet\""
+          },
+          {
             "code": "hardcoded_text",
             "pointer": "/blocks/0/viz/kind",
             "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
@@ -2873,6 +2972,11 @@
           {
             "code": "hardcoded_text",
             "pointer": "/blocks/13/viz/kind",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          },
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/14/viz/kind",
             "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
           }
         ],
@@ -2952,6 +3056,11 @@
             "code": "invalid",
             "pointer": "/blocks/13/query",
             "message": "a workload block needs a query or a saved view"
+          },
+          {
+            "code": "invalid",
+            "pointer": "/blocks/14/query",
+            "message": "a timesheet block needs a query or a saved view"
           }
         ],
         "warnings": []
@@ -3028,6 +3137,11 @@
             "code": "invalid",
             "pointer": "/blocks/13/query",
             "message": "a workload block needs a query or a saved view"
+          },
+          {
+            "code": "invalid",
+            "pointer": "/blocks/14/query",
+            "message": "a timesheet block needs a query or a saved view"
           }
         ],
         "warnings": []
@@ -3133,6 +3247,11 @@
             "code": "invalid",
             "pointer": "/blocks/13/query/where/rules/0/field",
             "message": "not a field of items"
+          },
+          {
+            "code": "invalid",
+            "pointer": "/blocks/14/query/where/rules/0/field",
+            "message": "not a field of items"
           }
         ],
         "warnings": []
@@ -3223,6 +3342,11 @@
           {
             "code": "invalid",
             "pointer": "/blocks/13/query/where/rules/0/field",
+            "message": "not a field of items"
+          },
+          {
+            "code": "invalid",
+            "pointer": "/blocks/14/query/where/rules/0/field",
             "message": "not a field of items"
           }
         ],
@@ -4968,6 +5092,11 @@
             "message": "Unrecognized key: \"showSource\""
           },
           {
+            "code": "invalid",
+            "pointer": "/blocks/14/viz",
+            "message": "Unrecognized key: \"showSource\""
+          },
+          {
             "code": "source_link_hidden",
             "pointer": "/blocks/0/viz/showSource",
             "message": "rows always link to their source: this block cannot turn that off"
@@ -5000,6 +5129,11 @@
           {
             "code": "source_link_hidden",
             "pointer": "/blocks/12/viz/showSource",
+            "message": "rows always link to their source: this block cannot turn that off"
+          },
+          {
+            "code": "source_link_hidden",
+            "pointer": "/blocks/14/viz/showSource",
             "message": "rows always link to their source: this block cannot turn that off"
           }
         ],
@@ -5079,6 +5213,11 @@
             "message": "Unrecognized key: \"showSource\""
           },
           {
+            "code": "invalid",
+            "pointer": "/blocks/14/viz",
+            "message": "Unrecognized key: \"showSource\""
+          },
+          {
             "code": "source_link_hidden",
             "pointer": "/blocks/0/viz/showSource",
             "message": "rows always link to their source: this block cannot turn that off"
@@ -5111,6 +5250,11 @@
           {
             "code": "source_link_hidden",
             "pointer": "/blocks/12/viz/showSource",
+            "message": "rows always link to their source: this block cannot turn that off"
+          },
+          {
+            "code": "source_link_hidden",
+            "pointer": "/blocks/14/viz/showSource",
             "message": "rows always link to their source: this block cannot turn that off"
           }
         ],
@@ -5190,6 +5334,11 @@
             "code": "invalid",
             "pointer": "/blocks/13/viz/kind",
             "message": "Invalid input: expected \"workload\""
+          },
+          {
+            "code": "invalid",
+            "pointer": "/blocks/14/viz/kind",
+            "message": "Invalid input: expected \"timesheet\""
           }
         ],
         "warnings": [
@@ -5261,6 +5410,11 @@
           {
             "code": "hardcoded_text",
             "pointer": "/blocks/13/viz/kind",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          },
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/14/viz/kind",
             "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
           }
         ]
@@ -5339,6 +5493,11 @@
             "message": "Invalid input: expected \"workload\""
           },
           {
+            "code": "invalid",
+            "pointer": "/blocks/14/viz/kind",
+            "message": "Invalid input: expected \"timesheet\""
+          },
+          {
             "code": "hardcoded_text",
             "pointer": "/blocks/0/viz/kind",
             "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
@@ -5406,6 +5565,11 @@
           {
             "code": "hardcoded_text",
             "pointer": "/blocks/13/viz/kind",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          },
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/14/viz/kind",
             "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
           }
         ],
@@ -5487,6 +5651,11 @@
             "message": "Unrecognized keys: \"caption\", \"field\""
           },
           {
+            "code": "invalid",
+            "pointer": "/blocks/14/viz",
+            "message": "Unrecognized keys: \"caption\", \"field\""
+          },
+          {
             "code": "private_field",
             "pointer": "/blocks/0/viz/field",
             "message": "a field that may hold a credential"
@@ -5554,6 +5723,11 @@
           {
             "code": "private_field",
             "pointer": "/blocks/13/viz/field",
+            "message": "a field that may hold a credential"
+          },
+          {
+            "code": "private_field",
+            "pointer": "/blocks/14/viz/field",
             "message": "a field that may hold a credential"
           }
         ],
@@ -5626,6 +5800,11 @@
           {
             "code": "hardcoded_text",
             "pointer": "/blocks/13/viz/caption",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          },
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/14/viz/caption",
             "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
           }
         ]
@@ -5704,6 +5883,11 @@
             "message": "Unrecognized keys: \"caption\", \"field\""
           },
           {
+            "code": "invalid",
+            "pointer": "/blocks/14/viz",
+            "message": "Unrecognized keys: \"caption\", \"field\""
+          },
+          {
             "code": "hardcoded_text",
             "pointer": "/blocks/0/viz/caption",
             "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
@@ -5841,6 +6025,16 @@
           {
             "code": "private_field",
             "pointer": "/blocks/13/viz/field",
+            "message": "a field that may hold a credential"
+          },
+          {
+            "code": "hardcoded_text",
+            "pointer": "/blocks/14/viz/caption",
+            "message": "hard-coded text: labels come from data or i18n keys; only titles and notes hold text"
+          },
+          {
+            "code": "private_field",
+            "pointer": "/blocks/14/viz/field",
             "message": "a field that may hold a credential"
           }
         ],

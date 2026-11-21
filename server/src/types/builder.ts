@@ -36,6 +36,7 @@ export const BLOCK_TYPES = [
   'timeline',
   'agenda',
   'workload',
+  'timesheet',
 ] as const;
 export type BlockType = (typeof BLOCK_TYPES)[number];
 
@@ -561,6 +562,15 @@ export const VIZ_SCHEMAS = {
     /** Hours a day that read as a full load; the bars above it warn. */
     capacityHours: z.number().min(1).max(24).optional(),
   }),
+  /**
+   * A topic's painted time (its areas) on a week grid, with its open to-dos beside it to drag
+   * onto the grid (`overlay.plannedAt`). The topic is the query's `topic` rule.
+   */
+  timesheet: z.strictObject({
+    kind: z.literal('timesheet'),
+    /** Also show the topic's time blocks (layer `block`), not only its areas; true unless set. */
+    showBlocks: z.boolean().optional(),
+  }),
 } as const satisfies Record<BlockType, z.ZodType>;
 
 // ─── Views (H3) ─────────────────────────────────────────────────────────────
@@ -568,8 +578,8 @@ export const VIZ_SCHEMAS = {
 /**
  * What a page view can be. Summary (the page's own grid) is always there and is not one of these:
  * it is the first view, can't be removed or moved, and is never stored in `views[]`.
- * - Rigid views (list, board, timeline, calendar, table, agenda, workload) are one full-page block
- *   of their type: no grid to edit.
+ * - Rigid views (list, board, timeline, calendar, table, agenda, workload, timesheet) are one
+ *   full-page block of their type: no grid to edit.
  * - A dashboard view is its own grid of blocks, like the Summary.
  */
 export const VIEW_TYPES = [
@@ -580,6 +590,7 @@ export const VIEW_TYPES = [
   'table',
   'agenda',
   'workload',
+  'timesheet',
   'dashboard',
 ] as const;
 export type ViewType = (typeof VIEW_TYPES)[number];
@@ -594,6 +605,7 @@ export const VIEW_BLOCK_TYPE: Readonly<Record<RigidViewType, BlockType>> = {
   table: 'table',
   agenda: 'agenda',
   workload: 'workload',
+  timesheet: 'timesheet',
 };
 
 export function isRigidViewType(type: ViewType): type is RigidViewType {

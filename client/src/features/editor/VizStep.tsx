@@ -10,6 +10,7 @@ import {
   type CatalogDescription,
   type DisplayRule,
 } from '@api-types/builder';
+import { TimesheetFields } from '@/features/dashboards/blocks/timesheet/TimesheetFields';
 import type { BlockDraft } from './draft';
 import { FormRow } from './FormRow';
 import { catalogFieldsOf, formatValue, isValueless, parseList } from './queryBuilder';
@@ -381,7 +382,10 @@ export function VizStep({ draft, onChange, catalog, variables }: VizStepProps) {
   const entry = catalog.blockTypes.find((candidate) => candidate.type === draft.type);
   const schema = entry?.vizSchema ?? {};
   const kinds = vizKinds(schema);
-  const options = vizOptions(schema);
+  // The timesheet's switch is its own (TimesheetFields): on unless turned off.
+  const options = vizOptions(schema).filter(
+    (option) => !(draft.type === 'timesheet' && option.name === 'showBlocks'),
+  );
   const fieldNames = catalogFieldsOf(catalog, draft.query?.source ?? 'items').map(
     (field) => field.field,
   );
@@ -427,6 +431,7 @@ export function VizStep({ draft, onChange, catalog, variables }: VizStepProps) {
           }}
         />
       ))}
+      {draft.type === 'timesheet' ? <TimesheetFields draft={draft} onChange={onChange} /> : null}
       {draft.type === 'note' ? (
         <FormRow label={t('editor.viz.note')} htmlFor="viz-note" hint={t('editor.viz.noteHint')}>
           <textarea

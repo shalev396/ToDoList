@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { DocCheck } from '../classes/dashboard/DocCheck.js';
 import type { DashboardDraft } from '../types/builder.js';
 import { getPersona, listPersonas, personaTemplateKeys, resolvePersonaKey } from './personas.js';
+import { BLOCK_CATALOG } from './catalog.js';
 import { applyOps, newBlockId } from './ops.js';
 import { instantiateTemplate, localizeTemplate } from './templates.js';
 import {
@@ -21,7 +22,7 @@ const page = (): DashboardDraft => ({
 });
 
 describe('view templates', () => {
-  it('lists the six templates of the brief, in order', () => {
+  it('lists the templates of the brief, and the Timesheet, in order', () => {
     assert.deepEqual(
       listViewTemplates().map((entry) => [entry.key, entry.type]),
       [
@@ -30,6 +31,7 @@ describe('view templates', () => {
         ['this-week@1', 'timeline'],
         ['deadlines-agenda@1', 'agenda'],
         ['workload-this-week@1', 'workload'],
+        ['timesheet@1', 'timesheet'],
         ['study-dashboard@1', 'dashboard'],
       ],
     );
@@ -45,6 +47,19 @@ describe('view templates', () => {
   it('localizes titles in English and Hebrew', () => {
     assert.equal(localizeViewTemplate('my-open-work@1', 'en')?.title, 'My open work');
     assert.notEqual(localizeViewTemplate('my-open-work@1', 'he')?.title, 'My open work');
+    assert.equal(localizeViewTemplate('timesheet', 'en')?.title, 'Timesheet');
+    assert.equal(localizeViewTemplate('timesheet', 'he')?.title, 'גיליון שעות');
+  });
+
+  it('the Timesheet template is the catalog’s timesheet block, on the page’s topic', () => {
+    const template = localizeViewTemplate('timesheet@1', 'en');
+    const [block] = template?.blocks ?? [];
+    assert.equal(block?.type, 'timesheet');
+    const { query, viz, listen } = BLOCK_CATALOG.timesheet.defaults;
+    assert.deepEqual(
+      { query: block.query, viz: block.viz, listen: block.listen },
+      { query, viz, listen },
+    );
   });
 
   it('every template makes a valid view on a topic page, with clean lint, in both languages', () => {

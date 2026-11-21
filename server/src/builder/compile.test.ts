@@ -1198,7 +1198,11 @@ describe('compileQuery: groups', () => {
 describe('compileQuery: task-shaped and time-shaped results (time blocks, areas, travel)', () => {
   /** The default scope of a task-shaped result: no reserved time. */
   const EXCLUSION = { kind: { $nin: ['block', 'travel'] } };
-  const TIME_SHAPED = ['calendar', 'clock', 'timeline', 'agenda', 'workload'] as const;
+  const TIME_SHAPED = ['calendar', 'clock', 'timeline', 'agenda', 'workload', 'timesheet'] as const;
+  /** What a timesheet's range never narrows (its to-dos), beside its timed rows. */
+  const UNDATED = { kind: { $nin: ['event', 'block', 'travel'] } };
+  const asTimesheet = (type: string, timed: unknown): unknown =>
+    type === 'timesheet' ? { $or: [timed, UNDATED] } : timed;
   const holdsExclusion = (compiled: CompiledQuery): boolean =>
     JSON.stringify(compiled.pipeline).includes(JSON.stringify(EXCLUSION));
   const catalogQuery = (type: (typeof BLOCK_TYPES)[number]): Query => {
@@ -1307,14 +1311,18 @@ describe('compileQuery: task-shaped and time-shaped results (time blocks, areas,
         ),
       );
     for (const type of TIME_SHAPED) {
-      assert.deepEqual(range('startAt', type), { $or: [{ startAt: week }, ...series] }, type);
+      assert.deepEqual(
+        range('startAt', type),
+        asTimesheet(type, { $or: [{ startAt: week }, ...series] }),
+        type,
+      );
       assert.deepEqual(
         range('any', type),
-        { $or: [{ startAt: week }, { startAt: null, dueAt: week }, ...series] },
+        asTimesheet(type, { $or: [{ startAt: week }, { startAt: null, dueAt: week }, ...series] }),
         type,
       );
       // A due date never repeats: no series branch.
-      assert.deepEqual(range('dueAt', type), { dueAt: week }, type);
+      assert.deepEqual(range('dueAt', type), asTimesheet(type, { dueAt: week }), type);
     }
     // The calendar's default over `$page.range` reads it too.
     const calendar = compileQuery(
@@ -1326,6 +1334,86 @@ describe('compileQuery: task-shaped and time-shaped results (time blocks, areas,
     );
     for (const branch of series) {
       assert.ok(JSON.stringify(filterOf(calendar)).includes(JSON.stringify(branch)));
+    }
+  });
+
+  it('a timesheet: its range narrows its time, never its to-dos; unset, it narrows nothing', () => {
+    const week = { $gte: new Date('2026-11-07T22:00:00Z'), $lt: new Date('2026-11-14T22:00:00Z') };
+    const vars = {
+      topic: 'work',
+      range: { from: '2026-11-07T22:00:00Z', to: '2026-11-14T22:00:00Z' },
+    };
+    const compiled = compileQuery(
+      catalogQuery('timesheet'),
+      context({ blockType: 'timesheet', vars }),
+    );
+    const filter = filterOf(compiled) as { $and: unknown[] };
+    // The topic, then: time blocks and areas, or open to-dos, tasks and issues.
+    assert.deepEqual(filter.$and.slice(0, 1), [
+      {
+        $and: [
+          { topicId: 'work' },
+          {
+            $or: [
+              { kind: 'block' },
+              {
+                $and: [
+                  { kind: { $in: ['todo', 'task', 'issue', 'assignment'] } },
+                  { status: { $in: ['open', 'in_progress'] } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+    assert.deepEqual(filter.$and[1], {
+      $or: [
+        { $or: [{ startAt: week }, { startAt: null, dueAt: week }, ...timeBranches(week)] },
+        UNDATED,
+      ],
+    });
+    assert.ok(!holdsExclusion(compiled), 'reserved time is read');
+    assert.deepEqual(compiled.appliedVars, { '$page.topic': 'work', '$page.range': vars.range });
+    // The main page sets no topic: every topic. No range yet: no date window at all.
+    const unscoped = filterOf(
+      compileQuery(catalogQuery('timesheet'), context({ blockType: 'timesheet' })),
+    );
+    assert.deepEqual(Object.keys(unscoped as object), ['$or']);
+    // The same query on any other block keeps its window over every row.
+    const asCalendar = filterOf(
+      compileQuery(catalogQuery('timesheet'), context({ blockType: 'calendar', vars })),
+    ) as { $and: unknown[] };
+    assert.ok(!JSON.stringify(asCalendar.$and[1]).includes(JSON.stringify(UNDATED)));
+  });
+
+  it('a timesheet sorts its timed rows first, whatever its query sorts by; no other block does', () => {
+    const sortOf = (compiled: CompiledQuery): Record<string, unknown> =>
+      stage(facetOf(compiled)['rows'], '$sort') as Record<string, unknown>;
+    const ranksOf = (compiled: CompiledQuery): Record<string, unknown> =>
+      stage(facetOf(compiled)['rows'], '$addFields') as Record<string, unknown>;
+    const timesheet = compileQuery(catalogQuery('timesheet'), context({ blockType: 'timesheet' }));
+    // Timed first, then soonest due (undated last), then the earliest plan (unplanned last).
+    assert.deepEqual(Object.keys(sortOf(timesheet)), [
+      '__timedFirst',
+      '__null0',
+      'dueAt',
+      '__null1',
+      'overlay.plannedAt',
+      '_id',
+    ]);
+    assert.deepEqual(ranksOf(timesheet)['__timedFirst'], {
+      $cond: [{ $in: ['$kind', ['event', 'block', 'travel']] }, 0, 1],
+    });
+    // A query sorting by anything else still keeps the time first.
+    const byTitle = compileQuery(
+      { source: 'items', sort: [{ field: 'title', dir: 'desc' }] },
+      context({ blockType: 'timesheet' }),
+    );
+    assert.equal(Object.keys(sortOf(byTitle))[0], '__timedFirst');
+    for (const type of ['calendar', 'list'] as const) {
+      const other = compileQuery(catalogQuery('timesheet'), context({ blockType: type }));
+      assert.equal('__timedFirst' in sortOf(other), false, type);
     }
   });
 
@@ -1356,6 +1444,7 @@ describe('compileQuery: task-shaped and time-shaped results (time blocks, areas,
           timeline: 100,
           agenda: 200,
           workload: 200,
+          timesheet: 200,
         }[type],
       );
       // A limit it names stands, and a preview still shows 20 rows at most.

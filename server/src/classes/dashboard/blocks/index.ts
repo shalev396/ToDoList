@@ -37,6 +37,7 @@ export { ActionBlock } from './ActionBlock.js';
 export { TimelineBlock } from './TimelineBlock.js';
 export { AgendaBlock } from './AgendaBlock.js';
 export { WorkloadBlock } from './WorkloadBlock.js';
+export { TimesheetBlock } from './TimesheetBlock.js';
 export { UnknownBlock } from './UnknownBlock.js';
 
 BlockRegistry.instance.seal();
