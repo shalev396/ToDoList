@@ -1358,7 +1358,7 @@ describe('compileQuery: task-shaped and time-shaped results (time blocks, areas,
               { kind: 'block' },
               {
                 $and: [
-                  { kind: { $in: ['todo', 'task', 'issue'] } },
+                  { kind: { $in: ['todo', 'task', 'issue', 'assignment'] } },
                   { status: { $in: ['open', 'in_progress'] } },
                 ],
               },
@@ -1385,6 +1385,36 @@ describe('compileQuery: task-shaped and time-shaped results (time blocks, areas,
       compileQuery(catalogQuery('timesheet'), context({ blockType: 'calendar', vars })),
     ) as { $and: unknown[] };
     assert.ok(!JSON.stringify(asCalendar.$and[1]).includes(JSON.stringify(UNDATED)));
+  });
+
+  it('a timesheet sorts its timed rows first, whatever its query sorts by; no other block does', () => {
+    const sortOf = (compiled: CompiledQuery): Record<string, unknown> =>
+      stage(facetOf(compiled)['rows'], '$sort') as Record<string, unknown>;
+    const ranksOf = (compiled: CompiledQuery): Record<string, unknown> =>
+      stage(facetOf(compiled)['rows'], '$addFields') as Record<string, unknown>;
+    const timesheet = compileQuery(catalogQuery('timesheet'), context({ blockType: 'timesheet' }));
+    // Timed first, then soonest due (undated last), then the earliest plan (unplanned last).
+    assert.deepEqual(Object.keys(sortOf(timesheet)), [
+      '__timedFirst',
+      '__null0',
+      'dueAt',
+      '__null1',
+      'overlay.plannedAt',
+      '_id',
+    ]);
+    assert.deepEqual(ranksOf(timesheet)['__timedFirst'], {
+      $cond: [{ $in: ['$kind', ['event', 'block', 'travel']] }, 0, 1],
+    });
+    // A query sorting by anything else still keeps the time first.
+    const byTitle = compileQuery(
+      { source: 'items', sort: [{ field: 'title', dir: 'desc' }] },
+      context({ blockType: 'timesheet' }),
+    );
+    assert.equal(Object.keys(sortOf(byTitle))[0], '__timedFirst');
+    for (const type of ['calendar', 'list'] as const) {
+      const other = compileQuery(catalogQuery('timesheet'), context({ blockType: type }));
+      assert.equal('__timedFirst' in sortOf(other), false, type);
+    }
   });
 
   it('a task-shaped block reads rows by their own dates only: no series branch', () => {

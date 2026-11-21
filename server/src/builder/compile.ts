@@ -287,6 +287,15 @@ const TASK_SHAPED_SCOPE: Filter = { kind: { $nin: [...SCHEDULED_KINDS] } };
  */
 const TIMESHEET_UNDATED: Filter = { kind: { $nin: ['event', ...SCHEDULED_KINDS] } };
 
+/**
+ * A timesheet's rows sort its timed rows (events, blocks, areas, legs) first, before whatever its
+ * query sorts by: the row cap then cuts its to-dos, never its painted time.
+ */
+const TIMESHEET_TIMED_FIRST = '__timedFirst';
+const TIMESHEET_TIMED_RANK: Filter = {
+  $cond: [{ $in: ['$kind', ['event', ...SCHEDULED_KINDS]] }, 0, 1],
+};
+
 /** The kinds a compiled `=` or `in` rule on `kind` asks for (`{kind: 'x'}`, `{kind: {$in}}`). */
 function kindsAskedFor(filter: Filter): unknown[] {
   const value = filter['kind'];
@@ -772,6 +781,10 @@ class Compilation {
   rowStages(sort: NonNullable<Query['sort']>, limit: number): PipelineStage[] {
     const nullFlags: Filter = {};
     const order: Record<string, 1 | -1> = {};
+    if (this.ctx.blockType === 'timesheet' && this.source === 'items') {
+      nullFlags[TIMESHEET_TIMED_FIRST] = TIMESHEET_TIMED_RANK;
+      order[TIMESHEET_TIMED_FIRST] = 1;
+    }
     sort.forEach((entry, index) => {
       const spec = this.field(entry.field, `/sort/${String(index)}/field`);
       if (spec.type === 'array') {

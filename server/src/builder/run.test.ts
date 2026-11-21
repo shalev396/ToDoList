@@ -506,8 +506,24 @@ describe('runQuery: a timesheet (a topic’s painted time and its open to-dos)',
       status: 'done',
     });
     await items.createLocal('w-t', { ownerUserId: 'u-1', title: 'Buy milk', topicId: 'personal' });
+    const homework = mirrored('jira', 't5', {
+      title: 'Calculus homework',
+      kind: 'assignment',
+      dueAt: new Date('2026-11-13T10:00:00Z'),
+    });
     await items.bulkUpsert('w-t', [
       mirrored('jira', 't1', { title: 'Fix the login' }),
+      mirrored('jira', 't4', { title: 'Ship the beta', dueAt: new Date('2026-11-12T10:00:00Z') }),
+      {
+        ...homework,
+        integrationId: 'i-moodle',
+        source: {
+          ...homework.source,
+          provider: 'moodle',
+          key: null,
+          url: 'https://moodle.example/a/5',
+        },
+      },
       mirrored('jira', 't2', { title: 'Shipped issue', status: 'done' }),
       mirrored('google_calendar', 't3', {
         title: 'Standup',
@@ -523,25 +539,42 @@ describe('runQuery: a timesheet (a topic’s painted time and its open to-dos)',
       context({ ws: { id: 'w-t' }, blockType: 'timesheet', vars: { topic: 'work', range: WEEK } }),
       deps,
     );
-    assert.deepEqual(titles(result), [
-      'Deep work',
-      'Due in December',
-      'Fix the login',
-      'TLVTech',
-      'Write the report',
-    ]);
     const rows = (result.rows ?? []) as ItemQueryRow[];
-    // Reserved time first (sorted by kind), so the row cap never cuts an area for a to-do.
+    // The time first (so the row cap never cuts it), then the to-dos, tasks, issues and
+    // assignments: soonest due first, undated last, a plan first among the undated.
     assert.deepEqual(
-      rows.map((row) => row.kind),
-      ['block', 'block', 'issue', 'todo', 'todo'],
+      rows.map((row) => row.title),
+      [
+        'TLVTech',
+        'Deep work',
+        'Ship the beta',
+        'Calculus homework',
+        'Due in December',
+        'Write the report',
+        'Fix the login',
+      ],
     );
+    assert.equal(result.total, 7);
     const area = rows.find((row) => row.title === 'TLVTech');
     assert.equal(area?.props['layer'], 'area');
     assert.deepEqual(area.props['recurrence'], ['RRULE:FREQ=WEEKLY;BYDAY=TU']);
     // A planned to-do carries its plan, a wall time in the workspace's zone.
     assert.equal(rows.find((row) => row.id === plannedId)?.overlay.plannedAt, '2026-11-10T10:30');
     assert.deepEqual(result.appliedVars, { '$page.topic': 'work', '$page.range': WEEK });
+  });
+
+  it('the row cap cuts the to-dos due latest (undated last), never the time', async () => {
+    const result = await runQuery(
+      { ...timesheetQuery(), limit: 4 },
+      context({ ws: { id: 'w-t' }, blockType: 'timesheet', vars: { topic: 'work', range: WEEK } }),
+      deps,
+    );
+    assert.deepEqual(
+      ((result.rows ?? []) as ItemQueryRow[]).map((row) => row.title),
+      ['TLVTech', 'Deep work', 'Ship the beta', 'Calculus homework'],
+    );
+    // The total still counts every match: the panel says how many are not listed.
+    assert.equal(result.total, 7);
   });
 
   it('on the main page (no topic set) reads every topic', async () => {
@@ -561,6 +594,12 @@ describe('runQuery: a timesheet (a topic’s painted time and its open to-dos)',
       context({ ws: { id: 'w-t' }, blockType: 'calendar', vars: { topic: 'work', range: WEEK } }),
       deps,
     );
-    assert.deepEqual(titles(result), ['Deep work', 'TLVTech']);
+    // Only the to-dos due inside the week.
+    assert.deepEqual(titles(result), [
+      'Calculus homework',
+      'Deep work',
+      'Ship the beta',
+      'TLVTech',
+    ]);
   });
 });

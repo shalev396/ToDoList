@@ -49,13 +49,18 @@ describe('timesheet: catalog, schema and view type', () => {
     assert.ok(query !== undefined);
     assert.equal(query.dateRange, '$page.range');
     assert.equal(query.limit, 200);
-    assert.deepEqual(query.sort?.[0], { field: 'kind', dir: 'asc' });
+    // Soonest due first, undated last (the panel's order), a plan breaking ties; the compiler puts
+    // the timed rows before all of them (compile.test.ts).
+    assert.deepEqual(query.sort, [
+      { field: 'dueAt', dir: 'asc' },
+      { field: 'overlay.plannedAt', dir: 'asc' },
+    ]);
     assert.deepEqual(query.where?.rules[0], {
       field: 'topic',
       operator: '=',
       value: '$page.topic',
     });
-    assert.deepEqual([...TIMESHEET_TODO_KINDS], ['todo', 'task', 'issue']);
+    assert.deepEqual([...TIMESHEET_TODO_KINDS], ['todo', 'task', 'issue', 'assignment']);
     // It compiles for a timesheet with and without its variables.
     for (const vars of [{}, { topic: 't1', range: 'this_week' }]) {
       assert.doesNotThrow(() =>

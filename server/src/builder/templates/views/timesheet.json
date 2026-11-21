@@ -39,7 +39,7 @@
                     {
                       "field": "kind",
                       "operator": "in",
-                      "value": ["todo", "task", "issue"]
+                      "value": ["todo", "task", "issue", "assignment"]
                     },
                     {
                       "field": "status",
@@ -56,11 +56,11 @@
         "dateField": "any",
         "sort": [
           {
-            "field": "kind",
+            "field": "dueAt",
             "dir": "asc"
           },
           {
-            "field": "dueAt",
+            "field": "overlay.plannedAt",
             "dir": "asc"
           }
         ],

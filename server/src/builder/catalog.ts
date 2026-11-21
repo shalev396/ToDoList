@@ -261,8 +261,8 @@ const OPEN: Rule = { field: 'status', operator: 'in', value: ['open', 'in_progre
 const EVENT: Rule = { field: 'kind', operator: '=', value: 'event' };
 /** Timed things: events, plus the time blocks, areas and travel legs TodoList keeps. */
 const TIMED: Rule = { field: 'kind', operator: 'in', value: ['event', ...SCHEDULED_KINDS] };
-/** What a timesheet lists to schedule: local to-dos, and mirrored tasks and issues. */
-export const TIMESHEET_TODO_KINDS = ['todo', 'task', 'issue'] as const;
+/** What a timesheet lists to schedule: local to-dos, mirrored tasks and issues, and assignments. */
+export const TIMESHEET_TODO_KINDS = ['todo', 'task', 'issue', 'assignment'] as const;
 
 export const BLOCK_CATALOG: Readonly<Record<BlockType, BlockCatalogEntry>> = {
   list: {
@@ -450,8 +450,9 @@ export const BLOCK_CATALOG: Readonly<Record<BlockType, BlockCatalogEntry>> = {
     vizSchema: VIZ_SCHEMAS.timesheet,
     // The page's topic (`$page.topic`; unset on the main page: every topic): its time blocks and
     // areas over the visible week (`$page.range`, set by the grid), and its open to-dos whatever
-    // their dates (compile.ts: a timesheet's range narrows only timed rows). Reserved time first,
-    // so the row cap never cuts an area for a to-do.
+    // their dates (compile.ts: a timesheet's range narrows only timed rows). Its timed rows always
+    // come first (compile.ts), so the row cap cuts to-dos, never painted time; the to-dos follow
+    // soonest due first, undated last (the panel's order), a plan breaking ties among the undated.
     defaults: {
       query: {
         source: 'items',
@@ -477,8 +478,8 @@ export const BLOCK_CATALOG: Readonly<Record<BlockType, BlockCatalogEntry>> = {
         dateRange: '$page.range',
         dateField: 'any',
         sort: [
-          { field: 'kind', dir: 'asc' },
           { field: 'dueAt', dir: 'asc' },
+          { field: 'overlay.plannedAt', dir: 'asc' },
         ],
         limit: 200,
       },
