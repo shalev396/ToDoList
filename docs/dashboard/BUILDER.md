@@ -62,7 +62,7 @@ items|containers   where (AND/OR), dateRange,       groupBy ≤3, aggregate     
 |---|---|---|
 | Filter rule | `{field, operator, value}` in a `{combinator, rules}` group (the react-querybuilder format, FRONTEND.md §3) | `status in [open,in_progress]`, `source.provider = jira` |
 | Date range | `"dateRange": "this_week" \| "next_7d" \| "overdue" \| "today" \| "this_semester" \| {from,to}` | Presets resolve in the workspace timezone, `Asia/Jerusalem`, with weeks starting Sunday (`settings.weekStart`). In a time view, on `startAt` or `any`, a repeating series that began before the range and has not ended before it (`props.recurrenceEnd`; none: never ends) is read too, and the view expands it into the range's occurrences. A task view reads rows by their own dates only |
-| Task or time | the block's type | Time-shaped types (`calendar`, `clock`, `timeline`, `agenda`, `workload`) always read time blocks, areas and travel legs, and read up to 200 rows when the query sets no `limit`. Every other type, and a query with no block type, leaves them out unless a rule asks for them by name (`kind = block`, `kind in [block, travel]`); `kind != event` or `kind notIn [...]` keeps them out |
+| Task or time | the block's type | Time-shaped types (`calendar`, `clock`, `timeline`, `agenda`, `workload`, `timesheet`) always read time blocks, areas and travel legs, and read up to 200 rows when the query sets no `limit`. A `timesheet`'s date range narrows only its timed rows (events, blocks, areas, legs): its to-dos are read whatever their dates. Every other type, and a query with no block type, leaves them out unless a rule asks for them by name (`kind = block`, `kind in [block, travel]`); `kind != event` or `kind notIn [...]` keeps them out |
 | Dynamic values | `@now`, `@today`, `@me`, `$page.<var>` | `dueAt < @now` |
 | Group / aggregate | `groupBy: ["source.provider"]`, `aggregate: {op:"count"}` | The donut by source |
 | If/then | `rules: [{if:{…}, then:{tone\|badge\|hide}}]` | Overdue shows red, done is hidden |
@@ -77,7 +77,7 @@ items|containers   where (AND/OR), dateRange,       groupBy ≤3, aggregate     
 
 | Type | Purpose | Required query bits | Defaults |
 |---|---|---|---|
-| `clock` | 24h ring of today's events with a **now-needle**, plus "now / next" | `source: items`, `kind in [event, block, travel]`, `dateRange: today` | `calendars: from integration`, refreshes every 60 s |
+| `clock` | 24h ring of today's events with a **now-needle**, plus "now / next". `viz.showTomorrow: true` (default off) also reads tomorrow and draws a second, smaller ring (no needle) with its colour key and items: beside today's when the block is wide, below it when narrow; only a `dateRange: today` is widened | `source: items`, `kind in [event, block, travel]`, `dateRange: today` | `calendars: from integration`, refreshes every 60 s |
 | `chart` | donut, bar, line or number | `groupBy` + `aggregate` | **Donut by `source.provider`** with a total count and area chips |
 | `calendar` | FullCalendar week/month/list | items with `startAt` or `dueAt` | **`view: "week"`** (`timeGridWeek`), with Month as a toggle saved per block |
 | `deadlines` | due-soon list, soonest first | `dueAt` not null, `status` open | `dateRange: next_14d`, overdue items on top |
@@ -88,6 +88,7 @@ items|containers   where (AND/OR), dateRange,       groupBy ≤3, aggregate     
 | `filter` | chips, select or date presets that set `$page` vars | `sets: "$page.topic"` | options come from `GET /facets` (never hard-coded) |
 | `action` | button | `action` | e.g. "Sync to Google Calendar" (Google OAuth) |
 | `note` | rich text (phase 4) | n/a | the only block that holds free text, and it's user-authored |
+| `timesheet` | a topic's painted time on a week grid (areas as bands in the topic's tint, time blocks as events) with its open to-dos beside it, "To schedule": dragging a to-do onto the week plans it (`overlay.plannedAt`, quarter hours, a 30-minute chip that drags to move; Unschedule clears it); dragging across free time paints a new area of the topic | `topic = $page.topic` (the page's topic; unset on the main dashboard: every topic), `kind = block` or (`kind in [todo, task, issue, assignment]` and `status in [open, in_progress]`), `dateRange: $page.range` (set by the grid), sorted `dueAt` then `overlay.plannedAt` (the compiler puts a timesheet's timed rows first, so the cap cuts the undated and latest-due to-dos, never painted time, and the panel says "Showing N of M"), `limit: 200` | `viz: {kind: "timesheet", showBlocks: true}`; `listen: [$page.range, $page.topic]`; size 12×14. Config: the **topic** is the query's top-level `topic` rule (`$page.topic`, one topic's id, or none for every topic; the block editor's Page picker edits it), and **`showBlocks`** (default true) also draws the topic's time blocks, not only its areas |
 
 The registry pattern is FRONTEND.md §5: adding a type means **one catalog entry on the server plus one registry entry on the client**.
 
@@ -132,7 +133,7 @@ The registry pattern is FRONTEND.md §5: adding a type means **one catalog entry
 ```json
 { "id": "blk_clock", "type": "clock", "title": "Today",
   "query": { "source": "items", "where": { "combinator": "and", "rules": [{ "field": "kind", "operator": "=", "value": "event" }] }, "dateRange": "today" },
-  "viz": { "kind": "clock24", "needle": "now", "showNext": true } }
+  "viz": { "kind": "clock24", "needle": "now", "showNext": true, "showTomorrow": false } }
 { "id": "blk_cal", "type": "calendar", "title": "Week",
   "query": { "source": "items", "dateRange": "$page.range", "where": { "combinator": "or", "rules": [
       { "field": "startAt", "operator": "notNull" }, { "field": "dueAt", "operator": "notNull" } ] } },

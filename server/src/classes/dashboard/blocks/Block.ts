@@ -1,6 +1,6 @@
 /**
  * One block of a dashboard (BUILDER.md §4), as an immutable value object over its stored JSON.
- * Every block type is its own class (the 14 of BLOCK_TYPES), so what a block must meet is decided by
+ * Every block type is its own class (the 15 of BLOCK_TYPES), so what a block must meet is decided by
  * polymorphism instead of a switch on its type: `Block.from(json)` makes the class of the block's
  * type (BlockRegistry), and a type this code does not know gets UnknownBlock.
  *

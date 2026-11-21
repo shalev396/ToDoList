@@ -8,12 +8,15 @@ import { toEventInput } from '../dashboards/blocks/calendar/calendarEvents.ts';
 import { buildClockModel } from '../dashboards/blocks/clock/clockModel.ts';
 import type { Occurrence, TimeRow } from '../dashboards/blocks/time/occurrences.ts';
 import {
+  canPickLegMode,
   isPastLeg,
   legFlagsOf,
   legMarksOf,
   legTitle,
   removalText,
   removedLegTitle,
+  repeatPatternOf,
+  repeatsKindOf,
 } from './legView.ts';
 
 /** `t` over a language's texts, with `{{name}}` filled in (as i18next does). */
@@ -155,6 +158,15 @@ describe('removedLegTitle', () => {
   });
 });
 
+describe('canPickLegMode', () => {
+  it('a leg that has started, or is over, keeps its way', () => {
+    assert.equal(canPickLegMode(minutes(NOW, 5), NOW), true);
+    assert.equal(canPickLegMode(NOW, NOW), false);
+    assert.equal(canPickLegMode(minutes(NOW, -30), NOW), false);
+    assert.equal(canPickLegMode(null, NOW), true);
+  });
+});
+
 describe('isPastLeg', () => {
   it('a leg is past once it has ended, not while it is under way', () => {
     const start = new Date('2026-11-19T07:00:00.000Z');
@@ -265,5 +277,40 @@ describe('conflict, past and unset flags reach the calendar event props', () => 
       unset: false,
     });
     assert.equal(model.current?.row.id, 'leg-1');
+  });
+});
+
+describe('repeatPatternOf', () => {
+  it('names the weekday and the local start time on the workspace clock', () => {
+    // 2026-11-19 07:30Z is Thursday 09:30 in Jerusalem (UTC+2) and Wednesday 23:30 in Los Angeles.
+    assert.deepEqual(repeatPatternOf('2026-11-19T07:30:00.000Z', 'Asia/Jerusalem', 'en'), {
+      weekday: 'Thursday',
+      time: '09:30',
+    });
+    assert.deepEqual(repeatPatternOf('2026-11-19T07:30:00.000Z', 'America/Los_Angeles', 'en'), {
+      weekday: 'Wednesday',
+      time: '23:30',
+    });
+  });
+
+  it('says the weekday in the language', () => {
+    assert.equal(
+      repeatPatternOf('2026-11-19T07:30:00.000Z', 'Asia/Jerusalem', 'he').weekday,
+      'יום חמישי',
+    );
+  });
+});
+
+describe('repeatsKindOf', () => {
+  it('claims nothing while the event is not read', () => {
+    assert.equal(repeatsKindOf('single', null), 'unknown');
+  });
+  it('a series occurrence or a series row is every occurrence', () => {
+    assert.equal(repeatsKindOf('2026-11-19T08:30:00.000Z', null), 'series');
+    assert.equal(repeatsKindOf('single', { containerId: 'c', series: true }), 'series');
+  });
+  it('a lone event in a calendar is a pattern; one outside is only this day', () => {
+    assert.equal(repeatsKindOf('single', { containerId: 'c', series: false }), 'pattern');
+    assert.equal(repeatsKindOf('single', { containerId: null, series: false }), 'none');
   });
 });

@@ -5,13 +5,17 @@
  */
 import type { Query, RuleGroup } from '@api-types/builder.ts';
 import {
+  ARRIVE_EARLY_MAX,
   TRAVEL_HORIZON_DAYS,
+  TRIP_MINUTES_MAX,
   type CreatePlaceRequest,
   type CreateTravelRuleRequest,
   type PlaceView,
   type RuleDirection,
+  type RuleLengths,
   type TravelMode,
   type TravelRuleScope,
+  type TravelRuleView,
   type TravelSettings,
   type UpdatePlaceRequest,
 } from '@api-types/travel.ts';
@@ -170,11 +174,84 @@ export function queryOfScope(scope: TravelRuleScope): Query {
   return scope.kind === 'where' ? { source: 'items', where: scope.where } : { source: 'items' };
 }
 
+/** The server's bounds of a rule's exact times (ARRIVE_EARLY_MAX, TRIP_MINUTES_MAX). */
+export const RULE_TIME_BOUNDS = {
+  arriveEarly: { min: 0, max: ARRIVE_EARLY_MAX },
+  length: { min: 1, max: TRIP_MINUTES_MAX },
+} as const;
+
 /**
- * The "New rule" form: its sentence, trips and place, and the mode he picked (null: none yet, so
- * it follows the default mode, which may change in Times while the form is open).
+ * A rule's exact times as typed, in whole minutes: how early the "there" leg arrives, and how long
+ * the there and back legs take. Empty means the usual: on the event's start, the trip's own length.
  */
-export interface NewRuleDraft {
+export interface RuleTimingDraft {
+  arriveEarly: string;
+  there: string;
+  back: string;
+}
+
+export const NO_TIMING: Readonly<RuleTimingDraft> = Object.freeze<RuleTimingDraft>({
+  arriveEarly: '',
+  there: '',
+  back: '',
+});
+
+/** The digits of what was typed (a field of whole minutes takes nothing else). */
+export function digitsOf(text: string): string {
+  return text.replace(/\D/g, '').slice(0, 4);
+}
+
+/**
+ * Minutes typed, whole, kept within the bounds (like the go-home fields); null when empty, or when
+ * it is below the bounds' minimum (an arrival of 0 minutes early is on time: the usual).
+ */
+export function ruleMinutesOf(text: string, bounds: { min: number; max: number }): number | null {
+  const digits = digitsOf(text);
+  if (digits === '') {
+    return null;
+  }
+  if (Number(digits) === 0) {
+    return null;
+  }
+  return clamp(Number(digits), { min: bounds.min, max: bounds.max });
+}
+
+/** What the saved rule's fields show in the form. */
+export function timingDraftOf(rule: TravelRuleView): RuleTimingDraft {
+  const text = (minutes: number | null | undefined): string =>
+    minutes === null || minutes === undefined || minutes === 0 ? '' : String(minutes);
+  return {
+    arriveEarly: text(rule.arriveEarlyMinutes),
+    there: text(rule.lengths?.there),
+    back: text(rule.lengths?.back),
+  };
+}
+
+/** The fields of a rule's request for the times typed: null clears one. */
+export function timingRequestOf(draft: Readonly<RuleTimingDraft>): {
+  arriveEarlyMinutes: number | null;
+  lengths: RuleLengths | null;
+} {
+  const there = ruleMinutesOf(draft.there, RULE_TIME_BOUNDS.length);
+  const back = ruleMinutesOf(draft.back, RULE_TIME_BOUNDS.length);
+  const lengths: RuleLengths = {};
+  if (there !== null) {
+    lengths.there = there;
+  }
+  if (back !== null) {
+    lengths.back = back;
+  }
+  return {
+    arriveEarlyMinutes: ruleMinutesOf(draft.arriveEarly, RULE_TIME_BOUNDS.arriveEarly),
+    lengths: there === null && back === null ? null : lengths,
+  };
+}
+
+/**
+ * The "New rule" form: its sentence, trips and place, the mode he picked (null: none yet, so
+ * it follows the default mode, which may change in Times while the form is open), and its exact times.
+ */
+export interface NewRuleDraft extends RuleTimingDraft {
   query: Query;
   mode: TravelMode | null;
   direction: RuleDirection;
@@ -186,6 +263,7 @@ export const NEW_RULE: Readonly<NewRuleDraft> = Object.freeze<NewRuleDraft>({
   mode: null,
   direction: 'both',
   placeId: null,
+  ...NO_TIMING,
 });
 
 /** The new rule's request, on his mode or else today's default; null without a condition. */
@@ -202,6 +280,7 @@ export function newRuleRequestOf(
     mode: draft.mode ?? defaultMode,
     direction: draft.direction,
     placeId: draft.placeId,
+    ...timingRequestOf(draft),
   };
 }
 

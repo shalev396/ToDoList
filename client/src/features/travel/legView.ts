@@ -73,6 +73,14 @@ export function isPastLeg(occurrence: Slot, now: Date): boolean {
 }
 
 /**
+ * Whether he can still pick another way for a leg: the planner never touches a leg that has
+ * started, so a mark on it would change nothing.
+ */
+export function canPickLegMode(start: Date | null, now: Date): boolean {
+  return start === null || start.getTime() > now.getTime();
+}
+
+/**
  * What a view marks on a leg: its mode, the conflict, past, and "the event moved" flags, and
  * whether its trip has no length yet (`unset`: drawn dashed, with the placeholder length).
  */
@@ -143,3 +151,47 @@ export const CONFLICT_EDGE =
  */
 export const UNSET_OUTLINE =
   'rounded-sm outline-1 outline-offset-[-1px] outline-dashed outline-muted-foreground/70';
+
+/**
+ * "Thursday" and "10:30" of when a trip's event starts, on the workspace's wall clock: what "every
+ * repeat" of an event that doesn't repeat by itself means (same weekday, same local start time).
+ */
+export function repeatPatternOf(
+  anchorStart: string,
+  timeZone: string,
+  locale: string,
+): { weekday: string; time: string } {
+  const start = new Date(anchorStart);
+  const time = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    hourCycle: 'h23',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(start);
+  return {
+    weekday: new Intl.DateTimeFormat(locale, { weekday: 'long', timeZone }).format(start),
+    time,
+  };
+}
+
+/**
+ * What "every repeat" means for a trip's event, for the words of the question: `series` (every
+ * occurrence), `pattern` (a rule for the same title, weekday and time in its calendar or project),
+ * `none` (it doesn't repeat and has no calendar: only this day), or `unknown` while the event is not
+ * read (loading, failed): the words claim nothing.
+ */
+export function repeatsKindOf(
+  occurrence: string,
+  anchor: { containerId: string | null; series: boolean } | null,
+): 'series' | 'pattern' | 'none' | 'unknown' {
+  if (occurrence !== 'single') {
+    return 'series';
+  }
+  if (anchor === null) {
+    return 'unknown';
+  }
+  if (anchor.series) {
+    return 'series';
+  }
+  return anchor.containerId === null ? 'none' : 'pattern';
+}

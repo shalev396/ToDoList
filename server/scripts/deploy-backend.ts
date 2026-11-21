@@ -1,5 +1,5 @@
-import { DATABASE_URL_PARAMETER, stackName, SYNC_DB_ACTION } from '../infra/lib/constants.js';
-import { runApiAction } from './api-action.js';
+import { DATABASE_URL_PARAMETER, stackName } from '../infra/lib/constants.js';
+import { runSyncDbRounds } from './api-action.js';
 import { ensureAppSecret } from './app-secret.js';
 import {
   cdkContext,
@@ -21,7 +21,9 @@ import { activateCostAllocationTags } from './cost-allocation-tags.js';
  *   3. build + verify the two Lambda layers
  *   4. cdk deploy, passing DATABASE_URL as the NoEcho parameter. CDK creates the stack or updates
  *      it; a failed deploy rolls back, and a stack whose creation rolled back is recreated.
- *   5. sync the database schema: invoke the API function with {"action":"sync-db"}
+ *   5. sync the database schema: invoke the API function with {"action":"sync-db"}, again while
+ *      it answers done:false (it stops before its time runs out; at most 10 rounds, a failure
+ *      after 2 rounds in a row without progress or 2 timeouts; scripts/sync-db-rounds.ts)
  *   6. activate the Project and Stage cost allocation tags for billing (never fails the deploy)
  *
  * Inputs: DOMAIN_NAME and DATABASE_URL (shell or server/.env.<stage>) plus AWS credentials.
@@ -57,7 +59,7 @@ runCdk(LABEL, `cdk deploy ${stack}`, [
 ]);
 
 // 5. Database schema
-const synced = await runApiAction(LABEL, stage, SYNC_DB_ACTION);
+const synced = await runSyncDbRounds(LABEL, stage);
 console.warn(`[${LABEL}] database schema synced: ${synced}`);
 
 // 6. Cost allocation tags

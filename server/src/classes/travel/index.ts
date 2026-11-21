@@ -49,5 +49,6 @@ export {
   TravelAnchors,
   type GatherInput,
   type Gathered,
+  type RuledAnchor,
 } from './TravelAnchors.js';
 export { AFTER_SYNC_BUDGET_MS, TravelPlanner, type PreviewInput } from './TravelPlanner.js';

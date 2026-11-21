@@ -20,6 +20,13 @@ test('Unsorted (an empty key) is gray', () => {
 test('a provider segment keeps its source colour', () => {
   const segment: Segment = { ...base, field: 'source.provider', key: 'jira', provider: 'jira' };
   assert.equal(segmentColor(segment, 0, familyOf), 'var(--color-source-jira)');
+  const clickup: Segment = {
+    ...base,
+    field: 'source.provider',
+    key: 'clickup',
+    provider: 'clickup',
+  };
+  assert.equal(segmentColor(clickup, 1, familyOf), 'var(--color-source-clickup)');
 });
 
 test('any other field takes the chart slots in order', () => {

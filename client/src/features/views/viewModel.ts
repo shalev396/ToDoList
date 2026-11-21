@@ -30,6 +30,7 @@ export const CUSTOM_VIEW_TYPES: readonly ViewType[] = [
   'table',
   'agenda',
   'workload',
+  'timesheet',
   'dashboard',
 ];
 

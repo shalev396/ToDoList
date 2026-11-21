@@ -17,6 +17,7 @@ export const views = {
     table: 'טבלה',
     agenda: 'סדר יום',
     workload: 'עומס',
+    timesheet: 'גיליון שעות',
     dashboard: 'לוח בקרה',
   },
   typeHints: {
@@ -27,6 +28,7 @@ export const views = {
     table: 'שורות ועמודות',
     agenda: 'עכשיו, הבא, בהמשך היום, מחר',
     workload: 'שעות לכל יום השבוע',
+    timesheet: 'זמן צבוע, ומשימות לגרור אליו',
     dashboard: 'רשת בלוקים משלו',
   },
   add: {

@@ -3,7 +3,13 @@ import { z } from 'zod';
 import { Place, TravelRule, TravelSetup } from '../../../classes/travel/index.js';
 import { ValidationError } from '../../../errors/ValidationError.js';
 import { RuleGroupSchema } from '../../../types/builder.js';
-import { RULE_DIRECTIONS, TRAVEL_MODES, type TravelRuleScope } from '../../../types/travel.js';
+import {
+  ARRIVE_EARLY_MAX,
+  RULE_DIRECTIONS,
+  TRAVEL_MODES,
+  TRIP_MINUTES_MAX,
+  type TravelRuleScope,
+} from '../../../types/travel.js';
 import { confirmField } from '../../middleware/confirm.js';
 import { defineTool } from '../../tool.js';
 import { itemCaller } from '../itemViews.js';
@@ -14,7 +20,7 @@ const RuleId = z.string().min(1).max(100).describe('A rule id, as travel_list_ru
 export const travelListRules = defineTool({
   name: 'travel_list_rules',
   title: 'List the member’s travel rules',
-  description: `The key’s own member’s travel rules, oldest first (where-rules apply in this order; a rule for an item beats one for its series, which beats a where-rule). Each rule names its place by name. ${PRIVACY_NOTE}`,
+  description: `The key’s own member’s travel rules, oldest first (where-rules apply in this order; a rule for an item beats one for its series, which beats a repeats rule, which beats a where-rule; a repeats rule is made by travel_edit_leg with mode and every, and removed here). Each rule names its place by name. ${PRIVACY_NOTE}`,
   toolset: 'items',
   inputSchema: z.strictObject({}),
   outputSchema: z.object({ rules: z.array(RuleViewSchema) }),
@@ -61,7 +67,7 @@ function scopeOf(input: {
 export const travelSetRule = defineTool({
   name: 'travel_set_rule',
   title: 'Add or change a travel rule',
-  description: `A rule says which items the member travels to and how: scope it with exactly one of where (a rule group over items, as the dashboards’ queries take, e.g. containerId = a calendar), seriesItemId (every occurrence of a repeating item) or itemId (one item; with occurrenceStart, one occurrence of a repeating one). mode is walk, drive or transit; direction there (to it from Home or the place before), back (the trip after it: home, or on to the next place, or back into the area around it) or both. place is the name (or an alias) of one of the member’s saved places the rule sends them to; left out, the item’s own place applies; null removes it. Give id to change a rule (anything left out stays; a new scope replaces the old). It applies to areas too (painted time such as Studying 8-16): the items inside one with a place of their own are travelled to for their own time (back into the area after them when there is time, else straight on), and a marked area lends its place to the items inside it with none, which then add no trips of their own. The member’s legs are made again before it answers. At most 50 rules. ${PRIVACY_NOTE}`,
+  description: `A rule says which items the member travels to and how: scope it with exactly one of where (a rule group over items, as the dashboards’ queries take, e.g. containerId = a calendar), seriesItemId (every occurrence of a repeating item) or itemId (one item; with occurrenceStart, one occurrence of a repeating one). mode is walk, drive or transit; direction there (to it from Home or the place before), back (the trip after it: home, or on to the next place, or back into the area around it) or both. place is the name (or an alias) of one of the member’s saved places the rule sends them to; left out, the item’s own place applies; null removes it. Give id to change a rule (anything left out stays; a new scope replaces the old). It applies to areas too (painted time such as Studying 8-16): the items inside one with a place of their own are travelled to for their own time (back into the area after them when there is time, else straight on), and a marked area lends its place to the items inside it with none, which then add no trips of their own. arriveEarlyMinutes (0 to 240) makes the there leg this rule draws arrive that many minutes before the item starts; lengths ({there, back} in minutes) set how long the there leg (from Home) and the way back take, winning over the trip’s own length, for the legs this rule draws only (so Sunday’s bus can take 95 minutes and Monday’s 100); null clears either, and an empty or absent side takes the trip’s own length. They work on every scope. The member’s legs are made again before it answers. At most 50 rules. ${PRIVACY_NOTE}`,
   toolset: 'items',
   inputSchema: z.strictObject({
     id: RuleId.optional().describe('Change this rule; left out: a new rule'),
@@ -75,6 +81,14 @@ export const travelSetRule = defineTool({
     mode: z.enum(TRAVEL_MODES).optional(),
     direction: z.enum(RULE_DIRECTIONS).optional(),
     place: z.string().min(1).max(200).nullable().optional(),
+    arriveEarlyMinutes: z.number().int().min(0).max(ARRIVE_EARLY_MAX).nullable().optional(),
+    lengths: z
+      .strictObject({
+        there: z.number().int().positive().max(TRIP_MINUTES_MAX).nullable().optional(),
+        back: z.number().int().positive().max(TRIP_MINUTES_MAX).nullable().optional(),
+      })
+      .nullable()
+      .optional(),
   }),
   outputSchema: z.object({ rule: RuleViewSchema }),
   annotations: {
@@ -100,6 +114,8 @@ export const travelSetRule = defineTool({
         mode: input.mode,
         direction: input.direction,
         placeId,
+        arriveEarlyMinutes: input.arriveEarlyMinutes,
+        lengths: input.lengths,
       });
     } else {
       if (scope === undefined) {
@@ -113,6 +129,8 @@ export const travelSetRule = defineTool({
         mode: input.mode,
         direction: input.direction,
         placeId,
+        arriveEarlyMinutes: input.arriveEarlyMinutes,
+        lengths: input.lengths,
       });
     }
     return {

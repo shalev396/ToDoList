@@ -99,6 +99,7 @@ export async function runWorkspaceQuery(
         ? { fieldRegistry: registryOf(await ProviderFields.of(workspace, userId, now.getTime())) }
         : {}),
       ...(target.blockType === undefined ? {} : { blockType: target.blockType }),
+      ...(target.includeTomorrow === true ? { includeTomorrow: true } : {}),
     };
     return await reads.run(query, ctx);
   } catch (error) {

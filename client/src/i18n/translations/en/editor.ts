@@ -221,10 +221,19 @@ export const editor = {
       legend: 'Legend',
       needle: 'Needle',
       showNext: 'Show what’s next',
+      showTomorrow: 'Show tomorrow',
       showDelta: 'Show the change',
       overdueOnTop: 'Overdue on top',
       field: 'Filter by',
       multi: 'Allow several choices',
+      showBlocks: 'Show time blocks too, not only areas',
+    },
+    timesheet: {
+      topic: 'Page',
+      topicPage: 'This page',
+      topicAll: 'Every page',
+      topicHint:
+        'Whose painted time and to-dos it shows. On the main dashboard, “This page” is every page.',
     },
     values: {
       list: 'List',

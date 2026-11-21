@@ -183,6 +183,7 @@ const ROUTES: readonly [string, string, unknown?][] = [
   ['DELETE', '/travel/items/i-1'],
   ['POST', '/travel/preview', { mode: 'walk' }],
   ['PATCH', '/travel/legs/l-1', { minutes: 10 }],
+  ['PUT', '/travel/legs/l-1/mode', { mode: 'walk', scope: 'this' }],
   ['POST', '/travel/legs/l-1/skip'],
   ['POST', '/travel/legs/l-1/reset'],
   ['GET', '/travel/legs/l-1/links'],
@@ -248,6 +249,11 @@ describe('access', () => {
       ['POST', '/travel/preview', { mode: 'walk', x: 1 }],
       ['POST', '/travel/preview', { mode: 'walk', arriveBy: at, departAt: at }],
       ['PATCH', '/travel/legs/l-1', { startAt: at, title: 'x' }],
+      ['PUT', '/travel/legs/l-1/mode', { mode: 'fly', scope: 'this' }],
+      ['PUT', '/travel/legs/l-1/mode', { mode: 'walk', scope: 'always' }],
+      ['PUT', '/travel/legs/l-1/mode', { mode: 'walk' }],
+      ['PUT', '/travel/legs/l-1/mode', { scope: 'this' }],
+      ['PUT', '/travel/legs/l-1/mode', { mode: 'walk', scope: 'this', minutes: 5 }],
       ['POST', '/travel/legs/l-1/skip', { reason: 'x' }],
       ['POST', '/travel/legs/l-1/reset', { x: 1 }],
     ] as const) {
@@ -345,6 +351,8 @@ describe('marking an item', () => {
       mode: 'transit',
       direction: 'both',
       placeId: braudeId,
+      arriveEarlyMinutes: null,
+      lengths: null,
       createdAt: answer.rule.createdAt,
     });
     // Days 2 and 9 of the horizon (day 16 is past it), there and back.
@@ -554,6 +562,63 @@ describe('marking an item', () => {
       (await call('editor', 'PATCH', '/travel/legs/no-such-leg', { minutes: 5 })).status,
       404,
     );
+  });
+
+  it('PUT …/legs/:id/mode: this day or every repeat; 400 and 404', async () => {
+    const first = await todo('editor', 'Statistics', 11, 9);
+    const legs = await mark(first);
+    const there = legOf(legs, 'there');
+    assert.equal(there.props.travel.mode, 'transit');
+    const walked = await ok<{ marked: number; leg: Leg | null }>(
+      'editor',
+      'PUT',
+      `/travel/legs/${there.id}/mode`,
+      { mode: 'walk', scope: 'this' },
+    );
+    assert.equal(walked.marked, 1);
+    assert.equal(walked.leg?.id, there.id);
+    assert.equal(walked.leg.props.travel.mode, 'walk');
+    // Its way and place stay: both ways, to Braude.
+    const rule = (await ok<TravelRuleView[]>('editor', 'GET', '/travel/rules')).find(
+      (one) => one.scope.kind === 'item' && one.scope.itemId === first,
+    );
+    assert.deepEqual([rule?.mode, rule?.direction, rule?.placeId], ['walk', 'both', braudeId]);
+    // An event that doesn't repeat, with no repeats of it: itself.
+    const driven = await ok<{ marked: number; leg: Leg | null }>(
+      'editor',
+      'PUT',
+      `/travel/legs/${there.id}/mode`,
+      { mode: 'drive', scope: 'repeats' },
+    );
+    assert.equal(driven.marked, 1);
+    assert.equal(driven.leg?.props.travel.mode, 'drive');
+    const bad = await call('editor', 'PUT', `/travel/legs/${there.id}/mode`, {
+      mode: 'fly',
+      scope: 'this',
+    });
+    assert.equal(bad.status, 400, bad.text);
+    const missing = await call('editor', 'PUT', '/travel/legs/no-such-leg/mode', {
+      mode: 'walk',
+      scope: 'this',
+    });
+    assert.equal(missing.status, 404, missing.text);
+    assert.equal(
+      (
+        await call('editor2', 'PUT', `/travel/legs/${there.id}/mode`, {
+          mode: 'walk',
+          scope: 'this',
+        })
+      ).status,
+      404,
+    );
+    // A skipped leg is not changed.
+    const back = legOf(legs, 'back');
+    assert.equal((await call('editor', 'POST', `/travel/legs/${back.id}/skip`)).status, 204);
+    const skipped = await call('editor', 'PUT', `/travel/legs/${back.id}/mode`, {
+      mode: 'walk',
+      scope: 'this',
+    });
+    assert.equal(skipped.status, 404, skipped.text);
   });
 
   it('skip then GET /days lists it under removed with reason skipped', async () => {

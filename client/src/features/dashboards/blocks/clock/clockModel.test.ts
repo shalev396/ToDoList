@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { angleForTime, dayArcAngles, zonedParts, zonedTime } from './ClockRing.math.ts';
-import { buildClockModel } from './clockModel.ts';
+import { buildClockModel, tomorrowOf } from './clockModel.ts';
 import type { TimeRow } from '../time/occurrences.ts';
 import type { ItemColour } from '@api-types/colours.ts';
 
@@ -272,5 +272,51 @@ describe('needle angle', () => {
         );
       }
     }
+  });
+});
+
+describe('tomorrow', () => {
+  const now = at(2026, 11, 12, 23, 10);
+  const rows = [
+    row('tonight', { startAt: at(2026, 11, 12, 23), endAt: at(2026, 11, 12, 23, 59) }),
+    row('standup', { startAt: at(2026, 11, 13, 9), endAt: at(2026, 11, 13, 9, 30) }),
+    row('holiday', { allDay: true, startAt: at(2026, 11, 13), endAt: at(2026, 11, 14) }),
+    row('later', { startAt: at(2026, 11, 14, 10), endAt: at(2026, 11, 14, 11) }),
+  ];
+
+  it('tomorrowOf is the first instant of the next local day', () => {
+    assert.equal(tomorrowOf(now, TZ).getTime(), at(2026, 11, 13).getTime() + 1);
+    // Late in the evening and just after midnight both name the same next day.
+    assert.equal(tomorrowOf(at(2026, 11, 12), TZ).getTime(), at(2026, 11, 13).getTime() + 1);
+  });
+
+  it('tomorrow’s model holds only tomorrow’s items, and today’s holds only today’s', () => {
+    const tomorrow = buildClockModel(rows, now, TZ, undefined, undefined, tomorrowOf(now, TZ));
+    assert.deepEqual(
+      tomorrow.timed.map((e) => e.id.split('@')[0]),
+      ['standup'],
+    );
+    assert.deepEqual(
+      tomorrow.allDay.map((o) => o.row.id),
+      ['holiday'],
+    );
+    const today = buildClockModel(rows, now, TZ);
+    assert.deepEqual(
+      today.timed.map((e) => e.title),
+      ['tonight'],
+    );
+    assert.equal(today.allDay.length, 0);
+  });
+
+  it('tomorrow has no current event, and a series occurs on tomorrow', () => {
+    const weekly = row('weekly', {
+      startAt: at(2026, 11, 6, 9),
+      endAt: at(2026, 11, 6, 10),
+      props: { calendarId: 'c', eventId: 'e', recurrence: ['RRULE:FREQ=WEEKLY'] },
+    });
+    const tomorrow = buildClockModel([weekly], now, TZ, undefined, undefined, tomorrowOf(now, TZ));
+    assert.equal(tomorrow.current, null);
+    assert.equal(tomorrow.timed.length, 1);
+    assert.equal(tomorrow.timed[0]?.start.getTime(), at(2026, 11, 13, 9).getTime());
   });
 });

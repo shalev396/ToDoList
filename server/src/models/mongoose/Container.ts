@@ -222,6 +222,19 @@ export const ContainerRepository: IContainerRepository = {
     return found !== null;
   },
 
+  async idsForIntegration(workspaceId, integrationId) {
+    const rows = await ContainerMongoModel.find({ workspaceId, integrationId }, { _id: 1 }).lean();
+    return rows.map((row) => row._id);
+  },
+
+  async idsDeletedAt(workspaceId, integrationId, deletedAt) {
+    const rows = await ContainerMongoModel.find(
+      { workspaceId, integrationId, deletedAt },
+      { _id: 1 },
+    ).lean();
+    return rows.map((row) => row._id);
+  },
+
   async softDeleteForIntegration(workspaceId, integrationId, deletedAt = new Date()) {
     const result = await ContainerMongoModel.updateMany(
       { workspaceId, integrationId, deletedAt: null },

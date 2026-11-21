@@ -206,6 +206,8 @@ export function TimeBlockSection({
   const topicId = topicOf(item);
   const topicName = topics.find((topic) => topic.id === topicId)?.name ?? null;
   const subject = subjectOf(item);
+  // The block's own note (not the overlay's, which the sheet's own section below edits).
+  const note = (item.bodyPreview ?? '').trim();
   const here = view.occurrence;
   const otherSkips = view.skipped.filter(
     (date) => date.getTime() !== here?.originalStart.getTime(),
@@ -254,6 +256,18 @@ export function TimeBlockSection({
           <dd className="min-w-0 [overflow-wrap:anywhere]" dir="auto" data-block-page="">
             {topicName ?? t('scheduled.sheet.noTopic')}
           </dd>
+          {note === '' ? null : (
+            <>
+              <dt className="text-muted-foreground">{t('scheduled.sheet.note')}</dt>
+              <dd
+                className="min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere]"
+                dir="auto"
+                data-block-note=""
+              >
+                {note}
+              </dd>
+            </>
+          )}
         </dl>
         {here?.skipped === true ? (
           <div className="flex flex-wrap items-center gap-2" data-block-skipped="">
@@ -536,6 +550,7 @@ function BlockEditForm({
     subject: base.subject,
     topicId: base.topicId,
   }));
+  const [note, setNote] = useState(base.note);
   const [tried, setTried] = useState(false);
   const [asking, setAsking] = useState<{ save: BlockSave; draft: BlockDraft } | null>(null);
   const saveButton = useRef<HTMLButtonElement>(null);
@@ -589,6 +604,7 @@ function BlockEditForm({
       title: state.title,
       subject: state.subject,
       topicId: state.topicId ?? null,
+      note,
       start: time.start,
       end: time.end,
     };
@@ -650,6 +666,21 @@ function BlockEditForm({
               { value: NO_TOPIC, label: t('scheduled.form.noTopic') },
               ...topics.map((topic) => ({ value: topic.id, label: topic.name })),
             ]}
+          />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${ids}-note`}>{t('scheduled.form.note')}</Label>
+          <textarea
+            id={`${ids}-note`}
+            value={note}
+            dir="auto"
+            rows={3}
+            maxLength={5000}
+            onChange={(event) => {
+              setNote(event.target.value);
+            }}
+            data-time-block-note=""
+            className="min-h-20 w-full resize-y rounded-sm border border-input bg-card px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
           />
         </div>
       </fieldset>

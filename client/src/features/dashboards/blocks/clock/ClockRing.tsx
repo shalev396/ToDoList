@@ -31,8 +31,10 @@ export interface ClockRingProps {
   events: readonly ClockEvent[];
   /** Painted time for parts of life: a thin band just outside the ring, behind the arcs. */
   areas?: readonly ClockArea[] | undefined;
-  /** Places the needle, and picks the day the ring shows. */
+  /** Places the needle, and picks the day the ring shows (any instant of that day). */
   now: Date;
+  /** Draw the needle (and its hub). Off for a day that is not today: the "Tomorrow" ring. */
+  showNeedle?: boolean | undefined;
   /** IANA zone whose wall clock the ring shows. */
   timeZone: string;
   /** Width and height in px. The ring scales down with a narrower container. */
@@ -74,6 +76,7 @@ export function ClockRing({
   events,
   areas = NO_AREAS,
   now,
+  showNeedle = true,
   timeZone,
   size = 240,
   labels,
@@ -298,32 +301,39 @@ export function ClockRing({
             : null}
         </g>
 
-        <g className="clock-ring-needle" style={{ transform: `rotate(${String(needleAngle)}deg)` }}>
-          <line
-            x1={0}
-            y1={0}
-            x2={0}
-            y2={-outer}
-            style={SURFACE}
-            strokeWidth={5}
-            strokeLinecap="round"
-          />
-          <line
-            x1={0}
-            y1={0}
-            x2={0}
-            y2={-outer}
-            className="stroke-foreground"
-            strokeWidth={2}
-            strokeLinecap="round"
-          />
-        </g>
-        <circle
-          r={Math.max(3, 4.5 * scale)}
-          className="fill-foreground"
-          style={SURFACE}
-          strokeWidth={2}
-        />
+        {showNeedle ? (
+          <>
+            <g
+              className="clock-ring-needle"
+              style={{ transform: `rotate(${String(needleAngle)}deg)` }}
+            >
+              <line
+                x1={0}
+                y1={0}
+                x2={0}
+                y2={-outer}
+                style={SURFACE}
+                strokeWidth={5}
+                strokeLinecap="round"
+              />
+              <line
+                x1={0}
+                y1={0}
+                x2={0}
+                y2={-outer}
+                className="stroke-foreground"
+                strokeWidth={2}
+                strokeLinecap="round"
+              />
+            </g>
+            <circle
+              r={Math.max(3, 4.5 * scale)}
+              className="fill-foreground"
+              style={SURFACE}
+              strokeWidth={2}
+            />
+          </>
+        ) : null}
       </svg>
 
       <ul className="sr-only" aria-label={labels.eventList}>

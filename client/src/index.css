@@ -48,6 +48,21 @@
   --color-sunken: var(--sunken);
   --color-chart-6: var(--chart-6);
   --color-chart-7: var(--chart-7);
+  --color-status-good: var(--status-good);
+  --color-status-warning: var(--status-warning);
+  --color-status-serious: var(--status-serious);
+  --color-status-critical: var(--status-critical);
+  --font-sans:
+    'IBM Plex Sans Variable', 'IBM Plex Sans Hebrew', ui-sans-serif, system-ui, sans-serif;
+}
+
+/*
+ * Source colours (one per provider, components/items/sources.ts). `static`: every variable is
+ * written to :root whether or not a class uses it, because a chart reads them by name at run time
+ * (`var(--color-source-clickup)`, blocks/data/segmentColor.ts). Tailwind only keeps the variables
+ * it finds in the source, and a name built at run time is never found: the segment went black.
+ */
+@theme inline static {
   --color-source-jira: var(--chart-1);
   --color-source-moodle: var(--chart-2);
   --color-source-google-calendar: var(--chart-3);
@@ -55,12 +70,6 @@
   --color-source-github: var(--chart-6);
   --color-source-linear: var(--chart-7);
   --color-source-local: var(--muted-foreground);
-  --color-status-good: var(--status-good);
-  --color-status-warning: var(--status-warning);
-  --color-status-serious: var(--status-serious);
-  --color-status-critical: var(--status-critical);
-  --font-sans:
-    'IBM Plex Sans Variable', 'IBM Plex Sans Hebrew', ui-sans-serif, system-ui, sans-serif;
 }
 
 /*
@@ -652,7 +661,7 @@
  * the sunken wash for today and an ink now-line. Events are painted in their topic colour (fill and
  * ink set per event from features/colours, never the source's); travel is hatched (`--tc-hatch`,
  * set per event) with its label on a plate of its fill; an area is a band in its tint behind
- * everything, edged in its Scheduled step (`--tc-edge`) and labelled at the top.
+ * everything, edged in its Scheduled step (`--tc-edge`); its name is a tag in the day's header, not on the band.
  */
 .todolist-calendar .fc {
   --fc-border-color: var(--border);
@@ -743,41 +752,37 @@
 .todolist-calendar .fc .fc-timegrid-event-short .tc-leg-words {
   display: none;
 }
+/* An area: a band in its tint behind the day's events, framed in its Scheduled step. It takes no
+   width from them and nothing covers them: its name is a tag in the day's header (CalendarBlock's
+   AreaTagButton), which opens it. */
 .todolist-calendar .fc .tc-area {
   opacity: 1;
   box-shadow: inset 0 0 0 1px var(--tc-edge, var(--border));
 }
-.todolist-calendar .fc .tc-area-label {
-  overflow: hidden;
-  padding: 2px 4px;
-  color: var(--foreground);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.todolist-calendar .fc .fc-col-header-cell-cushion:has([data-area-tags]) {
+  display: block;
+  min-width: 0;
 }
-/* In the week grid, events would cover a label at the band's top: a day with an area keeps a rail
-   along its start, clear of events, and the label runs down it. */
-.todolist-calendar .fc .fc-timegrid-col:has(.tc-area) .fc-timegrid-col-events {
-  margin-inline-start: 18px;
+/* Half-hour rows of `--tc-slot` (chipLayout.ts SLOT_PX): a quarter hour holds a line of text. */
+.todolist-calendar .fc .fc-timegrid-slot {
+  height: var(--tc-slot, 1.5em);
 }
-.todolist-calendar .fc .fc-timegrid-col .tc-area-label {
-  position: absolute;
-  inset-block: 0;
-  inset-inline-start: 0;
-  display: flex;
-  justify-content: center;
-  width: 18px;
-  padding: 4px 0;
+/* The chip pads itself (chipLayout.ts counts it). */
+.todolist-calendar .fc .fc-timegrid-event .fc-event-main {
+  padding: 0;
 }
-.todolist-calendar .fc .fc-timegrid-col .tc-area-label > [aria-hidden] {
-  max-height: 100%;
-  overflow: hidden;
-  /* Line-left is the top in a vertical line, in either direction: the label starts at the top. */
+/* A chip shorter than a line of text, with free time after it, is drawn a line tall (`--tc-line`)
+   over that time. Only drawn: FullCalendar's overlaps follow the true times (eventMinHeight 0). */
+.todolist-calendar .fc .fc-timegrid-event.tc-stretch {
+  min-height: var(--tc-line, 14px);
+}
+/* A stacked chip's title lines up under its icon, on the start side of the page's direction, even
+   when the title itself runs the other way. */
+.todolist-calendar[dir='rtl'] .fc .tc-chip-title {
+  text-align: right;
+}
+.todolist-calendar[dir='ltr'] .fc .tc-chip-title {
   text-align: left;
-  text-overflow: ellipsis;
-  writing-mode: vertical-rl;
 }
 .todolist-calendar .fc .fc-daygrid-more-link {
   color: var(--muted-foreground);
@@ -797,4 +802,21 @@
 .todolist-calendar .fc .fc-list-event-time {
   width: 4.5rem;
   white-space: nowrap;
+}
+/*
+ * The timesheet's week (TimesheetBlock), on the calendar's styles. A planned to-do is a chip in its
+ * colour with a dashed line of its own ink inside it (a plan, not reserved time), so it reads apart
+ * from a time block; it drags. While a
+ * to-do or a chip is dragged anywhere on the page, the painted time is edged stronger: guidance
+ * for where to drop, never a rule.
+ */
+.todolist-calendar .fc .tc-planned {
+  outline: 1px dashed color-mix(in oklab, currentColor 70%, transparent);
+  outline-offset: -2px;
+}
+.todolist-calendar .fc .tc-planned.fc-event-draggable {
+  cursor: grab;
+}
+body:has(.fc-event-dragging) .timesheet-grid .fc .tc-area {
+  box-shadow: inset 0 0 0 2px var(--tc-edge, var(--border));
 }

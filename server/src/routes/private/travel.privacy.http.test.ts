@@ -214,6 +214,10 @@ describe('travel privacy', () => {
       assert.equal((await call('b', 'PATCH', `/travel/legs/${id}`, { minutes: 5 })).status, 404);
       assert.equal((await call('b', 'POST', `/travel/legs/${id}/skip`)).status, 404);
       assert.equal((await call('b', 'POST', `/travel/legs/${id}/reset`)).status, 404);
+      assert.equal(
+        (await call('b', 'PUT', `/travel/legs/${id}/mode`, { mode: 'walk', scope: 'this' })).status,
+        404,
+      );
       assert.equal((await call('owner', 'GET', `/items/${id}`)).status, 404);
     }
     // A's places: B can neither change nor pin to them.

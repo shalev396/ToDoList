@@ -25,6 +25,7 @@ export function EveryOccurrenceDialog({
   onCancel,
   returnFocus,
   note = null,
+  copy,
 }: {
   open: boolean;
   /** False on the series as a whole: there is no one occurrence to choose. */
@@ -35,6 +36,8 @@ export function EveryOccurrenceDialog({
   returnFocus: RefObject<HTMLElement | null>;
   /** What choosing every occurrence would not keep (the leave and arrive times he typed). */
   note?: string | null;
+  /** Other words for the question and its two answers (a leg's way of going). */
+  copy?: { title: string; body: string; every: string; one: string };
 }) {
   const { t } = useTranslation();
   return (
@@ -57,8 +60,10 @@ export function EveryOccurrenceDialog({
         }}
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>{t('travel.add.every.title')}</AlertDialogTitle>
-          <AlertDialogDescription>{t('travel.add.every.body')}</AlertDialogDescription>
+          <AlertDialogTitle>{copy?.title ?? t('travel.add.every.title')}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {copy?.body ?? t('travel.add.every.body')}
+          </AlertDialogDescription>
           {note === null ? null : (
             <p className="text-sm text-foreground" data-every-length-only="">
               {note}
@@ -81,7 +86,7 @@ export function EveryOccurrenceDialog({
                 onChoose(false);
               }}
             >
-              {t('travel.add.every.one')}
+              {copy?.one ?? t('travel.add.every.one')}
             </Button>
           ) : null}
           <Button
@@ -91,7 +96,7 @@ export function EveryOccurrenceDialog({
               onChoose(true);
             }}
           >
-            {t('travel.add.every.every')}
+            {copy?.every ?? t('travel.add.every.every')}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

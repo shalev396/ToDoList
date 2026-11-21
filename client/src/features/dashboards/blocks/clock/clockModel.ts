@@ -71,9 +71,19 @@ export interface ClockModel {
 const endOf = (o: Occurrence): Date => o.end ?? new Date(o.start.getTime() + DEFAULT_LENGTH_MS);
 
 /**
+ * An instant on the local day after the one containing `now`: the day the "Tomorrow" ring
+ * shows. It is the first millisecond of that day, so a day that starts at 01:00 (a skipped
+ * midnight) is still the right one.
+ */
+export function tomorrowOf(now: Date, timeZone: string): Date {
+  return new Date(endOfZonedDay(now, timeZone).getTime() + 1);
+}
+
+/**
  * Without `colourOf` there are no areas and every arc keeps its source colour. `titleOf` gives a
  * row's title in the UI language (a travel leg's is drawn from its props); it defaults to the
- * stored one.
+ * stored one. `day` is the instant whose local day is drawn (now, unless it is tomorrow's ring
+ * (`tomorrowOf`)); Now and Next are always about `now`, so tomorrow has no current event.
  */
 export function buildClockModel(
   rows: readonly TimeRow[],
@@ -81,8 +91,9 @@ export function buildClockModel(
   timeZone: string,
   colourOf?: (rowId: string) => ItemColour,
   titleOf: (row: TimeRow) => string = (row) => row.title,
+  dayOf: Date = now,
 ): ClockModel {
-  const day = { from: startOfZonedDay(now, timeZone), to: endOfZonedDay(now, timeZone) };
+  const day = { from: startOfZonedDay(dayOf, timeZone), to: endOfZonedDay(dayOf, timeZone) };
   let all = expandOccurrences(rows, day, timeZone);
   let areas: ClockArea[] = [];
   if (colourOf !== undefined) {

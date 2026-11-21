@@ -1,4 +1,9 @@
-import type { RuleDirection, TravelMode, TravelRuleScope } from '../../types/travel.js';
+import type {
+  RuleDirection,
+  RuleLengths,
+  TravelMode,
+  TravelRuleScope,
+} from '../../types/travel.js';
 
 /**
  * A member's travel rule (plan Ruling 11): "when [scope] → travel by [mode], [there / back / both]",
@@ -13,6 +18,10 @@ export interface TravelRuleData {
   direction: RuleDirection;
   /** One of the member's places; null: the anchor's own place applies. */
   placeId: string | null;
+  /** Whole minutes the "there" leg arrives early; null: 0. Rules stored before it read as null. */
+  arriveEarlyMinutes: number | null;
+  /** Lengths that win over the trip's own for the legs it draws; null: none. */
+  lengths: RuleLengths | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -23,6 +32,8 @@ export interface NewTravelRuleRecord {
   mode: TravelMode;
   direction: RuleDirection;
   placeId: string | null;
+  arriveEarlyMinutes: number | null;
+  lengths: RuleLengths | null;
 }
 
 export interface TravelRulePatch {
@@ -30,6 +41,8 @@ export interface TravelRulePatch {
   mode?: TravelMode;
   direction?: RuleDirection;
   placeId?: string | null;
+  arriveEarlyMinutes?: number | null;
+  lengths?: RuleLengths | null;
 }
 
 export interface ITravelRuleRepository {
@@ -50,6 +63,8 @@ export interface ITravelRuleRepository {
   delete(workspaceId: string, ownerUserId: string, id: string): Promise<boolean>;
   /** A place was removed: the owner's rules naming it name none. Returns how many. */
   clearPlace(workspaceId: string, ownerUserId: string, placeId: string): Promise<number>;
+  /** Containers were removed: the repeats rules of these calendars or projects go. How many. */
+  deleteRepeatsIn(workspaceId: string, containerIds: readonly string[]): Promise<number>;
   /** A membership ended: every rule of the member, hard-deleted. Returns how many. */
   deleteForMember(workspaceId: string, ownerUserId: string): Promise<number>;
   /** The workspace was deleted: every rule in it. Returns how many. */
