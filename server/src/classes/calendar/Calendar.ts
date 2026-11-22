@@ -11,7 +11,8 @@
  * `overlay.plannedAt`, a due date, or a start whose span reaches into it), except the items Google
  * Calendar itself mirrors (they are its events already) and those with `overlay.calendarSync ===
  * false`. A provider copy of a local to-do is left out while its to-do is in the set, or turned off
- * for the calendar (H5, absorbedCopies). It is read in two parts, so no cap ever hides an item:
+ * for the calendar (H5, PushCalendar#absorbedCopies). It is read in two parts, so no cap ever
+ * hides an item:
  * - the items of the live links, all of them (in chunks): what to update or move, and, by their
  *   absence, which events to delete;
  * - the other items, page by page while the request's budget keeps WRITE_RESERVE_MS for the
@@ -155,7 +156,7 @@ function narrowingOf(
     });
     // The base filter's match first (already in `scope`), the `$facet` last: what is between is
     // the query's own work (computed fields, then its filters). Not its copy absorption: the push
-    // set is read in pages, and absorbedCopies applies H5 to the whole set.
+    // set is read in pages, and PushCalendar#absorbedCopies applies H5 to the whole set.
     const facet = compiled.pipeline.findIndex((stage) => '$facet' in stage);
     narrowed.stages = compiled.pipeline
       .slice(1, facet === -1 ? undefined : facet)
@@ -222,60 +223,24 @@ function toPushItem(doc: PushDoc): PushItem {
   };
 }
 
+/** A read of the push set: `match` on what is stored (the scope first), then `extra` stages. */
 type PushRead = (match: Filter[], extra?: Record<string, unknown>[]) => Promise<PushDoc[]>;
 
 /**
- * H5 in the push set: a provider copy is left out while its to-do is in the set, and while its
- * to-do is turned off for the calendar (the copy is the same task: no event he turned off comes
- * back through it); any other copy is pushed as its own item. The set is read in pages, so the
- * to-dos are found first, among the ones the copies in `scope` name (few), through the same read,
- * and the copies are then left out of every page. `{}` when no copy is left out.
+ * The push set's read: `match` (the access filter and the push rules first) on what is stored;
+ * then every item's effective values (Overrides: a mirrored item's overrides, so its event is
+ * placed at the date it reads as), which `dated` and `narrowed` (a dry run's own stages, its
+ * compiled filter) read.
  */
-async function absorbedCopies(
+function pushRead(
   workspaceId: string,
-  access: Filter,
-  scope: readonly Filter[],
-  read: PushRead,
-): Promise<Filter> {
-  const items = await getItemRepository();
-  const named = await items.aggregate<{ _id?: unknown }>(workspaceId, [
-    { $match: { $and: [...scope, { 'overlay.copyOf': { $type: 'string' } }] } },
-    { $group: { _id: '$overlay.copyOf' } },
-  ]);
-  const todoIds = named.flatMap((row) => (typeof row._id === 'string' ? [row._id] : []));
-  if (todoIds.length === 0) return {};
-  const [inSet, offCalendar] = await Promise.all([
-    read([...scope, { _id: { $in: todoIds } }]),
-    items.aggregate<{ _id: string }>(workspaceId, [
-      { $match: { $and: [access, { _id: { $in: todoIds }, 'overlay.calendarSync': false }] } },
-      { $project: { _id: 1 } },
-    ]),
-  ]);
-  const todos = [...new Set([...inSet, ...offCalendar].map((doc) => doc._id))];
-  return todos.length === 0 ? {} : { 'overlay.copyOf': { $nin: todos } };
-}
-
-/**
- * The push set's items, read in two parts (see the header): every item of `linked` still in it,
- * then, page by page while `budget` keeps the writes' reserve, the others (one page at least).
- * The access filter and the push rules are matched on what is stored; then every item's effective
- * values are projected (Overrides: a mirrored item's overrides, so its event is placed at the date
- * it reads as), and `dated` and `narrowed` (a dry run's own stages, its compiled filter) read them.
- * A provider copy whose to-do is in the set is left out (absorbedCopies).
- */
-async function pushItems(
-  workspaceId: string,
-  access: Filter,
   dated: readonly Filter[],
   narrowed: readonly Record<string, unknown>[],
-  linked: readonly string[],
-  budget: TimeBudget,
-): Promise<PushItem[]> {
-  const items = await getItemRepository();
+): PushRead {
   // A wider filter on what is stored before the projection (exact after it): the indexes narrow.
   const wide = Overrides.prefilter({ $and: [...dated] });
-  const read: PushRead = (match, extra = []) =>
-    items.aggregate<PushDoc>(workspaceId, [
+  return async (match, extra = []) =>
+    (await getItemRepository()).aggregate<PushDoc>(workspaceId, [
       { $match: { $and: wide === null ? match : [...match, wide] } },
       { $addFields: Overrides.projection() },
       { $match: { $and: [...dated] } },
@@ -283,9 +248,19 @@ async function pushItems(
       ...extra,
       { $project: PUSH_FIELDS },
     ]);
-  const pushed: Filter[] = [access, ...pushRule()];
-  const absorbed = await absorbedCopies(workspaceId, access, pushed, read);
-  const scope = Object.keys(absorbed).length === 0 ? pushed : [...pushed, absorbed];
+}
+
+/**
+ * The push set's items through `read`, in two parts (see the header): every item of `linked` still
+ * in it, then, page by page while `budget` keeps the writes' reserve, the others (one page at
+ * least). `scope` (the access filter first) leaves out the provider copies H5 absorbs.
+ */
+async function pushItems(
+  scope: readonly Filter[],
+  read: PushRead,
+  linked: readonly string[],
+  budget: TimeBudget,
+): Promise<PushItem[]> {
   const found: PushDoc[] = [];
   for (let at = 0; at < linked.length; at += PAGE_SIZE) {
     found.push(...(await read([...scope, { _id: { $in: linked.slice(at, at + PAGE_SIZE) } }])));
@@ -415,11 +390,19 @@ export class PushCalendar extends Calendar {
       timeZone,
     );
     const narrowed = narrowingOf(narrowing, caller, policy, now);
-    const items = await pushItems(
+    const access = policy.itemFilter(caller.context);
+    const pushed: Filter[] = [access, ...pushRule()];
+    // H5 is decided on the whole push set, as a confirmed push reads it: a narrowing only filters
+    // what a dry run previews, so its plan stays a part of the confirmed push's.
+    const absorbed = await PushCalendar.#absorbedCopies(
       workspaceId,
-      policy.itemFilter(caller.context),
-      [datedWithin(window), ...narrowed.filters],
-      narrowed.stages,
+      access,
+      pushed,
+      pushRead(workspaceId, [datedWithin(window)], []),
+    );
+    const items = await pushItems(
+      absorbed === null ? pushed : [...pushed, absorbed],
+      pushRead(workspaceId, [datedWithin(window), ...narrowed.filters], narrowed.stages),
       live.map((link) => link.itemId),
       budget,
     );
@@ -435,6 +418,38 @@ export class PushCalendar extends Calendar {
       allowDelete: narrowing === undefined,
     };
     return PushPlan.of({ ...buildOps(items, links, cfg, now), cfg, config });
+  }
+
+  /**
+   * H5 in the push set: a provider copy is left out while its to-do is in the set, and while its
+   * to-do is turned off for the calendar (the copy is the same task: no event he turned off comes
+   * back through it); any other copy is pushed as its own item. The set is read in pages, so the
+   * to-dos are found first, among the ones the copies in `scope` name (few), through `whole` (the
+   * un-narrowed set), and their copies are then left out of every page: the filter to add to the
+   * scope, or null when no copy is left out.
+   */
+  static async #absorbedCopies(
+    workspaceId: string,
+    access: Filter,
+    scope: readonly Filter[],
+    whole: PushRead,
+  ): Promise<Filter | null> {
+    const items = await getItemRepository();
+    const named = await items.aggregate<{ _id?: unknown }>(workspaceId, [
+      { $match: { $and: [...scope, { 'overlay.copyOf': { $type: 'string' } }] } },
+      { $group: { _id: '$overlay.copyOf' } },
+    ]);
+    const todoIds = named.flatMap((row) => (typeof row._id === 'string' ? [row._id] : []));
+    if (todoIds.length === 0) return null;
+    const [inSet, offCalendar] = await Promise.all([
+      whole([...scope, { _id: { $in: todoIds } }]),
+      items.aggregate<{ _id: string }>(workspaceId, [
+        { $match: { $and: [access, { _id: { $in: todoIds }, 'overlay.calendarSync': false }] } },
+        { $project: { _id: 1 } },
+      ]),
+    ]);
+    const todos = [...new Set([...inSet, ...offCalendar].map((doc) => doc._id))];
+    return todos.length === 0 ? null : { 'overlay.copyOf': { $nin: todos } };
   }
 
   /** Creations still allowed today: the cap minus what runs of the last 24 hours created. */

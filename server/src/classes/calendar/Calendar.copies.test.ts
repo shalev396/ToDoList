@@ -3,7 +3,8 @@
  * left out while its to-do is in the set (one event, the to-do's), and while its to-do is turned
  * off for the calendar (no event he turned off comes back through its copy). Any other copy is
  * pushed as an item of its own: an undated to-do no longer hides its dated Linear issue. The set
- * is read in pages, so this holds whichever page each one is on.
+ * is read in pages, so this holds whichever page each one is on; and a dry run's narrowing only
+ * filters what it previews, never what is absorbed.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -142,13 +143,21 @@ describe('the push set and provider copies', () => {
     assert.ok(!ids.includes(off.copy) && !ids.includes(off.todo));
   });
 
-  it('an MCP dry run narrowed to issues plans the copy: its to-do is not in that read', async () => {
+  it('an MCP dry run decides H5 on the whole set, as the confirmed push does: its plan is a part', async () => {
     const pair = await todoWithCopy('Narrowed', 2, 3);
+    const all = await created();
+    assert.ok(all.includes(pair.todo) && !all.includes(pair.copy));
+    // Narrowed to issues: the to-do is not previewed, and its copy stays absorbed (the confirmed
+    // push, which takes no narrowing, makes the to-do's event, never the copy's).
     const issues = await created({
       where: { combinator: 'and', rules: [{ field: 'kind', operator: '=', value: 'issue' }] },
     });
-    assert.ok(issues.includes(pair.copy) && !issues.includes(pair.todo));
-    const all = await created();
-    assert.ok(all.includes(pair.todo) && !all.includes(pair.copy));
+    assert.ok(!issues.includes(pair.copy) && !issues.includes(pair.todo));
+    // A range that holds the copy's day but not the to-do's: the same.
+    const day = (days: number): string =>
+      new Date(Date.now() + days * DAY_MS).toISOString().slice(0, 10);
+    const copyDay = await created({ range: { from: day(3), to: day(3) } });
+    assert.ok(!copyDay.includes(pair.copy) && !copyDay.includes(pair.todo));
+    for (const id of [...issues, ...copyDay]) assert.ok(all.includes(id), id);
   });
 });
