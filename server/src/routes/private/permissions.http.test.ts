@@ -144,6 +144,26 @@ interface Dash {
   blockId: string;
 }
 
+/** A GitHub integration each for Ann and Ben: the one provider a bundled template names. */
+async function githubs(f: Fixture): Promise<{ benGithub: string; annGithub: string }> {
+  const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+  const benGithub = `ben-gh-${f.wid}`;
+  const annGithub = `ann-gh-${f.wid}`;
+  await seedIntegration(f.wid, {
+    id: benGithub,
+    ownerUserId: ids.ben,
+    provider: 'github',
+    label: 'Ben github',
+  });
+  await seedIntegration(f.wid, {
+    id: annGithub,
+    ownerUserId: ids.ann,
+    provider: 'github',
+    label: 'Ann github',
+  });
+  return { benGithub, annGithub };
+}
+
 /** A dashboard of Ann's with one list block reading `connectors`. */
 async function dashboard(f: Fixture, connectors: string[], who: Who = 'ann'): Promise<Dash> {
   const created = dataOf(await call(who, 'POST', `${f.base}/dashboards`, { title: 'Board' }));
@@ -383,18 +403,30 @@ describe('connectors on blocks', () => {
     assert.deepEqual(await blockTitles(f, 'cy', his), ['Ben issue']);
   });
 
-  it('a template binds the instantiating member’s own integrations (ruling 16)', async () => {
+  it('a template binds the instantiating member’s own integrations to a block that names a provider (ruling 16)', async () => {
     const f = await workspace();
+    const { benGithub, annGithub } = await githubs(f);
     const created = dataOf(
-      await call('ben', 'POST', `${f.base}/builder/instantiate`, { templateKey: 'dashboard' }),
+      await call('ben', 'POST', `${f.base}/builder/instantiate`, { templateKey: 'personal' }),
     );
-    const blocks = created['blocks'] as { connectors?: string[]; query?: unknown }[];
+    const blocks = created['blocks'] as { connectors?: string[] }[];
     const bound = blocks.filter((block) => block.connectors !== undefined);
     assert.ok(bound.length > 0);
     for (const block of bound) {
-      assert.ok(!(block.connectors ?? []).includes(f.annJira), 'never Ann’s');
-      assert.ok((block.connectors ?? []).includes(f.benJira));
+      assert.deepEqual(block.connectors, [benGithub], 'only his GitHub: never Ann’s, never Jira');
+      assert.ok(!(block.connectors ?? []).includes(annGithub));
     }
+  });
+
+  it('a block that names no provider stays on All sources (no connectors field)', async () => {
+    const f = await workspace();
+    await githubs(f);
+    const created = dataOf(
+      await call('ben', 'POST', `${f.base}/builder/instantiate`, { templateKey: 'dashboard' }),
+    );
+    const blocks = created['blocks'] as { connectors?: string[] }[];
+    assert.ok(blocks.length > 0);
+    assert.ok(blocks.every((block) => block.connectors === undefined));
   });
 });
 
@@ -404,34 +436,38 @@ describe('templates never share silently (I4, ruling 16)', () => {
 
   it('the preview names the member’s own unshared integrations a template would attach', async () => {
     const f = await workspace();
-    const preview = await shares(f, 'ben', ['dashboard']);
+    const { benGithub } = await githubs(f);
+    const preview = await shares(f, 'ben', ['personal']);
     assert.deepEqual(dataOf(preview)['shares'], [
-      { id: f.benJira, provider: 'jira', accountLabel: 'Ben private label' },
+      { id: benGithub, provider: 'github', accountLabel: 'Ben github' },
     ]);
     assert.ok(!preview.text.includes(f.annJira), 'never another member’s');
-    assert.equal((await shares(f, 'cy', ['dashboard'])).status, 403, 'viewers create nothing');
+    // A template with no provider-named block attaches nothing, and the preview says so.
+    assert.deepEqual(dataOf(await shares(f, 'ben', ['dashboard']))['shares'], []);
+    assert.equal((await shares(f, 'cy', ['personal'])).status, 403, 'viewers create nothing');
     assert.equal((await shares(f, 'ben', ['no-such-template'])).status, 400);
   });
 
   it('"Create without them" attaches only what is shared already', async () => {
     const f = await workspace();
+    const { benGithub } = await githubs(f);
     const connectorsOf = (view: Data): string[] =>
       (view['blocks'] as { connectors?: string[] }[]).flatMap((block) => block.connectors ?? []);
     const instantiate = async (): Promise<Data> =>
       dataOf(
         await call('ben', 'POST', `${f.base}/builder/instantiate`, {
-          templateKey: 'dashboard',
+          templateKey: 'personal',
           shareIntegrations: false,
         }),
       );
-    assert.ok(!connectorsOf(await instantiate()).includes(f.benJira));
+    assert.ok(!connectorsOf(await instantiate()).includes(benGithub));
     assert.deepEqual(dataOf(await call('ben', 'GET', `${f.base}/integrations/sharing`)), {
       shared: [],
     });
     // Once Ben shares it himself, a template binds it again and there is nothing left to ask.
-    await dashboard(f, [f.benJira], 'ben');
-    assert.deepEqual(dataOf(await shares(f, 'ben', ['dashboard']))['shares'], []);
-    assert.ok(connectorsOf(await instantiate()).includes(f.benJira));
+    await dashboard(f, [benGithub], 'ben');
+    assert.deepEqual(dataOf(await shares(f, 'ben', ['personal']))['shares'], []);
+    assert.ok(connectorsOf(await instantiate()).includes(benGithub));
   });
 });
 

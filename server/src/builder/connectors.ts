@@ -98,7 +98,9 @@ export function boundConnectors(
 
 /**
  * A template's draft with its data blocks bound to the instantiating member's own integrations
- * (ruling 16). A block that already names connectors keeps them.
+ * (ruling 16). A block that already names connectors keeps them, and a block whose query names
+ * no provider stays without the field ("All sources": it reads whatever its viewer may see, so a
+ * source connected later shows up too). Only a block with provider hints is bound: it is narrow.
  */
 export function bindTemplateConnectors<T extends { blocks: Block[] }>(
   draft: T,
@@ -108,6 +110,7 @@ export function bindTemplateConnectors<T extends { blocks: Block[] }>(
     ...draft,
     blocks: draft.blocks.map((block): Block => {
       if (block.connectors !== undefined || !readsData(block)) return block;
+      if (providerHints(block.query) === null) return block;
       const bound = boundConnectors(block.query, integrations);
       return bound === null ? block : { ...block, connectors: bound };
     }),
