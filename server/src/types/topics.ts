@@ -40,7 +40,7 @@ export const TOPIC_COLOURS = [
   'blue',
   'violet',
   'pink',
-  'cyan',
+  'magenta',
 ] as const;
 export type TopicColour = (typeof TOPIC_COLOURS)[number];
 

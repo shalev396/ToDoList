@@ -126,19 +126,19 @@ describe('palette', () => {
     assert.equal(inkVar('gray', 'scheduled'), 'var(--tc-gray-scheduled-ink)');
   });
 
-  it('paints cyan, the TLVTech family, with its own tokens and keeps it apart from its neighbours', () => {
-    assert.deepEqual(paintOf({ family: 'cyan', role: 'area' }), {
-      fill: 'var(--tc-cyan-area)',
+  it('paints magenta, the TLVTech family, with its own tokens and keeps it apart from its neighbours', () => {
+    assert.deepEqual(paintOf({ family: 'magenta', role: 'area' }), {
+      fill: 'var(--tc-magenta-area)',
       ink: 'var(--foreground)',
       stripe: null,
     });
-    assert.equal(hatchFill('cal-1', 'cyan'), 'url(#cal-1-cyan)');
+    assert.equal(hatchFill('cal-1', 'magenta'), 'url(#cal-1-magenta)');
     for (const [name, theme] of Object.entries(THEMES)) {
       for (const role of ['scheduled', 'work', 'travel', 'area'] as const) {
-        const cyan = token(theme, `--tc-cyan-${role}`);
+        const magenta = token(theme, `--tc-magenta-${role}`);
         for (const other of ['gray', 'blue', 'teal', 'violet', 'green'] as const) {
           assert.notEqual(
-            cyan,
+            magenta,
             token(theme, `--tc-${other}-${role}`),
             `${name} ${role} vs ${other}`,
           );

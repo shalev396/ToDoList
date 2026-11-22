@@ -10,7 +10,7 @@ export const colours = {
     blue: 'Blue',
     violet: 'Violet',
     pink: 'Pink',
-    cyan: 'Cyan',
+    magenta: 'Magenta',
   },
   role: {
     scheduled: 'Scheduled',

@@ -183,7 +183,7 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 | `complete_todo` | Set `status: done` or `open` | D=false, I |
 | `delete_todo` | Soft delete (`deletedAt`); needs `confirm` | D |
 | `set_overlay` | Pin, hide or annotate a **mirrored** item via DATA.md `overlay.*` (local-only, never written to the provider) | D=false, I |
-| `set_subject` | Create or change a Subject (a lesson): its colour family (gray, red, orange, amber, green, teal, blue, violet, pink or cyan), title patterns and, with `rename`, its name; `{name, rename?, family?, patterns?}` → `{subject, created}`; editor+ | D=false, I |
+| `set_subject` | Create or change a Subject (a lesson): its colour family (gray, red, orange, amber, green, teal, blue, violet, pink or magenta), title patterns and, with `rename`, its name; `{name, rename?, family?, patterns?}` → `{subject, created}`; editor+ | D=false, I |
 | `travel_list_places` | The key's own member's saved places (Home, campus, the gym): `{places: [{id, name, aliases, home}]}`, oldest first; never an address. Scope `read`; editor+ | RO, I |
 | `travel_set_place` | Save a place (a new one needs `name`; `address` is optional free text, never looked up, only for opening Waze or Google Maps on the member's device; a typed `"lat, lon"` is text like any other) or change one (`id`; `name`, `address` (empty clears it), `aliases`, `home`) → `{place}` (name view); no `lat`/`lon`/`coords` input; editor+ | D=false |
 | `travel_remove_place` | `{id, confirm}`: removes a place with what points at it (rules naming it name none, pins go); without `confirm: true` only previews → `{applied, summary, …}`; editor+ | D |
@@ -305,7 +305,7 @@ The target is the workspace's primary calendar (`settings.primaryCalendar`) and 
 | `workspace_invite` | `{email, role, message?, language?}` → a pending invite; the invitee accepts in the UI (DATA.md `Invites`) | `workspace:share` + owner | D=false |
 | `workspace_update_member` | Change a member's role; needs `confirm` | `workspace:share` + owner | D |
 | `workspace_remove_member` | Revoke a membership; needs `confirm` | `workspace:share` + owner | D |
-| `set_topic_colour` | Give a topic its colour family (gray, red, orange, amber, green, teal, blue, violet, pink or cyan): `{topic, family}` | `workspace:share` + owner | D=false, I |
+| `set_topic_colour` | Give a topic its colour family (gray, red, orange, amber, green, teal, blue, violet, pink or magenta): `{topic, family}` | `workspace:share` + owner | D=false, I |
 | `set_file_under` | File an own integration, or one of its calendars/projects (`containerId`), under a topic (`topic` null: Unsorted, or back to the connection's topic); stored items move at once, hand-set item topics are kept | `workspace:share` + owner | D=false, I |
 | `audit_log_query` | Recent actions, filterable by agent | `workspace:read` | RO |
 

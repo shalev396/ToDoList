@@ -151,25 +151,25 @@ describe('nextFamily', () => {
   });
 });
 
-describe('the cyan family', () => {
+describe('the magenta family', () => {
   it('is one of the ten families a topic or a Subject may name', () => {
     assert.equal(TOPIC_COLOURS.length, 10);
     assert.equal(new Set(TOPIC_COLOURS).size, 10);
-    assert.ok((TOPIC_COLOURS as readonly string[]).includes('cyan'));
+    assert.ok((TOPIC_COLOURS as readonly string[]).includes('magenta'));
   });
   it('is chosen by hand, never auto-assigned', () => {
-    assert.equal((FAMILY_ASSIGN_ORDER as readonly string[]).includes('cyan'), false);
+    assert.equal((FAMILY_ASSIGN_ORDER as readonly string[]).includes('magenta'), false);
     const eight = [...FAMILY_ASSIGN_ORDER];
-    assert.equal(nextFamily([...eight, 'cyan']), 'blue');
-    assert.equal(nextFamily(['cyan']), 'blue');
+    assert.equal(nextFamily([...eight, 'magenta']), 'blue');
+    assert.equal(nextFamily(['magenta']), 'blue');
   });
-  it('colours an item whose Subject is cyan, in its role', () => {
-    const subjects: ColourSubject[] = [{ name: 'TLVTech', family: 'cyan', patterns: [] }];
+  it('colours an item whose Subject is magenta, in its role', () => {
+    const subjects: ColourSubject[] = [{ name: 'TLVTech', family: 'magenta', patterns: [] }];
     const area = resolveColour(
       input({ kind: 'block', provider: 'local', layer: 'area', subject: 'TLVTech' }),
       { topicFamilies: new Map(), subjects },
     );
-    assert.deepEqual([area.family, area.role, area.from], ['cyan', 'area', 'subject']);
+    assert.deepEqual([area.family, area.role, area.from], ['magenta', 'area', 'subject']);
   });
 });
 

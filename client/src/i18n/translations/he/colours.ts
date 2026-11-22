@@ -10,7 +10,7 @@ export const colours = {
     blue: 'כחול',
     violet: 'סגול',
     pink: 'ורוד',
-    cyan: 'תכלת',
+    magenta: 'מג׳נטה',
   },
   role: {
     scheduled: 'מתוכנן',
