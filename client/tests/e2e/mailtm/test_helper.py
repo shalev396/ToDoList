@@ -260,3 +260,13 @@ def test_a_token_without_a_known_issue_time_is_dated_by_its_iat():
     undated = mailtm.TestUser("e", "p", "opaque", "r")
     stale = mailtm.SessionUser(undated, "api", clock=clock, login=lambda *a: ("new", "r2"))
     assert stale.id_token == "new"  # no date at all: renewed at once
+
+
+def test_a_session_account_can_be_copied_and_named():
+    import copy
+
+    user = mailtm.TestUser("u@mail.test", "pw", "id", "refresh", issued_at=1_700_000_000.0)
+    session = mailtm.SessionUser(user, "api", clock=lambda: 1_700_000_001.0)
+    twin = copy.copy(session)
+    assert twin.email == "u@mail.test" and twin.id_token == "id"
+    assert repr(session) == "SessionUser('u@mail.test')"

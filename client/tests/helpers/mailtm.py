@@ -132,6 +132,9 @@ class SessionUser:
         return self.fresh().refresh_token
 
     def __getattr__(self, name: str):
+        if name.startswith("__") or name in ("_user", "_api_base_url", "_clock", "_login"):
+            # Not set yet (a copy or pickle being made): never recurse into self._user.
+            raise AttributeError(name)
         return getattr(self._user, name)
 
     def _asdict(self) -> dict:
