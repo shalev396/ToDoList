@@ -1,50 +1,89 @@
 """
-mail.tm for test suites: a minimal API client whose every call goes through a rate limiter shared
-by all the processes on the machine (pytest-xdist workers included). Portable: this folder
-imports nothing outside itself and the standard library, except `requests`. See README.md.
+mail.tm for test suites: a minimal API client whose every call waits in one first-in, first-out
+queue shared by all the processes on the machine (pytest-xdist workers included), a live feed of
+new messages (Mercure), and a guard a suite can turn on so no unplanned code calls mail.tm.
+Portable: this folder imports nothing outside itself and the standard library, except `requests`.
+See README.md.
 """
 from .client import (
+    ANNOUNCED_PER_MINUTE,
     AddressTaken,
+    CallStats,
     DEFAULT_BASE_URL,
     DOCUMENTED_LIMIT,
+    Inbox,
+    InboxWatch,
     MailTmClient,
     MailTmError,
+    MailTmRateLimited,
     MailTmTimeout,
     Quota,
     RetryPolicy,
+    account_id_from_token,
     backoff_seconds,
+    default_buckets,
     default_state_dir,
     message_text,
+    rate_limit_headers,
     ratelimit_quota,
     retry_after_seconds,
 )
+from .guard import GUARD, CallGuard, MailTmNotAllowed, Violation
+from .live import DEFAULT_MERCURE_URL, SseEvent, SseParser, ThreadedFeed, arrived_message
 from .ratelimit import (
-    DEFAULT_BURST,
-    DEFAULT_RATE,
+    DEFAULT_BUCKETS,
+    PER_MINUTE,
+    PER_SECOND,
+    Bucket,
     InterProcessLock,
     LockTimeout,
     RateLimitTimeout,
-    SharedRateLimiter,
+    Refusal,
+    RunCounters,
+    SharedQueue,
+    Slot,
 )
 
 __all__ = [
+    "ANNOUNCED_PER_MINUTE",
     "AddressTaken",
+    "Bucket",
+    "CallGuard",
+    "CallStats",
     "DEFAULT_BASE_URL",
-    "DEFAULT_BURST",
-    "DEFAULT_RATE",
+    "DEFAULT_BUCKETS",
+    "DEFAULT_MERCURE_URL",
     "DOCUMENTED_LIMIT",
+    "GUARD",
+    "Inbox",
+    "InboxWatch",
     "InterProcessLock",
     "LockTimeout",
     "MailTmClient",
     "MailTmError",
+    "MailTmNotAllowed",
+    "MailTmRateLimited",
     "MailTmTimeout",
+    "PER_MINUTE",
+    "PER_SECOND",
     "Quota",
     "RateLimitTimeout",
+    "Refusal",
     "RetryPolicy",
-    "SharedRateLimiter",
+    "RunCounters",
+    "SharedQueue",
+    "Slot",
+    "SseEvent",
+    "SseParser",
+    "ThreadedFeed",
+    "Violation",
+    "account_id_from_token",
+    "arrived_message",
     "backoff_seconds",
+    "default_buckets",
     "default_state_dir",
     "message_text",
+    "rate_limit_headers",
     "ratelimit_quota",
     "retry_after_seconds",
 ]

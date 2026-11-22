@@ -40,25 +40,51 @@ class FakeClock:
         return at - self.start
 
 
-def busiest_second(times: Iterable[float]) -> int:
-    """The most times any half-open window of one second holds."""
+def busiest_window(times: Iterable[float], seconds: float) -> int:
+    """The most times any half-open window of `seconds` holds."""
     ordered = sorted(times)
     best = first = 0
     for last, at in enumerate(ordered):
-        while at - ordered[first] >= 1.0 - EPS:
+        while at - ordered[first] >= seconds - EPS:
             first += 1
         best = max(best, last - first + 1)
     return best
 
 
-def assert_conforms(times: Iterable[float], rate: float, burst: int) -> None:
-    """Every time is one a GCRA bucket of `rate` and `burst` would have let through."""
-    interval = 1.0 / rate
-    tolerance = (burst - 1) * interval
-    tat = float("-inf")
-    for at in sorted(times):
-        assert at >= tat - tolerance - EPS, f"{at} came {tat - tolerance - at:.6f} s early"
-        tat = max(tat, at) + interval
+def busiest_second(times: Iterable[float]) -> int:
+    """The most times any half-open window of one second holds."""
+    return busiest_window(times, 1.0)
+
+
+def assert_within(times: Iterable[float], buckets: Iterable) -> None:
+    """No window of any bucket holds more releases than its limit."""
+    times = list(times)
+    for bucket in buckets:
+        most = busiest_window(times, bucket.window)
+        assert most <= bucket.limit, f"{most} in {bucket.window:g} s (limit {bucket.limit})"
+
+
+class ScriptedFeed:
+    """A live feed on the fake clock: `items` are (seconds after the feed opened, item), where an
+    item is a message summary dict or a `live.Ended`. `next(timeout)` moves the clock to the next
+    item, or by `timeout` when none comes sooner."""
+
+    def __init__(self, clock: FakeClock, items: list) -> None:
+        self.clock = clock
+        self.opened = clock.now
+        self.items = sorted(items, key=lambda item: item[0])
+        self.closed = False
+
+    def next(self, timeout: float):
+        if self.items and self.opened + self.items[0][0] <= self.clock.now + timeout:
+            at, item = self.items.pop(0)
+            self.clock.now = max(self.clock.now, self.opened + at)
+            return item
+        self.clock.now += max(timeout, 0.0)
+        return None
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def spawn(code: str, *args: object) -> subprocess.Popen:
