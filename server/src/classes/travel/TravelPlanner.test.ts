@@ -55,9 +55,19 @@ after(async () => {
   await db.stop();
 });
 
+/**
+ * "Today" for the whole file, read once. Each test dates its anchors with local() and checks the
+ * legs with local() again, seconds later: read anew each time, a run that crossed local midnight
+ * between the two expected every time a day later than the legs it made (one red full run, the
+ * assertion after "regenerate twice"). The planner keeps the real clock; a midnight between this
+ * and its run moves its 14-day horizon a day on, which no anchor here (days 2 to 10, and 17 past
+ * it) sits close enough to feel.
+ */
+const TODAY = new Date();
+
 /** `days` local days from today, at hh:mm on Jerusalem's wall clock. */
 function local(days: number, hour: number, minute = 0): Date {
-  const { year, month, day } = zonedParts(addLocalDays(new Date(), days, ZONE), ZONE);
+  const { year, month, day } = zonedParts(addLocalDays(TODAY, days, ZONE), ZONE);
   return zonedTime(year, month, day, hour, minute, ZONE);
 }
 
