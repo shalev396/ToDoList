@@ -131,10 +131,15 @@ export function buildTimesheet(
   timeZone: string,
   colourOf: (rowId: string) => ItemColour,
   showBlocks: boolean,
+  hidden: readonly ItemQueryRow[] = [],
 ): TimesheetModel {
   const timedRows = rows.filter((row) => !isTodoRow(row));
   const todos = panelOrder(rows.filter(isTodoRow));
-  const { areas, items } = splitAreas(expandOccurrences(timedRows, range, timeZone), colourOf);
+  // What a display rule hides still takes its slot out of its series (never listed).
+  const { areas, items } = splitAreas(
+    expandOccurrences(timedRows, range, timeZone, { hidden }),
+    colourOf,
+  );
   return {
     areas,
     timed: items.filter((o) => showBlocks || layerOf(o.row) !== 'block'),

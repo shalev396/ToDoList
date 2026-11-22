@@ -203,17 +203,26 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   const [startHour, setStartHour] = useState(() => readStartHour(block.viz));
   const region = useRef<HTMLDivElement>(null);
 
-  const visible = useMemo(() => {
+  const ruled = useMemo(() => {
     const rows = (data.data?.rows ?? []).filter(isTimeRow);
-    const shown = applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars });
-    return shown.filter((entry) => !entry.hidden);
+    return applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars });
   }, [data.data?.rows, block.rules, now, timeZone, vars]);
+  const visible = useMemo(() => ruled.filter((entry) => !entry.hidden), [ruled]);
+  // What a rule hides still takes its slot out of its series: a hidden cancelled occurrence never
+  // turns back into an active, busy one.
+  const hiddenRows = useMemo(
+    () => ruled.filter((entry) => entry.hidden).map((entry) => entry.row),
+    [ruled],
+  );
   // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
   const visibleRows = useMemo(() => withSeriesFields(visible.map((entry) => entry.row)), [visible]);
   const colourOf = useRowColours(visibleRows);
   const { areas, displayed } = useMemo(() => {
     const byRow = new Map(visible.map((entry) => [entry.row.id, entry] as const));
-    const split = splitAreas(expandOccurrences(visibleRows, range, timeZone), colourOf);
+    const split = splitAreas(
+      expandOccurrences(visibleRows, range, timeZone, { hidden: hiddenRows }),
+      colourOf,
+    );
     return {
       areas: split.areas,
       displayed: split.items.map((occurrence): DisplayedOccurrence => {
@@ -226,7 +235,7 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         };
       }),
     };
-  }, [visible, visibleRows, range, timeZone, colourOf, t, now]);
+  }, [visible, visibleRows, hiddenRows, range, timeZone, colourOf, t, now]);
   const viewName = fcView(view, phone, options.list);
   // FullCalendar draws no background events in the month grid or a list: there an area is a
   // plain event, in the area's style, that opens its sheet.

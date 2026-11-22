@@ -57,12 +57,18 @@ function isOpenTask(occurrence: Occurrence): boolean {
   return isUndoneTask(occurrence) && occurrence.row.status !== 'cancelled';
 }
 
-export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: string): AgendaModel {
+/** `hidden`: rows a display rule hides; they still take their slots out of their series. */
+export function buildAgenda(
+  rows: readonly TimeRow[],
+  now: Date,
+  timeZone: string,
+  hidden: readonly TimeRow[] = [],
+): AgendaModel {
   const todayStart = startOfZonedDay(now, timeZone);
   const todayEnd = endOfZonedDay(now, timeZone);
   const tomorrowEnd = endOfZonedDay(todayEnd, timeZone);
   const from = new Date(todayStart.getTime() - OVERDUE_DAYS * DAY_MS);
-  const all = expandOccurrences(rows, { from, to: tomorrowEnd }, timeZone);
+  const all = expandOccurrences(rows, { from, to: tomorrowEnd }, timeZone, { hidden });
   const nowMs = now.getTime();
 
   const model: AgendaModel = {

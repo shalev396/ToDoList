@@ -108,9 +108,11 @@ export function buildClockModel(
   colourOf?: (rowId: string) => ItemColour,
   titleOf: (row: TimeRow) => string = (row) => row.title,
   dayOf: Date = now,
+  hidden: readonly TimeRow[] = [],
 ): ClockModel {
   const day = { from: startOfZonedDay(dayOf, timeZone), to: endOfZonedDay(dayOf, timeZone) };
-  let all = expandOccurrences(rows, day, timeZone);
+  // What a display rule hides still takes its slot out of its series (never listed).
+  let all = expandOccurrences(rows, day, timeZone, { hidden });
   let areas: ClockArea[] = [];
   if (colourOf !== undefined) {
     const split = splitAreas(all, colourOf);

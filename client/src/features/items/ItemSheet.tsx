@@ -284,9 +284,14 @@ function ItemBody({
           />
         ) : null}
 
-        {/* A disabled item gets no travel (its time is free): enable it first. */}
-        {canWrite && canTravelTo(item) && item.overlay.disabled !== true ? (
-          <ItemTravelSection item={item} occurrence={occurrence} />
+        {canWrite && canTravelTo(item) ? (
+          <ItemTravelSection
+            item={item}
+            occurrence={occurrence}
+            // A disabled item gets no new travel (its time is free); a mark made before stays
+            // removable.
+            canMark={item.overlay.disabled !== true}
+          />
         ) : null}
 
         {refused === null ? null : (

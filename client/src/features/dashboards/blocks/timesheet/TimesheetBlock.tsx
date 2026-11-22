@@ -165,21 +165,31 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
   const data = useBlockData(dashboard, block, { ...vars, range: rangeVar });
   const plan = usePlanTodo(workspace?.id ?? '', dashboard.id, block.id);
 
-  const rows = useMemo(() => {
-    const shown = applyDisplayRules(itemRowsOf(data.data), block.rules, {
-      now,
-      timeZone,
-      userId: '',
-      vars,
-    });
-    // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
-    return withSeriesFields(shown.filter((entry) => !entry.hidden).map((entry) => entry.row));
-  }, [data.data, block.rules, now, timeZone, vars]);
+  const ruled = useMemo(
+    () =>
+      applyDisplayRules(itemRowsOf(data.data), block.rules, {
+        now,
+        timeZone,
+        userId: '',
+        vars,
+      }),
+    [data.data, block.rules, now, timeZone, vars],
+  );
+  // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+  const rows = useMemo(
+    () => withSeriesFields(ruled.filter((entry) => !entry.hidden).map((entry) => entry.row)),
+    [ruled],
+  );
+  // What a rule hides still takes its slot out of its series.
+  const hiddenRows = useMemo(
+    () => ruled.filter((entry) => entry.hidden).map((entry) => entry.row),
+    [ruled],
+  );
   const colourOf = useRowColours(rows);
   const showBlocks = showsBlocks(block.viz);
   const model = useMemo(
-    () => buildTimesheet(rows, range, timeZone, colourOf, showBlocks),
-    [rows, range, timeZone, colourOf, showBlocks],
+    () => buildTimesheet(rows, range, timeZone, colourOf, showBlocks, hiddenRows),
+    [rows, range, timeZone, colourOf, showBlocks, hiddenRows],
   );
   const topicId = timesheetTopicId(block.query, vars);
 

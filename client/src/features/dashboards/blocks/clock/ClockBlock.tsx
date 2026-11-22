@@ -62,27 +62,41 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
   /** Only an explicit true: a clock without the flag is today alone, as it always was. */
   const showTomorrow = block.viz['showTomorrow'] === true;
 
-  const kept = useMemo(() => {
+  const ruled = useMemo(() => {
     const rows = (data.data?.rows ?? []).filter(isTimeRow);
-    // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
-    return withSeriesFields(
-      applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars })
-        .filter((entry) => !entry.hidden)
-        .map((entry) => entry.row),
-    );
+    return applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars });
   }, [data.data?.rows, block.rules, now, timeZone, vars]);
+  // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+  const kept = useMemo(
+    () => withSeriesFields(ruled.filter((entry) => !entry.hidden).map((entry) => entry.row)),
+    [ruled],
+  );
+  // What a rule hides still takes its slot out of its series.
+  const hiddenRows = useMemo(
+    () => ruled.filter((entry) => entry.hidden).map((entry) => entry.row),
+    [ruled],
+  );
   const colourOf = useRowColours(kept);
   const model = useMemo(
-    () => buildClockModel(kept, now, timeZone, colourOf, (row) => rowTitle(t, row)),
-    [kept, now, timeZone, colourOf, t],
+    () =>
+      buildClockModel(kept, now, timeZone, colourOf, (row) => rowTitle(t, row), now, hiddenRows),
+    [kept, now, timeZone, colourOf, t, hiddenRows],
   );
   const tomorrowDay = useMemo(() => tomorrowOf(now, timeZone), [now, timeZone]);
   const tomorrow = useMemo(
     () =>
       showTomorrow
-        ? buildClockModel(kept, now, timeZone, colourOf, (row) => rowTitle(t, row), tomorrowDay)
+        ? buildClockModel(
+            kept,
+            now,
+            timeZone,
+            colourOf,
+            (row) => rowTitle(t, row),
+            tomorrowDay,
+            hiddenRows,
+          )
         : null,
-    [showTomorrow, kept, now, timeZone, colourOf, t, tomorrowDay],
+    [showTomorrow, kept, now, timeZone, colourOf, t, tomorrowDay, hiddenRows],
   );
   const topicNames = useMemo(
     () => new Map(topics.map((topic) => [topic.id, topic.name])),

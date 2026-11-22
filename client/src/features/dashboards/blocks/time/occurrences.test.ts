@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PARITY_CASES } from '@api-types/recurrence/cases.ts';
+import { applyDisplayRules } from '../../rules/applyDisplayRules.ts';
 import { zonedTime } from '../clock/ClockRing.math.ts';
 import {
   expandOccurrences,
@@ -110,6 +111,40 @@ describe('expandOccurrences', () => {
     assert.deepEqual(expandOccurrences([cancelled], WEEK, TZ), []);
     const declined = { ...master, status: 'cancelled', statusRaw: 'declined' };
     assert.deepEqual(expandOccurrences([declined, cancelled], WEEK, TZ), []);
+  });
+
+  it('a "hide cancelled" display rule never turns the slot into an active, busy occurrence', () => {
+    const cancelled = row({
+      id: 'x1',
+      title: 'e1_20261110T080000Z',
+      status: 'cancelled',
+      startAt: at(2026, 11, 10, 10),
+      props: {
+        calendarId: 'c',
+        eventId: 'e1_20261110T080000Z',
+        recurringEventId: 'e1',
+        originalStartAt: at(2026, 11, 10, 10).toISOString(),
+      },
+    });
+    const ruled = applyDisplayRules(
+      [series(), cancelled],
+      [{ if: { field: 'status', operator: '=', value: 'cancelled' }, then: { hide: true } }],
+      { now: at(2026, 11, 8), timeZone: TZ, userId: 'u' },
+    );
+    const shown = ruled.filter((entry) => !entry.hidden).map((entry) => entry.row);
+    const hidden = ruled.filter((entry) => entry.hidden).map((entry) => entry.row);
+    assert.deepEqual(hidden, [cancelled]);
+    const out = expandOccurrences(shown, WEEK, TZ, { hidden });
+    // Sunday and Thursday only: Tuesday's slot is neither drawn active nor drawn cancelled.
+    assert.deepEqual(
+      out.map((o) => [wallString(o.start, TZ), o.inactive]),
+      [
+        ['2026-11-08T10:00:00', null],
+        ['2026-11-12T10:00:00', null],
+      ],
+    );
+    // A hidden master hides its cancelled occurrences too.
+    assert.deepEqual(expandOccurrences([cancelled], WEEK, TZ, { hidden: [series()] }), []);
   });
 
   it('never lists a declined occurrence, and still takes its slot out of the series', () => {

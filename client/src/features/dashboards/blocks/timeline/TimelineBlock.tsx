@@ -60,7 +60,7 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
   const { openNewItem } = useShellUi();
   const { role } = useCurrentWorkspace();
   const canWrite = role === 'editor' || role === 'owner';
-  const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
+  const { query, rows, hiddenRows, loadState, now, timeZone } = useDataBlock(dashboard, block);
   const title = blockTitle(block, t);
   const locale = dateLocale(language);
   const count = daysOf(block.viz);
@@ -76,13 +76,16 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
       out.push({ date: wallDate(start, timeZone), start, items: [] });
       start = end;
     }
-    const occurrences = expandOccurrences(itemRows, { from: first, to: start }, timeZone);
+    // What a rule hides still takes its slot out of its series (never listed).
+    const occurrences = expandOccurrences(itemRows, { from: first, to: start }, timeZone, {
+      hidden: hiddenRows,
+    });
     for (const occurrence of occurrences) {
       const date = wallDate(occurrence.start, timeZone);
       out.find((day) => day.date === date)?.items.push(occurrence);
     }
     return out;
-  }, [itemRows, now, timeZone, count]);
+  }, [itemRows, hiddenRows, now, timeZone, count]);
   const busy = days.filter((day) => day.items.length > 0);
   const listed = canWrite ? days : busy;
   const heading = new Intl.DateTimeFormat(locale, {

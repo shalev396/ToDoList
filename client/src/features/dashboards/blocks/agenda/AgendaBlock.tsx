@@ -123,7 +123,7 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
   const { openItem } = useItemParam();
   const location = useLocation();
   const { language } = useLanguage();
-  const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
+  const { query, rows, hiddenRows, loadState, now, timeZone } = useDataBlock(dashboard, block);
   const title = blockTitle(block, t);
   const locale = dateLocale(language);
   // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
@@ -140,14 +140,16 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
       items.map((entry) => entry.row),
       now,
       timeZone,
+      hiddenRows,
     );
     const areaModel = buildAgenda(
       areas.map((entry) => entry.row),
       now,
       timeZone,
+      hiddenRows,
     );
     return agendaAreas(itemModel, areaModel);
-  }, [itemRows, colourOf, now, timeZone]);
+  }, [itemRows, hiddenRows, colourOf, now, timeZone]);
   const empty = AGENDA_PARTS.every((part) => groups[part].length === 0);
   const status = loadState !== 'ready' ? loadState : empty ? 'empty' : 'ready';
   return (
