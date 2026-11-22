@@ -209,7 +209,7 @@ classDiagram
   }
   class ItemAccessFilter {
     <<value object>>
-    +copyAbsorption()$ Stage[]
+    +copyAbsorption(hidden?)$ Stage[]
     +isCopyAbsorption(stage)$ boolean
     +items(ws) Filter
     +itemsUnabsorbed(ws) Filter
@@ -1276,6 +1276,7 @@ classDiagram
     +get(id)
     +detail(item)
     +summaries(ids)
+    +copyOf(ids) Map
     +facets(connectors)
     +aggregates() RunQueryDeps
     +run(query, ctx)
@@ -1313,6 +1314,7 @@ classDiagram
     the primary, as its integration pushes
     -owner: Caller
     +plan(now, narrowing?, budget?) PushPlan
+    -absorbedCopies(workspaceId, access, scope, whole)$ Filter
   }
   Calendar <|-- PushCalendar
   class EventClaim {

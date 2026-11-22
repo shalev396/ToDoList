@@ -4,6 +4,10 @@
  * own. The to-do shows when the viewer may see it and it matches the block's whole filter (its
  * connectors, date range, rules, variables and topic narrowing); sort, limit and pages do not
  * count. Counts, groups and rows agree. The access filter stays the first stage.
+ *
+ * A to-do in the result that does not show hides nothing: one the block's `hide` display rule
+ * matches (the client hides it), and a cancelled one (time views drop it). A soft-deleted to-do is
+ * in no read. The absorption runs before the dedup of two integrations of one account.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +15,7 @@ import assert from 'node:assert/strict';
 import type { CreateLocalItemInput, ItemUpsert } from '../models/definitions/Item.js';
 import type { IItemRepository } from '../models/index.js';
 import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js';
-import type { Query, QueryResult, RuleGroup } from '../types/builder.js';
+import type { DisplayRule, Query, QueryResult, RuleGroup } from '../types/builder.js';
 import type { CompileContext } from './compile.js';
 import type { RunQueryDeps } from './run.js';
 
@@ -274,5 +278,130 @@ describe('a dashboard block and a provider copy', () => {
       { linear: 2, local: 1 },
     );
     assert.ok(todo);
+  });
+});
+
+describe('a to-do in the result that does not show', () => {
+  const doneHidden: DisplayRule = {
+    if: { field: 'status', operator: '=', value: 'done' },
+    then: { hide: true },
+  };
+
+  it('a list block with "if status = done then hide": the done to-do hidden, its open copy shown', async () => {
+    const { ws, todo, copy } = await pair({ status: 'done' });
+    const list = (rules: DisplayRule[]): CompileContext =>
+      context(ws, 'u-1', { blockType: 'list', displayRules: rules });
+    // The rows still hold the to-do (the client hides it, as before); the copy is now a row too.
+    const shown = await run({}, list([doneHidden]));
+    assert.deepEqual((shown.rows ?? []).map((row) => row.id).sort(), [todo, copy].sort());
+    assert.equal(shown.total, 2);
+    // No hide rule, or one that only tones or badges: one row, the to-do.
+    assert.deepEqual(await idsOf({}, list([])), [todo]);
+    assert.deepEqual(await idsOf({}, list([{ if: doneHidden.if, then: { tone: 'muted' } }])), [
+      todo,
+    ]);
+    // A hide rule the to-do does not match: it shows, so it still absorbs its copy.
+    assert.deepEqual(
+      await idsOf(
+        {},
+        list([{ if: { field: 'status', operator: '=', value: 'open' }, then: { hide: true } }]),
+      ),
+      [todo],
+    );
+  });
+
+  it('a hide rule reads $page variables and computed fields as the client does', async () => {
+    const { ws, todo, copy } = await pair({ status: 'done' });
+    const byVar: DisplayRule = {
+      if: { field: 'status', operator: '=', value: '$page.hidden' },
+      then: { hide: true },
+    };
+    // Unset: the rule does nothing (no warning reaches the result either).
+    const unset = await run({}, context(ws, 'u-1', { displayRules: [byVar] }));
+    assert.deepEqual(
+      (unset.rows ?? []).map((row) => row.id),
+      [todo],
+    );
+    assert.deepEqual(unset.warnings, []);
+    assert.deepEqual(unset.appliedVars, {});
+    const set = context(ws, 'u-1', { displayRules: [byVar], vars: { hidden: 'done' } });
+    assert.deepEqual(await idsOf({}, set), [copy, todo].sort());
+    // The built-in Importance reads 3 when unset: a rule on it matches the to-do.
+    const importance: DisplayRule = {
+      if: { field: 'attr.importance', operator: '=', value: 3 },
+      then: { hide: true },
+    };
+    assert.deepEqual(
+      await idsOf(
+        { where: rule('kind', '!=', 'event') },
+        context(ws, 'u-1', { displayRules: [importance] }),
+      ),
+      [copy, todo].sort(),
+    );
+    // A rule the compiler refuses hides nothing, and never breaks the block.
+    const refused: DisplayRule = {
+      if: { field: 'no.such.field', operator: '=', value: 'x' },
+      then: { hide: true },
+    };
+    assert.deepEqual(await idsOf({}, context(ws, 'u-1', { displayRules: [refused] })), [todo]);
+  });
+
+  it('a cancelled to-do hides nothing: its open copy shows in a calendar and in a list', async () => {
+    const due = new Date('2026-11-12T10:00:00Z');
+    const { ws, todo, copy } = await pair({ status: 'cancelled', dueAt: due }, { dueAt: due });
+    const week = { dateRange: 'this_week' as const };
+    assert.deepEqual(
+      await idsOf(week, context(ws, 'u-1', { blockType: 'calendar' })),
+      [copy, todo].sort(),
+    );
+    assert.deepEqual(
+      await idsOf({}, context(ws, 'u-1', { blockType: 'list' })),
+      [copy, todo].sort(),
+    );
+  });
+
+  it('a soft-deleted to-do whose copy is still marked: the copy shows', async () => {
+    const { ws, todo, copy } = await pair();
+    const mongoose = (await import('mongoose')).default;
+    // As if its release never ran: the copy still names the to-do.
+    await mongoose.connection
+      .collection('Items')
+      .updateOne({ _id: todo as never }, { $set: { deletedAt: new Date() } });
+    assert.deepEqual(await idsOf({}, context(ws)), [copy]);
+    assert.deepEqual(await idsOf({ where: OPEN }, context(ws)), [copy]);
+  });
+
+  it('runs before the dedup of two integrations of one account', async () => {
+    const { ws, todo, copy } = await pair();
+    // A second integration of the same Linear account mirrors the same issue, unmarked.
+    const mirror = await mirrored(ws, `${ws}-mirror`, {
+      integrationId: 'i-linear-2',
+      title: 'Plan (Linear, second)',
+      source: {
+        provider: 'linear',
+        accountId: 'acct',
+        externalId: copy,
+        key: copy.toUpperCase(),
+        url: `https://linear.app/x/issue/${copy}`,
+        updatedAtSource: null,
+        etag: null,
+        hash: null,
+      },
+    });
+    const both: CompileContext = context(ws, 'u-1', {
+      access: {
+        userId: 'u-1',
+        integrations: [
+          { id: 'i-linear', provider: 'linear', accountId: 'acct', ownerUserId: 'u-1' },
+          { id: 'i-linear-2', provider: 'linear', accountId: 'acct', ownerUserId: 'u-2' },
+        ],
+        local: 'visible',
+      },
+      connectors: ['i-linear', 'i-linear-2', 'local'],
+      dedup: ['i-linear', 'i-linear-2'],
+    });
+    // The marked copy is dropped first; the dedup then keeps the second integration's record (as
+    // the access filter's rule did). Absorbing after the dedup would have dropped both.
+    assert.deepEqual(await idsOf({}, both), [mirror, todo].sort());
   });
 });

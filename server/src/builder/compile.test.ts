@@ -333,7 +333,11 @@ describe('compileQuery: provider copies (H5)', () => {
     );
     const { pipeline } = compiled;
     const at = pipeline.findIndex((entry) => ItemAccessFilter.isCopyAbsorption(entry));
-    assert.deepEqual(pipeline.slice(at, at + 3), ItemAccessFilter.copyAbsorption());
+    // A cancelled to-do does not show (time views drop it), so it hides nothing.
+    assert.deepEqual(
+      pipeline.slice(at, at + 3),
+      ItemAccessFilter.copyAbsorption({ $eq: ['$status', 'cancelled'] }),
+    );
     assert.deepEqual(pipeline[at - 1], { $match: filterOf(compiled) });
     assert.equal(at + 4, pipeline.length);
     assert.ok('$facet' in (pipeline.at(-1) ?? {}));
@@ -353,6 +357,39 @@ describe('compileQuery: provider copies (H5)', () => {
       byProvider.pipeline.filter((entry) => ItemAccessFilter.isCopyAbsorption(entry)).length,
       3,
     );
+  });
+
+  it('folds the block’s hide rules into what does not show, and nothing else of them leaks', () => {
+    const query: Query = {
+      source: 'items',
+      where: where({ field: 'kind', operator: '=', value: 'todo' }),
+    };
+    const plain = compileQuery(query, context());
+    const hiding = compileQuery(
+      query,
+      context({
+        displayRules: [
+          { if: { field: 'status', operator: '=', value: 'done' }, then: { hide: true } },
+          { if: { field: 'priority', operator: '>', value: 2 }, then: { tone: 'destructive' } },
+          // Reserved time named by a hide rule never widens the task-shaped read.
+          { if: { field: 'kind', operator: '=', value: 'block' }, then: { hide: true } },
+          // An unset variable: no warning, no applied variable.
+          { if: { field: 'topic', operator: '=', value: '$page.topic' }, then: { hide: true } },
+        ],
+      }),
+    );
+    const window = (compiled: CompiledQuery): string =>
+      JSON.stringify(compiled.pipeline.find((entry) => '$setWindowFields' in entry));
+    assert.match(window(hiding), /"\$literal":"done"/);
+    assert.match(window(hiding), /"\$literal":"block"/);
+    assert.doesNotMatch(window(hiding), /destructive|priority/);
+    assert.doesNotMatch(window(plain), /\$literal/);
+    // Everything else is the same query: the rows, counts and groups it reads are unchanged.
+    const rest = (compiled: CompiledQuery): unknown[] =>
+      compiled.pipeline.filter((entry) => !('$setWindowFields' in entry));
+    assert.deepEqual(rest(hiding), rest(plain));
+    assert.deepEqual(hiding.warnings, plain.warnings);
+    assert.deepEqual(hiding.appliedVars, plain.appliedVars);
   });
 });
 

@@ -196,6 +196,75 @@ describe('the absorption rule', () => {
     assert.ok(!seen.includes(copyId));
   });
 
+  it('a soft-deleted to-do whose copy is still marked: the list shows the copy', async () => {
+    const { todo, copyId } = await todoWithCopy('workspace');
+    const mongoose = (await import('mongoose')).default;
+    // As if its release never ran: the copy still names the to-do.
+    await mongoose.connection
+      .collection('Items')
+      .updateOne({ _id: todo.id as never }, { $set: { deletedAt: new Date() } });
+    const ids = await idsOf('u-owner');
+    assert.ok(ids.includes(copyId) && !ids.includes(todo.id));
+  });
+
+  it('a saved block’s hide display rule: its done to-do, hidden, no longer hides the open copy', async () => {
+    const { todo, copyId } = await todoWithCopy('workspace', {
+      todo: { status: 'done', topicId: 't-hide' },
+      copy: { topicId: 't-hide' },
+    });
+    const { createDashboard, applyDashboardOps, getDashboard } =
+      await import('../testing/dashboardCalls.js');
+    const { runWorkspaceQuery } = await import('./workspaceQuery.js');
+    const actor = { userId: 'u-owner', agentId: null };
+    const dashboard = await createDashboard(ws, actor, { title: 'Hide done', language: 'en' });
+    const query = {
+      source: 'items' as const,
+      where: {
+        combinator: 'and' as const,
+        rules: [{ field: 'topic', operator: '=' as const, value: 't-hide' }],
+      },
+    };
+    await applyDashboardOps(ws, actor, dashboard.id, {
+      expectedVersion: dashboard.version,
+      ops: [
+        {
+          op: 'add_block',
+          block: {
+            type: 'list',
+            query,
+            rules: [
+              { if: { field: 'status', operator: '=', value: 'done' }, then: { hide: true } },
+            ],
+          },
+        },
+        { op: 'add_block', block: { type: 'list', query } },
+      ],
+    });
+    const [hiding, plain] = (await getDashboard(ws, actor, dashboard.id, {})).blocks;
+    assert.ok(hiding && plain);
+    const rowsOf = async (blockId: string): Promise<string[]> =>
+      ((await runWorkspaceQuery(ws, 'u-owner', { dashboardId: dashboard.id, blockId })).rows ?? [])
+        .map((row) => row.id)
+        .sort();
+    assert.deepEqual(await rowsOf(hiding.id), [copyId, todo.id].sort());
+    assert.deepEqual(await rowsOf(plain.id), [todo.id]);
+  });
+
+  it('provider-field discovery leaves out a copy whose to-do the member may see', async () => {
+    const { ProviderFields } = await import('../classes/item/ProviderFields.js');
+    const { todo } = await todoWithCopy('workspace', { copy: { props: { copyOnlyPoints: 5 } } });
+    const paths = async (userId: string, at: number): Promise<string[]> =>
+      (await ProviderFields.of({ id: ws.id }, userId, at)).map((field) => field.path);
+    // Later than any cached answer: each call reads afresh.
+    const start = Date.now() + 10 * 60_000;
+    assert.ok(!(await paths('u-owner', start)).includes('props.copyOnlyPoints'));
+    // Private to its owner: another member sees the copy, so its field is offered to them.
+    const repo = await models.getItemRepository();
+    await repo.updateLocal(ws.id, todo.id, { visibility: 'private' });
+    assert.ok(!(await paths('u-owner', start + 2 * 60_000)).includes('props.copyOnlyPoints'));
+    assert.ok((await paths('u-other', start + 4 * 60_000)).includes('props.copyOnlyPoints'));
+  });
+
   it("the to-do's row carries a chip per copy, with the copy's live status", async () => {
     const { todo, copyId } = await todoWithCopy('workspace');
     const repo = await models.getItemRepository();

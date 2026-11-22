@@ -10,7 +10,12 @@
 import type { Caller } from '../base/Caller.js';
 import { QueryValidationError } from '../../builder/errors.js';
 import { storedConnectorScopes, storedConnectors } from '../../builder/connectors.js';
-import { BLOCK_TYPES, type BlockType, type QueryRequest } from '../../types/builder.js';
+import {
+  BLOCK_TYPES,
+  type BlockType,
+  type DisplayRule,
+  type QueryRequest,
+} from '../../types/builder.js';
 
 /** What a request's query is, and where it sits (for error pointers). */
 export interface QueryTargetData {
@@ -29,6 +34,8 @@ export interface QueryTargetData {
   readonly connectorScopes?: Readonly<Record<string, readonly string[]>>;
   /** The page's importance preset, as stored (checked before use). */
   readonly importance?: unknown;
+  /** A block's display rules: its `hide` ones decide whether a to-do shows (H5). */
+  readonly displayRules?: readonly DisplayRule[];
 }
 
 export class QueryTarget {
@@ -96,6 +103,7 @@ export class QueryTarget {
         : {}),
       ...(connectors === undefined ? {} : { connectors }),
       ...(connectorScopes === undefined ? {} : { connectorScopes }),
+      ...(json.rules === undefined ? {} : { displayRules: json.rules }),
     };
     if (json.query !== undefined) {
       return new QueryTarget({

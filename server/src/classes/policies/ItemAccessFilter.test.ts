@@ -75,6 +75,39 @@ describe('ItemAccessFilter.copyAbsorption', () => {
     assert.deepEqual(rows, []);
   });
 
+  it('a to-do that does not show (hidden) keeps its copies as rows of their own', async () => {
+    const rows = await aggregate([
+      { $match: { workspaceId: WS } },
+      ...ItemAccessFilter.copyAbsorption({ $eq: ['$title', 'Plan'] }),
+    ]);
+    assert.deepEqual(ids(rows), [
+      'copy-jira',
+      'copy-linear',
+      'copy-orphan',
+      'plain-issue',
+      'plain-todo',
+      'todo',
+    ]);
+  });
+
+  it('knows its own stages, with or without hidden, and nothing else', () => {
+    for (const stage of [
+      ...ItemAccessFilter.copyAbsorption(),
+      ...ItemAccessFilter.copyAbsorption({ $eq: ['$status', 'cancelled'] }),
+    ]) {
+      assert.ok(ItemAccessFilter.isCopyAbsorption(stage), JSON.stringify(stage));
+    }
+    // A user's filter that merely names the mark is not one of them.
+    for (const stage of [
+      { $match: { title: { $regex: '__copyOfInRead', $options: 'i' } } },
+      { $match: { __copyOfInRead: 1 } },
+      { $unset: 'other' },
+      { $setWindowFields: { partitionBy: '$x', output: { other: { $max: 1 } } } },
+    ]) {
+      assert.ok(!ItemAccessFilter.isCopyAbsorption(stage), JSON.stringify(stage));
+    }
+  });
+
   it('the access filter holds no absorption: a copy is in it like any item', () => {
     const filter = new ItemAccessFilter({ userId: 'u-1', integrations: [], local: 'visible' });
     const items = filter.items({ id: WS });

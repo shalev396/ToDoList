@@ -50,19 +50,14 @@ const TODO_IN_READ = '__copyOfInRead';
 /** True for a provider copy (its `overlay.copyOf` names a to-do), as an aggregation expression. */
 const IS_COPY = { $eq: [{ $type: '$overlay.copyOf' }, 'string'] };
 
-/** The stages of `copyAbsorption`, as JSON (it never varies): what `isCopyAbsorption` compares. */
-const COPY_ABSORPTION: readonly string[] = [
-  {
-    // A copy shares its to-do's partition; any other row is its own. In a copy's partition, the
-    // one row that is not a copy is its to-do, when the read holds it.
-    $setWindowFields: {
-      partitionBy: { $cond: [IS_COPY, '$overlay.copyOf', '$_id'] },
-      output: { [TODO_IN_READ]: { $max: { $cond: [IS_COPY, 0, 1] } } },
-    },
-  },
-  { $match: { $nor: [{ 'overlay.copyOf': { $type: 'string' }, [TODO_IN_READ]: 1 }] } },
-  { $unset: TODO_IN_READ },
-].map((stage) => JSON.stringify(stage));
+/** The `$match` that drops a copy whose to-do is in the read (it never varies). */
+const DROP_ABSORBED = JSON.stringify({
+  $match: { $nor: [{ 'overlay.copyOf': { $type: 'string' }, [TODO_IN_READ]: 1 }] },
+});
+
+function isRecord(value: unknown): value is Filter {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 export class ItemAccessFilter {
   readonly #access: Readonly<ItemAccess>;
@@ -84,14 +79,41 @@ export class ItemAccessFilter {
    * and counts, groups and rows agree. They read only the rows the stages before them let through,
    * so they never widen what the caller sees. A read of ONE item by id, or of what exists
    * (facets), does not use them.
+   *
+   * `hidden`, an aggregation expression over a row: true for a to-do that is in the result yet
+   * does not show (a dashboard block's cancelled to-do, or one its `hide` display rule matches).
+   * Such a to-do does not hide its copies.
    */
-  static copyAbsorption(): Filter[] {
-    return COPY_ABSORPTION.map((stage) => JSON.parse(stage) as Filter);
+  static copyAbsorption(hidden?: unknown): Filter[] {
+    // The one row of a copy's partition that is not a copy is its to-do; it absorbs when shown.
+    const absorbs =
+      hidden === undefined
+        ? { $cond: [IS_COPY, 0, 1] }
+        : { $cond: [{ $and: [{ $not: [IS_COPY] }, { $not: [hidden] }] }, 1, 0] };
+    return [
+      {
+        // A copy shares its to-do's partition; any other row is its own.
+        $setWindowFields: {
+          partitionBy: { $cond: [IS_COPY, '$overlay.copyOf', '$_id'] },
+          output: { [TODO_IN_READ]: { $max: absorbs } },
+        },
+      },
+      JSON.parse(DROP_ABSORBED) as Filter,
+      { $unset: TODO_IN_READ },
+    ];
   }
 
-  /** Whether `stage` is one of `copyAbsorption`'s stages. */
+  /** Whether `stage` is one of `copyAbsorption`'s stages (whatever its `hidden`). */
   static isCopyAbsorption(stage: unknown): boolean {
-    return COPY_ABSORPTION.includes(JSON.stringify(stage));
+    if (!isRecord(stage)) return false;
+    const keys = Object.keys(stage);
+    if (keys.length !== 1) return false;
+    const window = stage['$setWindowFields'];
+    if (isRecord(window)) {
+      const output = window['output'];
+      return isRecord(output) && Object.keys(output).join() === TODO_IN_READ;
+    }
+    return stage['$unset'] === TODO_IN_READ || JSON.stringify(stage) === DROP_ABSORBED;
   }
 
   /**
@@ -118,8 +140,8 @@ export class ItemAccessFilter {
   }
 
   /**
-   * The same filter as `items`, named for the reads that never absorb a copy: a read of ONE item
-   * by id (open it, pin it) or of what exists (facets) is about who may see the item.
+   * Identical to `items`; the name is kept so a read of ONE item by id (open it, pin it) or of
+   * what exists (facets) says at its call site that it never absorbs a copy.
    */
   itemsUnabsorbed(ws: ItemNarrowing): Filter {
     return this.items(ws);

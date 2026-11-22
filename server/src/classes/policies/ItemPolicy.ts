@@ -256,7 +256,10 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
     return this.#filters.items(ws);
   }
 
-  /** The same filter, for reads that never absorb (ItemAccessFilter#itemsUnabsorbed). */
+  /**
+   * Identical to `itemFilter`, named for the reads that never absorb a copy (by id, facets):
+   * ItemAccessFilter#itemsUnabsorbed.
+   */
   itemFilterUnabsorbed(ws: ItemNarrowing): Filter {
     return this.#filters.itemsUnabsorbed(ws);
   }

@@ -100,6 +100,7 @@ export async function runWorkspaceQuery(
         : {}),
       ...(target.blockType === undefined ? {} : { blockType: target.blockType }),
       ...(target.includeTomorrow === true ? { includeTomorrow: true } : {}),
+      ...(target.displayRules === undefined ? {} : { displayRules: target.displayRules }),
     };
     return await reads.run(query, ctx);
   } catch (error) {
