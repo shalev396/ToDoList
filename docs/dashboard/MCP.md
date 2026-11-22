@@ -349,7 +349,7 @@ Goal: an agent can do in Elytra what Remi did in Notion. That covers creating th
 | `builder_preview` | **Dry-run**: apply a patch in memory → resulting config, sample rows per block, and a signed read-only preview URL (15 min) | `read` | RO |
 | `builder_create_dashboard` | New dashboard or topic page, optionally `fromTemplate` | `builder:write` | D=false |
 | `builder_add_block` | Add one block (auto-placement if no `gridPos`) | `builder:write` | D=false |
-| `builder_update_block` | Patch one block (query, rules, viz, title) | `builder:write` | D=false, I |
+| `builder_update_block` | Patch one block (query, rules, viz, title, connectors). Omit `connectors` for all sources; list them only to narrow; `null` goes back to all sources | `builder:write` | D=false, I |
 | `builder_arrange` | Set `gridPos` for several blocks (wraps `PUT /dashboards/:id/layout`) | `builder:write` | D=false, I |
 | `builder_connect_blocks` | Wire a cross-filter: the source block sets a variable, the targets `listen` | `builder:write` | D=false, I |
 | `builder_apply_patch` | Power tool: an RFC 6902 JSON Patch on the draft | `builder:write` | D=false |

@@ -81,3 +81,25 @@ export function normalizeScopes(
   );
   return kept.length === 0 ? undefined : Object.fromEntries(kept);
 }
+
+/**
+ * Whether the block ticks every source its editor offers: all the member's own connections and
+ * local to-dos, with none narrowed to some containers (a scope entry). Then "All sources" reads
+ * the same today and also shows a source connected later. Needs at least one own connection
+ * (with only local to-dos there is nothing to be "all" of), and a block already on all sources
+ * (no connectors field) is not offered it again.
+ */
+export function ticksEverySource(
+  pick: SourcePick,
+  ownIds: readonly string[],
+  localId: string,
+): boolean {
+  if (pick.connectors === undefined || ownIds.length === 0) {
+    return false;
+  }
+  if (pick.connectorScopes !== undefined && Object.keys(pick.connectorScopes).length > 0) {
+    return false;
+  }
+  const picked = new Set(pick.connectors);
+  return [...ownIds, localId].every((id) => picked.has(id));
+}
