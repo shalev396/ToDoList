@@ -65,6 +65,8 @@ export class ProviderFields {
       ws.id,
       [
         { $match: policy.itemFilter(ws) },
+        // Only what the sample and H5 read: the absorption sorts every visible item.
+        { $project: { 'source.provider': 1, props: 1, updatedAt: 1, 'overlay.copyOf': 1 } },
         // A provider copy is left out while its to-do is visible (H5), as before: this read has
         // no filter, so the to-do is in it whenever the caller may see it.
         ...ItemPolicy.copyAbsorption(),

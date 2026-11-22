@@ -47,9 +47,10 @@ export class SubjectMatches {
   }
 
   /**
-   * The candidate rows: the visible items whose own Subject or effective title could match, a
-   * provider copy left out while its to-do is among them (H5, as every view the colours paint).
-   * A read past its time limit is a 503, as the query builder's (ItemQuery#run).
+   * The candidate rows: the visible items whose own Subject or effective title could match. A
+   * provider copy is left out while its to-do is visible, whatever the patterns, as an unfiltered
+   * view leaves it out (H5): the absorption runs before the patterns. A read past its time limit
+   * is a 503, as the query builder's (ItemQuery#run).
    */
   async #read(
     policy: ItemPolicy,
@@ -65,6 +66,15 @@ export class SubjectMatches {
         [
           { $match: policy.itemFilter(caller.context) },
           ItemQuery.effectiveStage(),
+          // Only what the counts and H5 read: the absorption sorts every visible item.
+          {
+            $project: {
+              title: 1,
+              [`overlay.attrs.${SUBJECT_ATTRIBUTE_KEY}`]: 1,
+              'overlay.copyOf': 1,
+            },
+          },
+          ...ItemPolicy.copyAbsorption(),
           {
             $match: {
               $or: [
@@ -75,7 +85,6 @@ export class SubjectMatches {
               ],
             },
           },
-          ...ItemPolicy.copyAbsorption(),
           { $sort: { _id: 1 } },
           { $limit: this.#scanMax + 1 },
           { $project: { title: 1, [`overlay.attrs.${SUBJECT_ATTRIBUTE_KEY}`]: 1 } },
