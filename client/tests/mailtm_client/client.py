@@ -52,9 +52,9 @@ from .guard import GUARD, CallGuard
 from .live import DEFAULT_MERCURE_URL, READ_TIMEOUT, Ended, ThreadedFeed
 from .ratelimit import (
     DEFAULT_BUCKETS,
+    STATE_BUSY,
     Bucket,
     Clock,
-    LockTimeout,
     RateLimitTimeout,
     SharedQueue,
     Sleep,
@@ -488,8 +488,8 @@ class MailTmClient:
             try:
                 run = self.queue.counters(self.queue.run_id)
                 totals = f"{run.requests} requests, {run.refused} refused"
-            except LockTimeout:
-                totals = "unknown (the queue's lock is stuck)"
+            except STATE_BUSY:
+                totals = "unknown (the queue's state is busy)"
             return MailTmRateLimited(
                 f"mail.tm {why} {method} {path} after {self._clock() - started:.0f} s "
                 f"({attempts} attempts, {refusals} answered 429, {queued:.0f} s in line); this "
@@ -504,9 +504,9 @@ class MailTmClient:
                 slot = self.queue.acquire(ticket, route=route, max_wait=left)
             except RateLimitTimeout:
                 raise gave_up("was still waiting in line for") from None
-            except LockTimeout as error:
-                # No place in line was taken (the lock was stuck before a ticket was handed out):
-                # try again, within the ceiling.
+            except STATE_BUSY as error:
+                # The queue's state stayed busy before a place in line was taken: try again,
+                # within the ceiling.
                 _log.warning("mail.tm queue: %s; trying again", error)
                 self._sleep(min(HEARTBEAT_ON_STUCK_LOCK, max(left, 0.0)))
                 continue
@@ -532,11 +532,11 @@ class MailTmClient:
                 hint = self._refusal_hint(response, quota)
                 try:
                     refusal = self.queue.refused(slot, hint, policy_of(quota))
-                except LockTimeout as error:
+                except STATE_BUSY as error:
                     # The pause can't reach the others; this caller still waits it out.
                     wait = hint if hint is not None else self._backoff(refusals)
                     _log.warning(
-                        "mail.tm answered 429 to %s %s; the queue's lock is stuck (%s), so only "
+                        "mail.tm answered 429 to %s %s; the queue's state is busy (%s), so only "
                         "this process pauses %.1f s",
                         method,
                         path,
@@ -636,7 +636,7 @@ class MailTmClient:
             reset = min(reset, self.retry.quota_pause_cap)
         try:
             self.queue.answered(slot, remaining, reset, policy_of(quota))
-        except LockTimeout as error:
+        except STATE_BUSY as error:
             _log.warning("mail.tm queue: %s; this answer's rate-limit news is lost", error)
 
     @staticmethod
@@ -654,7 +654,10 @@ class MailTmClient:
         now = self._wall()
         if self._domains is not None and 0 <= now - self._domains_at < self.domain_ttl:
             return list(self._domains)
-        cached = self.queue.load_shared("domains")
+        try:
+            cached = self.queue.load_shared("domains")
+        except STATE_BUSY:
+            cached = None  # the shared cache is best effort: ask mail.tm
         if (
             isinstance(cached, dict)
             and cached.get("base_url") == self.base_url
@@ -673,9 +676,12 @@ class MailTmClient:
         if not names:
             raise MailTmError("mail.tm lists no domain")
         self._domains, self._domains_at = names, now
-        self.queue.store_shared(
-            "domains", {"base_url": self.base_url, "fetched_at": now, "domains": names}
-        )
+        try:
+            self.queue.store_shared(
+                "domains", {"base_url": self.base_url, "fetched_at": now, "domains": names}
+            )
+        except STATE_BUSY:
+            pass  # the others look it up themselves
         return list(names)
 
     def domain(self) -> str:
@@ -687,7 +693,10 @@ class MailTmClient:
         `domains()` asks mail.tm again. Mail.tm retires domains, and refuses an address at one it
         no longer serves (422) the way it refuses a taken one."""
         self._domains, self._domains_at = None, 0.0
-        self.queue.store_shared("domains", None)
+        try:
+            self.queue.store_shared("domains", None)
+        except STATE_BUSY:
+            pass  # the others keep theirs until it expires
 
     def create_account(self, address: str, password: str) -> dict:
         """Creates the inbox `address` (at one of `domains()`). Returns the account (`id`,
@@ -888,7 +897,7 @@ class InboxWatch:
             return self
         try:
             down = client.queue.load_shared("feed-down")
-        except LockTimeout:
+        except STATE_BUSY:
             down = None
         if isinstance(down, dict) and isinstance(down.get("until"), (int, float)):
             if down["until"] > client._wall():
@@ -932,7 +941,7 @@ class InboxWatch:
             client.queue.store_shared(
                 "feed-down", {"until": client._wall() + FEED_DOWN_FOR, "why": self.failure[:200]}
             )
-        except LockTimeout:
+        except STATE_BUSY:
             pass
 
     def wait_for(

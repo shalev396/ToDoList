@@ -25,6 +25,7 @@ from ._testing import (
 from .ratelimit import (
     DEFAULT_BUCKETS,
     RUN_KEPT_FOR,
+    STATE_VERSION,
     PER_MINUTE,
     PER_SECOND,
     STALE_TICKET,
@@ -215,8 +216,9 @@ READ = "GET /messages/{id}"
 
 def test_a_429_pauses_everyone_and_counts_one_strike_per_burst(make, clock):
     """Two requests of a route out at once, both refused: one strike, a 5 s pause for everyone
-    and a 5 s spacing. The next refused request (sent after the strike) is a second one: 10 s and
-    10 s. A request of the route that gets through ends its run of 429s."""
+    and a 5 s spacing. The next refused request (sent after the strike) is a second one: a 10 s
+    pause and half as much spacing again. A request of the route that gets through ends its run
+    of 429s."""
     queue, other = make(), make()
     one, two = queue.acquire(route=POST), other.acquire(route=POST)
     first, second = queue.refused(one), other.refused(two)
@@ -226,7 +228,7 @@ def test_a_429_pauses_everyone_and_counts_one_strike_per_burst(make, clock):
     three = queue.acquire(route=POST)
     assert clock.since_start(three.at) == pytest.approx(5)
     third = queue.refused(three)
-    assert (third.strikes, third.escalated, third.pause, third.spacing) == (2, True, 10, 10)
+    assert (third.strikes, third.escalated, third.pause, third.spacing) == (2, True, 10, 7.5)
     four = queue.acquire(route=POST)
     assert clock.since_start(four.at) == pytest.approx(15)
     queue.answered(four)
@@ -239,7 +241,7 @@ def test_a_success_on_another_route_never_resets_a_routes_backoff(make, clock):
     queue.refused(queue.acquire(route=POST))
     queue.answered(queue.acquire(route=READ))  # another route got through
     refusal = queue.refused(queue.acquire(route=POST))
-    assert (refusal.strikes, refusal.pause, refusal.spacing) == (2, 10, 10)
+    assert (refusal.strikes, refusal.pause, refusal.spacing) == (2, 10, 7.5)
     assert queue.route_info(READ) == (0.0, 0, None)
 
 
@@ -251,24 +253,42 @@ def test_a_routes_backoff_doubles_up_to_its_policy_window(make, clock):
 
 
 def test_spacing_grows_on_429s_and_eases_after_five_answers_in_a_row(make, clock):
-    """Additive increase, multiplicative decrease, in time between calls: doubled on each 429
-    (up to the policy's window over its limit), halved after five answers without one, and
-    gone once it would be under 5 s."""
+    """In time between calls: half as much again on each 429 (from 5 s, up to the policy's
+    window over its limit), a quarter off after five answers without one. Gentle steps, so it
+    settles near the real limit instead of jumping across it."""
     queue = make(buckets=[Bucket(100, 1.0)])  # only the route's own spacing in play
     spacings = [
-        queue.refused(queue.acquire(route=POST), 0, (1, 60)).spacing for _ in range(6)
+        queue.refused(queue.acquire(route=POST), 0, (1, 60)).spacing for _ in range(8)
     ]
-    assert spacings == _approx([5, 10, 20, 40, 60, 60])
+    assert spacings == _approx([5, 7.5, 11.25, 16.875, 25.3125, 37.96875, 56.953125, 60])
     eased = []
     for _ in range(20):
-        slot = queue.acquire(route=POST)
-        queue.answered(slot)
+        queue.answered(queue.acquire(route=POST))
         eased.append(queue.route_info(POST).spacing)
-    assert eased == _approx([60] * 4 + [30] * 5 + [15] * 5 + [7.5] * 5 + [0])
-    times = []
-    for _ in range(3):
-        times.append(queue.acquire(route=POST).at)
+    assert eased == _approx([60] * 4 + [45] * 5 + [33.75] * 5 + [25.3125] * 5 + [18.984375])
+    times = [queue.acquire(route=POST).at for _ in range(2)]
+    assert times[1] - times[0] == pytest.approx(18.984375)  # every call keeps the spacing
+
+
+def test_spacing_under_5_s_is_dropped(make, clock):
+    queue = make(buckets=[Bucket(100, 1.0)])
+    queue.answered(queue.acquire(route=POST))
+    queue.refused(queue.acquire(route=POST), 0)  # 5 s
+    for _ in range(5):
+        queue.answered(queue.acquire(route=POST))
+    assert queue.route_info(POST).spacing == 0  # 3.75 s: gone, only the buckets left
+    times = [queue.acquire(route=POST).at for _ in range(3)]
     assert [later - earlier for earlier, later in zip(times, times[1:])] == _approx([0, 0])
+
+
+def test_a_refusal_does_not_count_as_the_routes_last_call(make, clock):
+    """A 429 created nothing: the next try is spaced from the route's last call that got
+    through, not from the refusal."""
+    queue = make()
+    queue.answered(queue.acquire(route=POST))  # at 0
+    clock.advance(4)
+    queue.refused(queue.acquire(route=POST), 0)  # at 4: spacing 5 s
+    assert clock.since_start(queue.acquire(route=POST).at) == pytest.approx(5)  # 0 + 5
 
 
 def test_a_routes_spacing_is_capped_by_its_policy_or_a_minute(make, clock):
@@ -276,7 +296,7 @@ def test_a_routes_spacing_is_capped_by_its_policy_or_a_minute(make, clock):
     for _ in range(3):
         queue.refused(queue.acquire(route=READ), 0, (10, 60))
     assert queue.route_info(READ).spacing == pytest.approx(6)  # 60 s / 10
-    for _ in range(6):
+    for _ in range(9):
         queue.refused(queue.acquire(route="GET /me"), 0)
     assert queue.route_info("GET /me").spacing == pytest.approx(60)  # no policy: a minute
 
@@ -294,6 +314,7 @@ def test_a_ticket_held_back_by_its_own_routes_spacing_does_not_hold_up_the_line(
     """A retry of `POST /accounts` waiting out its spacing keeps its place for its route, but a
     read of a confirmation email behind it goes first."""
     refused, reader = make(), make()
+    refused.answered(refused.acquire(route=POST))  # got through at 0
     slot = refused.acquire(route=POST)
     refused.refused(slot, 0)  # no pause for anyone; the route's spacing is now 5 s
     reads = []
@@ -313,7 +334,8 @@ def test_a_ticket_held_back_by_its_own_routes_spacing_does_not_hold_up_the_line(
 
 def test_tickets_of_one_route_keep_their_order(make, clock):
     first, second = make(), make()
-    first.refused(first.acquire(route=POST), 0)  # spacing 5 s
+    first.answered(first.acquire(route=POST))  # got through at 0
+    first.refused(first.acquire(route=POST), 0)  # spacing 5 s, from 0
     a, b = first.take_ticket(POST), second.take_ticket(POST)
     order = []
 
@@ -420,7 +442,7 @@ def test_a_damaged_state_file_counts_as_a_full_window(make, clock, tmp_path):
     """The release log is lost: it must never be under-counted, so the longest window waits."""
     queue = make()
     queue.acquire()
-    (tmp_path / "state" / "queue.json").write_bytes(b'{"v": 2, "next_ticket": 12')
+    (tmp_path / "state" / f"queue-v{STATE_VERSION}.json").write_bytes(b'{"v": 3, "next_ti')
     assert clock.since_start(queue.acquire().at) == pytest.approx(60)
 
 
@@ -428,11 +450,48 @@ def test_a_state_from_the_future_is_not_trusted(make, clock, tmp_path):
     """A clock that went back (or a hand-edited file) must not stall everyone for days."""
     queue = make()
     queue.acquire()
-    path = tmp_path / "state" / "queue.json"
+    path = tmp_path / "state" / f"queue-v{STATE_VERSION}.json"
     state = json.loads(path.read_text())
     state["pause_until"] = clock.now + 86400
     path.write_text(json.dumps(state))
     assert clock.since_start(queue.acquire().at) == pytest.approx(60)
+
+
+def test_another_versions_state_is_left_alone_and_costs_no_wait(make, clock, tmp_path):
+    """Each state version has its own file: a process of an older version beside this one (an
+    upgrade mid-run) neither stalls it nor gets its file reset."""
+    older = tmp_path / "state" / "queue.json"
+    older.parent.mkdir(parents=True)
+    older.write_text('{"v": 2, "tat": 0}')
+    queue = make()
+    assert clock.since_start(queue.acquire().at) == 0
+    assert older.read_text() == '{"v": 2, "tat": 0}'
+    assert (tmp_path / "state" / f"queue-v{STATE_VERSION}.json").exists()
+
+
+class _BusyFile(SharedQueue):
+    """A queue whose state file is held open by someone else for its next `busy` writes."""
+
+    busy = 0
+
+    def _save(self, state):
+        if _BusyFile.busy > 0:
+            _BusyFile.busy -= 1
+            raise PermissionError(13, "The process cannot access the file")
+        super()._save(state)
+
+
+def test_a_state_file_held_open_while_waiting_is_waited_out(tmp_path, clock):
+    """A Windows sharing violation that outlasts the short retry (an antivirus scanning the new
+    file) costs a caller a heartbeat, never a failure."""
+    queue = _BusyFile(str(tmp_path / "state"), clock=clock, sleep=clock.sleep)
+    _BusyFile.busy = 3  # take_ticket's write, then two looks at the line
+    slot = queue.acquire(route="POST /accounts")
+    assert slot.route == "POST /accounts"
+    assert clock.since_start(slot.at) == pytest.approx(3)
+    _BusyFile.busy = 2
+    with pytest.raises(RateLimitTimeout):
+        queue.acquire(max_wait=0.5)
 
 
 def test_a_long_but_plausible_pause_is_honoured(make, clock, tmp_path):
@@ -493,13 +552,36 @@ def test_a_lock_file_left_behind_with_junk_is_free(tmp_path, clock):
         assert clock.sleeps == []
 
 
-def test_a_queue_with_a_stuck_lock_raises_instead_of_hanging(make, tmp_path, clock):
+def test_a_queue_with_a_stuck_lock_waits_it_out_within_the_callers_limit(make, tmp_path, clock):
+    """A stuck lock is waited out, never raised as such: past the caller's own limit it is a
+    RateLimitTimeout like any long wait, and the queue works again once the holder lets go."""
     queue = make(lock_timeout=3)
     stuck = InterProcessLock(str(tmp_path / "state" / "ratelimit.lock"))
     with stuck:
+        with pytest.raises(RateLimitTimeout, match="queue's state"):
+            queue.acquire(max_wait=10)
         with pytest.raises(LockTimeout):
-            queue.acquire()
-    assert queue.acquire()  # and works again once the holder lets go
+            queue.counters()  # a direct read still says what is wrong
+    assert queue.acquire()
+
+
+def test_a_lock_stuck_while_waiting_in_line_is_waited_out(make, tmp_path, clock):
+    queue = make(lock_timeout=3)
+    queue.pause(5)
+    stuck = InterProcessLock(str(tmp_path / "state" / "ratelimit.lock"))
+    holds = []
+
+    def stuck_meanwhile():
+        if not holds:
+            stuck.acquire()
+            holds.append(clock.now)
+        elif clock.now - holds[0] >= 20 and stuck.held:
+            stuck.release()
+            clock.on_sleep = None
+
+    clock.on_sleep = stuck_meanwhile
+    slot = queue.acquire(route="POST /accounts")
+    assert clock.since_start(slot.at) >= 20  # it waited for the holder, then went
 
 
 HOLD_LOCK_THEN_HANG = r"""
@@ -627,7 +709,7 @@ def _end_pause(state_dir: str) -> None:
     """Ends the pause now (as the test, holding the lock like any process would)."""
     queue = SharedQueue(state_dir)
     with queue._locked():
-        path = os.path.join(state_dir, "queue.json")
+        path = os.path.join(state_dir, ratelimit.STATE_FILE)
         state = json.loads(open(path, encoding="utf-8").read())
         state["pause_until"] = time.time()
         with open(path, "w", encoding="utf-8") as handle:

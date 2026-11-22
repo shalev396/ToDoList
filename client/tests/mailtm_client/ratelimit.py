@@ -15,11 +15,11 @@ next to it (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows):
 - **Buckets.** Each bucket is `limit` releases in any `window` seconds (a sliding log of release
   times), across every route. The defaults are mail.tm's: 6 a second (it documents 8 per IP
   address) and 9 a minute (it announces `RateLimit-Policy: 10; w=60`).
-- **Routes.** Each route learns its own spacing, shared by every process (additive increase,
-  multiplicative decrease, in time between calls): a 429 doubles the least time between two of
-  its calls (from 5 s, up to the window over the limit its `RateLimit-Policy` names, else 60 s),
-  and five answers in a row without one halve it, down to none. Its 429s in a row set its
-  backoff. A success on another route never touches them.
+- **Routes.** Each route learns its own spacing, shared by every process: a 429 makes the least
+  time between two of its calls half as long again (from 5 s, up to the window over the limit
+  its `RateLimit-Policy` names, else 60 s), and five answers in a row without one take a quarter
+  off it, down to none under 5 s. Its 429s in a row set its backoff. A success on another route
+  never touches them.
 - **Pauses.** `refused` (a 429) pauses every process: for the server's hint, else the route's
   backoff (5 s, 10 s, 20 s, ... up to its policy window). `answered` obeys a `remaining` /
   `reset` budget the server sends, for that route. The strictest of all of them wins.
@@ -63,14 +63,23 @@ FOLLOW_POLL = 0.05
 ROUTE_BACKOFF_START = 5.0
 # A route's backoff and spacing cap when it has named no RateLimit-Policy.
 DEFAULT_ROUTE_WINDOW = 60.0
-# Answers in a row without a 429 that halve a route's spacing.
+# Answers in a row without a 429 that ease a route's spacing.
 SPACING_EASES_AFTER = 5
+# A 429 multiplies a route's spacing by this; five answers in a row without one, by the other.
+# Gentle steps, so the spacing settles near the real limit instead of jumping across it.
+SPACING_GROWS = 1.5
+SPACING_EASES = 0.75
 # A run's counters are dropped this long after its last request.
 RUN_KEPT_FOR = 86400.0
 
 LOCK_FILE = "ratelimit.lock"
-STATE_FILE = "queue.json"
 STATE_VERSION = 3
+# Each version of the state has a file of its own, so processes running two versions side by
+# side (an upgrade mid-run) never take each other's file for damage and reset it on every call.
+STATE_FILE = f"queue-v{STATE_VERSION}.json"
+# A Windows sharing violation (an antivirus or indexer holding the file open) is waited out this
+# many times 10 ms before it counts as an error.
+SHARING_VIOLATION_TRIES = 300
 
 # Errors that mean "somebody else holds the lock" (flock: EWOULDBLOCK; msvcrt: EACCES).
 _BUSY = frozenset({errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK})
@@ -82,6 +91,11 @@ _SHARED_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 class LockTimeout(TimeoutError):
     """The shared lock stayed taken for longer than the lock timeout."""
+
+
+# The shared state is busy for a while (a stuck lock holder, a file held open on Windows): waited
+# out, never a caller's failure, as long as the caller may still wait.
+STATE_BUSY = (LockTimeout, PermissionError)
 
 
 class RateLimitTimeout(TimeoutError):
@@ -144,9 +158,10 @@ LOCKING = WindowsLocking if os.name == "nt" else PosixLocking
 
 
 def _retry_sharing_violation(action: Callable[[], Any]) -> Any:
-    """Runs `action`, retrying for a moment a Windows sharing violation (an antivirus or indexer
-    holding the file open); elsewhere a PermissionError is real and raised at once."""
-    for _ in range(50):
+    """Runs `action`, retrying for up to 3 s a Windows sharing violation (an antivirus or indexer
+    holding the file open, a new file most of all); elsewhere a PermissionError is real and
+    raised at once."""
+    for _ in range(SHARING_VIOLATION_TRIES):
         try:
             return action()
         except PermissionError:
@@ -360,6 +375,7 @@ class RunCounters(NamedTuple):
 @dataclass
 class _Route:
     last: float = 0.0  # its last release
+    last_ok: float = 0.0  # its last release that got an answer other than a 429
     spacing: float = 0.0
     successes: int = 0  # answers in a row without a 429, since its spacing last changed
     strikes: int = 0
@@ -429,6 +445,7 @@ def _route_from(data: Any) -> _Route:
         policy = [_number(policy[0]), _number(policy[1])]
     return _Route(
         last=_number(data["last"]),
+        last_ok=_number(data.get("last_ok", 0.0)),
         spacing=max(_number(data["spacing"]), 0.0),
         successes=_whole(data["successes"]),
         strikes=_whole(data["strikes"]),
@@ -662,7 +679,7 @@ class SharedQueue:
                 state = self._load(self._clock())
                 if state.waiting.pop(ticket, None) is not None:
                     self._save(state)
-        except LockTimeout:
+        except STATE_BUSY:
             pass
 
     def acquire(
@@ -672,8 +689,15 @@ class SharedQueue:
         own spacing have room, then returns the release. With `max_wait`, raises
         RateLimitTimeout (and leaves the line) once it has waited that long."""
         started = self._mono()
-        if ticket is None:
-            ticket = self.take_ticket(route)
+        while ticket is None:
+            try:
+                ticket = self.take_ticket(route)
+            except STATE_BUSY as error:
+                if max_wait is not None and self._mono() - started >= max_wait:
+                    raise RateLimitTimeout(
+                        f"Waited {self._mono() - started:.1f} s for the queue's state ({error})"
+                    ) from None
+                self._sleep(HEARTBEAT)
         ahead = 0
         at = now = self._clock()
         while True:
@@ -708,8 +732,8 @@ class SharedQueue:
                         at = state.head_at if state.head_at is not None else now
                         wait = max(at - now, FOLLOW_POLL)
                     self._save(state)
-            except LockTimeout:
-                wait = HEARTBEAT  # a stuck holder: look again, within this caller's limit
+            except STATE_BUSY:
+                wait = HEARTBEAT  # busy state: look again, within this caller's limit
             wait = min(max(wait, 0.0), HEARTBEAT)
             if max_wait is not None:
                 left = max(max_wait, 0.0) - (self._mono() - started)
@@ -732,21 +756,28 @@ class SharedQueue:
     ) -> Refusal:
         """The request `slot` released got a 429. Nobody sends for `hint` seconds when the server
         said how long, else for the route's backoff (5 s, doubling with its 429s in a row, up to
-        its policy window), and the route's spacing doubles (from 5 s, up to its policy window
-        over its limit). 429s for requests sent before the last counted one was answered belong
-        to the same burst and change neither."""
+        its policy window), and the route's spacing grows by half (from 5 s, up to its policy
+        window over its limit). A refusal created nothing, so the route's spacing runs again from
+        its last call that got through. 429s for requests sent before the last counted one was
+        answered belong to the same burst and change neither strikes nor spacing."""
         with self._locked():
             now = self._clock()
             state = self._load(now)
             known = state.routes.setdefault(slot.route, _Route())
             self._learn_policy(known, policy)
             spacing_cap, backoff_cap = self._cap(known)
+            if known.last == slot.at:
+                # A 429 created nothing: the route's spacing runs from its last call that got
+                # through, not from this refusal (unless another call went out since).
+                known.last = known.last_ok
             escalated = slot.seq > known.strike_seq
             if escalated:
                 known.strikes += 1
                 known.strike_seq = state.seq
                 known.successes = 0
-                known.spacing = min(max(known.spacing * 2, ROUTE_BACKOFF_START), spacing_cap)
+                known.spacing = min(
+                    max(known.spacing * SPACING_GROWS, ROUTE_BACKOFF_START), spacing_cap
+                )
             if hint is None:
                 strikes = max(known.strikes, 1)
                 seconds = min(ROUTE_BACKOFF_START * 2.0 ** min(strikes - 1, 32), backoff_cap)
@@ -780,7 +811,8 @@ class SharedQueue:
     ) -> None:
         """The request `slot` released got an answer other than a 429. For its route only: a
         request sent after the last strike that gets through ends the run of 429s, and every
-        `SPACING_EASES_AFTER` such answers in a row halve the spacing (below 5 s, none). With
+        `SPACING_EASES_AFTER` such answers in a row take a quarter off the spacing (below 5 s,
+        none). With
         `remaining` and `reset` (the server's RateLimit headers), at most `remaining` more of the
         route's requests go before `reset` seconds pass, less the ones released since this one
         (still in flight when it counted)."""
@@ -789,12 +821,13 @@ class SharedQueue:
             state = self._load(now)
             known = state.routes.setdefault(slot.route, _Route())
             self._learn_policy(known, policy)
+            known.last_ok = max(known.last_ok, slot.at)
             if slot.seq > known.strike_seq:
                 known.strikes = 0
                 known.successes += 1
                 if known.successes >= SPACING_EASES_AFTER:
                     known.successes = 0
-                    known.spacing /= 2
+                    known.spacing *= SPACING_EASES
                     if known.spacing < ROUTE_BACKOFF_START:
                         known.spacing = 0.0
             if remaining is not None and reset is not None:

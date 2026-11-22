@@ -236,10 +236,12 @@ def test_retry_after_is_honoured_in_seconds(mail):
 
 
 def test_a_short_retry_after_still_waits_for_the_routes_spacing(mail):
-    """After a 429 the route's calls are at least 5 s apart, even if Retry-After says 3."""
-    mail.session.answers = [answer(429, retry_after=3), answer(201, {"id": "a"})]
+    """After a 429 the route's calls are at least 5 s after its last one that got through, even
+    if Retry-After says 1."""
+    mail.session.answers = [answer(201, {"id": "a"}), answer(429, retry_after=1), answer(201, {})]
     mail.create_account("x@mail.test", "pw")
-    assert mail.session.gaps() == pytest.approx([5.0])
+    mail.create_account("y@mail.test", "pw")
+    assert mail.session.gaps() == pytest.approx([0.0, 5.0])
 
 
 def test_retry_after_is_honoured_as_an_http_date(mail):
@@ -266,12 +268,13 @@ def test_a_429_pauses_every_process_sharing_the_state_dir(make, clock, state_dir
 
 
 def test_a_refused_call_is_never_dropped(mail):
-    """Ten 429s in a row, then an answer: the call still gets it. Retry-After is honoured, and
-    the route's spacing (5, 10, 20, 40 s, then a minute) takes over once it is longer."""
+    """Ten 429s in a row, then an answer: the call still gets it, each retry after the
+    Retry-After (a refusal created nothing, so the route's spacing, which runs from its last call
+    that got through, doesn't add to it)."""
     mail.session.answers = [answer(429, retry_after=30) for _ in range(10)] + [answer(200)]
     assert mail.request("GET", "/messages").status_code == 200
     assert len(mail.session.calls) == 11
-    assert mail.session.gaps() == pytest.approx([30.0, 30.0, 30.0, 40.0] + [60.0] * 6)
+    assert mail.session.gaps() == pytest.approx([30.0] * 10)
 
 
 def test_only_the_call_ceiling_ends_a_refused_call_and_it_says_why(make):
@@ -729,13 +732,12 @@ def test_a_timed_out_wait_says_how_long_it_spent_in_line(make, clock, state_dir)
 
 
 def test_rate_limited_looks_never_end_the_wait(mail, clock):
-    """Five refused looks in a row (20 s each, then the route's widening spacing), far past the
-    10 s budget: still found."""
+    """Five refused looks in a row, 20 s each, far past the 10 s budget: still found."""
     refused = [answer(429, retry_after=20) for _ in range(5)]
     mail.session.answers = [*refused, _inbox("m1"), _message("m1", "hi")]
     found = mail.wait_for_message("tok", lambda m: True, timeout=10, poll_interval=2)
     assert found["id"] == "m1"
-    assert clock.since_start(mail.session.calls[5].at) == pytest.approx(160)
+    assert clock.since_start(mail.session.calls[5].at) == pytest.approx(100)
 
 
 # --- waiting for a message: the live feed --------------------------------------------------------
@@ -1267,7 +1269,7 @@ class QuotaSession:
 @pytest.mark.parametrize(
     "limit, window, most_refusals, most_seconds",
     [
-        (2, 65.0, 8, 12 * 40.0),  # what mail.tm did: about two creations in 60-70 s
+        (2, 65.0, 8, 12 * 50.0),  # what mail.tm did: about two creations in 60-70 s
         (1, 60.0, 12, 12 * 75.0),  # what its header claims: one a minute
     ],
 )
