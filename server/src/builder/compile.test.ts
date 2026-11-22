@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Overrides } from '../classes/item/Overrides.js';
+import { ItemAccessFilter } from '../classes/policies/ItemAccessFilter.js';
 import { ItemPolicy } from '../classes/policies/ItemPolicy.js';
 import { BLOCK_TYPES, CAPS, type Query } from '../types/builder.js';
 import { BLOCK_CATALOG } from './catalog.js';
@@ -76,13 +77,19 @@ const TASK_SHAPED_STAGE = { $match: { kind: { $nin: ['block', 'travel'] } } };
 
 /**
  * The query's own filter stage, if any: the last `$match` before the facet (after the base filter,
- * the task-shaped scope, the stored-field prefilter and, for items, the effective values).
+ * the task-shaped scope, the stored-field prefilter and, for items, the effective values), not
+ * counting H5's copy absorption after it.
  */
 function filterOf(compiled: CompiledQuery): Record<string, unknown> | undefined {
   const scope = JSON.stringify(TASK_SHAPED_STAGE);
   const stage = compiled.pipeline
     .slice(1, -1)
-    .filter((entry) => '$match' in entry && JSON.stringify(entry) !== scope)
+    .filter(
+      (entry) =>
+        '$match' in entry &&
+        JSON.stringify(entry) !== scope &&
+        !ItemAccessFilter.isCopyAbsorption(entry),
+    )
     .at(-1);
   return stage?.['$match'] as Record<string, unknown> | undefined;
 }
@@ -208,20 +215,12 @@ describe('compileQuery: base filter', () => {
             vars: { topic: 'work', range: 'next_7d' },
           });
           const compiled = compileQuery(query, ctx);
-          // H5: a block filtered by a provider other than `local` shows a provider copy, so its
-          // base filter lacks the absorption rule; every other block has the full base filter.
-          const filtersByProvider =
-            query.source === 'items' &&
-            JSON.stringify(compiled.pipeline).includes('source.provider');
+          // The same base filter for every block, filtered by provider or not: H5's absorption is
+          // a stage after the query's filter, never part of the access.
           const policy = ItemPolicy.of(ctx.access);
           const base =
             query.source === 'items' ? policy.itemFilter(ctx.ws) : policy.containerFilter(ctx.ws);
-          const first = (compiled.pipeline[0]?.['$match'] ?? {}) as Record<string, unknown>;
-          if (filtersByProvider && !('$nor' in first)) {
-            assert.deepEqual(first, policy.itemFilterUnabsorbed(ctx.ws));
-          } else {
-            assert.deepEqual(compiled.pipeline[0], { $match: base });
-          }
+          assert.deepEqual(compiled.pipeline[0], { $match: base });
           assert.equal(compiled.collection, query.source === 'items' ? 'Items' : 'Containers');
         });
       }
@@ -319,6 +318,78 @@ describe('compileQuery: effective values (a mirrored item’s overrides)', () =>
     assert.deepEqual(filterOf(compiled), { status: 'done' });
     const containers = compileQuery({ source: 'containers' }, context());
     assert.ok(!containers.pipeline.some((stage) => '$addFields' in stage));
+  });
+});
+
+describe('compileQuery: provider copies (H5)', () => {
+  it('absorbs right after the query’s filter, before the facet’s count, groups and rows', () => {
+    const compiled = compileQuery(
+      {
+        source: 'items',
+        where: where({ field: 'status', operator: '=', value: 'open' }),
+        groupBy: ['source.provider'],
+      },
+      context(),
+    );
+    const { pipeline } = compiled;
+    const at = pipeline.findIndex((entry) => ItemAccessFilter.isCopyAbsorption(entry));
+    // A cancelled to-do does not show (time views drop it), so it hides nothing.
+    assert.deepEqual(
+      pipeline.slice(at, at + 3),
+      ItemAccessFilter.copyAbsorption({ $eq: ['$status', 'cancelled'] }),
+    );
+    assert.deepEqual(pipeline[at - 1], { $match: filterOf(compiled) });
+    assert.equal(at + 4, pipeline.length);
+    assert.ok('$facet' in (pipeline.at(-1) ?? {}));
+  });
+
+  it('every items query absorbs, filtered by provider or not; a containers query never', () => {
+    for (const [name, query] of QUERIES) {
+      const compiled = compileQuery(query, context({ vars: { topic: 'work', range: 'today' } }));
+      const stages = compiled.pipeline.filter((entry) => ItemAccessFilter.isCopyAbsorption(entry));
+      assert.equal(stages.length, query.source === 'items' ? 3 : 0, name);
+    }
+    const byProvider = compileQuery(
+      { source: 'items', where: where({ field: 'source.provider', operator: '=', value: 'jira' }) },
+      context(),
+    );
+    assert.equal(
+      byProvider.pipeline.filter((entry) => ItemAccessFilter.isCopyAbsorption(entry)).length,
+      3,
+    );
+  });
+
+  it('folds the block’s hide rules into what does not show, and nothing else of them leaks', () => {
+    const query: Query = {
+      source: 'items',
+      where: where({ field: 'kind', operator: '=', value: 'todo' }),
+    };
+    const plain = compileQuery(query, context());
+    const hiding = compileQuery(
+      query,
+      context({
+        displayRules: [
+          { if: { field: 'status', operator: '=', value: 'done' }, then: { hide: true } },
+          { if: { field: 'priority', operator: '>', value: 2 }, then: { tone: 'destructive' } },
+          // Reserved time named by a hide rule never widens the task-shaped read.
+          { if: { field: 'kind', operator: '=', value: 'block' }, then: { hide: true } },
+          // An unset variable: no warning, no applied variable.
+          { if: { field: 'topic', operator: '=', value: '$page.topic' }, then: { hide: true } },
+        ],
+      }),
+    );
+    const window = (compiled: CompiledQuery): string =>
+      JSON.stringify(compiled.pipeline.find((entry) => '$setWindowFields' in entry));
+    assert.match(window(hiding), /"\$literal":"done"/);
+    assert.match(window(hiding), /"\$literal":"block"/);
+    assert.doesNotMatch(window(hiding), /destructive|priority/);
+    assert.doesNotMatch(window(plain), /\$literal/);
+    // Everything else is the same query: the rows, counts and groups it reads are unchanged.
+    const rest = (compiled: CompiledQuery): unknown[] =>
+      compiled.pipeline.filter((entry) => !('$setWindowFields' in entry));
+    assert.deepEqual(rest(hiding), rest(plain));
+    assert.deepEqual(hiding.warnings, plain.warnings);
+    assert.deepEqual(hiding.appliedVars, plain.appliedVars);
   });
 });
 
@@ -609,8 +680,8 @@ describe('compileQuery: variables and dynamic values', () => {
       context(),
     );
     assert.equal(filterOf(compiled), undefined);
-    // The base filter, the task-shaped scope, the effective values, the facet.
-    assert.equal(compiled.pipeline.length, 4);
+    // The base filter, the task-shaped scope, the effective values, H5's three stages, the facet.
+    assert.equal(compiled.pipeline.length, 7);
   });
 
   it('resolves @me to the caller, @now to now and @today to local midnight', () => {
@@ -978,18 +1049,22 @@ describe('compileQuery: block connectors (PERMISSIONS-V2)', () => {
       context({ connectors: ['i-own', 'i-shared'], dedup: ['i-own', 'i-shared'] }),
     );
     const stages = compiled.pipeline.map((stage) => Object.keys(stage)[0]);
+    // H5's absorption first (where the access filter's rule used to drop a copy), then the dedup.
     assert.deepEqual(stages, [
       '$match',
       '$match',
       '$addFields',
       '$match',
+      '$setWindowFields',
+      '$match',
+      '$unset',
       '$addFields',
       '$sort',
       '$group',
       '$replaceRoot',
       '$facet',
     ]);
-    const group = compiled.pipeline[6]?.['$group'] as Record<string, unknown>;
+    const group = compiled.pipeline[9]?.['$group'] as Record<string, unknown>;
     assert.deepEqual(group['doc'], { $first: '$$ROOT' });
     assert.match(JSON.stringify(group['_id']), /source\.accountId/);
     // Not for containers, and not with fewer than two integrations to choose from.

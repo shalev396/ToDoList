@@ -6,8 +6,9 @@
  *
  * What a member can see = their own integrations' items ∪ the shared integrations' items ∪ the
  * local to-dos they may see (shared ones, and their own private ones; time blocks alike; a travel
- * leg only its member, whatever its visibility); a provider copy of a local to-do is hidden from
- * whoever sees that to-do (H5).
+ * leg only its member, whatever its visibility). A provider copy of a local to-do is hidden only
+ * while its to-do shows in the same read (H5): that is a stage of the read (`copyAbsorption`), not
+ * part of the access.
  */
 import type { WorkspaceContext } from '../base/Caller.js';
 import type { Provider } from '../../types/domain.js';
@@ -43,28 +44,19 @@ function topicFilter(ws: ItemNarrowing): Filter {
   return ws.onlyTopics === undefined ? {} : { topicId: { $in: [...ws.onlyTopics] } };
 }
 
-/** The positive provider conditions an `$and` chain of a compiled filter puts on `source.provider`. */
-function providerConditions(filter: unknown, found: unknown[] = []): unknown[] {
-  if (typeof filter !== 'object' || filter === null) return found;
-  for (const [key, value] of Object.entries(filter)) {
-    if (key === '$and' && Array.isArray(value)) {
-      for (const part of value as unknown[]) providerConditions(part, found);
-    } else if (key === 'source.provider') {
-      found.push(value);
-    }
-  }
-  return found;
-}
+/** The field the absorption stages set and drop again: 1 when the row's to-do is in the read. */
+const TODO_IN_READ = '__copyOfInRead';
 
-/** True when the filter asks for providers, none of which is `local`. */
-function excludesLocal(userFilter: unknown): boolean {
-  return providerConditions(userFilter).some((condition) => {
-    if (typeof condition === 'string') return condition !== 'local';
-    if (typeof condition !== 'object' || condition === null) return false;
-    const { $eq, $in } = condition as { $eq?: unknown; $in?: unknown };
-    if (typeof $eq === 'string') return $eq !== 'local';
-    return Array.isArray($in) && $in.length > 0 && !($in as unknown[]).includes('local');
-  });
+/** True for a provider copy (its `overlay.copyOf` names a to-do), as an aggregation expression. */
+const IS_COPY = { $eq: [{ $type: '$overlay.copyOf' }, 'string'] };
+
+/** The `$match` that drops a copy whose to-do is in the read (it never varies). */
+const DROP_ABSORBED = JSON.stringify({
+  $match: { $nor: [{ 'overlay.copyOf': { $type: 'string' }, [TODO_IN_READ]: 1 }] },
+});
+
+function isRecord(value: unknown): value is Filter {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export class ItemAccessFilter {
@@ -75,54 +67,61 @@ export class ItemAccessFilter {
   }
 
   /**
-   * One row, not three (H5): a mirrored provider copy of a local to-do is hidden from whoever can
-   * see that to-do (it is shared, or the viewer created it); the to-do's own row shows the copy.
-   * It composes WITH the access, never instead of it, and applies to lists only: a read of one
-   * item by id uses `itemsUnabsorbed`. Filtering by provider alone shows the copy, since the
-   * to-do does not match that filter. One $match, so counts and charts agree.
+   * One row, not three (H5): a mirrored provider copy of a local to-do is hidden while its to-do
+   * shows in the same read; the to-do's own row shows the copy then. Otherwise (the to-do is
+   * done and the read asks for open items, the read names a kind, a provider, a project, dates
+   * or a topic the to-do lacks, or the viewer may not see the to-do) the copy is a row of its
+   * own, so an open item never vanishes.
+   *
+   * The stages a list or aggregate read puts right after its own filter (the access, the
+   * effective values and every rule, range, variable and connector of the read), before any sort,
+   * cursor, limit, `$group`, `$count` or `$facet`: "the same read" is the result set, not a page,
+   * and counts, groups and rows agree. They read only the rows the stages before them let through,
+   * so they never widen what the caller sees. A read of ONE item by id, or of what exists
+   * (facets), does not use them.
+   *
+   * `hidden`, an aggregation expression over a row: true for a to-do that is in the result yet
+   * does not show (a dashboard block's cancelled to-do, or one its `hide` display rule matches).
+   * Such a to-do does not hide its copies.
    */
-  static copyAbsorption(userId: string): Filter {
-    return {
-      $nor: [
-        {
-          'overlay.copyOf': { $type: 'string' },
-          $or: [{ 'overlay.copyOfShared': true }, { 'overlay.copyOfOwner': userId }],
+  static copyAbsorption(hidden?: unknown): Filter[] {
+    // The one row of a copy's partition that is not a copy is its to-do; it absorbs when shown.
+    const absorbs =
+      hidden === undefined
+        ? { $cond: [IS_COPY, 0, 1] }
+        : { $cond: [{ $and: [{ $not: [IS_COPY] }, { $not: [hidden] }] }, 1, 0] };
+    return [
+      {
+        // A copy shares its to-do's partition; any other row is its own.
+        $setWindowFields: {
+          partitionBy: { $cond: [IS_COPY, '$overlay.copyOf', '$_id'] },
+          output: { [TODO_IN_READ]: { $max: absorbs } },
         },
-      ],
-    };
+      },
+      JSON.parse(DROP_ABSORBED) as Filter,
+      { $unset: TODO_IN_READ },
+    ];
+  }
+
+  /** Whether `stage` is one of `copyAbsorption`'s stages (whatever its `hidden`). */
+  static isCopyAbsorption(stage: unknown): boolean {
+    if (!isRecord(stage)) return false;
+    const keys = Object.keys(stage);
+    if (keys.length !== 1) return false;
+    const window = stage['$setWindowFields'];
+    if (isRecord(window)) {
+      const output = window['output'];
+      return isRecord(output) && Object.keys(output).join() === TODO_IN_READ;
+    }
+    return stage['$unset'] === TODO_IN_READ || JSON.stringify(stage) === DROP_ABSORBED;
   }
 
   /**
    * Items the caller may see: this workspace, not deleted, from an integration in the access, or
-   * a local to-do they may see (`integrationId` null: shared, or their own). With `userFilter`
-   * (the `$match` a read also applies), a filter by provider that leaves out `local` shows a
-   * provider copy, since the local to-do that would absorb it does not match (H5); every other
-   * read hides the copy.
+   * a local to-do they may see (`integrationId` null: shared, or their own). A list read adds
+   * `copyAbsorption` after its own filter.
    */
-  items(ws: ItemNarrowing, userFilter?: unknown): Filter {
-    const base = this.#baseItems(ws);
-    return excludesLocal(userFilter) ? this.#withoutAbsorption(base) : base;
-  }
-
-  /**
-   * The same access, without the absorption rule. A read of ONE item by id (open it, pin it) or
-   * of what exists (facets) is about who may see the item, and absorption does not change that.
-   */
-  itemsUnabsorbed(ws: ItemNarrowing): Filter {
-    return this.#withoutAbsorption(this.#baseItems(ws));
-  }
-
-  /** Containers the caller may see: this workspace, not deleted, from an integration in the access. */
-  containers(ws: ItemNarrowing): Filter {
-    return {
-      workspaceId: ws.id,
-      deletedAt: null,
-      ...topicFilter(ws),
-      integrationId: { $in: this.#access.integrations.map((integration) => integration.id) },
-    };
-  }
-
-  #baseItems(ws: ItemNarrowing): Filter {
+  items(ws: ItemNarrowing): Filter {
     const access = this.#access;
     const ids = access.integrations.map((integration) => integration.id);
     return {
@@ -137,13 +136,24 @@ export class ItemAccessFilter {
           ? [{ integrationId: null, visibility: 'workspace', kind: { $ne: 'travel' } }]
           : []),
       ],
-      ...ItemAccessFilter.copyAbsorption(access.userId),
     };
   }
 
-  #withoutAbsorption(base: Filter): Filter {
-    const absorption = ItemAccessFilter.copyAbsorption(this.#access.userId);
-    if (JSON.stringify(base['$nor']) !== JSON.stringify(absorption['$nor'])) return base;
-    return Object.fromEntries(Object.entries(base).filter(([key]) => key !== '$nor'));
+  /**
+   * Identical to `items`; the name is kept so a read of ONE item by id (open it, pin it) or of
+   * what exists (facets) says at its call site that it never absorbs a copy.
+   */
+  itemsUnabsorbed(ws: ItemNarrowing): Filter {
+    return this.items(ws);
+  }
+
+  /** Containers the caller may see: this workspace, not deleted, from an integration in the access. */
+  containers(ws: ItemNarrowing): Filter {
+    return {
+      workspaceId: ws.id,
+      deletedAt: null,
+      ...topicFilter(ws),
+      integrationId: { $in: this.#access.integrations.map((integration) => integration.id) },
+    };
   }
 }

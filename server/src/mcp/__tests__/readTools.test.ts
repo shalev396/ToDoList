@@ -689,3 +689,80 @@ describe('time blocks, areas and travel (time-shaped and task-shaped answers)', 
     assert.equal(deadlines.total, 1);
   });
 });
+
+describe('list_today and provider copies (H5)', () => {
+  it('lists a task once: its Google Calendar event goes when the to-do is due today or overdue', async () => {
+    const copies = await newTeam('read-copies');
+    const wid = copies.workspace.id;
+    const key = await insertAgentKey({
+      workspaceId: wid,
+      userId: copies.owner.id,
+      scopes: ['read'],
+    });
+    const dates: typeof Dates = await import('../../builder/dates.js');
+    const today = dates.resolveDatePreset('today', new Date(), 'Asia/Jerusalem', 'sun');
+    const at = (offsetMs: number): Date => new Date(today.from.getTime() + offsetMs);
+    const items = await models.getItemRepository();
+    const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+    await seedIntegration(wid, {
+      id: 'int-gcal-copies',
+      ownerUserId: copies.owner.id,
+      provider: 'google_calendar',
+      accountId: 'acct',
+    });
+    /** A to-do (due when `due` is given) and its event at 14:00 today, marked as its copy. */
+    const todoWithEvent = async (title: string, due: Date | null): Promise<string> => {
+      const todo = await items.createLocal(wid, {
+        ownerUserId: copies.owner.id,
+        title,
+        topicId: null,
+        dueAt: due,
+      });
+      const id = `${wid}-${title.replaceAll(' ', '-')}`;
+      await items.bulkUpsert(wid, [
+        {
+          id,
+          integrationId: 'int-gcal-copies',
+          kind: 'event',
+          topicId: null,
+          title,
+          status: 'open',
+          startAt: at(14 * HOUR),
+          endAt: at(15 * HOUR),
+          source: {
+            provider: 'google_calendar',
+            accountId: 'acct',
+            externalId: id,
+            key: null,
+            url: `https://example.invalid/${id}`,
+            updatedAtSource: null,
+            etag: null,
+            hash: null,
+          },
+        },
+      ]);
+      await items.setOverlay(wid, id, {
+        copyOf: todo.id,
+        copyOfOwner: copies.owner.id,
+        copyOfShared: true,
+      });
+      return id;
+    };
+    await todoWithEvent('Call the bank', at(DAY - 60_000));
+    await todoWithEvent('Renew the visa', at(-2 * DAY));
+    const undated = await todoWithEvent('Pick up the parcel', null);
+
+    const answer = structured(await call(key, 'list_today')) as {
+      events: Summary[];
+      dueToday: Summary[];
+      overdue: Summary[];
+    };
+    assert.deepEqual(titles(answer.dueToday), ['Call the bank']);
+    assert.deepEqual(titles(answer.overdue), ['Renew the visa']);
+    // The undated to-do is in no list: its event is the task's one entry.
+    assert.deepEqual(
+      answer.events.map((event) => event.id),
+      [undated],
+    );
+  });
+});
