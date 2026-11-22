@@ -28,9 +28,9 @@ ISSUES = {"combinator": "and", "rules": [{"field": "kind", "operator": "=", "val
 
 
 @pytest.fixture(scope="module")
-def demo(api_base_url):
+def demo(api_base_url, pooled_demo):
     """The worker's demo workspace and its owner."""
-    yield from demo_workspace(api_base_url)
+    yield from demo_workspace(api_base_url, pooled_demo)
 
 
 def _headers(user) -> dict:
