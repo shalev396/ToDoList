@@ -20,6 +20,8 @@ import { applyDisplayRules } from '../../rules/applyDisplayRules';
 import { usePageVars } from '../../variables/pageVars';
 import type { ItemQueryRow, QueryRow } from '@api-types/builder';
 import type { ItemColour } from '@api-types/colours';
+import { INACTIVE_TITLE, inactiveKey } from '../time/inactive';
+import { InactiveTag } from '../time/InactiveTag';
 import type { Occurrence } from '../time/occurrences';
 import {
   buildClockModel,
@@ -120,18 +122,26 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
         source: t(sourceNameKey(event.source)),
       });
       const flags = [
+        event.inactive === undefined || event.inactive === null
+          ? null
+          : t(inactiveKey(event.inactive)),
         event.leg?.conflict === true ? t('travel.leg.conflict') : null,
         event.leg?.unset === true ? t('travel.leg.setLength') : null,
       ].filter((flag) => flag !== null);
       return [text, ...flags].join('. ');
     },
     describeArea: (area: ClockArea) =>
-      t('timeBlocks.clock.describeArea', {
-        title: area.title,
-        start: time(area.start),
-        end: time(area.end),
-        topic: labelOf(area.colour),
-      }),
+      [
+        t('timeBlocks.clock.describeArea', {
+          title: area.title,
+          start: time(area.start),
+          end: time(area.end),
+          topic: labelOf(area.colour),
+        }),
+        ...(area.inactive === undefined || area.inactive === null
+          ? []
+          : [t(inactiveKey(area.inactive))]),
+      ].join('. '),
   };
 
   const todayColumn = (
@@ -193,9 +203,14 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
               <li key={o.key} className="flex min-w-0 items-center gap-2 text-[13px]">
                 <ColourDot colour={colourOf(o.row.id)} />
                 <SourceIcon source={ringProvider(o.row.source.provider)} />
-                <span dir="auto" title={o.row.title} className="min-w-0 flex-1 truncate">
+                <span
+                  dir="auto"
+                  title={o.row.title}
+                  className={cn('min-w-0 flex-1 truncate', o.inactive !== null && INACTIVE_TITLE)}
+                >
                   {o.row.title}
                 </span>
+                {o.inactive === null ? null : <InactiveTag inactive={o.inactive} />}
                 <SourceLink
                   source={{ provider: o.row.source.provider, url: o.row.source.url }}
                   title={o.row.title}

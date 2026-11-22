@@ -8,6 +8,8 @@
  * - Next: the first thing still to come today (everything starting at that same minute).
  * - Later today: the rest of today.
  * - Tomorrow: everything on the next local day.
+ * - A cancelled or disabled occurrence (its time free) is never Now or Next: on now or still to
+ *   come today, it is listed in Later today, faded; a task with one is no open task.
  */
 import { isScheduledKind } from '@api-types/scheduled.ts';
 import { endOfZonedDay } from '../clock/ClockRing.math.ts';
@@ -47,7 +49,7 @@ function isOpenTask(occurrence: Occurrence): boolean {
     row.kind !== 'event' &&
     !isScheduledKind(row.kind) &&
     row.status !== 'done' &&
-    row.status !== 'cancelled'
+    occurrence.inactive === null
   );
 }
 
@@ -69,6 +71,8 @@ export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: strin
     tomorrow: [],
   };
   const upcoming: Occurrence[] = [];
+  // Cancelled or disabled, on now or still to come today: Later today, never Now or Next.
+  const freed: Occurrence[] = [];
   for (const occurrence of all) {
     const startMs = occurrence.start.getTime();
     if (startMs < todayStart.getTime()) {
@@ -80,6 +84,10 @@ export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: strin
       model.tomorrow.push(occurrence);
     } else if (occurrence.allDay) {
       model.allDay.push(occurrence);
+    } else if (occurrence.inactive !== null && !occurrence.dueOnly) {
+      if (startMs > nowMs || nowMs < endOf(occurrence)) {
+        freed.push(occurrence);
+      }
     } else if (occurrence.dueOnly) {
       if (!isOpenTask(occurrence)) {
         continue;
@@ -105,6 +113,11 @@ export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: strin
         model.laterToday.push(occurrence);
       }
     }
+  }
+  if (freed.length > 0) {
+    model.laterToday = [...model.laterToday, ...freed].sort(
+      (a, b) => a.start.getTime() - b.start.getTime() || a.key.localeCompare(b.key),
+    );
   }
   return model;
 }

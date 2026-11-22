@@ -23,6 +23,8 @@ import { truncateText } from '../data/truncate';
 import { useDataBlock } from '../data/useDataBlock';
 import { endOfZonedDay, startOfZonedDay } from '../clock/ClockRing.math';
 import { nestInAreas, splitAreas } from '../time/areas';
+import { INACTIVE_TITLE, inactiveKey } from '../time/inactive';
+import { InactiveTag } from '../time/InactiveTag';
 import { expandOccurrences, wallDate, type Occurrence } from '../time/occurrences';
 import { TimelineAreaBand } from './TimelineAreaBand';
 
@@ -101,6 +103,7 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
     return (
       <li
         key={occurrence.key}
+        data-inactive={occurrence.inactive ?? undefined}
         data-timeline-leg={leg === null ? undefined : leg.mode}
         data-conflict={leg === null ? undefined : String(leg.conflict)}
         data-past={leg === null ? undefined : String(leg.past)}
@@ -122,15 +125,26 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
         <div className="-my-1 flex min-w-0 flex-1 flex-col">
           <button
             type="button"
-            // A trip with no length yet says so in its name, for anyone who can't see the dashes.
-            aria-label={leg?.unset === true ? `${label}. ${t('travel.leg.setLength')}` : undefined}
+            // A trip with no length yet says so in its name, for anyone who can't see the dashes; a
+            // cancelled or disabled one that its time is free.
+            aria-label={
+              leg?.unset === true
+                ? `${label}. ${t('travel.leg.setLength')}`
+                : occurrence.inactive === null
+                  ? undefined
+                  : `${label}. ${t(inactiveKey(occurrence.inactive))}`
+            }
             onClick={() => {
               openItem(row.id, occurrence.originalStart ?? undefined);
             }}
             className="flex min-h-11 min-w-0 items-center rounded-sm text-start text-sm hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             dir="auto"
           >
-            <span className="min-w-0 truncate">{label}</span>
+            <span
+              className={cn('min-w-0 truncate', occurrence.inactive !== null && INACTIVE_TITLE)}
+            >
+              {label}
+            </span>
           </button>
           {leg?.conflict === true ? (
             <ConflictMark className="-mt-2 mb-1 text-xs text-destructive" />
@@ -139,6 +153,7 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
         {occurrence.dueOnly ? (
           <span className="text-xs text-muted-foreground">{t('timeBlocks.timeline.due')}</span>
         ) : null}
+        {occurrence.inactive === null ? null : <InactiveTag inactive={occurrence.inactive} />}
         {leg === null ? (
           <>
             <SourceIcon source={displayProvider(row.source.provider)} />
@@ -198,6 +213,7 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
                         title={truncateText(area.row.title, 160) || t('dataBlocks.noTitle')}
                         start={area.start}
                         end={area.end ?? area.start}
+                        inactive={area.inactive}
                         colour={colourOf(area.row.id)}
                         timeZone={timeZone}
                         locale={locale}

@@ -12,7 +12,8 @@ import type { TravelMode } from '@api-types/travel.ts';
 import { colourVar, paintOf } from '../../../colours/palette.ts';
 import type { LegMarks } from '../../../travel/legView.ts';
 import type { TapReach, TimedSpan } from './chipLayout.ts';
-import { wallDate, wallString, type Occurrence } from '../time/occurrences.ts';
+import { INACTIVE_CLASS } from '../time/inactive.ts';
+import { wallDate, wallString, type Inactive, type Occurrence } from '../time/occurrences.ts';
 import type { Tone } from '../../rules/applyDisplayRules.ts';
 
 /** A due-only item (a point in time) is drawn this long. */
@@ -61,6 +62,8 @@ export interface CalendarEventProps {
   stretched: boolean;
   /** A tiny chip's invisible hit area into the free time around it (chipLayout.ts `tapReach`). */
   tap: TapReach | null;
+  /** Cancelled or disabled: drawn faded and struck through, with no fill (`tc-off`). */
+  inactive: Inactive | null;
 }
 
 /** How a short event is drawn beyond its time (chipLayout.ts); never part of the overlap math. */
@@ -78,6 +81,8 @@ export interface CalendarAreaProps {
   area: true;
   family: ColourFamily;
   originalStart: string | null;
+  /** Cancelled or disabled: a faded band (`tc-off`), no painted time to drop into. */
+  inactive: Inactive | null;
 }
 
 function addDay(date: string, days = 1): string {
@@ -110,7 +115,8 @@ function timing(o: Occurrence, timeZone: string): EventInput {
 /**
  * A solid fill under its ink; travel is hatched over its muted fill (`tc-travel`). A short event
  * may be drawn a line tall over the free time after it (`stretched`, `tc-stretch`), or keep its
- * height with a hit area into the free time around it (`tap`).
+ * height with a hit area into the free time around it (`tap`). A cancelled or disabled one has no
+ * fill: an edge in its colour, the page's ink, faded and struck through (`tc-off`): free time.
  */
 export function toEventInput(
   item: DisplayedOccurrence,
@@ -139,6 +145,7 @@ export function toEventInput(
     lengthUnset: item.leg?.unset ?? false,
     stretched,
     tap: tap ?? null,
+    inactive: o.inactive,
   };
   // FullCalendar sets an event's attributes once, when its element is made (`eventDidMount`), and
   // reuses the element while the id stays. Its name and tooltip carry its times (the chip shows
@@ -155,6 +162,7 @@ export function toEventInput(
     item.badges.join(','),
     colour.family,
     colour.role,
+    o.inactive,
     ...(item.leg === undefined
       ? []
       : [item.leg.conflict, item.leg.past, item.leg.moved, item.leg.unset, item.leg.mode]),
@@ -171,10 +179,11 @@ export function toEventInput(
       ...(item.leg?.unset === true ? ['tc-unset'] : []),
       ...(o.dueOnly ? ['fc-due'] : []),
       ...(stretched ? ['tc-stretch'] : []),
+      ...(o.inactive === null ? [] : [INACTIVE_CLASS]),
     ],
-    backgroundColor: paint.fill,
+    backgroundColor: o.inactive === null ? paint.fill : 'transparent',
     borderColor: paint.fill,
-    textColor: paint.ink,
+    textColor: o.inactive === null ? paint.ink : 'var(--foreground)',
     extendedProps,
     ...timing(o, timeZone),
   };
@@ -205,13 +214,15 @@ export function toAreaEventInput(
     area: true,
     family: colour.family,
     originalStart: occurrence.originalStart?.toISOString() ?? null,
+    inactive: occurrence.inactive,
   };
   return {
-    id: occurrence.key,
+    // Drawn again when it is disabled or enabled (FullCalendar keeps an element per id).
+    id: occurrence.inactive === null ? occurrence.key : `${occurrence.key}|${occurrence.inactive}`,
     title: occurrence.row.title,
     display: 'background',
     backgroundColor: colourVar(colour.family, 'area'),
-    classNames: ['tc-area'],
+    classNames: ['tc-area', ...(occurrence.inactive === null ? [] : [INACTIVE_CLASS])],
     extendedProps,
     ...timing(occurrence, timeZone),
   };
@@ -231,6 +242,8 @@ export interface AreaTag {
   /** Its wall-clock times (`HH:MM`); null for an all-day area. */
   from: string | null;
   to: string | null;
+  /** Cancelled or disabled: the tag is faded and struck through, and says so. */
+  inactive: Inactive | null;
 }
 
 /** The days (`YYYY-MM-DD`, wall clock) an area's band covers, first to last. */
@@ -269,6 +282,7 @@ export function areaTagsByDay(
       originalStart: o.originalStart?.toISOString() ?? null,
       from: o.allDay ? null : wallString(o.start, timeZone).slice(11, 16),
       to: o.allDay || o.end === null ? null : wallString(o.end, timeZone).slice(11, 16),
+      inactive: o.inactive,
     };
     for (const day of daysCovered(o, timeZone)) {
       byDay.set(day, [...(byDay.get(day) ?? []), tag]);

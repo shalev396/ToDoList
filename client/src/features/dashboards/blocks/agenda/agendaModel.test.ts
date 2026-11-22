@@ -141,6 +141,41 @@ describe('agenda: now / next / later today / tomorrow', () => {
   });
 });
 
+describe('agenda: cancelled and disabled time is free', () => {
+  it('is never now or next: on now or still to come, it is in later today, in order', () => {
+    const model = buildAgenda(
+      [
+        row('off-now', {
+          startAt: at('11:30'),
+          endAt: at('12:30'),
+          overlay: { disabled: true, disabledOccurrences: [] },
+        }),
+        row('gone', { status: 'cancelled', startAt: at('13:00'), endAt: at('14:00') }),
+        row('next', { startAt: at('15:00'), endAt: at('16:00') }),
+        row('later', { startAt: at('18:00'), endAt: at('19:00') }),
+        row('off-past', {
+          startAt: at('09:00'),
+          endAt: at('10:00'),
+          overlay: { disabled: true, disabledOccurrences: [] },
+        }),
+        row('task', {
+          kind: 'todo',
+          dueAt: at('17:00'),
+          overlay: { disabled: true, disabledOccurrences: [] },
+        }),
+      ],
+      NOW,
+      TZ,
+    );
+    assert.deepEqual(ids(model.now), []);
+    assert.deepEqual(ids(model.next), ['next']);
+    assert.deepEqual(ids(model.laterToday), ['off-now', 'gone', 'later']);
+    // A disabled task is no open task; a past disabled event is history, like any other.
+    assert.ok(!ids(model.laterToday).includes('task'));
+    assert.ok(!ids(model.earlierToday).includes('off-past'));
+  });
+});
+
 describe('agenda: areas', () => {
   const place = (items: TimeRow[], areas: TimeRow[]) =>
     agendaAreas(buildAgenda(items, NOW, TZ), buildAgenda(areas, NOW, TZ));

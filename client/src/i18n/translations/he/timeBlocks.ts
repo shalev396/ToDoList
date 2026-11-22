@@ -106,6 +106,11 @@ export const timeBlocks = {
     plannedLabel: 'מתוכנן: {{title}}, {{when}}',
     planFailed: 'התכנון לא נשמר. נסו שוב.',
   },
+  /** An occurrence whose time is free although it is shown: faded and struck through. */
+  inactive: {
+    cancelled: 'בוטל',
+    disabled: 'מושבת',
+  },
   tone: {
     destructive: 'דורש תשומת לב',
     warning: 'אזהרה',

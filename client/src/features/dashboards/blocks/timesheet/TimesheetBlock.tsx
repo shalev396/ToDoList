@@ -51,6 +51,7 @@ import { zonedParts, zonedTime } from '../clock/ClockRing.math';
 import { ringProvider } from '../clock/clockModel';
 import { itemRowsOf } from '../data/rows';
 import { isolateLtr } from '../time/areas';
+import { inactiveKey } from '../time/inactive';
 import { visibleRange, wallDate, wallString, type WeekStart } from '../time/occurrences';
 import { TimesheetAreaTag } from './TimesheetAreaTag';
 import { TodoPanel, type PanelTodo } from './TodoPanel';
@@ -393,6 +394,11 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
     const props = arg.event.extendedProps as EventProps;
     arg.el.setAttribute('data-item-id', props.rowId);
     arg.el.setAttribute('data-family', props.family);
+    // Cancelled or disabled (time/inactive.ts): faded, its time free; its name says so.
+    const off = props.inactive === null ? null : t(inactiveKey(props.inactive));
+    if (props.inactive !== null) {
+      arg.el.setAttribute('data-inactive', props.inactive);
+    }
     if (isArea(props)) {
       arg.el.setAttribute('data-role', 'area');
       arg.el.style.setProperty('--tc-edge', colourVar(props.family, 'scheduled'));
@@ -413,6 +419,9 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
         ? t('timeBlocks.calendar.allDay')
         : isolateLtr(`${wallTime(arg.event.start)}–${wallTime(arg.event.end)}`);
       name = t('timeBlocks.calendar.eventLabel', { title: arg.event.title, when, source });
+    }
+    if (off !== null) {
+      name = `${name}. ${off}`;
     }
     arg.el.setAttribute('aria-label', name);
     arg.el.setAttribute('title', name);

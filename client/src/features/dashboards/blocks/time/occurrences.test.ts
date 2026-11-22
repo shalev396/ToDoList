@@ -73,8 +73,9 @@ describe('expandOccurrences', () => {
       ],
     );
     const flagged = out[1];
-    assert.equal(flagged?.end?.getTime(), at(2026, 11, 10, 11).getTime());
-    assert.equal(flagged?.key, `master@${String(at(2026, 11, 10, 10).getTime())}`);
+    assert.ok(flagged);
+    assert.equal(flagged.end?.getTime(), at(2026, 11, 10, 11).getTime());
+    assert.equal(flagged.key, `master@${String(at(2026, 11, 10, 10).getTime())}`);
   });
 
   it('never lists a declined occurrence, and still takes its slot out of the series', () => {

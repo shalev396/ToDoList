@@ -102,6 +102,11 @@ export const timeBlocks = {
     plannedLabel: 'Planned: {{title}}, {{when}}',
     planFailed: 'The plan wasn’t saved. Try again.',
   },
+  /** An occurrence whose time is free although it is shown: faded and struck through. */
+  inactive: {
+    cancelled: 'Cancelled',
+    disabled: 'Disabled',
+  },
   tone: {
     destructive: 'Needs attention',
     warning: 'Warning',

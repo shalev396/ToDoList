@@ -95,6 +95,37 @@ describe('workload per day', () => {
     assert.equal(model.peakHours, 6);
   });
 
+  it('a disabled event or task and a cancelled occurrence of a series hold no time', () => {
+    const disabled = { ...row('x', {}).overlay, disabled: true };
+    const model = build([
+      row('off', {
+        kind: 'event',
+        startAt: at('10:00', '09'),
+        endAt: at('12:00', '09'),
+        overlay: disabled,
+      }),
+      row('task', { dueAt: at('17:00', '09'), props: { estimateHours: 3 }, overlay: disabled }),
+      row('series', {
+        kind: 'event',
+        startAt: at('08:00', '02'),
+        endAt: at('09:00', '02'),
+        props: { calendarId: 'c', eventId: 'e', recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=MO'] },
+      }),
+      row('gone', {
+        kind: 'event',
+        status: 'cancelled',
+        startAt: at('08:00', '09'),
+        props: {
+          calendarId: 'c',
+          recurringEventId: 'e',
+          originalStartAt: at('08:00', '09').toISOString(),
+        },
+      }),
+    ]);
+    assert.equal(model.days[1]?.totalHours, 0);
+    assert.deepEqual(model.unestimated, []);
+  });
+
   it('counts blocks and travel legs as busy hours, never areas, and none as task load', () => {
     const model = build([
       row('focus', {
