@@ -27,7 +27,9 @@ export function useNow(): Date {
 
 /**
  * What every data block needs: its query result, the item rows after the display rules (hidden
- * rows already removed), the frame status, and the workspace's clock (time zone, week start).
+ * rows already removed; `hiddenRows` are the ones a rule hides, which a time view still reads for
+ * the slots they take out of a series), the frame status, and the workspace's clock (time zone,
+ * week start).
  */
 export function useDataBlock(dashboard: DashboardView, block: Block) {
   const { vars } = usePageVars();
@@ -40,16 +42,21 @@ export function useDataBlock(dashboard: DashboardView, block: Block) {
   const userId = user?.id ?? '';
   const data = query.data;
 
-  const rows = useMemo((): DisplayedRow<ItemQueryRow>[] => {
+  const ruled = useMemo((): DisplayedRow<ItemQueryRow>[] => {
     return applyDisplayRules(itemRowsOf(data), block.rules, {
       now,
       timeZone,
       userId,
       weekStart,
       vars,
-    }).filter((entry) => !entry.hidden);
+    });
   }, [data, block.rules, now, timeZone, userId, weekStart, vars]);
+  const rows = useMemo(() => ruled.filter((entry) => !entry.hidden), [ruled]);
+  const hiddenRows = useMemo(
+    () => ruled.filter((entry) => entry.hidden).map((entry) => entry.row),
+    [ruled],
+  );
 
   const loadState: BlockStatus = query.isLoading ? 'loading' : query.isError ? 'error' : 'ready';
-  return { query, rows, loadState, now, timeZone, weekStart, vars };
+  return { query, rows, hiddenRows, loadState, now, timeZone, weekStart, vars };
 }

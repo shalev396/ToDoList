@@ -16,6 +16,7 @@ import {
   type CreateLocalItemInput,
   type IItemRepository,
   COPY_STATUSES,
+  DISABLED_OCCURRENCES_MAX,
   type ItemCopy,
   type ItemData,
   type ItemOverlay,
@@ -48,7 +49,13 @@ import {
 
 /** `copies` is absent from items stored before H5 (lean reads apply no defaults). */
 type StoredCopy = Omit<ItemCopy, 'at'> & { at?: Date };
-type ItemFields = Omit<ItemData, 'id' | 'copies'> & { _id: string; copies?: StoredCopy[] };
+/** `overlay.disabledOccurrences` is absent from items stored before it existed. */
+type StoredOverlay = Omit<ItemOverlay, 'disabledOccurrences'> & { disabledOccurrences?: string[] };
+type ItemFields = Omit<ItemData, 'id' | 'copies' | 'overlay'> & {
+  _id: string;
+  copies?: StoredCopy[];
+  overlay: StoredOverlay;
+};
 
 /** `bodyPreview` is a short preview; the full body stays at the source. */
 export const BODY_PREVIEW_MAX = 500;
@@ -102,6 +109,8 @@ const itemSchema = new mongoose.Schema<ItemFields>(
       copyOfOwner: { type: String, default: null },
       copyOfShared: { type: Boolean, default: null },
       attrs: { type: mongoose.Schema.Types.Mixed, default: (): Record<string, unknown> => ({}) },
+      disabled: { type: Boolean, default: null },
+      disabledOccurrences: { type: [String], default: [] },
       // Local stand-ins for fields the provider lacks (never written by a sync).
       overrides: {
         title: { type: String, default: null },
@@ -226,6 +235,8 @@ const OVERLAY_KEYS: readonly (keyof ItemOverlay)[] = [
   'copyOf',
   'copyOfOwner',
   'copyOfShared',
+  'disabled',
+  'disabledOccurrences',
 ];
 
 const OVERRIDE_KEYS: readonly (keyof ItemOverrides)[] = [
@@ -341,6 +352,8 @@ function toItemData(doc: ItemFields): ItemData {
       copyOfOwner: overlay.copyOfOwner ?? null,
       copyOfShared: overlay.copyOfShared ?? null,
       attrs: { ...overlay.attrs },
+      disabled: overlay.disabled ?? null,
+      disabledOccurrences: [...(overlay.disabledOccurrences ?? [])],
       overrides: toOverrides(overlay.overrides),
     },
     visibility: doc.visibility,
@@ -793,6 +806,83 @@ export const ItemRepository: IItemRepository = {
       },
       { new: true, runValidators: true },
     ).lean<ItemFields>();
+    return doc ? toItemData(doc) : null;
+  },
+
+  async setOccurrenceDisabled(workspaceId, id, originalStart, disabled, at) {
+    const filter = { _id: id, workspaceId, deletedAt: null };
+    if (!disabled) {
+      const doc = await ItemMongoModel.findOneAndUpdate(
+        filter,
+        {
+          $pull: { 'overlay.disabledOccurrences': originalStart },
+          $set: { 'overlay.editedAt': at },
+        },
+        { new: true },
+      ).lean<ItemFields>();
+      return doc ? toItemData(doc) : null;
+    }
+    // Pushed in order (ISO strings of one form sort as their instants) and cut to the newest
+    // DISABLED_OCCURRENCES_MAX, in one atomic write; one already listed is left as it is.
+    const added = await ItemMongoModel.findOneAndUpdate(
+      { ...filter, 'overlay.disabledOccurrences': { $ne: originalStart } },
+      {
+        $push: {
+          'overlay.disabledOccurrences': {
+            $each: [originalStart],
+            $sort: 1,
+            $slice: -DISABLED_OCCURRENCES_MAX,
+          },
+        },
+        $set: { 'overlay.editedAt': at },
+      },
+      { new: true },
+    ).lean<ItemFields>();
+    if (added) return toItemData(added);
+    const doc = await ItemMongoModel.findOneAndUpdate(
+      filter,
+      { $set: { 'overlay.editedAt': at } },
+      { new: true },
+    ).lean<ItemFields>();
+    return doc ? toItemData(doc) : null;
+  },
+
+  async setSeriesDisabled(workspaceId, series, disabled, at, access = {}) {
+    const result = await ItemMongoModel.updateMany(
+      {
+        // The caller's access first, so the series' own keys below always win.
+        $and: [access],
+        workspaceId,
+        'source.provider': 'google_calendar',
+        'source.accountId': series.accountId,
+        integrationId: series.integrationId,
+        deletedAt: null,
+        'props.calendarId': series.calendarId,
+        $or: [{ 'props.eventId': series.eventId }, { 'props.recurringEventId': series.eventId }],
+      },
+      {
+        $set: {
+          'overlay.disabled': disabled ? true : null,
+          'overlay.disabledOccurrences': [],
+          'overlay.editedAt': at,
+        },
+      },
+    );
+    return result.modifiedCount;
+  },
+
+  async findSeriesException(workspaceId, series, originalStart, access = {}) {
+    const doc = await ItemMongoModel.findOne({
+      $and: [access],
+      workspaceId,
+      'source.provider': 'google_calendar',
+      'source.accountId': series.accountId,
+      integrationId: series.integrationId,
+      deletedAt: null,
+      'props.calendarId': series.calendarId,
+      'props.recurringEventId': series.eventId,
+      'props.originalStartAt': originalStart,
+    }).lean<ItemFields>();
     return doc ? toItemData(doc) : null;
   },
 

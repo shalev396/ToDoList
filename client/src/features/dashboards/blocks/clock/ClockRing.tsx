@@ -66,7 +66,8 @@ const NO_AREAS: readonly ClockArea[] = [];
  * colour (topic or subject, and role; travel hatched), and an ink needle at now. An event
  * without a colour (the landing demos) draws in its source colour. Areas are a thin band just
  * outside the ring, in their tint with a 1px edge in the Scheduled step (the tint alone is close
- * to the card). Events and areas that cross midnight are clipped to the day.
+ * to the card). Events and areas that cross midnight are clipped to the day. A cancelled or
+ * disabled event is hollow (no fill, a dashed edge in its colour) and faded: its time is free.
  *
  * Presentational only: the caller passes the events, the time and all accessible text. The ring
  * is never mirrored in right-to-left pages. It assumes a card surface behind it; on another
@@ -196,9 +197,13 @@ export function ClockRing({
               data-clock-area=""
               data-family={area.colour.family}
               data-role="area"
+              data-inactive={area.inactive ?? undefined}
               style={{
                 fill: colourVar(area.colour.family, 'area'),
                 stroke: colourVar(area.colour.family, 'scheduled'),
+                ...((area.inactive ?? null) === null
+                  ? {}
+                  : { opacity: 0.4, strokeDasharray: '3 2' }),
               }}
               strokeWidth={1}
               d={arcPath({
@@ -217,6 +222,8 @@ export function ClockRing({
             const laneOuter = outer - lane * (laneWidth + GAP);
             const paint = event.colour === undefined ? null : paintOf(event.colour);
             const leg = event.leg ?? null;
+            // Cancelled or disabled: hollow, an edge in its colour, faded (its time is free).
+            const off = (event.inactive ?? null) !== null;
             const d = arcPath({
               innerRadius: laneOuter - laneWidth,
               outerRadius: laneOuter,
@@ -232,21 +239,32 @@ export function ClockRing({
                   event.id === emphasize ? `${event.id}-${String(event.start.getTime())}` : event.id
                 }
                 className={event.id === emphasize ? 'clock-arc-fresh' : undefined}
-                // A leg that is over is dimmed.
-                style={leg?.past === true ? { opacity: 0.5 } : undefined}
+                // A leg that is over is dimmed, and so is a cancelled or disabled event.
+                style={leg?.past === true ? { opacity: 0.5 } : off ? { opacity: 0.6 } : undefined}
               >
                 <path
                   className={
                     paint === null
-                      ? event.reserved === true
-                        ? RESERVED_SOURCE_STYLE.fill
+                      ? off
+                        ? 'stroke-muted-foreground'
+                        : event.reserved === true
+                          ? RESERVED_SOURCE_STYLE.fill
                         : SOURCE_STYLES[event.source].fill
                       : undefined
                   }
                   // A leg that can't be made in time has a red edge; one whose trip has no length
                   // yet is dashed.
                   style={{
-                    ...(paint === null ? {} : { fill: paint.fill }),
+                    ...(off
+                      ? {
+                          fill: 'none',
+                          strokeWidth: 1.5,
+                          strokeDasharray: '3 2',
+                          ...(paint === null ? {} : { stroke: paint.fill }),
+                        }
+                      : paint === null
+                        ? {}
+                        : { fill: paint.fill }),
                     ...(leg?.conflict === true
                       ? { stroke: 'var(--destructive)', strokeWidth: 2 }
                       : leg?.unset === true
@@ -260,6 +278,7 @@ export function ClockRing({
                   data-conflict={leg === null ? undefined : String(leg.conflict)}
                   data-past={leg === null ? undefined : String(leg.past)}
                   data-length-unset={leg === null ? undefined : String(leg.unset)}
+                  data-inactive={event.inactive ?? undefined}
                   d={d}
                 >
                   <title>{labels.describeEvent(event)}</title>

@@ -6,8 +6,10 @@
  * count. Counts, groups and rows agree. The access filter stays the first stage.
  *
  * A to-do in the result that does not show hides nothing: one the block's `hide` display rule
- * matches (the client hides it), and a cancelled one (time views drop it). A soft-deleted to-do is
- * in no read. The absorption runs before the dedup of two integrations of one account.
+ * matches (the client hides it). A cancelled to-do shows (every view draws it, faded: the owner's
+ * ruling of 2026-11-22), so it absorbs its copy; a read that filters it out (open items) lists the
+ * copy. A soft-deleted to-do is in no read. The absorption runs before the dedup of two
+ * integrations of one account.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -388,18 +390,16 @@ describe('a to-do in the result that does not show', () => {
     assert.deepEqual(await idsOf({}, context(ws, 'u-1', { displayRules: [refused] })), [todo]);
   });
 
-  it('a cancelled to-do hides nothing: its open copy shows in a calendar and in a list', async () => {
+  it('a cancelled to-do shows (faded), so it absorbs its open copy; filtered out, the copy shows', async () => {
     const due = new Date('2026-11-12T10:00:00Z');
     const { ws, todo, copy } = await pair({ status: 'cancelled', dueAt: due }, { dueAt: due });
     const week = { dateRange: 'this_week' as const };
-    assert.deepEqual(
-      await idsOf(week, context(ws, 'u-1', { blockType: 'calendar' })),
-      [copy, todo].sort(),
-    );
-    assert.deepEqual(
-      await idsOf({}, context(ws, 'u-1', { blockType: 'list' })),
-      [copy, todo].sort(),
-    );
+    assert.deepEqual(await idsOf(week, context(ws, 'u-1', { blockType: 'calendar' })), [todo]);
+    assert.deepEqual(await idsOf({}, context(ws, 'u-1', { blockType: 'list' })), [todo]);
+    // An open-items list leaves the cancelled to-do out: the copy is its own row there.
+    assert.deepEqual(await idsOf({ where: OPEN }, context(ws, 'u-1', { blockType: 'list' })), [
+      copy,
+    ]);
   });
 
   it('a soft-deleted to-do whose copy is still marked: the copy shows', async () => {

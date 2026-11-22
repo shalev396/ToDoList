@@ -51,7 +51,14 @@ import { zonedParts, zonedTime } from '../clock/ClockRing.math';
 import { ringProvider } from '../clock/clockModel';
 import { itemRowsOf } from '../data/rows';
 import { isolateLtr } from '../time/areas';
-import { visibleRange, wallDate, wallString, type WeekStart } from '../time/occurrences';
+import { inactiveKey } from '../time/inactive';
+import {
+  visibleRange,
+  wallDate,
+  wallString,
+  withSeriesFields,
+  type WeekStart,
+} from '../time/occurrences';
 import { TimesheetAreaTag } from './TimesheetAreaTag';
 import { TodoPanel, type PanelTodo } from './TodoPanel';
 import {
@@ -158,20 +165,31 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
   const data = useBlockData(dashboard, block, { ...vars, range: rangeVar });
   const plan = usePlanTodo(workspace?.id ?? '', dashboard.id, block.id);
 
-  const rows = useMemo(() => {
-    const shown = applyDisplayRules(itemRowsOf(data.data), block.rules, {
-      now,
-      timeZone,
-      userId: '',
-      vars,
-    });
-    return shown.filter((entry) => !entry.hidden).map((entry) => entry.row);
-  }, [data.data, block.rules, now, timeZone, vars]);
+  const ruled = useMemo(
+    () =>
+      applyDisplayRules(itemRowsOf(data.data), block.rules, {
+        now,
+        timeZone,
+        userId: '',
+        vars,
+      }),
+    [data.data, block.rules, now, timeZone, vars],
+  );
+  // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+  const rows = useMemo(
+    () => withSeriesFields(ruled.filter((entry) => !entry.hidden).map((entry) => entry.row)),
+    [ruled],
+  );
+  // What a rule hides still takes its slot out of its series.
+  const hiddenRows = useMemo(
+    () => ruled.filter((entry) => entry.hidden).map((entry) => entry.row),
+    [ruled],
+  );
   const colourOf = useRowColours(rows);
   const showBlocks = showsBlocks(block.viz);
   const model = useMemo(
-    () => buildTimesheet(rows, range, timeZone, colourOf, showBlocks),
-    [rows, range, timeZone, colourOf, showBlocks],
+    () => buildTimesheet(rows, range, timeZone, colourOf, showBlocks, hiddenRows),
+    [rows, range, timeZone, colourOf, showBlocks, hiddenRows],
   );
   const topicId = timesheetTopicId(block.query, vars);
 
@@ -393,6 +411,11 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
     const props = arg.event.extendedProps as EventProps;
     arg.el.setAttribute('data-item-id', props.rowId);
     arg.el.setAttribute('data-family', props.family);
+    // Cancelled or disabled (time/inactive.ts): faded, its time free; its name says so.
+    const off = props.inactive === null ? null : t(inactiveKey(props.inactive));
+    if (props.inactive !== null) {
+      arg.el.setAttribute('data-inactive', props.inactive);
+    }
     if (isArea(props)) {
       arg.el.setAttribute('data-role', 'area');
       arg.el.style.setProperty('--tc-edge', colourVar(props.family, 'scheduled'));
@@ -413,6 +436,9 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
         ? t('timeBlocks.calendar.allDay')
         : isolateLtr(`${wallTime(arg.event.start)}–${wallTime(arg.event.end)}`);
       name = t('timeBlocks.calendar.eventLabel', { title: arg.event.title, when, source });
+    }
+    if (off !== null) {
+      name = `${name}. ${off}`;
     }
     arg.el.setAttribute('aria-label', name);
     arg.el.setAttribute('title', name);

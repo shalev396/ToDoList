@@ -44,6 +44,8 @@ const QUERY_ROW: ItemQueryRow = {
     plannedAt: null,
     editedAt: null,
     attrs: { subject: 'Algebra' },
+    disabled: null,
+    disabledOccurrences: [],
   },
   closedAt: null,
 };

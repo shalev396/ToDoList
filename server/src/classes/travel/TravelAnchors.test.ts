@@ -623,4 +623,63 @@ describe('TravelAnchors.gather: exact times and free events', () => {
     // A leg made for it before it was marked free goes as no longer matching.
     assert.equal(fates.get(`${free}|single`), 'no_longer_matches');
   });
+
+  it('a disabled event, a disabled occurrence and a cancelled one anchor no travel', async () => {
+    const ws = await workspace();
+    const series = await lectureSeries(ws);
+    const exam = await event(ws, 'exam', {
+      title: 'Exam',
+      startAt: '2026-11-26T07:00:00.000Z',
+      endAt: '2026-11-26T09:00:00.000Z',
+      containerId: 'cal-braude',
+    });
+    const cancelled = `${ws.gcal}-lecture_cancelled`;
+    await (
+      await models.getItemRepository()
+    ).bulkUpsert(ws.id, [
+      {
+        id: cancelled,
+        integrationId: ws.gcal,
+        kind: 'event',
+        topicId: null,
+        title: 'Algorithms lecture',
+        status: 'cancelled',
+        statusRaw: 'cancelled',
+        startAt: new Date(TUESDAY_2),
+        endAt: null,
+        containerId: 'cal-braude',
+        props: {
+          calendarId: 'braude-cal',
+          eventId: 'lecture_cancelled',
+          recurringEventId: 'lecture',
+          originalStartAt: TUESDAY_2,
+        },
+        source: gcalSource(ws, 'lecture_cancelled'),
+      },
+    ]);
+    await classes.TravelRule.create(ws.a, {
+      scope: { kind: 'where', where: onCalendar('cal-braude') },
+      mode: 'transit',
+      direction: 'both',
+      placeId: ws.places.braude.id,
+    });
+    const items = await models.getItemRepository();
+    await items.setOverlay(ws.id, exam, { disabled: true });
+    await items.setOccurrenceDisabled(ws.id, series, TUESDAY_1, true, NOW);
+    const { anchors, fates } = await gather(ws);
+    assert.deepEqual(anchors, []);
+    for (const key of [`${exam}|single`, `${series}|${TUESDAY_1}`, `${series}|${TUESDAY_2}`]) {
+      assert.equal(fates.get(key), 'cancelled', key);
+    }
+    // Enabled again: both anchor once more.
+    await items.setOverlay(ws.id, exam, { disabled: null });
+    await items.setOccurrenceDisabled(ws.id, series, TUESDAY_1, false, NOW);
+    assert.deepEqual(
+      (await gather(ws)).anchors.map((anchor) => [anchor.itemId, anchor.occurrence]),
+      [
+        [series, TUESDAY_1],
+        [exam, 'single'],
+      ],
+    );
+  });
 });

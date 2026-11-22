@@ -15,7 +15,8 @@
  * - Recurring events stay series (`singleEvents=false`): the master carries `props.recurrence` (and
  *   `props.recurrenceEnd`, when its last occurrence ends; null: never), an exception its
  *   `recurringEventId` and `originalStartAt`, for the shared expansion (types/recurrence). A
- *   cancelled occurrence stays live as `status: cancelled` (the client hides that occurrence).
+ *   cancelled occurrence stays live as `status: cancelled` (the time views draw it faded, its time
+ *   free: classes/item/Disabled.ts).
  * - Auth: the integration's strategy (`ctx.auth`, classes/integration/auth) hands each resource
  *   its headers:
  *   - `service_account`: a service-account JWT traded for an access token (the strategy's signer), scope
@@ -182,8 +183,9 @@ function meetLinkOf(raw: GoogleCalendarEvent): string | null {
 /**
  * Google's own event link form (`eid` = base64 of "<eventId> <calendarId>"). Used only for a
  * cancelled occurrence of a series that arrives without `htmlLink` (Google guarantees little more
- * than its id): the engine needs a link on every live record, and the client only uses this one to
- * hide that occurrence. A deleted event needs none: it is a delete-only record.
+ * than its id): the engine needs a link on every live record. Google can't open a cancelled
+ * occurrence, so the time views and the item sheet show its master's link instead
+ * (types/recurrence `withSeriesFields`). A deleted event needs none: it is a delete-only record.
  */
 function cancelledOccurrenceLink(eventId: string, calendarId: string): string {
   const eid = Buffer.from(`${eventId} ${calendarId}`, 'utf8').toString('base64url');
@@ -202,7 +204,7 @@ export function calendarEventExternalId(calendarId: string, eventId: string): st
  *   id). The engine deletes the stored copy, which keeps its title and times.
  * - `cancelled` with a `recurringEventId`: one occurrence of a series was cancelled. Google says to
  *   keep it for the series' lifetime, so the item stays live (`cancelled`, `closedAt` = its
- *   `updated`), with the series id and original start the client needs to hide that occurrence.
+ *   `updated`), with the series id and original start the time views need to draw it in its slot.
  * - An invitation the calendar's owner declined is closed (`cancelled`, `closedAt` = `updated`).
  * Throws UnmappableEventError when a time is present but unusable, or a live event has no start.
  */

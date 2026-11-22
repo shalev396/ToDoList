@@ -791,3 +791,50 @@ describe('TravelPlanner.regenerate', () => {
     assert.equal(fetches.mock.callCount(), 0);
   });
 });
+
+describe('TravelPlanner.movesTravel: disabling (classes/item/Disabled.ts)', () => {
+  it('disabling or enabling an item, or one occurrence of it, moves the legs; a pin does not', async () => {
+    const { itemDataOf } = await import('../item/itemRecord.js');
+    const at = new Date('2026-11-24T08:00:00.000Z');
+    const item = (overlay: Record<string, unknown>): ReturnType<typeof itemDataOf> =>
+      itemDataOf({ _id: 'lecture', kind: 'event', startAt: at, overlay });
+    const plain = item({});
+    assert.equal(
+      classes.TravelPlanner.movesTravel({ before: plain, after: item({ disabled: true }) }),
+      true,
+    );
+    assert.equal(
+      classes.TravelPlanner.movesTravel({
+        before: plain,
+        after: item({ disabledOccurrences: [at.toISOString()] }),
+      }),
+      true,
+    );
+    assert.equal(
+      classes.TravelPlanner.movesTravel({ before: plain, after: item({ pinned: true }) }),
+      false,
+    );
+  });
+});
+
+describe('TravelRule.markItem: a disabled item gets no travel', () => {
+  it('refuses to mark an item disabled as a whole (400), as a cancelled one', async () => {
+    const ws = await workspace();
+    const { todo } = await classes.Todo.create(ws.a.caller, {
+      title: 'Called off',
+      startAt: local(3, 14),
+      endAt: local(3, 15),
+    });
+    await todo.setDisabled(ws.a.caller, { disabled: true });
+    await assert.rejects(
+      classes.TravelRule.markItem(ws.a.caller, {
+        itemId: todo.id,
+        every: false,
+        mode: 'drive',
+        direction: 'both',
+        placeId: ws.a.braudeId,
+      }),
+      /disabled item gets no travel/,
+    );
+  });
+});

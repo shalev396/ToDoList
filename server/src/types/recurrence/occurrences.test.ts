@@ -9,8 +9,10 @@ import {
   localExceptionsOf,
   recurrenceEndOf,
   seriesHasSlot,
+  withSeriesFields,
   type TimeRow,
 } from './occurrences.js';
+import { mapCalendarEvent } from '../../sync/providers/google_calendar.js';
 
 function parityCase(name: string): ParityCase {
   const found = PARITY_CASES.find((c) => c.name === name);
@@ -39,6 +41,7 @@ describe('expandOccurrences: parity cases', () => {
           key: o.key,
           start: o.start.toISOString(),
           end: o.end?.toISOString() ?? null,
+          ...(o.inactive === null ? {} : { inactive: o.inactive }),
         })),
         c.expected,
       );
@@ -461,5 +464,130 @@ describe('seriesHasSlot', () => {
       false,
     );
     assert.equal(seriesHasSlot(weekly(rule), new Date(NaN), ZONE), false);
+  });
+});
+
+describe('a cancelled Google occurrence as Google sends it (id, series, original start only)', () => {
+  const ZONE = 'Asia/Jerusalem';
+  const CALENDAR = 'work@example.test';
+  const WEEK = {
+    from: new Date('2026-11-07T22:00:00.000Z'),
+    to: new Date('2026-11-14T22:00:00.000Z'),
+  };
+
+  /** What the sync stores for a mapped event, as a /query row reads it (topic and overlay too). */
+  function rowOf(
+    raw: Record<string, unknown>,
+    id: string,
+    topicId: string | null,
+    attrs: Record<string, unknown> = {},
+  ): TimeRow & { topicId: string | null; overlay: Record<string, unknown> } {
+    const mapped = mapCalendarEvent(raw, {
+      calendarId: CALENDAR,
+      accountId: 'me@example.test',
+      timeZone: ZONE,
+    });
+    assert.ok(!('deleted' in mapped));
+    return {
+      id,
+      kind: mapped.kind,
+      title: mapped.title,
+      status: mapped.status,
+      statusRaw: mapped.statusRaw ?? null,
+      startAt: mapped.startAt ?? null,
+      endAt: mapped.endAt ?? null,
+      dueAt: null,
+      allDay: mapped.allDay ?? false,
+      source: {
+        provider: 'google_calendar',
+        key: null,
+        url: mapped.source.url,
+        externalId: mapped.source.externalId,
+      },
+      props: mapped.props ?? {},
+      topicId,
+      overlay: { disabled: null, disabledOccurrences: [], topicOverride: null, attrs },
+    };
+  }
+
+  const master = rowOf(
+    {
+      id: 'autods001',
+      status: 'confirmed',
+      summary: 'AutoDS Daily Meeting',
+      htmlLink: 'https://www.google.com/calendar/event?eid=bWFzdGVy',
+      start: { dateTime: '2026-11-01T10:00:00+02:00' },
+      end: { dateTime: '2026-11-01T10:30:00+02:00' },
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU,TU,TH'],
+    },
+    'm',
+    'work',
+    { subject: 'Standup' },
+  );
+  const cancelled = rowOf(
+    {
+      id: 'autods001_20261110T080000Z',
+      status: 'cancelled',
+      recurringEventId: 'autods001',
+      originalStartTime: { dateTime: '2026-11-10T10:00:00+02:00' },
+    },
+    'x',
+    null,
+  );
+
+  it('the mapper stores its raw id as its title, no end and no topic of its own', () => {
+    assert.deepEqual(
+      [cancelled.title, cancelled.endAt, cancelled.topicId],
+      ['autods001_20261110T080000Z', null, null],
+    );
+  });
+
+  it('is listed as its series: the master’s title, topic, subject, link and length', () => {
+    const out = expandOccurrences([master, cancelled], WEEK, ZONE);
+    const shown = out.find((o) => o.inactive === 'cancelled');
+    assert.ok(shown);
+    const row = shown.row as typeof cancelled;
+    assert.deepEqual(
+      [row.id, row.title, row.topicId, row.overlay['attrs'], row.source.url, row.status],
+      [
+        'x',
+        'AutoDS Daily Meeting',
+        'work',
+        { subject: 'Standup' },
+        'https://www.google.com/calendar/event?eid=bWFzdGVy',
+        'cancelled',
+      ],
+    );
+    assert.equal(shown.end?.getTime(), Date.parse('2026-11-10T08:30:00.000Z'));
+    assert.equal(out.filter((o) => o.start.getTime() === shown.start.getTime()).length, 1);
+  });
+
+  it('withSeriesFields dresses the row for the views’ colours; with no master it is left', () => {
+    const [, dressed] = withSeriesFields([master, cancelled]);
+    assert.ok(dressed);
+    assert.equal(dressed.title, 'AutoDS Daily Meeting');
+    assert.equal(dressed.topicId, 'work');
+    const [alone] = withSeriesFields([cancelled]);
+    assert.equal(alone, cancelled);
+    assert.deepEqual(expandOccurrences([cancelled], WEEK, ZONE), []);
+  });
+
+  it('a declined series hides the occurrences its organiser cancels', () => {
+    const declined = rowOf(
+      {
+        id: 'autods001',
+        status: 'confirmed',
+        summary: 'AutoDS Daily Meeting',
+        htmlLink: 'https://www.google.com/calendar/event?eid=bWFzdGVy',
+        start: { dateTime: '2026-11-01T10:00:00+02:00' },
+        end: { dateTime: '2026-11-01T10:30:00+02:00' },
+        recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU,TU,TH'],
+        attendees: [{ self: true, responseStatus: 'declined' }],
+      },
+      'm',
+      'work',
+    );
+    assert.equal(declined.statusRaw, 'declined');
+    assert.deepEqual(expandOccurrences([declined, cancelled], WEEK, ZONE), []);
   });
 });

@@ -250,6 +250,7 @@ export const travel = {
     change: 'שינוי הנסיעה',
     remove: 'הסרת הנסיעה',
     removeEvery: 'הסרת הנסיעה מכל המופעים',
+    enableFirst: 'הפריט מושבת: הפעילו אותו כדי להוסיף נסיעה.',
     removing: 'מסירים…',
     save: 'שמירת הנסיעה',
     saving: 'שומרים…',

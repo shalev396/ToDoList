@@ -39,11 +39,12 @@ export interface WorkloadModel {
   unestimated: ItemQueryRow[];
 }
 
-/** Reserved time that holds the day: an event, a block (not an area) or a travel leg. */
-function isBusy(row: ItemQueryRow): boolean {
-  if (row.status === 'cancelled') {
-    return false;
-  }
+/**
+ * Reserved time that can hold the day: an event, a block (not an area) or a travel leg. A cancelled
+ * or disabled occurrence of one holds nothing (its time is free); the rows are kept for the
+ * expansion, so a cancelled Google occurrence still takes its slot out of its series.
+ */
+function isReserved(row: ItemQueryRow): boolean {
   return row.kind === 'event' || row.kind === 'travel' || layerOf(row) === 'block';
 }
 
@@ -78,9 +79,12 @@ export function buildWorkload(
     from: week[0]?.start ?? startOfZonedDay(anchor, timeZone),
     to: week[6]?.end ?? anchor,
   };
-  // Busy time: events, time blocks and travel legs. An area is painted time, not busy.
-  const events = rows.filter(isBusy);
-  const occurrences = expandOccurrences(events, range, timeZone);
+  // Busy time: events, time blocks and travel legs. An area is painted time, not busy; a cancelled
+  // or disabled occurrence is free.
+  const events = rows.filter(isReserved);
+  const occurrences = expandOccurrences(events, range, timeZone).filter(
+    (occurrence) => occurrence.inactive === null,
+  );
 
   const unestimated: ItemQueryRow[] = [];
   const days = week.map(({ start, end }): WorkloadDay => {
@@ -101,7 +105,9 @@ export function buildWorkload(
         row.kind === 'event' ||
         isScheduledKind(row.kind) ||
         row.status === 'done' ||
-        row.status === 'cancelled'
+        row.status === 'cancelled' ||
+        // Disabled in TodoList: no work that day.
+        row.overlay.disabled === true
       ) {
         continue;
       }

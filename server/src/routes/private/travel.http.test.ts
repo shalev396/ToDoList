@@ -1185,11 +1185,11 @@ describe('marks that can make no leg (fix round 1)', () => {
     // Its own row names its series and original start (ids and times only), so a client finds
     // the marks kept under them; the master names none.
     interface SeriesView {
-      seriesOccurrence?: { seriesId: string; originalStart: string };
+      seriesOccurrence?: { seriesId: string; originalStart: string; disabled: string | null };
     }
     assert.deepEqual(
       (await ok<SeriesView>('editor', 'GET', `/items/${exceptionId}`)).seriesOccurrence,
-      { seriesId: masterId, originalStart: iso(slot) },
+      { seriesId: masterId, originalStart: iso(slot), disabled: null },
     );
     assert.equal(
       'seriesOccurrence' in (await ok<SeriesView>('editor', 'GET', `/items/${masterId}`)),

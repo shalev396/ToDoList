@@ -45,6 +45,7 @@ import { zonedParts, zonedTime } from '../clock/ClockRing.math';
 import { ringProvider } from '../clock/clockModel';
 import { areasAt } from '../time/areaHit';
 import { isolateLtr, splitAreas } from '../time/areas';
+import { activeOnly, inactiveKey } from '../time/inactive';
 import { ToneMark } from '../time/ToneMark';
 import {
   expandOccurrences,
@@ -52,6 +53,7 @@ import {
   visibleRange,
   wallDate,
   wallString,
+  withSeriesFields,
   type WeekStart,
 } from '../time/occurrences';
 import {
@@ -164,8 +166,8 @@ function readView(viz: Record<string, unknown>): { view: View; list: boolean; mo
  * and coloured by subject or topic and role (features/colours), with their source as a small
  * icon; travel is hatched, its label on a plate of its fill. Areas are bands in their tint behind
  * everything, labelled at the top. A click opens the item Sheet (`?item=`), on the occurrence
- * clicked (`?occurrence=`). The series' cancelled occurrences are excluded, never listed
- * (occurrences.ts).
+ * clicked (`?occurrence=`). A cancelled or disabled occurrence stays, faded and struck through with
+ * no fill (`tc-off`), and its time is free: a drag or a tap there treats it as nothing.
  *
  * Editors drag across free time on the week grid (not on a phone, where it is a list) to open
  * the New sheet on a time block at that time; inside an area it starts on the area's page
@@ -201,16 +203,26 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
   const [startHour, setStartHour] = useState(() => readStartHour(block.viz));
   const region = useRef<HTMLDivElement>(null);
 
-  const visible = useMemo(() => {
+  const ruled = useMemo(() => {
     const rows = (data.data?.rows ?? []).filter(isTimeRow);
-    const shown = applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars });
-    return shown.filter((entry) => !entry.hidden);
+    return applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars });
   }, [data.data?.rows, block.rules, now, timeZone, vars]);
-  const visibleRows = useMemo(() => visible.map((entry) => entry.row), [visible]);
+  const visible = useMemo(() => ruled.filter((entry) => !entry.hidden), [ruled]);
+  // What a rule hides still takes its slot out of its series: a hidden cancelled occurrence never
+  // turns back into an active, busy one.
+  const hiddenRows = useMemo(
+    () => ruled.filter((entry) => entry.hidden).map((entry) => entry.row),
+    [ruled],
+  );
+  // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+  const visibleRows = useMemo(() => withSeriesFields(visible.map((entry) => entry.row)), [visible]);
   const colourOf = useRowColours(visibleRows);
   const { areas, displayed } = useMemo(() => {
     const byRow = new Map(visible.map((entry) => [entry.row.id, entry] as const));
-    const split = splitAreas(expandOccurrences(visibleRows, range, timeZone), colourOf);
+    const split = splitAreas(
+      expandOccurrences(visibleRows, range, timeZone, { hidden: hiddenRows }),
+      colourOf,
+    );
     return {
       areas: split.areas,
       displayed: split.items.map((occurrence): DisplayedOccurrence => {
@@ -223,7 +235,7 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
         };
       }),
     };
-  }, [visible, visibleRows, range, timeZone, colourOf, t, now]);
+  }, [visible, visibleRows, hiddenRows, range, timeZone, colourOf, t, now]);
   const viewName = fcView(view, phone, options.list);
   // FullCalendar draws no background events in the month grid or a list: there an area is a
   // plain event, in the area's style, that opens its sheet.
@@ -303,9 +315,11 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     setView(next);
     save({ view: next });
   };
-  // Everything the grid shows, areas included: a drag inside an area takes its page.
+  // Everything the grid shows that takes its time, areas included: a drag inside an area takes
+  // its page. A cancelled or disabled one is free time.
+  const liveAreas = useMemo(() => activeOnly(areas), [areas]);
   const shown = useMemo(
-    () => [...areas, ...displayed.map((item) => item.occurrence)],
+    () => activeOnly([...areas, ...displayed.map((item) => item.occurrence)]),
     [areas, displayed],
   );
   const selectable = canWrite && !editing && viewName === 'timeGridWeek';
@@ -339,7 +353,7 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       preset.end.getTime() - preset.start.getTime() <= SLOT_MINUTES * 60_000;
     const covering =
       oneSlot && preset.start !== undefined && preset.end !== undefined
-        ? areasAt(areas, preset.start, preset.end)
+        ? areasAt(liveAreas, preset.start, preset.end)
         : [];
     if (point === null || covering.length === 0) {
       setChooser(null);
@@ -551,10 +565,25 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     const props = arg.event.extendedProps as CalendarEventProps | CalendarAreaProps;
     arg.el.setAttribute('data-item-id', props.rowId);
     arg.el.setAttribute('data-family', props.family);
+    if (props.inactive !== null) {
+      arg.el.setAttribute('data-inactive', props.inactive);
+    }
     if ('area' in props) {
       // The tint alone is close to the card: a 1px edge in the Scheduled step outlines it.
       arg.el.setAttribute('data-role', 'area');
       arg.el.style.setProperty('--tc-edge', colourVar(props.family, 'scheduled'));
+      if (props.inactive !== null && arg.event.display !== 'background') {
+        // A month or list row: struck through, so its name says why.
+        const areaWhen = arg.event.allDay
+          ? t('timeBlocks.calendar.allDay')
+          : isolateLtr(`${wallTime(arg.event.start)}–${wallTime(arg.event.end)}`);
+        const areaName = `${t('timeBlocks.calendar.areaLabel', {
+          title: arg.event.title,
+          when: areaWhen,
+        })}. ${t(inactiveKey(props.inactive))}`;
+        arg.el.setAttribute('aria-label', areaName);
+        arg.el.setAttribute('title', areaName);
+      }
       return;
     }
     arg.el.setAttribute('data-role', props.role);
@@ -583,9 +612,11 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       arg.el.setAttribute('data-length-unset', String(props.lengthUnset));
     }
     // What the chip's marks say, in its name and tooltip too (a tiny chip shows its icon only):
-    // a display rule's tone and badges, then what is wrong with a leg, or that its trip has no
-    // length yet (last). A due date's mark is the label's own ("Due: ...").
+    // that it was cancelled or disabled (first: its time is free), a display rule's tone and
+    // badges, then what is wrong with a leg, or that its trip has no length yet (last). A due
+    // date's mark is the label's own ("Due: ...").
     const flags = [
+      props.inactive === null ? null : t(inactiveKey(props.inactive)),
       props.tone === undefined ? null : t(`timeBlocks.tone.${props.tone}`),
       ...props.badges,
       props.conflict ? t('travel.leg.conflict') : null,
@@ -835,15 +866,22 @@ function AreaTagButton({ tag, onOpen }: { tag: AreaTag; onOpen: () => void }) {
     tag.from === null
       ? t('timeBlocks.calendar.allDay')
       : isolateLtr(tag.to === null ? tag.from : `${tag.from}–${tag.to}`);
-  const name = t('timeBlocks.calendar.areaLabel', { title: tag.title, when });
+  const name = [
+    t('timeBlocks.calendar.areaLabel', { title: tag.title, when }),
+    ...(tag.inactive === null ? [] : [t(inactiveKey(tag.inactive))]),
+  ].join('. ');
   return (
     <button
       type="button"
       data-area-tag={tag.rowId}
+      data-inactive={tag.inactive ?? undefined}
       aria-label={name}
       title={name}
       onClick={onOpen}
-      className="block min-h-5 w-full min-w-0 cursor-pointer truncate rounded-sm border px-1 text-[11px] leading-4 font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring pointer-coarse:min-h-6"
+      className={cn(
+        'block min-h-5 w-full min-w-0 cursor-pointer truncate rounded-sm border px-1 text-[11px] leading-4 font-medium text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring pointer-coarse:min-h-6',
+        tag.inactive !== null && 'line-through opacity-60',
+      )}
       style={{
         backgroundColor: colourVar(tag.family, 'area'),
         borderColor: colourVar(tag.family, 'scheduled'),

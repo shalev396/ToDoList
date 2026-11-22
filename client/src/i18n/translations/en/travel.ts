@@ -248,6 +248,7 @@ export const travel = {
     change: 'Change travel',
     remove: 'Remove travel',
     removeEvery: 'Remove travel from every occurrence',
+    enableFirst: 'This item is disabled: enable it to add travel.',
     removing: 'Removing…',
     save: 'Save travel',
     saving: 'Saving…',

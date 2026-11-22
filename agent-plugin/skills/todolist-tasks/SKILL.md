@@ -1,6 +1,6 @@
 ---
 name: todolist-tasks
-description: Use whenever the user wants to add, create, change, finish, reopen or delete a to-do or task in TodoList, to lay out a study or work week as time blocks and areas, or to set up travel time. Carries the task methodology - search before creating, verb-first titles, topic and due date, idempotencyKey, never edit mirrored items, complete instead of delete, confirm destructive calls. Uses search_items, create_todo, update_todo, complete_todo, delete_todo, set_overlay, create_time_block, edit_time_block and the travel_* tools.
+description: Use whenever the user wants to add, create, change, finish, reopen, disable or delete a to-do or task in TodoList (or disable an event whose time is now free), to lay out a study or work week as time blocks and areas, or to set up travel time. Carries the task methodology - search before creating, verb-first titles, topic and due date, idempotencyKey, never edit mirrored items, complete instead of delete, confirm destructive calls. Uses search_items, create_todo, update_todo, complete_todo, delete_todo, set_overlay, create_time_block, edit_time_block and the travel_* tools.
 ---
 
 # TodoList: the task methodology
@@ -22,6 +22,7 @@ A plugin hook enforces rules 1 to 5 below before `create_todo` runs and tells yo
 - `complete_todo` is how finished work is closed. Use it instead of deleting (`done: false` reopens).
 - **Time blocks, areas and travel legs are not to-dos.** They have kind `block` or `travel` and show in `list_today.scheduled[]` and `get_calendar`. They are time, not work: never call `complete_todo` on a block or a leg (it answers 409 `not_completable`), they have no status or due date, and `search_items` leaves them out unless you pass `kind`. `update_todo` refuses them and names `edit_time_block` or `travel_edit_leg`.
 - **Mirrored items are never edited.** Items with a `source.provider` other than `local` (Jira, ClickUp, Linear, Moodle, GitHub, Google) belong to their provider. Give the user the `openIn.url` as "Open in <provider>". To pin, hide or annotate a mirrored item locally, use `set_overlay`; that never touches the provider.
+- **Disabling: free the time, keep the item.** When the user says a meeting or to-do is off ("cancelled", "not happening", "I can book over it"), use `set_overlay` with `disabled: true`, not delete or complete. The item stays on his calendar, faded and struck through, and its time counts as free; nothing is written to the provider; `disabled: false` brings it back. For something that repeats, say which: `scope: "occurrence"` with `occurrenceStart` (the `occurrence.originalStart` from `get_calendar`) for one, `scope: "series"` for every occurrence (on a Google series: one call on the series' id covers its moved and cancelled occurrences too). Ask when it is unclear which one the user means. A travel leg is skipped (`travel_skip_leg`), never disabled.
 
 ## Destructive tools
 

@@ -57,10 +57,16 @@ function anchorStartOf(item: ItemDetail, occurrence: Date | null): Date | null {
 export function ItemTravelSection({
   item,
   occurrence,
+  canMark = true,
 }: {
   item: ItemDetail;
   /** The occurrence the sheet is on (its original start), from `?occurrence=`. */
   occurrence: Date | null;
+  /**
+   * False on an item disabled as a whole: no new or changed mark (the server refuses one), but a
+   * mark made before it was disabled is still shown and can be removed.
+   */
+  canMark?: boolean;
 }) {
   const { t } = useTranslation();
   const ids = useId();
@@ -265,26 +271,32 @@ export function ItemTravelSection({
 
       {draft === null ? (
         <div className="flex flex-wrap items-center gap-2" data-travel-actions="">
-          <Button
-            ref={opener}
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={busy || !setup.ready}
-            data-travel-add=""
-            onClick={() => {
-              open(current ?? repeatsRule);
-            }}
-          >
-            {current === null && repeatsRule === null ? (
-              <Plus aria-hidden="true" />
-            ) : (
-              <Pencil aria-hidden="true" />
-            )}
-            {current === null && repeatsRule === null
-              ? t('travel.add.add')
-              : t('travel.add.change')}
-          </Button>
+          {canMark ? (
+            <Button
+              ref={opener}
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy || !setup.ready}
+              data-travel-add=""
+              onClick={() => {
+                open(current ?? repeatsRule);
+              }}
+            >
+              {current === null && repeatsRule === null ? (
+                <Plus aria-hidden="true" />
+              ) : (
+                <Pencil aria-hidden="true" />
+              )}
+              {current === null && repeatsRule === null
+                ? t('travel.add.add')
+                : t('travel.add.change')}
+            </Button>
+          ) : (
+            <p className="text-[13px] text-muted-foreground" data-travel-disabled="">
+              {t('travel.add.enableFirst')}
+            </p>
+          )}
           {current === null ? null : (
             <Button
               type="button"

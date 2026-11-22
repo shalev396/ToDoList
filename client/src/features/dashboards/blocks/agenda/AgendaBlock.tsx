@@ -25,7 +25,9 @@ import { displayProvider } from '../data/rows';
 import { truncateText } from '../data/truncate';
 import { useDataBlock } from '../data/useDataBlock';
 import { splitAreas } from '../time/areas';
-import type { Occurrence } from '../time/occurrences';
+import { INACTIVE_TITLE, inactiveKey } from '../time/inactive';
+import { InactiveTag } from '../time/InactiveTag';
+import { withSeriesFields, type Occurrence } from '../time/occurrences';
 import { AgendaAreaHeader } from './AgendaAreaHeader';
 import { AGENDA_PARTS, agendaAreas, buildAgenda } from './agendaModel';
 
@@ -53,6 +55,7 @@ function AgendaRow({
     : timeOfDay(occurrence.start, locale, timeZone);
   return (
     <li
+      data-inactive={occurrence.inactive ?? undefined}
       data-agenda-leg={leg === null ? undefined : leg.mode}
       data-conflict={leg === null ? undefined : String(leg.conflict)}
       data-past={leg === null ? undefined : String(leg.past)}
@@ -74,20 +77,33 @@ function AgendaRow({
       <div className="-my-1 flex min-w-0 flex-1 flex-col">
         <button
           type="button"
-          // A trip with no length yet says so in its name, for anyone who can't see the dashes.
-          aria-label={leg?.unset === true ? `${title}. ${t('travel.leg.setLength')}` : undefined}
+          // A trip with no length yet says so in its name, for anyone who can't see the dashes; a
+          // cancelled or disabled one that its time is free.
+          aria-label={
+            leg?.unset === true
+              ? `${title}. ${t('travel.leg.setLength')}`
+              : occurrence.inactive === null
+                ? undefined
+                : `${title}. ${t(inactiveKey(occurrence.inactive))}`
+          }
           onClick={() => {
             openItem(row.id, occurrence.originalStart ?? undefined);
           }}
           className="flex min-h-11 min-w-0 items-center rounded-sm text-start text-sm hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           dir="auto"
         >
-          <span className="min-w-0 truncate">{title}</span>
+          <span className={cn('min-w-0 truncate', occurrence.inactive !== null && INACTIVE_TITLE)}>
+            {title}
+          </span>
         </button>
         {leg?.conflict === true ? (
           <ConflictMark className="-mt-2 mb-1 text-xs text-destructive" />
         ) : null}
       </div>
+      {occurrence.inactive === null ? null : (
+        // The button's name already says it.
+        <InactiveTag inactive={occurrence.inactive} silent />
+      )}
       {leg === null ? (
         <>
           <SourceIcon source={displayProvider(row.source.provider)} />
@@ -107,10 +123,11 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
   const { openItem } = useItemParam();
   const location = useLocation();
   const { language } = useLanguage();
-  const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
+  const { query, rows, hiddenRows, loadState, now, timeZone } = useDataBlock(dashboard, block);
   const title = blockTitle(block, t);
   const locale = dateLocale(language);
-  const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
+  // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+  const itemRows = useMemo(() => withSeriesFields(rows.map((entry) => entry.row)), [rows]);
   const colourOf = useRowColours(itemRows);
   const changed = useChangedTravelDays(now, timeZone);
   // Areas are split off before the agenda is built; items nest under them by time.
@@ -123,14 +140,16 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
       items.map((entry) => entry.row),
       now,
       timeZone,
+      hiddenRows,
     );
     const areaModel = buildAgenda(
       areas.map((entry) => entry.row),
       now,
       timeZone,
+      hiddenRows,
     );
     return agendaAreas(itemModel, areaModel);
-  }, [itemRows, colourOf, now, timeZone]);
+  }, [itemRows, hiddenRows, colourOf, now, timeZone]);
   const empty = AGENDA_PARTS.every((part) => groups[part].length === 0);
   const status = loadState !== 'ready' ? loadState : empty ? 'empty' : 'ready';
   return (
@@ -194,6 +213,7 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
                         title={truncateText(area.row.title, 160) || t('dataBlocks.noTitle')}
                         start={area.start}
                         end={area.end ?? area.start}
+                        inactive={area.inactive}
                         colour={colourOf(area.row.id)}
                         timeZone={timeZone}
                         locale={locale}

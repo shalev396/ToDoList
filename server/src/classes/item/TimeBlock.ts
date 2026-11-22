@@ -41,6 +41,7 @@ import {
   isSeriesRow,
   localExceptionsOf,
   recurrenceEndOf,
+  seriesHasSlot,
   type LocalException,
   type Occurrence,
   type Range,
@@ -49,7 +50,8 @@ import {
 import type { BlockLayer } from '../../types/scheduled.js';
 import { TIME_BLOCK_MAX_MS, TIME_BLOCK_MIN_MS } from '../../types/timeBlocks.js';
 import type { Deletable, Recurring } from './contracts.js';
-import { Item } from './Item.js';
+import { SERIES_DISABLED_MESSAGE, type DisableChange } from './Disabled.js';
+import { Item, type DisableWrite } from './Item.js';
 import { ItemChanges } from './ItemChanges.js';
 import type { EditField, ItemEdit } from './ItemEdit.js';
 import { ScheduledItem } from './ScheduledItem.js';
@@ -323,6 +325,44 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
   }
 
   /**
+   * Disabling a repeating block or area (Disabled.ts): `series` (or no scope and no occurrence)
+   * marks every occurrence and drops the one-by-one marks; `occurrence` marks the one at
+   * `occurrenceStart`, its original start (400 `not_an_occurrence` for a start that is none of
+   * the series' slots). Enabling one occurrence of a series disabled as a whole is 400. A block
+   * that does not repeat changes as a whole.
+   */
+  protected override async planDisabled(
+    caller: Caller,
+    change: DisableChange,
+    now: Date,
+  ): Promise<DisableWrite> {
+    if (!this.isRecurring) return super.planDisabled(caller, change, now);
+    const scope = change.scope ?? (change.occurrenceStart === undefined ? 'series' : 'occurrence');
+    if (scope === 'series') {
+      return () =>
+        this.storeOverlay({
+          disabled: change.disabled ? true : null,
+          disabledOccurrences: [],
+          editedAt: now,
+        });
+    }
+    const slot = change.occurrenceStart;
+    if (slot === undefined) {
+      throw new ValidationError('occurrenceStart: one occurrence is named by its original start');
+    }
+    if (!seriesHasSlot(this.data, slot, caller.settings.timezone)) {
+      throw new NotAnOccurrenceError('occurrenceStart: not an occurrence of this series');
+    }
+    const state = this.overlay.disabledState;
+    if (state.whole) {
+      if (!change.disabled) throw new ValidationError(SERIES_DISABLED_MESSAGE);
+      return () => this.reload();
+    }
+    state.assertRoomFor(slot, change.disabled);
+    return () => this.storeDisabledOccurrence(slot, change.disabled, now);
+  }
+
+  /**
    * A generic edit (`PATCH …/items/:id`): an "all" edit of title, note, topic, start and end; any
    * other field is 400, and so is clearing the title, the start or the end.
    */
@@ -399,12 +439,34 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
         ),
       };
     });
-    const block =
+    const named =
       subject === undefined || subject === saved.subject
         ? saved
         : await saved.#storeSubject(subject);
+    const block = await named.#marksStillIn(timeZone);
     await block.#changed(caller, this.data, block.data);
     return block;
+  }
+
+  /**
+   * After an "all" edit: the occurrences disabled one by one that are still slots of the series
+   * keep their mark; one the edit moved away or ended loses it (as its exceptions do), so a mark
+   * never lingers on a slot that no longer exists or takes a place in the list for nothing.
+   */
+  async #marksStillIn(timeZone: string): Promise<TimeBlock> {
+    const marks = this.overlay.disabledState.occurrences;
+    if (marks.length === 0) return this;
+    const span = this.timeRange;
+    const lines = this.recurrenceLines;
+    const kept =
+      span === null || lines.length === 0
+        ? []
+        : marks.filter((mark) =>
+            TimeBlock.#hasSlot(span, lines, new Date(mark).getTime(), timeZone),
+          );
+    if (kept.length === marks.length) return this;
+    const cleaned = await this.storeOverlay({ disabledOccurrences: kept });
+    return cleaned instanceof TimeBlock ? cleaned : this;
   }
 
   /**
