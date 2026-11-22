@@ -5,15 +5,23 @@ import { LegalDocument } from './LegalDocument';
 
 const SECTIONS = [
   'summary',
+  'agreement',
+  'eligibility',
   'free',
   'business',
   'account',
+  'acceptableUse',
+  'content',
   'responsibilities',
   'thirdParty',
-  'warranty',
   'openSource',
+  'availability',
+  'warranty',
+  'liability',
   'ending',
+  'law',
   'changes',
+  'general',
   'contact',
 ] as const;
 
