@@ -1,4 +1,4 @@
-/** Topic colours: the nine families, the four shades, and the topic family picker. */
+/** Topic colours: the ten families, the four shades, and the topic family picker. */
 export const colours = {
   family: {
     gray: 'Gray',
@@ -10,6 +10,7 @@ export const colours = {
     blue: 'Blue',
     violet: 'Violet',
     pink: 'Pink',
+    magenta: 'Magenta',
   },
   role: {
     scheduled: 'Scheduled',

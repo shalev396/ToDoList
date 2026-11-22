@@ -17,7 +17,7 @@ from tests.helpers.workspaces import ensure_topics, list_topics, open_as
 from tests.viewports import DESKTOP_VIEWPORT
 
 FAMILIES_BY_SLUG = {"personal": "blue", "work": "orange", "college": "teal"}
-HEBREW_FAMILIES = ["אפור", "אדום", "כתום", "ענבר", "ירוק", "טורקיז", "כחול", "סגול", "ורוד"]
+HEBREW_FAMILIES = ["אפור", "אדום", "כתום", "ענבר", "ירוק", "טורקיז", "כחול", "סגול", "ורוד", "מג׳נטה"]
 
 
 def _topics(page: Page, heading: str = "Topics"):
@@ -66,7 +66,7 @@ def test_picker_recolours_a_topic(page: Page, base_url: str, api_base_url: str, 
 
     _row(page, "Work").get_by_role("button", name="Color of Work: Orange").click()
     menu = page.get_by_role("menu")
-    expect(menu.get_by_role("menuitemradio")).to_have_count(9)
+    expect(menu.get_by_role("menuitemradio")).to_have_count(10)
     expect(menu.get_by_role("menuitemradio", name="Orange")).to_have_attribute("aria-checked", "true")
     with page.expect_response(_is_topic_patch) as saved:
         menu.get_by_role("menuitemradio", name="Violet").click()

@@ -14,6 +14,7 @@ Two real Cognito accounts (Mail.tm signups) and one invite email through the sta
 """
 import re
 
+import pytest
 from playwright.sync_api import Page, expect
 
 from tests.config import LONG_TIMEOUT, NORMAL_TIMEOUT
@@ -32,6 +33,7 @@ from tests.helpers.workspaces import (
 TOPICS = ("Work", "College", "Personal")
 
 
+@pytest.mark.email
 def test_owner_shares_college_with_a_classmate(
     page: Page, base_url: str, app_url: str, api_base_url: str, fresh_user
 ):

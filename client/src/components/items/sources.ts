@@ -2,8 +2,8 @@ import type { Provider } from './types.ts';
 
 /**
  * Source colours follow the fixed slots in docs/design/DESIGN.md: colour follows the source,
- * never its rank, and segments are drawn in slot order. Local to-dos have no slot and use the
- * muted ink.
+ * never its rank, and segments are drawn in slot order. Local to-dos ("Your to-dos") take
+ * their own sky cyan, --source-local; reserved providers (slack, notion) have none and stay muted.
  */
 export const SOURCE_SLOT_ORDER: readonly Provider[] = [
   'jira',
@@ -71,6 +71,9 @@ export const SOURCE_STYLES: Record<Provider, SourceStyle> = {
     edge: 'border-source-local',
   },
 };
+
+/** Providers with no slot of their own (slack, notion, a future source): the muted ink. */
+export const RESERVED_SOURCE_STYLE = { fill: 'fill-source-reserved', bg: 'bg-source-reserved' };
 
 /**
  * The source's colour as a CSS value, for code that paints at run time (a chart segment). The

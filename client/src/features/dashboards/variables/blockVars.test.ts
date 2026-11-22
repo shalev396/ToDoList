@@ -47,6 +47,47 @@ describe('blockVarNames', () => {
     assert.deepEqual(blockVarNames(deadlines), ['provider', 'range', 'topic']);
   });
 
+  it('adds the variables its hide rules read (the server decides H5 with them), not other rules’', () => {
+    const list: Block = {
+      id: 'blk_list1',
+      type: 'list',
+      title: 'Tasks',
+      query: { source: 'items' },
+      viz: { kind: 'list' },
+      rules: [
+        { if: { field: 'topic', operator: '=', value: '$page.area' }, then: { hide: true } },
+        { if: { field: 'status', operator: '=', value: '$page.toned' }, then: { tone: 'muted' } },
+        // A list value is literal, as in a query.
+        { if: { field: 'kind', operator: 'in', value: ['$page.kind'] }, then: { hide: true } },
+      ],
+    };
+    assert.deepEqual(blockVarNames(list), ['area']);
+    assert.deepEqual(selectBlockVars(list, vars({ area: 'work', toned: 'done' })), {
+      '$page.area': 'work',
+    });
+    assert.notEqual(
+      varsHash(selectBlockVars(list, vars({ area: 'work' }))),
+      varsHash(selectBlockVars(list, vars({ area: 'home' }))),
+    );
+  });
+
+  it('a chart or counter hides no row: its hide rules read nothing', () => {
+    const rules: Block['rules'] = [
+      { if: { field: 'topic', operator: '=', value: '$page.area' }, then: { hide: true } },
+    ];
+    const counter: Block = {
+      id: 'blk_count1',
+      type: 'counter',
+      title: 'Open',
+      query: { source: 'items', aggregate: { op: 'count' } },
+      viz: { kind: 'counter' },
+      rules,
+    };
+    assert.deepEqual(blockVarNames(counter), []);
+    const chart: Block = { ...counter, type: 'chart', viz: { kind: 'donut' } };
+    assert.deepEqual(blockVarNames(chart), []);
+  });
+
   it('is empty for a block without a query or listen', () => {
     const note: Block = { id: 'blk_note1', type: 'note', title: '', viz: { kind: 'note' } };
     assert.deepEqual(blockVarNames(note), []);

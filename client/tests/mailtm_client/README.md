@@ -1,56 +1,96 @@
 # mailtm_client
 
-A small [mail.tm](https://mail.tm) client for test suites, with a rate limit that every process on the machine shares. Each HTTP call waits its turn in one token bucket kept in a temp directory under a file lock, so pytest-xdist workers, parallel runs and scripts together stay under mail.tm's documented limit of 8 requests a second per IP address. The default is 6 a second with bursts of 2, so no second ever holds more than 7 calls. A 429 pauses every process at once (for its `Retry-After`, or else an exponential backoff with jitter), and the call is retried within a bounded number of attempts and a bounded total wait. The folder is self-contained: the standard library plus `requests`, no imports from the project around it, so it can be copied into another project as is.
+A small [mail.tm](https://mail.tm) client for test suites. Every HTTP call waits its turn in one first-in, first-out queue that every process on the machine shares (pytest-xdist workers, parallel runs, scripts), and the queue keeps all of them under mail.tm's limits together. A 429 pauses everyone and the same call is retried in its place in line: a call is never dropped for being refused. New messages are awaited on mail.tm's live feed (Mercure), with polling as the fallback, and a wait's deadline never counts the time spent in line. A guard, off by default, lets a suite make sure no unplanned code calls mail.tm.
 
-## The limit
+The folder is self-contained: the standard library plus `requests`, no imports from the project around it, so it can be copied into another project as is.
 
-From [docs.mail.tm](https://docs.mail.tm/): "The general quota limit is 8 queries per second (QPS) per IP address."
+## The limits
 
-The docs don't describe the answer over the limit. In practice it is HTTP 429, sometimes with `Retry-After`.
+- **8 a second.** From [docs.mail.tm](https://docs.mail.tm/): "The general quota limit is 8 queries per second (QPS) per IP address."
+- **10 a minute.** mail.tm also answers with `RateLimit-Policy: 10; w=60` (an IETF draft header: 10 requests per 60-second window) on some routes. The docs don't mention it, but in November 2026 CI runs drew 429s at well under one request a second, with four workers signing up and polling at once.
+- **Per route, and looser than announced.** `POST /accounts` and `GET /messages/{id}` answer `ratelimit-policy: 1; w=60`, but mail.tm lets through more than that: in November 2026, creations from one address 29 s apart both succeeded, and a third 37 s later was refused, so about **two account creations in 60-70 s**. Its 429s carried no `Retry-After` and no remaining count, only the policy.
+- **The live feed** (`mercure.mail.tm`) is another host and sends no rate-limit headers.
 
-mail.tm also sends `RateLimit-Policy: 10; w=60` (seen on `GET /domains` in November 2026). That IETF draft header means 10 requests per 60-second window, so some endpoints probably have a stricter quota the docs don't mention. The client caches the domain list for ten minutes for every process, which keeps `/domains` far below it. If mail.tm ever reports what is left of such a quota, the client obeys it (below). A 429 from any quota gets the same shared pause and retry.
+## The queue
+
+`SharedQueue` (ratelimit.py) is a line with two buckets for the whole host, and a learned spacing per route. The state is a small JSON file (`queue-v3.json`) in a temp directory, read and written under an exclusive lock (`ratelimit.lock`: `fcntl.flock` on POSIX, `msvcrt.locking` on Windows).
+
+- **Tickets.** A caller takes the next ticket number for its route (method and path, with ids as `{id}`: `POST /accounts`, `GET /messages/{id}`) and waits until no earlier ticket that could go is still waiting, and the buckets have room; only then is its request released. Callers are served in the order they asked, whatever process they are in. A retry keeps its ticket, so a refused call goes back to the head of the line, not the end. A ticket held back only by its own route's spacing doesn't hold up the tickets behind it: a read of a confirmation email doesn't wait behind an account creation that is waiting out its spacing.
+- **Buckets.** Each is "at most `limit` releases in any `window` seconds", kept as a log of release times, across every route:
+  - **6 per second**, under the documented 8;
+  - **9 per 60 seconds**, under the announced 10.
+- **Spacing per route, shared by every process.** A 429 makes the least time between two calls of its route half as long again (from 5 s, up to the window over the limit its `RateLimit-Policy` names, 60 s for `1; w=60`, or 60 s without a policy). Every five answers in a row without a 429 take a quarter off it, and under 5 s it is gone, leaving only the host buckets. The steps are gentle so the spacing hovers around the real limit instead of jumping across it. A refusal created nothing, so the spacing runs from the route's last call that got through, not from the refusal. A success on another route never touches it. Against mail.tm's real `POST /accounts` limit (about two in 65 s, so one every 32.5 s at best) the spacing moves between about 26 and 46 s: one creation every 39-44 s on average, about one 429 per four creations. Against a strict one a minute, one every 60-65 s. The announced policy is not enforced ahead of time, since mail.tm lets through more.
+- **The lock is never held across a sleep or a network call**: one small read and one small write. Waiting for the lock times out after 10 s with `LockTimeout`, naming the pid that last took it. The OS frees the lock when its holder exits, crashes or is killed. A busy state (a stuck lock, or on Windows the state file held open by an antivirus or indexer for more than the 3 s retried at once) is waited out by a caller in line, within its own limit, never raised; the client never loses an answer to it (a 201 stays a 201).
+- **A process that dies while waiting** never blocks the line for good. Waiters refresh their ticket at least every second; a ticket not refreshed for 15 s is dropped. A waiter that was only slow puts its ticket back in its old place.
+- **Each state version has its own file** (`queue-v3.json`), so processes of two versions side by side (an upgrade mid-run) never take each other's file for damage. **A damaged state file** (a torn write) or one from the future (a clock that went back) is taken as a full minute: the release log is lost and must never be under-counted, so the next release waits 60 s.
+- **The clocks**: `time.time` for what other processes read (release times, pauses), `time.monotonic` for how long a caller waited. `clock` and `sleep` can be injected, for tests.
+
+## A 429 is never the end of a call
+
+- **Everyone pauses.** The pause is the server's hint, the stricter of `Retry-After` (honoured in full, up to the call's 15-minute ceiling) and the RateLimit reset (at most 120 s). Without a hint it is the route's own backoff: 5 s, 10 s, 20 s, ... up to its policy window (60 s by default), doubling with the route's 429s in a row. 429s for requests that were already out together count once, so four workers refused at the same moment don't quadruple it. A request of that route that gets through ends its run of 429s; a success on another route doesn't.
+- **The same call is retried in its place in line**, as often as it takes, whatever its method: a 429 is a refusal, so nothing happened (no account exists yet). `retry_429=False` gets the 429 back instead; everyone still pauses.
+- **Only the ceiling ends it.** A call may take 15 minutes, time in line and pauses included. Past that it raises `MailTmRateLimited`, saying how many attempts were made, how many were refused, how long it waited in line, and the run's totals.
+- **Every 429 is logged** (a warning on logger `<package>.client`) with its rate-limit headers, the pause, its route's strikes and spacing, the run's 429 count and request counter, and how many requests went out in the last minute. A failing run then shows which quota binds.
+- **The run's totals** (requests, 429s, longest wait in line, both by route) are kept in the shared state by run id (`MailTmClient(run_id=...)`, or `MAILTM_RUN_ID`), each run its own, so runs side by side don't reset each other: `queue.counters(run_id)`. A run's counters go a day after its last request.
 
 ## It obeys the server's RateLimit headers
 
-Every answer's IETF RateLimit headers are read, in any letter case:
+Every answer's rate-limit headers are read, in any letter case: `RateLimit` (draft 7 `limit=10, remaining=0, reset=42`, or the later `"name";r=0;t=42`), `RateLimit-Limit` / `-Remaining` / `-Reset`, their `X-RateLimit-*` forms (a reset that large is an epoch time) and `RateLimit-Policy` (`10; w=60`, or `"name";q=10;w=60`). Where several quotas are given, the strictest wins. `ratelimit_quota(headers)` returns what they say.
 
-- `RateLimit: limit=10, remaining=0, reset=42` (draft 7), or the later `RateLimit: "name";r=0;t=42`;
-- the older `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset`;
-- `RateLimit-Policy: 10; w=60`, or the later `"name";q=10;w=60`.
+- A `remaining` count becomes a budget for that route in the shared queue: at most `remaining - 1` more of its requests before the reset (else the policy's window, else a second; at most 120 s), less the requests released since the counted one, which were still in flight when the server counted. mail.tm sends no remaining count so far.
+- A policy is remembered per route (the strictest seen) and caps that route's backoff and spacing.
 
-When `remaining` is down to 1 or less, every process pauses until the quota resets: `reset` seconds, else the policy's window, else one second. The pause is at most 120 s, so a bogus `reset` can't hang a run. So the next call waits instead of drawing a 429.
+Malformed values (`nan`, `inf`, negative numbers, words) are skipped, never raised.
 
-The pause covers the whole API host, not one endpoint. The headers don't say which requests a quota counts, so this is the simplest choice that never under-counts. Its cost: a spent quota on one endpoint also holds back the others until it resets.
+## Waiting for a message
 
-Malformed values (`nan`, `inf`, negative numbers, words) are skipped, never raised, and so is a malformed `Retry-After`. `ratelimit_quota(headers)` returns what the headers say, for your own use.
+`wait_for_message(token, predicate, timeout=..., ...)` returns the first message for which `predicate` is true, and reads each message once.
 
-mail.tm sends only the policy so far, with no `remaining`, so for now the headers trigger no pause there.
+- **The deadline counts only waiting for the email**, not waiting in line for a mail.tm slot. A look that is rate limited is retried in line, and that time is not charged, so a 429 never ends a wait; only the real deadline does. On a timeout, `MailTmTimeout` says how many looks at the inbox were made, how many messages were read, and how long went to waiting in line.
+- **The live feed.** mail.tm publishes every change to an inbox over Mercure, as server-sent events: hub `https://mercure.mail.tm/.well-known/mercure`, topic `/accounts/{accountId}`, `Authorization: Bearer <the inbox's token>`. A wait opens the stream, looks at the inbox once (a message may have come before it opened), then reads each new message the feed announces with one queued GET, instead of a look every few seconds. In November 2026 the hub announced a confirmation email about a second after the signup. The hub is another host without rate-limit headers, so opening the stream doesn't take a queue slot (the guard still applies).
+- **`watch_inbox(token, account_id)`** opens the feed before the email is sent, so not even that first look is needed: `with mail.watch_inbox(...) as watch: send(); watch.wait_for(predicate, ..., check_existing=False)`. The account id comes from `sign_in(address, password)` (or the token itself, `account_id_from_token`).
+- **The fallback is polling, on the same budget.** When the stream can't connect (no account id, refused, or unreachable after two tries), drops, or announces a message that can't be read, the wait polls for the rest of its budget: after `initial_delay`, then every `poll_interval`. When the hub was unreachable, every process polls for the next five minutes without trying it again. While the feed is quiet for 45 s, the wait also takes one look, in case an event was missed. Each case is logged: which path found the message, or why the feed was given up.
+- `live=False` (or `MAILTM_LIVE=0`) turns the feed off: polling only.
 
-## How the shared limit works
+`probe_mercure.py` checks the feed against the real mail.tm (pytest never collects it): it makes a throwaway inbox, opens the stream, optionally signs up to a TodoList API with the address so a real email is sent, and prints every event and the rate-limit headers of every answer.
 
-- **One bucket per state directory.** `ratelimit.json` holds two numbers: the bucket's next free time (GCRA's "theoretical arrival time") and the end of any pause. `ratelimit.lock` is the lock: `fcntl.flock` on POSIX, `msvcrt.locking` on Windows.
-- **Reserve, then sleep.** `acquire()` takes the lock, reserves the next free slot, writes the bucket back and lets go: the lock is held for one small read and one small write. The process then sleeps until its slot, outside the lock. The slots all processes get are exactly the ones a single bucket would hand out: `rate` a second on average, at most `burst` back to back after a quiet spell. No one-second window ever holds more than `burst + ceil(rate) - 1` of them (7 with the defaults).
-- **A 429 pauses everyone.** `penalize(seconds)` moves the bucket past `now + seconds` for every process. A process already asleep on an earlier slot checks again when it wakes, and reserves a slot after the pause. After a pause the bucket restarts with no burst. The client logs each 429 as a warning (logger `<package>.client`) with the call and the pause, so a test that failed on a slow inbox shows whether mail.tm was refusing calls meanwhile.
-- **It never deadlocks.** The lock is never held across a sleep or a network call. Waiting for it times out with `LockTimeout` (10 s), which names the pid that last took it. A lock cannot go stale either: the OS releases it when its process exits, crashes or is killed, so a lock file left behind is free whatever it contains. A damaged state file, or one that points implausibly far ahead (a clock that went back), costs a one-second pause, not a stall.
-- **The clock** is `time.time`, because release times are compared across processes and the state file outlives reboots. `clock` and `sleep` can be injected, for tests.
+```bash
+python tests/mailtm_client/probe_mercure.py --wait 180 --signup-api http://127.0.0.1:3000/api
+```
+
+## The guard
+
+`GUARD` (guard.py) is off by default. A suite that turns it on (`GUARD.enable()`) gets `MailTmNotAllowed` from any mail.tm call (every request and the live feed) made while no permission is open, before anything is sent:
+
+```python
+GUARD.enable()
+with GUARD.running("tests/x.py::test_y"):  # names the code in the error
+    with GUARD.allow("this test makes inboxes"):
+        ...
+```
+
+`MailTmNotAllowed` is not a `MailTmError`, so code that handles mail.tm's own errors can't swallow it, and every violation is noted in `GUARD.violations`. A client may be given its own guard (`MailTmClient(guard=CallGuard())`).
 
 ## Defaults and settings
 
-| Setting                | Default                                     | Change it with                                        |
-| ---------------------- | ------------------------------------------- | ----------------------------------------------------- |
-| Rate                   | 6 requests a second                         | `MailTmClient(rate=...)`, or `MAILTM_RATE`            |
-| Burst                  | 2                                           | `MailTmClient(burst=...)`                             |
-| State directory        | `<system temp>/mailtm-ratelimit-<API host>` | `MailTmClient(state_dir=...)`, or `MAILTM_STATE_DIR`  |
-| Lock timeout           | 10 s                                        | `SharedRateLimiter(lock_timeout=...)`                 |
-| Longest pause          | 120 s                                       | `SharedRateLimiter(max_pause=...)`                    |
-| RateLimit headers      | pause at `remaining` 1 or less, up to 120 s | `RetryPolicy(quota_reserve=..., quota_pause_cap=...)` |
-| Attempts per call      | 7, with at most 120 s of waiting in all     | `RetryPolicy(max_attempts=..., max_total_wait=...)`   |
-| Backoff without a hint | 1-2 s, 2-4 s, 4-8 s, ..., each at most 30 s | `RetryPolicy(backoff_base=..., backoff_cap=...)`      |
-| `Retry-After`          | honoured, up to 60 s                        | `RetryPolicy(retry_after_cap=...)`                    |
-| Request timeout        | 10 s                                        | `MailTmClient(timeout=...)`                           |
-| Domain cache           | 10 minutes, shared by all processes         | `MailTmClient(domain_ttl=...)`                        |
+| Setting              | Default                                       | Change it with                                        |
+| -------------------- | --------------------------------------------- | ----------------------------------------------------- |
+| Per second           | 6                                             | `MailTmClient(buckets=...)`, or `MAILTM_PER_SECOND`   |
+| Per minute           | 9                                             | `MailTmClient(buckets=...)`, or `MAILTM_PER_MINUTE`   |
+| State directory      | `<system temp>/mailtm-ratelimit-<API host>`   | `MailTmClient(state_dir=...)`, or `MAILTM_STATE_DIR`  |
+| Run id (for totals)  | none                                          | `MailTmClient(run_id=...)`, or `MAILTM_RUN_ID`        |
+| Live feed            | on                                            | `MailTmClient(live=False)`, or `MAILTM_LIVE=0`        |
+| Lock timeout         | 10 s                                          | `SharedQueue(lock_timeout=...)`                       |
+| Longest single pause | 15 minutes                                    | `SharedQueue(max_pause=...)`                          |
+| Ceiling per call     | 15 minutes, time in line included             | `RetryPolicy(call_ceiling=...)`                       |
+| 429 without a hint   | the route's 5 s, 10 s, ..., up to its window  | (the queue's `ROUTE_BACKOFF_START`)                   |
+| `Retry-After`        | honoured, up to the 15-minute ceiling         | `RetryPolicy(retry_after_cap=...)`                    |
+| RateLimit budget     | `remaining - 1`, reset at most 120 s away     | `RetryPolicy(quota_reserve=..., quota_pause_cap=...)` |
+| Transient failures   | 7 calls in all (the stream: 2), idempotent    | `RetryPolicy(max_attempts=..., backoff_base=...)`     |
+| Request timeout      | 10 s (the stream: 10 s to connect, 90 s idle) | `MailTmClient(timeout=...)`                           |
+| Domain cache         | 10 minutes, shared by all processes           | `MailTmClient(domain_ttl=...)`                        |
 
-Constructor arguments win over the environment variables. Every process that shares a state directory should use the same rate and burst. To share a limiter you built yourself, pass `MailTmClient(limiter=...)`.
+Constructor arguments win over the environment variables. Every process that shares a state directory should use the same buckets. To share a queue you built yourself, pass `MailTmClient(queue=...)`.
 
 ## Use
 
@@ -59,31 +99,24 @@ import secrets
 
 from mailtm_client import MailTmClient, message_text
 
-mail = MailTmClient()  # or MailTmClient(rate=3, state_dir="/shared/mailtm")
+mail = MailTmClient()
 address = f"test-{secrets.token_hex(6)}@{mail.domain()}"
 password = secrets.token_urlsafe(12)
 mail.create_account(address, password)
-token = mail.get_token(address, password)
-message = mail.wait_for_message(
-    token, lambda m: "Your code" in message_text(m), timeout=60, poll_interval=8, initial_delay=10
-)
+inbox = mail.sign_in(address, password)  # token and account id
+with mail.watch_inbox(inbox.token, inbox.account_id) as watch:
+    send_the_email_to(address)
+    message = watch.wait_for(
+        lambda m: "Your code" in message_text(m), timeout=150, poll_interval=8, check_existing=False
+    )
 ```
 
-`list_messages(token)` and `get_message(token, id)` read an inbox. `wait_for_message` fetches each message once. `request(method, path, token=..., json=...)` makes any other call, for example `DELETE /accounts/{id}`, through the same limit and retries. Errors are `MailTmError`, a `RuntimeError`. They never include passwords or tokens.
+`list_messages(token)` and `get_message(token, id)` read an inbox. `request(method, path, token=..., json=...)` makes any other call, for example `DELETE /accounts/{id}`, through the same queue and retries. Errors are `MailTmError`, a `RuntimeError`. They never include passwords or tokens.
 
-`wait_for_message` never waits past its `timeout`: each of its calls gets the time left as `max_wait`, for its slot and for its retries.
+### What else is retried
 
-- When the next free slot is past the deadline, it raises `MailTmTimeout` at once.
-- When a 429 asks for longer than is left, it raises a `MailTmError` (429) without retrying.
-- A request already sent can still take its own `timeout` (10 s).
-
-`request(..., max_wait=...)` and `acquire(max_wait=...)` do the same for your own calls; `acquire` raises `RateLimitTimeout`.
-
-### What is retried
-
-- **A 429** is retried for idempotent calls (GET, DELETE, and `POST /token`, which only issues a token) and for account creation. A 429 is a refusal, so no account exists yet, and sending the request again cannot make a second one. Any other call (a PATCH, say) gets the 429 back, but every process still pauses.
 - **A dropped connection, a timeout or a 502/503/504** is retried only for idempotent calls. Account creation is not retried then: the account may already exist, and a retry would turn a clear error into "address already used".
-- **"Address already used" (422) on account creation**: the client tries to sign in with the password it was given. If that works, an earlier attempt really created the inbox, so it's returned as created (nobody else can have set that password). If not, the address is someone else's and `AddressTaken` is raised, so the caller can pick a new random address and try again. mail.tm answers 422 the same way for an address at a domain it has retired ("The domain … is not valid"), which a cached list can still name: call `forget_domains()` before the retry, and the next `domain()` asks mail.tm again, for every process.
+- **"Address already used" (422) on account creation**: the client tries to sign in with the password it was given. If that works, an earlier attempt really created the inbox, so it's returned as created (nobody else can have set that password). If not, `AddressTaken` is raised, so the caller can pick a new random address. mail.tm answers 422 the same way for an address at a domain it has retired: call `forget_domains()` before the retry, and the next `domain()` asks mail.tm again, for every process.
 - **Anything else** (400, 401, 404, 500) is returned or raised at once.
 
 ## Copying it into another project
@@ -91,16 +124,16 @@ message = mail.wait_for_message(
 1. Copy this folder anywhere importable, for example next to your tests. Rename it freely: it imports its own modules only relatively.
 2. It needs Python 3.9+ and `requests`.
 3. Import it by the folder's name: `from mailtm_client import MailTmClient`.
-4. To run its tests (offline, about 10 s), run `python -m pytest <folder>` from the folder's parent.
+4. To run its tests (offline, about 20 s), run `python -m pytest <folder>` from the folder's parent.
 
 Its tests need no network and never touch the real state directory:
 
-- `test_ratelimit.py`: the bucket arithmetic on a fake clock, and `max_wait`; four real processes hammering one bucket, whose slots must conform to it, with no second over the bound; the lock timing out, and recovering from a holder that was killed; the Windows and POSIX locking (each runs on its own platform).
-- `test_client.py`: 429 and `Retry-After` handling, the backoff bounds, what is retried, the RateLimit headers in every form (and malformed ones), the pause a spent quota sets for every process, the shared domain cache, `wait_for_message` and its deadline; three real processes calling a local HTTP endpoint with the default settings.
+- `test_ratelimit.py`: the buckets, the line's order, retries keeping their place, dead and slow waiters, pauses, per-route 429 strikes, backoff and spacing (and a ticket held back by its route's spacing letting others pass), the server's budget and per-run counters on a fake clock; damaged state; real processes joining one line (released in the order they joined) and hammering it (no window over its limit); the lock timing out and recovering from a holder that was killed; the Windows and POSIX locking (each on its own platform).
+- `test_client.py`: 429 handling (never dropped, the ceiling, the shared pause, the logs), the backoff, what is retried, account creation against a stub of mail.tm's real policy-only quota (few 429s, bounded time, reads never stuck behind it), a stuck lock never losing an answer, the RateLimit headers in every form, the shared domain cache, waits whose deadline excludes time in line, the live feed (scripted on the fake clock, and a real local SSE server) and every fallback to polling, the SSE parsing, the guard; three real processes calling a local HTTP endpoint.
 
 ## Limits
 
-- **One machine.** It coordinates the processes that share a state directory. By default those are the processes of one user on one machine: the temp dir is per user on Windows, and the files get that user's permissions. Several machines behind one IP address (a CI fleet, an office NAT) each run their own bucket, so give each one a share of the limit. Each machine's most per second (`burst + ceil(rate) - 1`) must add up to 8 or less across them: two machines at `MAILTM_RATE=2` (3 each), or three at `MAILTM_RATE=1` (2 each).
-- **Others on your IP address.** Other users of mail.tm on the same address (a shared CI egress) are not counted. Only the 429 handling covers them.
-- **Release, not arrival.** The limiter controls when requests leave. The network or a busy CPU can still bunch them up on the way. The margin between 7 a second at most and mail.tm's 8 absorbs that. A coarse clock (`time.time` ticks every 15.6 ms on Windows before Python 3.13) never makes the limiter release early.
-- **Undocumented quotas.** A quota the server announces only as a policy, like mail.tm's `RateLimit-Policy: 10; w=60`, is not enforced ahead of time: the client can only obey a `remaining` count. If one starts to bite, give that endpoint its own `SharedRateLimiter` (its own state directory, `rate` 10/60, `burst=1`), and call its `acquire()` before those calls.
+- **One machine.** The queue coordinates the processes that share a state directory: by default those of one user on one machine. Several machines behind one IP address (a CI fleet, an office NAT) each run their own queue, so give each one a share of the limits (`MAILTM_PER_SECOND`, `MAILTM_PER_MINUTE`) adding up to at most 8 and 10.
+- **Others on your IP address.** Other users of mail.tm on the same address (a shared CI egress) are not counted. Only the 429 handling covers them, and it never gives up before the ceiling.
+- **Release, not arrival.** The queue controls when requests leave; the network can still bunch them up on the way. The margins (6 of 8, 9 of 10) absorb that.
+- **The live feed is unverified here.** docs.mail.tm answers scripts with 403, so the hub, the topic and the event shape (`@type: Message`) come from mail.tm's public client libraries. `probe_mercure.py` shows what the hub really sends; polling covers any mismatch.

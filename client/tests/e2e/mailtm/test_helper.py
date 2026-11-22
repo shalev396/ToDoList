@@ -1,7 +1,7 @@
 """
 tests/helpers/mailtm.py, offline: it only wires the project's settings into tests/mailtm_client
-(whose own tests cover the shared rate limit and the 429 handling). Mail.tm is a stub here, and
-the clock a fake one, so nothing waits.
+(whose own tests cover the shared queue, the 429 handling and the live feed). Mail.tm is a stub
+here, the clock a fake one (so nothing waits), and the client has its own guard.
 """
 import json
 
@@ -9,7 +9,7 @@ import pytest
 import requests
 
 from tests.helpers import mailtm
-from tests.mailtm_client import MailTmClient
+from tests.mailtm_client import CallGuard, MailTmClient
 
 
 def _answer(status: int, body) -> requests.Response:
@@ -51,6 +51,8 @@ def mail(monkeypatch, tmp_path):
         session=Session(),
         clock=clock,
         sleep=clock.sleep,
+        guard=CallGuard(),
+        live=False,
     )
     monkeypatch.setattr(mailtm, "_client", client)
     return Session
@@ -61,6 +63,76 @@ def test_one_client_per_process_on_the_real_mail_tm(monkeypatch):
     client = mailtm.get_mailtm_client()
     assert client is mailtm.get_mailtm_client()
     assert client.base_url == "https://api.mail.tm"
+    assert client.queue.run_id == mailtm.mailtm_run_id()  # the run's requests counted together
+
+
+def test_every_worker_of_a_run_counts_as_that_run(monkeypatch):
+    monkeypatch.setenv("PYTEST_XDIST_TESTRUNUID", "run-abc")
+    assert mailtm.mailtm_run_id() == "run-abc"
+    monkeypatch.delenv("PYTEST_XDIST_TESTRUNUID")
+    monkeypatch.delenv(mailtm.RUN_ID_ENV, raising=False)
+    alone = mailtm.mailtm_run_id()
+    assert alone and mailtm.mailtm_run_id() == alone  # one process alone keeps its own
+
+
+def test_a_new_user_is_confirmed_from_the_live_feed_opened_before_the_signup(monkeypatch, tmp_path):
+    """The confirmation email can't arrive unseen: the feed opens, then the signup sends it, then
+    one read takes the code from the message the feed announced."""
+    steps = []
+
+    class Session:
+        answers = [
+            _answer(200, {"hydra:member": [{"domain": "mail.test", "isActive": True}]}),
+            _answer(201, {"id": "acc-1"}),
+            _answer(200, {"token": "t", "id": "acc-1"}),
+            _answer(200, {}),  # the live feed's stream
+            _answer(200, {"id": "m1", "text": "Your code is 482913", "html": []}),
+        ]
+
+        def request(self, method, url, **kwargs):
+            path = url.removeprefix(mailtm.MAILTM_BASE).removeprefix("https://mercure.mail.tm")
+            steps.append(f"{method} {path}")
+            return Session.answers.pop(0)
+
+    class Feed:
+        def __init__(self, response):
+            self.items = [{"@type": "Message", "id": "m1", "subject": "Confirm"}]
+
+        def next(self, timeout):
+            return self.items.pop(0) if self.items else None
+
+        def close(self):
+            steps.append("feed closed")
+
+    clock = _Clock()
+    client = MailTmClient(
+        mailtm.MAILTM_BASE,
+        state_dir=str(tmp_path),
+        session=Session(),
+        clock=clock,
+        sleep=clock.sleep,
+        guard=CallGuard(),
+        live=True,
+        feed_factory=Feed,
+    )
+    monkeypatch.setattr(mailtm, "_client", client)
+    monkeypatch.setattr(mailtm, "signup_app", lambda api, email, password: steps.append("signup"))
+    monkeypatch.setattr(
+        mailtm, "confirm_signup_app", lambda api, email, code: steps.append(f"confirm {code}")
+    )
+    monkeypatch.setattr(mailtm, "login_app", lambda api, email, password: ("id", "refresh"))
+    user = mailtm.create_test_user("http://api.test", with_workspace=False)
+    assert steps == [
+        "GET /domains",
+        "POST /accounts",
+        "POST /token",
+        "GET /.well-known/mercure",
+        "signup",
+        "GET /messages/m1",
+        "feed closed",
+        "confirm 482913",
+    ]
+    assert user.email.endswith("@mail.test") and user.mailtm_password
 
 
 def test_a_new_inbox_is_made_on_the_active_domain(mail):
@@ -119,9 +191,10 @@ def test_the_confirmation_code_comes_from_the_inbox(mail):
 
 def test_no_code_within_the_poll_window_is_an_error(mail):
     mail.answers = [_answer(200, {"hydra:member": []}) for _ in range(30)]
-    with pytest.raises(RuntimeError, match="No confirmation code received within 150s"):
+    with pytest.raises(RuntimeError, match="No confirmation code received within 150s") as missed:
         mailtm.poll_inbox_and_get_code("t")
     assert len(mail.paths) == 19  # at 12 s, then every 8 s to 148 s, and a last look at 150 s
+    assert "19 looks at the inbox" in str(missed.value)  # what the wait did, for the CI log
 
 
 def test_the_invite_path_comes_from_the_invitees_inbox(mail):
@@ -137,3 +210,63 @@ def test_the_invite_path_comes_from_the_invitees_inbox(mail):
 def test_an_inbox_without_its_password_cannot_be_read(mail):
     with pytest.raises(RuntimeError, match="password is unknown"):
         mailtm.wait_for_invite_path(mailtm.TestUser("u@mail.test", "pw", "id", "refresh"))
+
+
+class _Clock2:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_a_session_account_logs_in_again_once_its_token_is_45_minutes_old():
+    """No Mail.tm call: the stored password signs in again, and the new tokens are kept."""
+    clock = _Clock2(1_700_000_000.0)
+    logins = []
+
+    def login(api, email, password):
+        logins.append((api, email, password))
+        return f"id-{len(logins)}", f"refresh-{len(logins)}"
+
+    user = mailtm.TestUser("u@mail.test", "pw", "id-0", "refresh-0", "inbox", clock.now)
+    session = mailtm.SessionUser(user, "http://api.test", clock=clock, login=login)
+    clock.now += 44 * 60
+    assert (session.id_token, session.refresh_token, logins) == ("id-0", "refresh-0", [])
+    others = (session.email, session.password, session.mailtm_password)
+    assert others == ("u@mail.test", "pw", "inbox")
+    clock.now += 60
+    assert session.id_token == "id-1" and session.refresh_token == "refresh-1"
+    assert logins == [("http://api.test", "u@mail.test", "pw")]
+    clock.now += 44 * 60
+    assert session.id_token == "id-1" and len(logins) == 1  # renewed 44 min ago: kept
+    clock.now += 60
+    assert session._asdict()["id_token"] == "id-2"
+
+
+def test_a_token_without_a_known_issue_time_is_dated_by_its_iat():
+    import base64
+
+    def jwt(payload: dict) -> str:
+        body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        return f"x.{body}.y"
+
+    assert mailtm.token_issued_at(jwt({"iat": 1_700_000_000})) == 1_700_000_000
+    assert mailtm.token_issued_at("opaque") == 0.0
+    clock = _Clock2(1_700_000_000.0 + 10 * 60)
+    fresh = mailtm.TestUser("e", "p", jwt({"iat": 1_700_000_000}), "r")
+    session = mailtm.SessionUser(fresh, "api", clock=clock, login=lambda *a: ("new", "r2"))
+    assert session.id_token == fresh.id_token  # 10 minutes old by its iat
+    undated = mailtm.TestUser("e", "p", "opaque", "r")
+    stale = mailtm.SessionUser(undated, "api", clock=clock, login=lambda *a: ("new", "r2"))
+    assert stale.id_token == "new"  # no date at all: renewed at once
+
+
+def test_a_session_account_can_be_copied_and_named():
+    import copy
+
+    user = mailtm.TestUser("u@mail.test", "pw", "id", "refresh", issued_at=1_700_000_000.0)
+    session = mailtm.SessionUser(user, "api", clock=lambda: 1_700_000_001.0)
+    twin = copy.copy(session)
+    assert twin.email == "u@mail.test" and twin.id_token == "id"
+    assert repr(session) == "SessionUser('u@mail.test')"

@@ -27,6 +27,7 @@ import {
   selectedContainers,
   toggleConnector,
   toggleContainer,
+  ticksEverySource,
   type SourcePick,
 } from './connectorScopes';
 import { fieldEntries } from './fieldOptions';
@@ -241,6 +242,29 @@ function ConnectorChecks({
           onChange({ connectors: checked ? undefined : [], connectorScopes: undefined });
         },
       )}
+      {ticksEverySource(
+        pick,
+        own.map((integration) => integration.id),
+        LOCAL_CONNECTOR,
+      ) ? (
+        <div
+          data-connectors-offer-all
+          className="flex flex-wrap items-center gap-2 rounded-md bg-muted px-3 py-2"
+        >
+          <p className="flex-1 text-[13px]">{t('editor.source.offerAll')}</p>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 min-w-11"
+            data-connectors-use-all
+            onClick={() => {
+              onChange({ connectors: undefined, connectorScopes: undefined });
+            }}
+          >
+            {t('editor.source.useAll')}
+          </Button>
+        </div>
+      ) : null}
       <div className="flex flex-wrap gap-x-4 gap-y-2">
         {own.map((integration) => {
           const icon = iconOf(integration.provider);

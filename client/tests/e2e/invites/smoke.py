@@ -5,6 +5,7 @@ messages for another email (403), a link that no longer works (404/410) and a us
 import re
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from playwright.sync_api import Page, expect
 
 from tests.config import LONG_TIMEOUT, NORMAL_TIMEOUT
@@ -16,25 +17,26 @@ from tests.helpers.workspaces import (
     open_as,
     sign_in,
 )
-from tests.helpers.users import new_mailbox, new_user, pooled_user
+from tests.helpers.users import new_mailbox, new_user
 
 UNKNOWN_TOKEN = "Zz9_-abcdefghijklmnopqrstuvwxyz0123456789AB"
 
 
-def _invite(api_base_url: str, new_workspace, email: str, role: str = "viewer"):
-    """An invite of the worker's owner account to a new workspace (deleted after the test)."""
-    owner = pooled_user(api_base_url, "owner")
+def _invite(api_base_url: str, new_workspace, owner, email: str, role: str = "viewer"):
+    """An invite of the worker's owner account (`pooled_owner`) to a new workspace (deleted after
+    the test)."""
     workspace = new_workspace(owner, "Invite Lab")
     created = create_invite(api_base_url, owner, workspace["id"], email, role)
     return owner, workspace, created["inviteUrl"]
 
 
+@pytest.mark.email
 def test_signed_out_visitor_logs_in_and_comes_back(
-    page: Page, base_url: str, api_base_url: str, new_workspace
+    page: Page, base_url: str, api_base_url: str, new_workspace, pooled_owner
 ):
     guest = new_user(api_base_url)
     email = guest.email
-    _, workspace, url = _invite(api_base_url, new_workspace, email)
+    _, workspace, url = _invite(api_base_url, new_workspace, pooled_owner, email)
     path = invite_path(url)
     page.goto(f"{base_url}{path}", wait_until="load")
     expect(page).to_have_url(re.compile(r"/en/auth/login\?next=%2Fen%2Finvites%2F"))
@@ -56,11 +58,12 @@ def test_unknown_link_says_it_no_longer_works(page: Page, base_url: str, fresh_o
     )
 
 
+@pytest.mark.email
 def test_invite_for_another_email(
     page: Page, base_url: str, api_base_url: str, fresh_owner, new_workspace
 ):
-    user, _ = fresh_owner
-    _, _, url = _invite(api_base_url, new_workspace, new_mailbox())
+    user, _ = fresh_owner  # the worker's owner account: it sends the invite too
+    _, _, url = _invite(api_base_url, new_workspace, user, new_mailbox())
     open_as(page, base_url, user, invite_path(url), h1="Join a workspace")
     page.get_by_role("button", name="Accept invite").click()
     expect(page.get_by_role("heading", level=1)).to_have_text(
@@ -70,13 +73,14 @@ def test_invite_for_another_email(
     expect(page.get_by_role("button", name="Sign in with another account")).to_be_visible()
 
 
+@pytest.mark.email
 def test_another_account_comes_back_to_the_invite(
     page: Page, base_url: str, api_base_url: str, fresh_owner, new_workspace
 ):
     """"Sign in with another account" signs out and opens the login page with this invite as
     next, so the invited person comes straight back to it."""
-    user, _ = fresh_owner
-    _, _, url = _invite(api_base_url, new_workspace, new_mailbox())
+    user, _ = fresh_owner  # the worker's owner account: it sends the invite too
+    _, _, url = _invite(api_base_url, new_workspace, user, new_mailbox())
     path = invite_path(url)
     open_as(page, base_url, user, path, h1="Join a workspace")
     page.get_by_role("button", name="Accept invite").click()
@@ -86,9 +90,11 @@ def test_another_account_comes_back_to_the_invite(
     expect(page.get_by_role("heading", level=1)).to_be_visible()
 
 
-def test_used_invite(page: Page, base_url: str, api_base_url: str, second_user, new_workspace):
+def test_used_invite(
+    page: Page, base_url: str, api_base_url: str, second_user, new_workspace, pooled_owner
+):
     invitee = second_user
-    _, _, url = _invite(api_base_url, new_workspace, invitee.email)
+    _, _, url = _invite(api_base_url, new_workspace, pooled_owner, invitee.email)
     accept_invite(api_base_url, invitee, invite_token(url))
     open_as(page, base_url, invitee, invite_path(url), h1="Join a workspace")
     page.get_by_role("button", name="Accept invite").click()
@@ -97,11 +103,13 @@ def test_used_invite(page: Page, base_url: str, api_base_url: str, second_user, 
     )
 
 
-def test_revoked_invite(page: Page, base_url: str, api_base_url: str, second_user, new_workspace):
+def test_revoked_invite(
+    page: Page, base_url: str, api_base_url: str, second_user, new_workspace, pooled_owner
+):
     import requests
 
     invitee = second_user
-    owner, workspace, url = _invite(api_base_url, new_workspace, invitee.email)
+    owner, workspace, url = _invite(api_base_url, new_workspace, pooled_owner, invitee.email)
     invite_id = requests.get(
         f"{api_base_url}/private/workspaces/{workspace['id']}/invites",
         headers={"Authorization": f"Bearer {owner.id_token}"},

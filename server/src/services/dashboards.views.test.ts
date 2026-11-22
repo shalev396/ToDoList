@@ -161,24 +161,20 @@ describe('view limits on the server', () => {
   });
 });
 
-describe('view templates bind only my integrations', () => {
-  it('binds the actor’s own integration, never another member’s', async () => {
+describe('view templates leave data blocks on All sources', () => {
+  it('names no provider, so binds nothing: never another member’s integration either', async () => {
     let page = await blank();
     page = await ops(page, [{ op: 'add_view', templateKey: 'workload-this-week@1' }]);
     const connectors = page.blocks.flatMap((block) => block.connectors ?? []);
-    assert.ok(connectors.includes('int-owner-google'));
-    assert.ok(!connectors.includes('int-other-google'));
+    assert.deepEqual(connectors, []);
     assert.equal(page.views[0]?.templateKey, 'workload-this-week@1');
   });
 
-  it('names what it would share, and shares nothing with shareIntegrations false', async () => {
+  it('names nothing to share for blocks on All sources, and shares nothing with shareIntegrations false', async () => {
     const shares = await svc.templateShares(ctx.editor, actor.editor, ['my-open-work@1']);
     assert.deepEqual(shares, []);
     const own = await svc.templateShares(ctx.other, actor.other, ['workload-this-week@1']);
-    assert.deepEqual(
-      own.map((share) => share.id),
-      ['int-other-google'],
-    );
+    assert.deepEqual(own, []);
     const page = await svc.createDashboard(ctx.other, actor.other, { title: 'P2', language: 'en' });
     const result = await svc.applyDashboardOps(ctx.other, actor.other, page.id, {
       expectedVersion: page.version,
@@ -225,7 +221,6 @@ describe('persona templates', () => {
       ),
     );
     const connectors = everything.flatMap((view) => view.blocks.flatMap((b) => b.connectors ?? []));
-    assert.ok(connectors.includes('int-owner-google'));
     assert.ok(!connectors.includes('int-other-google'));
 
     const second = await personas.instantiatePersona(ctx.owner, actor.owner, {

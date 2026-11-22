@@ -15,7 +15,7 @@ from tests.helpers.workspaces import (
     invite_token,
     sign_in,
 )
-from tests.helpers.users import new_mailbox, pooled_user
+from tests.helpers.users import new_mailbox
 from tests.helpers.responsive import assert_no_horizontal_overflow
 from tests.helpers.tap_targets import assert_touch_screen, reset_allowed, small_targets, stale_allowed
 from tests.viewports import VIEWPORTS
@@ -72,8 +72,9 @@ def test_tap_targets_signed_out(touch_page: Page, base_url: str):
     assert not stale_allowed(), f"Allow-list entries no page needed: {stale_allowed()}"
 
 
+@pytest.mark.email
 def test_tap_targets_onboarding_and_invite(
-    touch_page: Page, base_url: str, api_base_url: str, fresh_user, new_workspace
+    touch_page: Page, base_url: str, api_base_url: str, fresh_user, new_workspace, pooled_owner
 ):
     page = touch_page
     problems = []
@@ -83,7 +84,7 @@ def test_tap_targets_onboarding_and_invite(
     assert_touch_screen(page)
     problems += small_targets(page, "onboarding")
 
-    owner = pooled_user(api_base_url, "owner")
+    owner = pooled_owner
     # Deleted after the test: a workspace left behind is the one the app opens for this account
     # in its later tests (the oldest, when none is stored).
     workspace = new_workspace(owner, "Tap Lab", timezone="Asia/Jerusalem")
@@ -94,6 +95,7 @@ def test_tap_targets_onboarding_and_invite(
     _report(problems)
 
 
+@pytest.mark.email
 def test_tap_targets_shell_settings_members(
     touch_page: Page, base_url: str, api_base_url: str, fresh_owner, second_user
 ):

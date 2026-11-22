@@ -605,7 +605,7 @@ export const ItemRepository: IItemRepository = {
       { new: true, runValidators: true },
     ).lean<ItemFields>();
     if (doc) {
-      // The to-do's sharing moved: its provider copies follow (they hide for whoever sees it).
+      // The to-do's sharing moved: its provider copies' mark follows.
       if (patch.visibility !== undefined && (doc.copies ?? []).length > 0) {
         await ItemMongoModel.updateMany(
           { workspaceId, 'overlay.copyOf': id },

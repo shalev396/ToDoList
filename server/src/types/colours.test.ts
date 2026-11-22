@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { AttributeDef } from './attributes.js';
+import { TOPIC_COLOURS } from './topics.js';
 import {
+  FAMILY_ASSIGN_ORDER,
   nextFamily,
   resolveColour,
   roleOf,
@@ -146,6 +148,28 @@ describe('nextFamily', () => {
   it('reuses from the start once every family is taken', () => {
     assert.equal(nextFamily(eight), 'blue');
     assert.equal(nextFamily([...eight, 'blue']), 'orange');
+  });
+});
+
+describe('the magenta family', () => {
+  it('is one of the ten families a topic or a Subject may name', () => {
+    assert.equal(TOPIC_COLOURS.length, 10);
+    assert.equal(new Set(TOPIC_COLOURS).size, 10);
+    assert.ok((TOPIC_COLOURS as readonly string[]).includes('magenta'));
+  });
+  it('is chosen by hand, never auto-assigned', () => {
+    assert.equal((FAMILY_ASSIGN_ORDER as readonly string[]).includes('magenta'), false);
+    const eight = [...FAMILY_ASSIGN_ORDER];
+    assert.equal(nextFamily([...eight, 'magenta']), 'blue');
+    assert.equal(nextFamily(['magenta']), 'blue');
+  });
+  it('colours an item whose Subject is magenta, in its role', () => {
+    const subjects: ColourSubject[] = [{ name: 'TLVTech', family: 'magenta', patterns: [] }];
+    const area = resolveColour(
+      input({ kind: 'block', provider: 'local', layer: 'area', subject: 'TLVTech' }),
+      { topicFamilies: new Map(), subjects },
+    );
+    assert.deepEqual([area.family, area.role, area.from], ['magenta', 'area', 'subject']);
   });
 });
 

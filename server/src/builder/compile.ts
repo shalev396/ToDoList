@@ -8,6 +8,9 @@
  * - for items, the next stage projects each item's effective values (Overrides: a mirrored item's
  *   local override of a field its provider lacks, else the provider's value), so every filter,
  *   sort, group and row after it reads what the item reads as;
+ * - for items, right after the query's filter, a provider copy of a local to-do is dropped while
+ *   its to-do is in the same result and shows: not cancelled, and hidden by none of the block's
+ *   `hide` display rules (H5, ItemAccessFilter.copyAbsorption), before any count, group or row;
  * - field names come only from the catalog whitelist (credential paths are never fields);
  * - values are literals checked against their field's type: an object with a `$` key is refused
  *   anywhere in the query and in any variable's value, so `$where`, `$function`, `$expr` and the
@@ -25,12 +28,14 @@ import {
   MAX_RELATIVE_N,
   RELATIVE_UNITS,
   DateRangeBoundsSchema,
+  DisplayRuleSchema,
   IsoDateTimeSchema,
   QuerySchema,
   VAR_REF_PATTERN,
   VAR_REF_PREFIX,
   type BlockType,
   type DateField,
+  type DisplayRule,
   type DatePreset,
   type DateRange,
   type Operator,
@@ -54,6 +59,7 @@ import {
 import { localDayBounds, resolveDatePreset, resolveRelative, type DateBounds } from './dates.js';
 import { importanceFields } from './importance.js';
 import { QueryValidationError, fromZodError, toPointer } from './errors.js';
+import { FilterExpressionError, filterExpression, type Expression } from './ruleExpression.js';
 
 /** One aggregation stage, as plain JSON (plus Dates). */
 export type PipelineStage = Record<string, unknown>;
@@ -112,6 +118,12 @@ export interface CompileContext {
   /** The page's importance preset; Weighted with the defaults when absent. */
   importance?: ImportanceConfig;
   /**
+   * Items only: the block's display rules (BUILDER.md §3 "If/then"). Only the `hide` ones count:
+   * a to-do one of them matches is hidden on the client, so it does not hide its provider copies
+   * (H5). They never change which rows, counts or groups the query returns.
+   */
+  displayRules?: readonly DisplayRule[];
+  /**
    * The server's own drafts only (ItemQuery#runDraft), never a request: the rows to read, past
    * the public cap (CAPS.maxLimit), in place of the query's limit.
    */
@@ -123,7 +135,9 @@ export interface CompiledQuery {
   /**
    * `$match` base filter, then (task-shaped items) a `$match` that leaves reserved time out, then
    * (items) `$addFields` of the effective values, then `$match` of the query's filters (when it
-   * has any), then one `$facet`: `total` (`[{count}]`) plus `rows` and/or `groups`.
+   * has any), then (items) the copy absorption stages (H5), then (items read from two
+   * integrations of one account) the dedup stages, then one `$facet`: `total` (`[{count}]`) plus
+   * `rows` and/or `groups`.
    */
   pipeline: PipelineStage[];
   warnings: string[];
@@ -260,6 +274,12 @@ export const TIME_SHAPED_BLOCKS: ReadonlySet<BlockType> = new Set<BlockType>([
   'workload',
   'timesheet',
 ]);
+
+/**
+ * The block types that show counts or groups, not rows: the client hides no row there, so a hide
+ * display rule hides nothing (H5, hiddenExpression).
+ */
+const COUNTING_BLOCKS: ReadonlySet<BlockType> = new Set<BlockType>(['chart', 'counter']);
 
 function isTimeShaped(blockType: BlockType | undefined): boolean {
   return blockType !== undefined && TIME_SHAPED_BLOCKS.has(blockType);
@@ -912,6 +932,47 @@ function dedupStages(order: readonly string[]): PipelineStage[] {
   ];
 }
 
+/**
+ * H5: when a to-do in a block's result does not show, as an expression over the row: it is
+ * cancelled (time views drop it), or one of the block's `hide` display rules matches it (the
+ * client hides it). Such a to-do does not hide its provider copies (copyAbsorption). Each hide
+ * rule's condition goes through a Compilation of its own, so its warnings, variables and kinds
+ * never reach the query's result; one the compiler refuses hides nothing here, as an unset
+ * variable hides nothing on the client. `computed`: the fields the pipeline already computed; a
+ * computed field only a hide rule reads is computed inside the expression instead.
+ *
+ * A chart or counter shows counts and groups, never rows, so the client hides nothing there and
+ * its hide rules count for nothing here (else a task would count twice: its to-do and its copy).
+ * A stored rule that is not a display rule (malformed) is skipped, never an error.
+ */
+function hiddenExpression(ctx: CompileContext, computed: Filter): Expression {
+  const hiding = new Compilation('items', ctx);
+  const field = (path: string): Expression => {
+    if (Object.hasOwn(computed, path)) return `$${path}`;
+    if (path === `overlay.attrs.${BUILTIN_IMPORTANCE_KEY}`) {
+      return { $ifNull: [`$${path}`, BUILTIN_IMPORTANCE_DEFAULT] };
+    }
+    const score = importanceFields(ctx.importance, ctx.attributes ?? [], ctx.now);
+    return Object.hasOwn(score, path) ? score[path] : `$${path}`;
+  };
+  const conditions: Expression[] = [{ $eq: ['$status', 'cancelled'] }];
+  const rules =
+    ctx.blockType !== undefined && COUNTING_BLOCKS.has(ctx.blockType) ? [] : ctx.displayRules;
+  (rules ?? []).forEach((stored, index) => {
+    const parsed = DisplayRuleSchema.safeParse(stored);
+    if (!parsed.success || !('hide' in parsed.data.then)) return;
+    try {
+      const filter = hiding.rule(parsed.data.if, `/rules/${String(index)}/if`);
+      if (filter !== null) conditions.push(filterExpression(filter, field));
+    } catch (error) {
+      if (!(error instanceof QueryValidationError || error instanceof FilterExpressionError)) {
+        throw error;
+      }
+    }
+  });
+  return conditions.length === 1 ? conditions[0] : { $or: conditions };
+}
+
 function capForPreview(limit: number, ctx: CompileContext): number {
   return ctx.preview ? Math.min(limit, CAPS.previewRows) : limit;
 }
@@ -1000,9 +1061,8 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
   }
 
   const filter = combine(filters, '$and');
-  // A block filtered by provider (not `local`) shows a provider copy: its to-do does not match.
   const access = new ItemAccessFilter(ctx.access);
-  const base = source === 'items' ? access.items(ctx.ws, filter) : access.containers(ctx.ws);
+  const base = source === 'items' ? access.items(ctx.ws) : access.containers(ctx.ws);
   const computed: Filter = {};
   if (compilation.usesImportance) {
     Object.assign(computed, importanceFields(ctx.importance, ctx.attributes ?? [], ctx.now));
@@ -1046,6 +1106,10 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
       : []),
     ...(Object.keys(computed).length === 0 ? [] : [{ $addFields: computed }]),
     ...(filter === null ? [] : [{ $match: filter }]),
+    // H5: a provider copy whose to-do is in this result, and shows, is the to-do's row; any other
+    // copy is its own. Before the dedup (as the access filter's rule was) and before the facet, so
+    // the total, the groups and the rows agree.
+    ...(source === 'items' ? ItemAccessFilter.copyAbsorption(hiddenExpression(ctx, computed)) : []),
     ...dedup,
     { $facet: facet },
   ];

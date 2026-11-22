@@ -197,7 +197,8 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
 
   /**
    * The topic of the newest block the caller sees with this subject that has one; null when there
-   * is none (no topic is assumed to exist: time-blocks design, Decision 5).
+   * is none (no topic is assumed to exist: time-blocks design, Decision 5). A block is never a
+   * provider copy, so H5's absorption has nothing to hide here.
    */
   static async lastTopicForSubject(caller: Caller, subject: string): Promise<string | null> {
     const [row] = await (

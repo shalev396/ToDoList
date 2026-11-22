@@ -269,18 +269,16 @@ def open_as(
         expect(page.get_by_role("heading", level=1)).to_have_text(h1, timeout=timeout)
 
 
-def demo_workspace(api_base_url: str):
+def demo_workspace(api_base_url: str, user):
     """Generator for a module-scoped fixture: a workspace filled with the demo data
-    (`loadDemoData`, honoured on dev and qa), owned by the worker's "demo" account, deleted at the
-    end of the module. Yields (user, workspace).
+    (`loadDemoData`, honoured on dev and qa), owned by `user` (the worker's "demo" account, made in
+    setup by the `pooled_demo` fixture), deleted at the end of the module. Yields (user,
+    workspace).
 
         @pytest.fixture(scope="module")
-        def demo(api_base_url):
-            yield from demo_workspace(api_base_url)
+        def demo(api_base_url, pooled_demo):
+            yield from demo_workspace(api_base_url, pooled_demo)
     """
-    from tests.helpers.users import pooled_user
-
-    user = pooled_user(api_base_url, "demo")
     forget_left_behind(api_base_url, user)
     workspace = create_workspace(
         api_base_url, user, "Demo workspace", timezone="Asia/Jerusalem", loadDemoData=True

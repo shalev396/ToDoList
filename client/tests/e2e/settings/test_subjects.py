@@ -95,6 +95,20 @@ def test_add_subject_with_live_count_and_save(
     )
 
 
+def test_a_magenta_subject_shows_its_own_swatch(
+    page: Page, base_url: str, api_base_url: str, fresh_owner
+):
+    """TLVTech in the new magenta family: the row carries it and its swatch paints magenta tokens."""
+    user, workspace = fresh_owner
+    _create_subjects(api_base_url, user, workspace, [("TLVTech", "magenta", ["*tlvtech*"])])
+    open_as(page, base_url, user, "/en/settings", h1="Settings")
+    row = page.locator('[data-subject="TLVTech"][data-family="magenta"]')
+    expect(row).to_be_visible(timeout=NORMAL_TIMEOUT)
+    for role in ("area", "travel", "scheduled", "work"):
+        expect(row.locator(f'[data-family="magenta"][data-role="{role}"]').first).to_be_visible()
+    expect(row).to_contain_text("Magenta")
+
+
 def test_reorder_and_rename(page: Page, base_url: str, api_base_url: str, fresh_owner):
     user, workspace = fresh_owner
     _seed(api_base_url, user, workspace)

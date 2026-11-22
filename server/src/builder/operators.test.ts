@@ -6,6 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { ItemAccessFilter } from '../classes/policies/ItemAccessFilter.js';
 import { BUILTIN_IMPORTANCE, type AttributeDef } from '../types/attributes.js';
 import { CAPS, OPERATORS, type Query } from '../types/builder.js';
 import { FIELD_CATALOG, OPERATORS_BY_TYPE } from './catalog.js';
@@ -38,8 +39,11 @@ function filter(
 ): Record<string, unknown> {
   const query = { source, where: { combinator: 'and', rules: [rule] } } as Query;
   const compiled = compileQuery(query, ctx);
-  // The query's own filter: the last $match (after the base filter and a stored-field prefilter).
-  const match = compiled.pipeline.filter((stage) => '$match' in stage).at(-1);
+  // The query's own filter: the last $match (after the base filter and a stored-field prefilter),
+  // not counting H5's copy absorption after it.
+  const match = compiled.pipeline
+    .filter((stage) => '$match' in stage && !ItemAccessFilter.isCopyAbsorption(stage))
+    .at(-1);
   return match?.['$match'] as Record<string, unknown>;
 }
 
