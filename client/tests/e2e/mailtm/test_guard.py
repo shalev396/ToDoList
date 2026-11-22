@@ -88,7 +88,8 @@ def test_untagged_tests_that_touch_mail_tm_are_found_at_collection():
     ]
     with_fixture = _Item("tests/e2e/x.py::test_b", _uses_helpers, ["pooled_demo"])
     assert problems(with_fixture) == ["calls new_mailbox()"]
-    assert problems(_Item("tests/e2e/x.py::test_c", _uses_helpers, ["fresh_user"], email=True)) == []
+    tagged = _Item("tests/e2e/x.py::test_c", _uses_helpers, ["fresh_user"], email=True)
+    assert problems(tagged) == []
     assert problems(_Item("tests/e2e/x.py::test_d", _uses_nothing, ["page"])) == []
     assert problems(_Item("tests/mailtm_client/test_x.py::t", _uses_helpers, ["fresh_user"])) == []
 
@@ -99,3 +100,26 @@ def test_each_pooled_role_has_its_setup_fixture(request):
         name = conftest.pooled_fixture(role)
         assert callable(getattr(conftest, name)), name
     assert conftest.pooled_fixture("kanban-scroll") == "pooled_kanban_scroll"
+
+
+def _mentions_only(page):
+    """Calls new_mailbox() in a docstring: not a call."""
+    # new_user() in a comment is not a call either
+    return page, "pooled_user(api, 'demo')"
+
+
+def _default_and_variable_roles(api_base_url, role, pooled_user):
+    pooled_user(api_base_url)
+    pooled_user(api_base_url, role)
+
+
+def test_the_scan_reads_calls_not_text_and_names_every_pooled_role():
+    problems = _conftest()._mail_problems
+    assert problems(_Item("tests/e2e/x.py::test_e", _mentions_only, ["page"])) == []
+    found = problems(_Item("tests/e2e/x.py::test_f", _default_and_variable_roles, ["page"]))
+    assert found == [
+        'calls pooled_user(..., "owner") without the `pooled_owner` fixture, which makes that '
+        "account in setup",
+        "calls pooled_user() with a role it can't name in advance: take the account from its "
+        "pooled_* fixture, which makes it in setup",
+    ]

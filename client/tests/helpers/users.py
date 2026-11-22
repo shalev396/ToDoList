@@ -22,6 +22,7 @@ set up through the API (tests/helpers/workspaces.py), including `load_demo_data=
 qa honour it).
 """
 from tests.helpers.mailtm import (
+    SessionUser,
     TestUser,
     create_mailtm_account,
     create_test_user,
@@ -29,7 +30,7 @@ from tests.helpers.mailtm import (
 )
 
 # One entry per (worker process, role): module state is per process, so xdist workers never share.
-_POOL: dict[tuple[str, str], TestUser] = {}
+_POOL: dict[tuple[str, str], SessionUser] = {}
 
 
 def new_user(api_base_url: str, with_workspace: bool = False) -> TestUser:
@@ -37,13 +38,14 @@ def new_user(api_base_url: str, with_workspace: bool = False) -> TestUser:
     return create_test_user(api_base_url, with_workspace=with_workspace)
 
 
-def pooled_user(api_base_url: str, role: str = "owner") -> TestUser:
+def pooled_user(api_base_url: str, role: str = "owner") -> SessionUser:
     """The worker's account for this role, created on first use (in setup: the `pooled_<role>`
-    fixtures). It has no workspace of its own."""
+    fixtures). It has no workspace of its own. It serves the whole run, so its id token is renewed
+    by logging in again once it is 45 minutes old (SessionUser)."""
     key = (api_base_url, role)
     user = _POOL.get(key)
     if user is None:
-        user = new_user(api_base_url)
+        user = SessionUser(new_user(api_base_url), api_base_url)
         _POOL[key] = user
     return user
 

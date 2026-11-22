@@ -11,11 +11,14 @@ fallback, and the wait's deadline counts only time not spent in line. The suite'
 (conftest.py) lets only tests tagged @pytest.mark.email, and the setup of the shared accounts,
 reach Mail.tm. This module holds the project's settings and the TodoList API steps.
 """
+import base64
+import json
 import os
 import re
 import secrets
+import time
 import uuid
-from typing import NamedTuple, Optional
+from typing import Callable, NamedTuple, Optional
 from urllib.parse import urlparse
 
 import requests
@@ -67,6 +70,75 @@ class TestUser(NamedTuple):
     refresh_token: str
     # Mail.tm password of the user's inbox, so a test can read mail sent to them ("" if unknown).
     mailtm_password: str = ""
+    # When the id token was issued (epoch seconds); 0 when unknown, then read from the token.
+    issued_at: float = 0.0
+
+
+# Cognito id tokens last an hour (server/infra auth.ts); a run can take longer. Accounts made once
+# for the whole run log in again once their token is this old.
+TOKEN_RENEWED_AFTER = 45 * 60
+
+
+def token_issued_at(id_token: str) -> float:
+    """The JWT's `iat` (epoch seconds), or 0 when it has none (or isn't a JWT)."""
+    parts = id_token.split(".")
+    if len(parts) != 3:
+        return 0.0
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+        return float(payload.get("iat") or 0.0)
+    except (ValueError, TypeError, AttributeError):
+        return 0.0
+
+
+class SessionUser:
+    """
+    An account the whole run shares (the shared user, a pooled one): a TestUser whose id token is
+    renewed by logging in again with its password once it is TOKEN_RENEWED_AFTER old, the first
+    time `id_token` or `refresh_token` is read after that. No Mail.tm call: the account and its
+    confirmed email exist already. Every other attribute is the TestUser's.
+    """
+
+    def __init__(
+        self,
+        user: TestUser,
+        api_base_url: str,
+        *,
+        clock: Callable[[], float] = time.time,
+        login: Optional[Callable[[str, str, str], tuple[str, str]]] = None,
+    ) -> None:
+        self._user = user
+        self._api_base_url = api_base_url
+        self._clock = clock
+        self._login = login or login_app
+
+    def fresh(self) -> TestUser:
+        """The account, with an id token younger than TOKEN_RENEWED_AFTER."""
+        user = self._user
+        issued = user.issued_at or token_issued_at(user.id_token)
+        if self._clock() - issued >= TOKEN_RENEWED_AFTER:
+            id_token, refresh_token = self._login(self._api_base_url, user.email, user.password)
+            self._user = user._replace(
+                id_token=id_token, refresh_token=refresh_token, issued_at=self._clock()
+            )
+        return self._user
+
+    @property
+    def id_token(self) -> str:
+        return self.fresh().id_token
+
+    @property
+    def refresh_token(self) -> str:
+        return self.fresh().refresh_token
+
+    def __getattr__(self, name: str):
+        return getattr(self._user, name)
+
+    def _asdict(self) -> dict:
+        return self.fresh()._asdict()
+
+    def __repr__(self) -> str:
+        return f"SessionUser({self._user.email!r})"
 
 
 def get_mailtm_domain() -> str:
@@ -191,7 +263,7 @@ def create_test_user(api_base_url: str, with_workspace: bool = True) -> TestUser
         code = poll_inbox_and_get_code(inbox.token, watch)
     confirm_signup_app(api_base_url, email, code)
     id_token, refresh_token = login_app(api_base_url, email, app_password)
-    user = TestUser(email, app_password, id_token, refresh_token, mailtm_password)
+    user = TestUser(email, app_password, id_token, refresh_token, mailtm_password, time.time())
     if with_workspace:
         ensure_workspace(api_base_url, user)
     return user

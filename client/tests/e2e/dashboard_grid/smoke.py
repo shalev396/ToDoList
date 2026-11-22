@@ -211,7 +211,10 @@ def _expect_focused(locator, page: Page, menu_node) -> None:
     try:
         expect(locator).to_be_focused()
     except AssertionError as error:
-        state = page.evaluate(_MENU_STATE, menu_node)
+        try:
+            state = page.evaluate(_MENU_STATE, menu_node)
+        except Exception as unavailable:  # noqa: BLE001 - the focus failure must still show
+            state = f"unavailable ({type(unavailable).__name__}: {unavailable})"
         raise AssertionError(f"{error}\nBlock menu state: {state}") from None
 
 

@@ -210,3 +210,53 @@ def test_the_invite_path_comes_from_the_invitees_inbox(mail):
 def test_an_inbox_without_its_password_cannot_be_read(mail):
     with pytest.raises(RuntimeError, match="password is unknown"):
         mailtm.wait_for_invite_path(mailtm.TestUser("u@mail.test", "pw", "id", "refresh"))
+
+
+class _Clock2:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_a_session_account_logs_in_again_once_its_token_is_45_minutes_old():
+    """No Mail.tm call: the stored password signs in again, and the new tokens are kept."""
+    clock = _Clock2(1_700_000_000.0)
+    logins = []
+
+    def login(api, email, password):
+        logins.append((api, email, password))
+        return f"id-{len(logins)}", f"refresh-{len(logins)}"
+
+    user = mailtm.TestUser("u@mail.test", "pw", "id-0", "refresh-0", "inbox", clock.now)
+    session = mailtm.SessionUser(user, "http://api.test", clock=clock, login=login)
+    clock.now += 44 * 60
+    assert (session.id_token, session.refresh_token, logins) == ("id-0", "refresh-0", [])
+    others = (session.email, session.password, session.mailtm_password)
+    assert others == ("u@mail.test", "pw", "inbox")
+    clock.now += 60
+    assert session.id_token == "id-1" and session.refresh_token == "refresh-1"
+    assert logins == [("http://api.test", "u@mail.test", "pw")]
+    clock.now += 44 * 60
+    assert session.id_token == "id-1" and len(logins) == 1  # renewed 44 min ago: kept
+    clock.now += 60
+    assert session._asdict()["id_token"] == "id-2"
+
+
+def test_a_token_without_a_known_issue_time_is_dated_by_its_iat():
+    import base64
+
+    def jwt(payload: dict) -> str:
+        body = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+        return f"x.{body}.y"
+
+    assert mailtm.token_issued_at(jwt({"iat": 1_700_000_000})) == 1_700_000_000
+    assert mailtm.token_issued_at("opaque") == 0.0
+    clock = _Clock2(1_700_000_000.0 + 10 * 60)
+    fresh = mailtm.TestUser("e", "p", jwt({"iat": 1_700_000_000}), "r")
+    session = mailtm.SessionUser(fresh, "api", clock=clock, login=lambda *a: ("new", "r2"))
+    assert session.id_token == fresh.id_token  # 10 minutes old by its iat
+    undated = mailtm.TestUser("e", "p", "opaque", "r")
+    stale = mailtm.SessionUser(undated, "api", clock=clock, login=lambda *a: ("new", "r2"))
+    assert stale.id_token == "new"  # no date at all: renewed at once

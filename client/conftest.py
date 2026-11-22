@@ -23,13 +23,14 @@ guard lets only tests tagged @pytest.mark.email, and the setup of the shared acc
 (shared_test_user, the pooled_* fixtures), call it. An untagged test that would touch Mail.tm
 fails before it starts when that shows in its fixtures or code, and otherwise at the call.
 """
+import ast
 import base64
 import inspect
 import json
 import os
-import re
 import subprocess
-import time
+import textwrap
+import uuid
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -44,14 +45,21 @@ SHARED_STATE_TESTS = ("tests/e2e/flows/",)
 OFFLINE_MAIL_TESTS = ("tests/mailtm_client/", "tests/e2e/mailtm/")
 # What makes or reads a real inbox: a test that uses one must be tagged @pytest.mark.email.
 MAIL_FIXTURES = frozenset({"fresh_user"})
-_MAIL_CALL = re.compile(
-    r"\b(new_user|new_mailbox|create_test_user(?:_and_login)?|wait_for_invite_path"
-    r"|create_mailtm_account|get_mailtm_token|poll_inbox_and_get_code)\s*\("
+MAIL_HELPERS = frozenset(
+    {
+        "new_user",
+        "new_mailbox",
+        "create_test_user",
+        "create_test_user_and_login",
+        "wait_for_invite_path",
+        "create_mailtm_account",
+        "get_mailtm_token",
+        "poll_inbox_and_get_code",
+    }
 )
-_POOLED_CALL = re.compile(r"\bpooled_user\(\s*[^,()]+,\s*[\"']([\w-]+)[\"']\s*\)")
 _MAIL_PROBLEMS = pytest.StashKey[list]()
 _VIOLATIONS_BEFORE = pytest.StashKey[int]()
-_SESSION_STARTED = time.time()
+_RUN_ID = pytest.StashKey[str]()
 
 
 def pooled_fixture(role: str) -> str:
@@ -78,10 +86,36 @@ def pytest_configure(config):
 
     from tests.config import DEFAULT_TIMEOUT
     from tests.mailtm_client import GUARD
+    from tests.mailtm_client.client import RUN_ID_ENV
 
     expect.set_options(timeout=DEFAULT_TIMEOUT)
     # From here on, a Mail.tm call needs a permission (an email-tagged test, or account setup).
     GUARD.enable()
+    if not hasattr(config, "workerinput"):
+        # One run id for every worker (pytest-xdist hands --testrunuid to each), so the shared
+        # queue counts this run's Mail.tm requests together and the summary finds them.
+        run_id = getattr(config.option, "testrunuid", None) or uuid.uuid4().hex
+        if hasattr(config.option, "testrunuid"):
+            config.option.testrunuid = run_id
+        os.environ[RUN_ID_ENV] = run_id
+        config.stash[_RUN_ID] = run_id
+
+
+def _calls(function) -> list:
+    """The calls in a test function's own code (its parsed source: comments and strings that
+    merely mention a helper don't count), as (name, arguments) pairs."""
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+    except (OSError, TypeError, SyntaxError):
+        return []
+    calls = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", None)
+            if name:
+                calls.append((name, node.args))
+    return calls
 
 
 def _mail_problems(item) -> list:
@@ -90,17 +124,23 @@ def _mail_problems(item) -> list:
         return []
     names = set(getattr(item, "fixturenames", ()))
     problems = [f"uses the `{name}` fixture" for name in sorted(MAIL_FIXTURES & names)]
-    try:
-        source = inspect.getsource(item.function)
-    except (AttributeError, OSError, TypeError):
-        source = ""
-    problems += [f"calls {name}()" for name in sorted(set(_MAIL_CALL.findall(source)))]
-    for role in sorted(set(_POOLED_CALL.findall(source))):
-        fixture = pooled_fixture(role)
+    calls = _calls(getattr(item, "function", None))
+    problems += [f"calls {name}()" for name in sorted({n for n, _ in calls if n in MAIL_HELPERS})]
+    for name, args in calls:
+        if name != "pooled_user":
+            continue
+        role = args[1] if len(args) > 1 else ast.Constant("owner")
+        if not (isinstance(role, ast.Constant) and isinstance(role.value, str)):
+            problems.append(
+                "calls pooled_user() with a role it can't name in advance: take the account from "
+                "its pooled_* fixture, which makes it in setup"
+            )
+            continue
+        fixture = pooled_fixture(role.value)
         if fixture not in names:
             problems.append(
-                f'calls pooled_user(..., "{role}") without the `{fixture}` fixture, which makes '
-                "that account in setup"
+                f'calls pooled_user(..., "{role.value}") without the `{fixture}` fixture, which '
+                "makes that account in setup"
             )
     return problems
 
@@ -142,25 +182,30 @@ def pytest_runtest_protocol(item, nextitem):
         return (yield)
 
 
-def pytest_terminal_summary(terminalreporter):
-    """This run's Mail.tm totals from the shared queue (every worker together), so a failure
-    shows how close the run came to the quotas."""
+def pytest_terminal_summary(terminalreporter, config):
+    """This run's Mail.tm totals from the shared queue (every worker together), by route, so a
+    failure shows how close the run came to the quotas, and which one bound."""
     from tests.helpers.mailtm import MAILTM_BASE
     from tests.mailtm_client import SharedQueue, default_state_dir
     from tests.mailtm_client.client import STATE_DIR_ENV
 
+    run_id = config.stash.get(_RUN_ID, None)
     try:
         state_dir = os.environ.get(STATE_DIR_ENV) or default_state_dir(MAILTM_BASE)
-        if not os.path.isdir(state_dir):
+        if run_id is None or not os.path.isdir(state_dir):
             return
-        run = SharedQueue(state_dir).counters()
+        run = SharedQueue(state_dir).counters(run_id)
     except Exception as error:  # noqa: BLE001 - a summary line must never fail the run
         terminalreporter.write_line(f"mail.tm: no totals ({type(error).__name__}: {error})")
         return
-    if run.requests and run.since >= _SESSION_STARTED - 1:
+    if run.requests:
+        routes = ", ".join(
+            f"{route} {sent}" + (f" ({refused} refused)" if refused else "")
+            for route, (sent, refused) in sorted(run.routes.items())
+        )
         terminalreporter.write_line(
             f"mail.tm this run: {run.requests} requests, {run.refused} answered 429, "
-            f"longest wait in line {run.longest_wait:.0f} s"
+            f"longest wait in line {run.longest_wait:.0f} s; by route: {routes}"
         )
 
 
@@ -292,7 +337,12 @@ def shared_test_user(api_base_url, tmp_path_factory):
     Creating the user fails (instead of skipping) on SES or rate-limit errors: a skip would hide
     every auth-dependent test behind green skips. To avoid spending SES quota, set E2E_TEST_*.
     """
-    from tests.helpers.mailtm import TestUser, create_test_user, get_test_user_from_env
+    from tests.helpers.mailtm import (
+        SessionUser,
+        TestUser,
+        create_test_user,
+        get_test_user_from_env,
+    )
     from tests.helpers.workspaces import ensure_workspace
     from tests.mailtm_client import GUARD
 
@@ -306,7 +356,9 @@ def shared_test_user(api_base_url, tmp_path_factory):
         with GUARD.allow("setup: the shared test user"):
             return create_test_user(api_base_url)._asdict()
 
-    return TestUser(**_run_once(tmp_path_factory, "shared-test-user", create))
+    # It serves the whole run: its id token is renewed by logging in again once it is 45 min old.
+    user = TestUser(**_run_once(tmp_path_factory, "shared-test-user", create))
+    return SessionUser(user, api_base_url)
 
 
 def _pooled(api_base_url: str, role: str):
