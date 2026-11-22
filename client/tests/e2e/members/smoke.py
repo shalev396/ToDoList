@@ -5,6 +5,7 @@ Each test owns a fresh workspace (deleted after it); other people are the worker
 """
 import re
 
+import pytest
 import requests
 from playwright.sync_api import Page, expect
 
@@ -17,7 +18,7 @@ from tests.helpers.workspaces import (
     open_as,
     sign_in,
 )
-from tests.helpers.users import new_mailbox, pooled_user
+from tests.helpers.users import new_mailbox
 
 
 def _members(api_base_url: str, user, workspace_id: str) -> list:
@@ -30,9 +31,9 @@ def _members(api_base_url: str, user, workspace_id: str) -> list:
     return response.json()["data"]
 
 
-def _add_member(api_base_url: str, owner, workspace_id: str, role: str = "viewer"):
-    """The worker's second account, after it accepted an invite (through the API)."""
-    member = pooled_user(api_base_url, "member")
+def _add_member(api_base_url: str, owner, workspace_id: str, member, role: str = "viewer"):
+    """The worker's second account (`pooled_member`), after it accepted an invite (through the
+    API)."""
     created = create_invite(api_base_url, owner, workspace_id, member.email, role)
     accept_invite(api_base_url, member, invite_token(created["inviteUrl"]))
     return member
@@ -58,6 +59,7 @@ def test_members_redirects_unauthenticated(page: Page, app_url: str):
     expect(page).to_have_url(f"{app_url}/auth/login?next=%2Fen%2Fsettings%2Fmembers")
 
 
+@pytest.mark.email
 def test_invite_is_sent_and_waits_in_the_pending_list(page: Page, base_url: str, fresh_owner):
     """Send invite emails the address (the toast says so; the link is never shown or logged) and
     the invite waits in the pending list with its role."""
@@ -86,6 +88,7 @@ def test_invite_is_sent_and_waits_in_the_pending_list(page: Page, base_url: str,
     expect(pending).not_to_contain_text("All topics")
 
 
+@pytest.mark.email
 def test_several_emails_each_get_an_invite(page: Page, base_url: str, api_base_url: str, fresh_owner):
     user, workspace = fresh_owner
     open_as(page, base_url, user, "/en/settings/members", h1="Settings")
@@ -120,6 +123,7 @@ def test_inviting_a_member_again_is_refused_inline(page: Page, base_url: str, fr
     expect(dialog.get_by_role("alert")).to_contain_text("already a member", timeout=NORMAL_TIMEOUT)
 
 
+@pytest.mark.email
 def test_revoke_a_pending_invite(page: Page, base_url: str, api_base_url: str, fresh_owner):
     user, workspace = fresh_owner
     email = new_mailbox()
@@ -131,10 +135,12 @@ def test_revoke_a_pending_invite(page: Page, base_url: str, api_base_url: str, f
     expect(dialog.get_by_text("No pending invites.")).to_be_visible()
 
 
-def test_owner_changes_a_role(page: Page, base_url: str, api_base_url: str, fresh_owner):
+def test_owner_changes_a_role(
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
+):
     """A workspace is shared whole (PERMISSIONS-V2): a member has a role, and no topic menu."""
     user, workspace = fresh_owner
-    member = _add_member(api_base_url, user, workspace["id"])
+    member = _add_member(api_base_url, user, workspace["id"], pooled_member)
     open_as(page, base_url, user, "/en/settings/members", h1="Settings")
     dialog = _open_share(page)
     name = _shown_name(api_base_url, user, workspace["id"], member)
@@ -148,9 +154,11 @@ def test_owner_changes_a_role(page: Page, base_url: str, api_base_url: str, fres
     assert "areaScope" not in row
 
 
-def test_owner_removes_a_member(page: Page, base_url: str, api_base_url: str, fresh_owner):
+def test_owner_removes_a_member(
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
+):
     user, workspace = fresh_owner
-    member = _add_member(api_base_url, user, workspace["id"])
+    member = _add_member(api_base_url, user, workspace["id"], pooled_member)
     open_as(page, base_url, user, "/en/settings/members", h1="Settings")
     dialog = _open_share(page)
     name = _shown_name(api_base_url, user, workspace["id"], member)
@@ -162,13 +170,13 @@ def test_owner_removes_a_member(page: Page, base_url: str, api_base_url: str, fr
 
 
 def test_removed_member_is_reset_like_a_switch(
-    page: Page, base_url: str, api_base_url: str, fresh_owner, new_workspace
+    page: Page, base_url: str, api_base_url: str, fresh_owner, new_workspace, pooled_member
 ):
     """Review focus 2: when the current workspace leaves my list (its owner removed me), the
     app resets as on a switch: the open dialog closes, the old workspace's data goes, and I
     land on the dashboard of the workspace I still have."""
     owner, workspace = fresh_owner
-    member = _add_member(api_base_url, owner, workspace["id"])
+    member = _add_member(api_base_url, owner, workspace["id"], pooled_member)
     home = new_workspace(member, "Member Home")
     sign_in(page, base_url, member)
     page.evaluate("(id) => localStorage.setItem('todolist-current-workspace', id)", workspace["id"])
@@ -206,11 +214,11 @@ def test_owner_row_cannot_be_changed(page: Page, base_url: str, fresh_owner):
 
 
 def test_a_member_sees_who_has_access_read_only(
-    page: Page, base_url: str, api_base_url: str, fresh_owner
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
 ):
     """Everyone may open Share, but only the owner can add people or change access."""
     owner, workspace = fresh_owner
-    member = _add_member(api_base_url, owner, workspace["id"], role="editor")
+    member = _add_member(api_base_url, owner, workspace["id"], pooled_member, role="editor")
     open_as(page, base_url, member, "/en/settings/members", h1="Workspace", workspace_id=workspace["id"])
     dialog = _open_share(page)
     expect(dialog.get_by_role("heading", name="People with access")).to_be_visible(timeout=NORMAL_TIMEOUT)
@@ -221,7 +229,13 @@ def test_a_member_sees_who_has_access_read_only(
 
 
 def test_anyone_with_the_link_joins_as_a_viewer(
-    page: Page, base_url: str, api_base_url: str, fresh_owner, browser_context_args
+    page: Page,
+    base_url: str,
+    api_base_url: str,
+    fresh_owner,
+    browser_context_args,
+    pooled_member,
+    pooled_other,
 ):
     """General access: the owner turns on "Anyone with the link" (Can view); a second user, with
     no invite, opens the link and becomes a viewer. Reset kills the old link;
@@ -242,7 +256,7 @@ def test_anyone_with_the_link_joins_as_a_viewer(
     dialog.get_by_role("button", name="Copy link").click()
     assert page.evaluate("() => navigator.clipboard.readText()") == link
 
-    guest = pooled_user(api_base_url, "member")
+    guest = pooled_member
     # The test's own context arguments: on a deployed dev/qa site they carry the WAF gate's
     # basic-auth credentials (conftest.py), without which the join page never loads.
     guest_page = page.context.browser.new_context(**browser_context_args).new_page()
@@ -264,7 +278,7 @@ def test_anyone_with_the_link_joins_as_a_viewer(
     dialog.get_by_role("button", name="Reset link").click()
     page.get_by_role("alertdialog").get_by_role("button", name="Reset link").click()
     expect(link_field).not_to_have_value(link, timeout=NORMAL_TIMEOUT)
-    late = pooled_user(api_base_url, "other")
+    late = pooled_other
     old_token = link.rsplit("/", 1)[1]
     response = requests.post(
         f"{api_base_url}/private/join-links/accept",
@@ -279,7 +293,9 @@ def test_anyone_with_the_link_joins_as_a_viewer(
     expect(dialog.get_by_label("Join link")).to_have_count(0, timeout=NORMAL_TIMEOUT)
 
 
-def test_a_join_link_can_give_edit_access(page: Page, base_url: str, api_base_url: str, fresh_owner):
+def test_a_join_link_can_give_edit_access(
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
+):
     owner, workspace = fresh_owner
     open_as(page, base_url, owner, "/en/settings/members", h1="Settings")
     dialog = _open_share(page)
@@ -289,7 +305,7 @@ def test_a_join_link_can_give_edit_access(page: Page, base_url: str, api_base_ur
     expect(dialog.get_by_text("can join and edit")).to_be_visible(timeout=NORMAL_TIMEOUT)
     token = link_field.input_value().rsplit("/", 1)[1]
 
-    guest = pooled_user(api_base_url, "member")
+    guest = pooled_member
     response = requests.post(
         f"{api_base_url}/private/join-links/accept",
         json={"token": token},

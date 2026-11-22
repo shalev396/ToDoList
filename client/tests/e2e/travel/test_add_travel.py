@@ -29,7 +29,6 @@ from tests.helpers.dashboards import create_dashboard
 from tests.helpers.scheduled import add_days, open_new_sheet, this_sunday, zoned_iso
 from tests.helpers.select import choose
 from tests.helpers.travel import create_place, list_rules
-from tests.helpers.users import pooled_user
 from tests.helpers.workspaces import open_as
 from tests.viewports import DESKTOP_VIEWPORT
 
@@ -374,11 +373,11 @@ def test_due_only_todo_asks_for_a_time(page: Page, base_url: str, api_base_url: 
 
 
 @pytest.fixture
-def demo_owner(api_base_url, new_workspace):
+def demo_owner(new_workspace, pooled_owner):
     """The worker's owner account, owning a new workspace with the demo data: its Google
     calendar mirror has "Data Structures lecture", weekly at 10:00 from 13 days ago (the occurrence
     in 8 days is cancelled), at "Building L, Room 105". Deleted after the test."""
-    user = pooled_user(api_base_url, "owner")
+    user = pooled_owner
     return user, new_workspace(
         user, "Travel demo", timezone="Asia/Jerusalem", loadDemoData=True
     )

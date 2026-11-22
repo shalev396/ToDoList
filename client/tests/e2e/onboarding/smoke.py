@@ -4,10 +4,10 @@ invites waiting for their email. Each fresh user is a new Cognito account (Mail.
 """
 import re
 
+import pytest
 from playwright.sync_api import Page, expect
 
 from tests.config import DEMO_SEED_TIMEOUT, LONG_TIMEOUT, NORMAL_TIMEOUT
-from tests.helpers.users import pooled_user
 from tests.helpers.workspaces import create_invite, open_as, sign_in
 
 
@@ -17,6 +17,7 @@ def test_onboarding_redirects_unauthenticated(page: Page, app_url: str):
     expect(page).to_have_url(f"{app_url}/auth/login?next=%2Fen%2Fonboarding")
 
 
+@pytest.mark.email
 def test_user_without_workspace_is_sent_to_onboarding(
     page: Page, base_url: str, app_url: str, fresh_user
 ):
@@ -31,6 +32,7 @@ def test_user_without_workspace_is_sent_to_onboarding(
     expect(page.get_by_role("heading", level=1)).to_have_text("Profile", timeout=NORMAL_TIMEOUT)
 
 
+@pytest.mark.email
 def test_login_without_workspace_goes_to_onboarding(page: Page, app_url: str, fresh_user):
     """Logging in through the form with no workspace lands on onboarding."""
     page.goto(f"{app_url}/auth/login", wait_until="load")
@@ -40,6 +42,7 @@ def test_login_without_workspace_goes_to_onboarding(page: Page, app_url: str, fr
     expect(page).to_have_url(f"{app_url}/onboarding", timeout=LONG_TIMEOUT)
 
 
+@pytest.mark.email
 def test_slug_preview_follows_the_name_until_edited(
     page: Page, base_url: str, app_url: str, fresh_user
 ):
@@ -54,12 +57,14 @@ def test_slug_preview_follows_the_name_until_edited(
     expect(slug).to_have_value("my-workspace-name")
 
 
+@pytest.mark.email
 def test_hebrew_name_gets_a_random_slug(page: Page, base_url: str, app_url: str, fresh_user):
     open_as(page, base_url, fresh_user, "/en/onboarding", h1="Welcome to TodoList")
     page.get_by_label("Name", exact=True).fill("לימודים ועבודה")
     expect(page.get_by_label("Link name")).to_have_value(re.compile(r"^workspace-[a-z0-9]{6}$"))
 
 
+@pytest.mark.email
 def test_create_workspace_opens_its_dashboard(
     page: Page, base_url: str, app_url: str, fresh_user
 ):
@@ -74,6 +79,7 @@ def test_create_workspace_opens_its_dashboard(
     expect(page.get_by_role("button", name="Ada Lab, switch workspace")).to_be_visible()
 
 
+@pytest.mark.email
 def test_create_without_demo_data_starts_with_one_empty_personal_page(
     page: Page, base_url: str, app_url: str, fresh_user
 ):
@@ -94,10 +100,17 @@ def test_create_without_demo_data_starts_with_one_empty_personal_page(
         expect(nav.get_by_role("link", name=topic, exact=True)).to_have_count(0)
 
 
+@pytest.mark.email
 def test_taken_slug_is_reported_on_the_field(
-    page: Page, base_url: str, app_url: str, api_base_url: str, fresh_user, new_workspace
+    page: Page,
+    base_url: str,
+    app_url: str,
+    api_base_url: str,
+    fresh_user,
+    new_workspace,
+    pooled_owner,
 ):
-    owner = pooled_user(api_base_url, "owner")
+    owner = pooled_owner
     taken = new_workspace(owner, "Taken Lab")["slug"]
     open_as(page, base_url, fresh_user, "/en/onboarding", h1="Welcome to TodoList")
     page.get_by_label("Name", exact=True).fill("Another Lab")
@@ -109,11 +122,18 @@ def test_taken_slug_is_reported_on_the_field(
     expect(page).to_have_url(f"{app_url}/onboarding")
 
 
+@pytest.mark.email
 def test_pending_invites_are_listed(
-    page: Page, base_url: str, app_url: str, api_base_url: str, fresh_user, new_workspace
+    page: Page,
+    base_url: str,
+    app_url: str,
+    api_base_url: str,
+    fresh_user,
+    new_workspace,
+    pooled_owner,
 ):
     """Invites sent to my email show with the workspace's name; joining needs the link."""
-    owner = pooled_user(api_base_url, "owner")
+    owner = pooled_owner
     workspace = new_workspace(owner, "Invite Lab")
     create_invite(api_base_url, owner, workspace["id"], fresh_user.email, "viewer")
     open_as(page, base_url, fresh_user, "/en/onboarding", h1="Welcome to TodoList")

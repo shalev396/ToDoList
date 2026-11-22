@@ -19,8 +19,8 @@ PROVIDER = "google_calendar"
 
 
 @pytest.fixture(scope="module")
-def demo(api_base_url):
-    yield from demo_workspace(api_base_url)
+def demo(api_base_url, pooled_demo):
+    yield from demo_workspace(api_base_url, pooled_demo)
 
 
 def _open_panel(page: Page, base_url: str, user, workspace_id: str, locale: str = "en"):
