@@ -13,7 +13,8 @@
  * - Every change starts from an item the caller may see (ItemPolicy: share-on-attach), found by
  *   `Item.find`: anything else is a 404. `edit` is polymorphic: a to-do changes its own fields, a
  *   mirrored item splits the edit between its provider and its overrides. `setOverlay` is the same
- *   for every item: TodoList's own fields, never written to a provider.
+ *   for every item: TodoList's own fields, never written to a provider; so is `setDisabled`
+ *   (Disabled.ts), polymorphic over a series.
  */
 import { AuditTarget } from '../base/AuditTarget.js';
 import type { Caller } from '../base/Caller.js';
@@ -36,6 +37,8 @@ import { layerOf } from '../../types/scheduled.js';
 import { AttributeValues } from './AttributeValues.js';
 import { isCompletable, isDeletable, type Completable, type Deletable } from './contracts.js';
 import { Copies, type LiveStatuses } from './Copies.js';
+import { DisabledState, type DisableChange } from './Disabled.js';
+import { ItemChanges } from './ItemChanges.js';
 import { DueDate } from './DueDate.js';
 import type { ItemEdit, ProviderHalf } from './ItemEdit.js';
 import type { ItemEditing } from './ItemEditing.js';
@@ -447,6 +450,50 @@ export abstract class Item
     (await ItemPolicy.for(caller)).assertCanOverride(caller, this.facts);
     const checked = AttributeValues.checked(values, AttributeDefinitions.of(caller.settings));
     return this.storeOverlay({ attrs: checked.toStored(), editedAt: now });
+  }
+
+  /**
+   * Disables the item, or occurrences of its series, or enables them again (editors who see it;
+   * Disabled.ts): TodoList's own state, never written to a provider. Polymorphic: a single item
+   * changes as a whole; a repeating time block or area, and a Google series, by `change.scope`; a
+   * travel leg refuses (it is skipped). The item as now stored.
+   */
+  async setDisabled(caller: Caller, change: DisableChange, now: Date = new Date()): Promise<Item> {
+    this.assertIn(caller);
+    (await ItemPolicy.for(caller)).assertCanOverride(caller, this.facts);
+    const updated = await this.applyDisabled(caller, change, now);
+    // Travel hears of it: a disabled occurrence anchors no trip (ItemChanges).
+    await ItemChanges.notify(caller, {
+      itemId: this.id,
+      kind: this.kind,
+      before: this.data,
+      after: updated.data,
+    });
+    return updated;
+  }
+
+  /** A single item: the whole of it (a scope or an occurrence names nothing more). */
+  protected applyDisabled(_caller: Caller, change: DisableChange, now: Date): Promise<Item> {
+    return this.storeOverlay({ disabled: change.disabled ? true : null, editedAt: now });
+  }
+
+  /** One occurrence of its series, by original start, disabled or enabled (the item as now stored). */
+  protected async storeDisabledOccurrence(
+    originalStart: Date,
+    disabled: boolean,
+    now: Date,
+  ): Promise<Item> {
+    const updated = await (
+      await getItemRepository()
+    ).setOccurrenceDisabled(
+      this.workspaceId,
+      this.id,
+      DisabledState.key(originalStart),
+      disabled,
+      now,
+    );
+    if (updated === null) throw new NotFoundError();
+    return Item.from(updated);
   }
 
   /** Stores an overlay patch; the item as now stored (404 when it is gone). */

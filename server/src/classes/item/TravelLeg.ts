@@ -493,6 +493,13 @@ export class TravelLeg extends ScheduledItem {
     return super.setOverlay(caller, edit);
   }
 
+  /** A leg is skipped, never disabled (400): disabling its event removes it. */
+  protected override applyDisabled(): Promise<Item> {
+    return Promise.reject(
+      new ValidationError('disabled: a trip is skipped, not disabled (disable its event instead)'),
+    );
+  }
+
   /** Custom attribute values, but never a subject of its own (400): its event's applies. */
   override setAttributes(
     caller: Caller,

@@ -33,6 +33,8 @@ function row(id: string, patch: Partial<ItemQueryRow>): ItemQueryRow {
       plannedAt: null,
       editedAt: null,
       attrs: {},
+      disabled: null,
+      disabledOccurrences: [],
     },
     closedAt: null,
     ...patch,

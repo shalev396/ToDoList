@@ -35,14 +35,16 @@ import { ProviderItemMissingError } from '../../errors/ProviderItemMissingError.
 import { ProviderNoAnswerError } from '../../errors/ProviderNoAnswerError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
-import type { ItemData } from '../../models/definitions/Item.js';
+import { NotAnOccurrenceError } from '../../errors/NotAnOccurrenceError.js';
+import type { GoogleSeriesRef, ItemData } from '../../models/definitions/Item.js';
 import { getItemRepository } from '../../models/index.js';
 import { logger } from '../../services/logger.js';
 import { calendarEventExternalId, mapCalendarEvent } from '../../sync/providers/google_calendar.js';
 import type { MappedItem } from '../../sync/types.js';
-import { isSeriesRow, toDate } from '../../types/recurrence/occurrences.js';
+import { isSeriesRow, seriesHasSlot, toDate } from '../../types/recurrence/occurrences.js';
 import type { Recurring, Schedulable } from './contracts.js';
 import { CreateQuota } from './CreateQuota.js';
+import { DisabledState, SERIES_DISABLED_MESSAGE, type DisableChange } from './Disabled.js';
 import { eventHasGuests } from './guests.js';
 import { Item } from './Item.js';
 import type { ProviderHalf } from './ItemEdit.js';
@@ -128,9 +130,12 @@ export class CalendarEvent extends MirroredItem implements Schedulable, Recurrin
    * caller sees exactly one master of that series (`master`), else by its own; and by its original
    * start. Null for any other event.
    */
-  async seriesOccurrence(
-    caller: Caller,
-  ): Promise<{ seriesId: string; master: boolean; originalStart: Date } | null> {
+  async seriesOccurrence(caller: Caller): Promise<{
+    seriesId: string;
+    master: boolean;
+    originalStart: Date;
+    disabled: 'series' | 'occurrence' | null;
+  } | null> {
     const { props } = this.data;
     const calendarId = props['calendarId'];
     const seriesEventId = props['recurringEventId'];
@@ -162,9 +167,108 @@ export class CalendarEvent extends MirroredItem implements Schedulable, Recurrin
       .map((doc) => Item.fromDoc(doc))
       .filter((item) => item instanceof CalendarEvent && item.isRecurring);
     const [master] = masters;
-    return masters.length === 1 && master !== undefined
-      ? { seriesId: master.id, master: true, originalStart }
-      : { seriesId: this.id, master: false, originalStart };
+    if (masters.length !== 1 || master === undefined) {
+      return { seriesId: this.id, master: false, originalStart, disabled: null };
+    }
+    const state = master.overlay.disabledState;
+    return {
+      seriesId: master.id,
+      master: true,
+      originalStart,
+      disabled: state.whole ? 'series' : state.listed(originalStart) ? 'occurrence' : null,
+    };
+  }
+
+  /**
+   * The Google series it belongs to, as this integration stores it: its own as a master, its
+   * master's as an exception row (`recurringEventId`), with the slot an exception row fills. Null
+   * for a single event.
+   */
+  get #series(): { ref: GoogleSeriesRef; originalStart: Date | null } | null {
+    const { props, source } = this.data;
+    const calendarId = props['calendarId'];
+    const eventId = this.isRecurring ? props['eventId'] : props['recurringEventId'];
+    if (typeof calendarId !== 'string' || typeof eventId !== 'string') return null;
+    const original = props['originalStartAt'];
+    return {
+      ref: { integrationId: this.integrationId, accountId: source.accountId, calendarId, eventId },
+      originalStart: this.isRecurring
+        ? null
+        : toDate(typeof original === 'string' ? original : null),
+    };
+  }
+
+  /**
+   * Disabling an event of a Google series (Disabled.ts). `series` marks the master and every
+   * exception row of it (moved, cancelled) at once, from either. One occurrence (`occurrence`, or
+   * an exception row with no scope) marks the exception row that fills its slot, else the slot in
+   * the master's list; enabling it clears both, and is 400 while the master disables the whole
+   * series. A single event changes as a whole.
+   */
+  protected override async applyDisabled(
+    caller: Caller,
+    change: DisableChange,
+    now: Date,
+  ): Promise<Item> {
+    const series = this.#series;
+    if (series === null) return super.applyDisabled(caller, change, now);
+    const scope =
+      change.scope ??
+      (this.isRecurring && change.occurrenceStart === undefined ? 'series' : 'occurrence');
+    const items = await getItemRepository();
+    if (scope === 'series') {
+      await items.setSeriesDisabled(this.workspaceId, series.ref, change.disabled, now);
+      return this.reload();
+    }
+    const eventOf = (row: ItemData | null): CalendarEvent | null => {
+      const item = row === null ? null : Item.from(row);
+      return item instanceof CalendarEvent ? item : null;
+    };
+    let master: CalendarEvent | null = this.isRecurring ? this : null;
+    let exception: CalendarEvent | null = this.isRecurring ? null : this;
+    let slot = series.originalStart;
+    if (this.isRecurring) {
+      slot = change.occurrenceStart ?? null;
+      if (slot === null) {
+        throw new ValidationError('occurrenceStart: one occurrence is named by its original start');
+      }
+      const row = await items.findSeriesException(
+        this.workspaceId,
+        series.ref,
+        DisabledState.key(slot),
+      );
+      exception = eventOf(row);
+      if (exception === null && !seriesHasSlot(this.data, slot, caller.settings.timezone)) {
+        throw new NotAnOccurrenceError('occurrenceStart: not an occurrence of this series');
+      }
+    } else {
+      const row = await items.findBySource(
+        this.workspaceId,
+        {
+          provider: this.provider,
+          accountId: series.ref.accountId,
+          integrationId: this.integrationId,
+        },
+        calendarEventExternalId(series.ref.calendarId, series.ref.eventId),
+      );
+      master = eventOf(row);
+    }
+    const whole = master?.overlay.disabledState.whole === true;
+    if (whole && !change.disabled) throw new ValidationError(SERIES_DISABLED_MESSAGE);
+    if (change.disabled) {
+      if (whole) return this;
+      if (exception !== null) {
+        await exception.storeOverlay({ disabled: true, editedAt: now });
+      } else if (master !== null && slot !== null) {
+        await master.storeDisabledOccurrence(slot, true, now);
+      }
+      return this.reload();
+    }
+    if (exception !== null) await exception.storeOverlay({ disabled: null, editedAt: now });
+    if (master !== null && slot !== null && master.overlay.disabledState.listed(slot)) {
+      await master.storeDisabledOccurrence(slot, false, now);
+    }
+    return this.reload();
   }
 
   protected override needsGuestNotice(): boolean {

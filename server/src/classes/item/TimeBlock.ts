@@ -41,6 +41,7 @@ import {
   isSeriesRow,
   localExceptionsOf,
   recurrenceEndOf,
+  seriesHasSlot,
   type LocalException,
   type Occurrence,
   type Range,
@@ -49,6 +50,7 @@ import {
 import type { BlockLayer } from '../../types/scheduled.js';
 import { TIME_BLOCK_MAX_MS, TIME_BLOCK_MIN_MS } from '../../types/timeBlocks.js';
 import type { Deletable, Recurring } from './contracts.js';
+import { SERIES_DISABLED_MESSAGE, type DisableChange } from './Disabled.js';
 import { Item } from './Item.js';
 import { ItemChanges } from './ItemChanges.js';
 import type { EditField, ItemEdit } from './ItemEdit.js';
@@ -320,6 +322,42 @@ export class TimeBlock extends ScheduledItem implements Recurring, Deletable {
       originalStart: originalStart.toISOString(),
       skipped: true,
     }));
+  }
+
+  /**
+   * Disabling a repeating block or area (Disabled.ts): `series` (or no scope and no occurrence)
+   * marks every occurrence and drops the one-by-one marks; `occurrence` marks the one at
+   * `occurrenceStart`, its original start (400 `not_an_occurrence` for a start that is none of
+   * the series' slots). Enabling one occurrence of a series disabled as a whole is 400. A block
+   * that does not repeat changes as a whole.
+   */
+  protected override async applyDisabled(
+    caller: Caller,
+    change: DisableChange,
+    now: Date,
+  ): Promise<Item> {
+    if (!this.isRecurring) return super.applyDisabled(caller, change, now);
+    const scope = change.scope ?? (change.occurrenceStart === undefined ? 'series' : 'occurrence');
+    if (scope === 'series') {
+      return this.storeOverlay({
+        disabled: change.disabled ? true : null,
+        disabledOccurrences: [],
+        editedAt: now,
+      });
+    }
+    const slot = change.occurrenceStart;
+    if (slot === undefined) {
+      throw new ValidationError('occurrenceStart: one occurrence is named by its original start');
+    }
+    if (!seriesHasSlot(this.data, slot, caller.settings.timezone)) {
+      throw new NotAnOccurrenceError('occurrenceStart: not an occurrence of this series');
+    }
+    const state = this.overlay.disabledState;
+    if (state.whole) {
+      if (!change.disabled) throw new ValidationError(SERIES_DISABLED_MESSAGE);
+      return this;
+    }
+    return this.storeDisabledOccurrence(slot, change.disabled, now);
   }
 
   /**

@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { AttributeKeySchema } from '../types/attributes.js';
 import { ITEM_KINDS, ITEM_STATUSES, PROVIDERS } from '../types/domain.js';
+import { DISABLE_SCOPES } from '../types/items.js';
 
 const Iso = z.iso.datetime({ offset: true });
 const Title = z.string().trim().min(1).max(300);
@@ -90,8 +91,20 @@ export const UpdateOverlayBody = z
     plannedAt: z.string().max(16).nullable().optional(),
     /** Custom attribute values by key; null clears one (types/attributes.ts). */
     attrs: AttrValues.optional(),
+    /** Disable (true) or enable (false): the item, or occurrences of its series (`scope`). */
+    disabled: z.boolean().optional(),
+    /** With `disabled`: one occurrence, or every occurrence of a series. */
+    scope: z.enum(DISABLE_SCOPES).optional(),
+    /** With `disabled`: the occurrence's original start. */
+    occurrenceStart: Iso.optional(),
   })
-  .refine((body) => Object.keys(body).length > 0, 'At least one change is required');
+  .refine((body) => Object.keys(body).length > 0, 'At least one change is required')
+  .refine(
+    (body) =>
+      body.disabled !== undefined ||
+      (body.scope === undefined && body.occurrenceStart === undefined),
+    { message: 'scope and occurrenceStart go with disabled', path: ['disabled'] },
+  );
 
 export const CompleteItemBody = z.strictObject({ done: z.boolean() });
 

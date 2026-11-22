@@ -55,6 +55,8 @@ function row(id: string, over: Partial<ItemQueryRow> = {}): ItemQueryRow {
       plannedAt: null,
       editedAt: null,
       attrs: {},
+      disabled: null,
+      disabledOccurrences: [],
     },
     closedAt: null,
     ...over,

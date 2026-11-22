@@ -257,6 +257,7 @@ export class ItemQuery {
           seriesOccurrence: {
             seriesId: occurrence.seriesId,
             originalStart: occurrence.originalStart.toISOString(),
+            disabled: occurrence.disabled,
           },
         };
   }

@@ -104,6 +104,8 @@ function toItemRow(doc: Record<string, unknown>): ItemQueryRow {
       plannedAt: text(overlay['plannedAt']),
       editedAt: date(overlay['editedAt']),
       attrs: record(scrub(record(overlay['attrs']))),
+      disabled: flag(overlay['disabled']),
+      disabledOccurrences: strings(overlay['disabledOccurrences']),
     },
     closedAt: date(doc['closedAt']),
     ...(typeof doc['importance'] === 'number' ? { importance: doc['importance'] } : {}),
