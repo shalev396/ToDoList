@@ -489,6 +489,73 @@ describe('create_time_block and edit_time_block', () => {
     assert.match(errorText(untitled), /title/);
   });
 
+  it('set_overlay disables one occurrence, then the series: get_calendar keeps them, not busy', async () => {
+    const { item } = await made({
+      title: 'Seminar',
+      startAt: SUNDAY,
+      endAt: week(0, 2),
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU;COUNT=3'],
+    });
+    interface Entry {
+      id: string;
+      busy?: boolean;
+      inactive?: string | null;
+      occurrence: { seriesId: string; originalStart: string } | null;
+    }
+    const entries = async (): Promise<[string, boolean | undefined, string | null][]> =>
+      (
+        structured(
+          await call(blocksKey, 'get_calendar', { range: 'custom', from: SUNDAY, to: week(3) }),
+        ) as { items: Entry[] }
+      ).items
+        .filter((entry) => entry.occurrence?.seriesId === item.id)
+        .map((entry) => [
+          entry.occurrence?.originalStart ?? '',
+          entry.busy,
+          entry.inactive ?? null,
+        ]);
+    const one = await call(blocksKey, 'set_overlay', {
+      id: item.id,
+      disabled: true,
+      scope: 'occurrence',
+      occurrenceStart: week(1),
+    });
+    assert.notEqual(one.isError, true, errorText(one));
+    assert.deepEqual(
+      (structured(one) as { item: { overlay: { disabledOccurrences: string[] } } }).item.overlay
+        .disabledOccurrences,
+      [week(1)],
+    );
+    assert.deepEqual(await entries(), [
+      [week(0), true, null],
+      [week(1), false, 'disabled'],
+      [week(2), true, null],
+    ]);
+    // The whole series in one call (the shape an agent uses for a meeting that stopped).
+    const all = await call(blocksKey, 'set_overlay', {
+      id: item.id,
+      disabled: true,
+      scope: 'series',
+    });
+    assert.notEqual(all.isError, true, errorText(all));
+    assert.ok(
+      (await entries()).every(([, busy, inactive]) => busy === false && inactive === 'disabled'),
+    );
+    // One occurrence of a series disabled as a whole is not enabled alone.
+    const alone = await call(blocksKey, 'set_overlay', {
+      id: item.id,
+      disabled: false,
+      occurrenceStart: week(1),
+    });
+    assert.equal(alone.isError, true);
+    assert.match(errorText(alone), /series/);
+    const back = await call(blocksKey, 'set_overlay', { id: item.id, disabled: false });
+    assert.notEqual(back.isError, true, errorText(back));
+    assert.ok((await entries()).every(([, busy, inactive]) => busy === true && inactive === null));
+    const stray = await call(blocksKey, 'set_overlay', { id: item.id, scope: 'series' });
+    assert.equal(stray.isError, true);
+  });
+
   it('refuses what the REST schemas refuse', async () => {
     for (const args of [
       { title: 'x', startAt: SUNDAY },
@@ -707,6 +774,17 @@ describe('set_overlay', () => {
     assert.deepEqual([result.item.overlay.pinned, result.item.overlay.note], [true, 'ask Dana']);
     assert.equal(result.item.title, 'Fix the login bug');
     assert.equal(result.item.source.provider, 'jira');
+  });
+
+  it('disables and enables a mirrored item, in TodoList only', async () => {
+    const off = structured(
+      await call(editorKey, 'set_overlay', { id: mirroredId, disabled: true }),
+    ) as { item: Item & { overlay: { disabled: boolean | null } } };
+    assert.deepEqual([off.item.overlay.disabled, off.item.status], [true, 'open']);
+    const on = structured(
+      await call(editorKey, 'set_overlay', { id: mirroredId, disabled: false }),
+    ) as { item: Item & { overlay: { disabled: boolean | null } } };
+    assert.equal(on.item.overlay.disabled, null);
   });
 });
 

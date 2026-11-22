@@ -88,7 +88,7 @@ export async function findItems(
 /**
  * One entry per occurrence in `bounds` of what a time-shaped draft found, in time order: a series
  * (a Google master or a time block that repeats) gives one per occurrence, moved and skipped ones
- * applied; a cancelled item gives none, as on the calendar.
+ * applied; a cancelled or disabled one is listed with `inactive` (busy false), as on the calendar.
  */
 export function occurrencesOf(found: Found, bounds: Range, timeZone: string): ItemSummaryView[] {
   const byId = new Map(found.items.map((item) => [item.id, item]));

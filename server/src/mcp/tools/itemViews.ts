@@ -77,6 +77,15 @@ export const ItemSummaryView = z.object({
       .describe('When the member plans to do it: YYYY-MM-DD or YYYY-MM-DDTHH:mm, local time'),
     editedAt: Iso,
     attrs: z.record(z.string(), z.unknown()).describe('Custom attribute values by key'),
+    disabled: z
+      .boolean()
+      .nullable()
+      .describe(
+        'Disabled in TodoList (a series: every occurrence): shown faded, its time free; null: not',
+      ),
+    disabledOccurrences: z
+      .array(z.string())
+      .describe('A series’ occurrences disabled one by one: their original starts, ISO 8601'),
   }),
   lastSeenAt: Iso,
   layer: z
@@ -99,7 +108,14 @@ export const ItemSummaryView = z.object({
     .boolean()
     .optional()
     .describe(
-      'In time answers: whether it takes the time. Events (unless shown as free), time blocks and travel are busy; areas, to-dos and tasks are not',
+      'In time answers: whether it takes the time. Events (unless shown as free), time blocks and travel are busy; areas, to-dos and tasks are not; a cancelled or disabled entry never is',
+    ),
+  inactive: z
+    .enum(['cancelled', 'disabled'])
+    .nullable()
+    .optional()
+    .describe(
+      'In time answers: cancelled (at its provider) or disabled (in TodoList): still listed, but its time is free; null: it happens',
     ),
 });
 export type ItemSummaryView = z.infer<typeof ItemSummaryView>;
@@ -173,6 +189,8 @@ export function toItemSummaryView(item: ItemSummary): ItemSummaryView {
       plannedAt: item.overlay.plannedAt,
       editedAt: iso(item.overlay.editedAt),
       attrs: { ...item.overlay.attrs },
+      disabled: item.overlay.disabled,
+      disabledOccurrences: [...item.overlay.disabledOccurrences],
     },
     lastSeenAt: iso(item.lastSeenAt),
     ...(item.layer === undefined ? {} : { layer: item.layer }),
@@ -184,10 +202,10 @@ export function toItemSummaryView(item: ItemSummary): ItemSummaryView {
  * (docs/superpowers/specs/2026-11-17-time-blocks-design.md, "Areas"; travel spec, "How it shows"):
  * travel and time blocks do, an area does not (it is a plan, not a commitment), an event does
  * unless it is shown as free (Google's `transparent`), and a to-do or task does not (it is work to
- * fit into time). An entry placed at its due date never does.
+ * fit into time). An entry placed at its due date never does, nor a cancelled or disabled one.
  */
-function isBusy(summary: ItemSummaryView, dueOnly: boolean): boolean {
-  if (dueOnly) return false;
+function isBusy(summary: ItemSummaryView, occurrence: Occurrence): boolean {
+  if (occurrence.dueOnly || occurrence.inactive !== null) return false;
   switch (summary.kind) {
     case 'travel':
       return true;
@@ -202,8 +220,8 @@ function isBusy(summary: ItemSummaryView, dueOnly: boolean): boolean {
 
 /**
  * One occurrence of an item, as the time tools answer with it: the item's summary, with
- * `occurrence` (the series and the slot it fills; null for an item that does not repeat) and
- * `busy`. An occurrence expanded from the item's own series takes that occurrence's start and
+ * `occurrence` (the series and the slot it fills; null for an item that does not repeat), `busy`
+ * and `inactive` (cancelled or disabled: listed, its time free). An occurrence expanded from the item's own series takes that occurrence's start and
  * end; any other entry (a single item, a moved Google occurrence, a due-only one) is at its own.
  */
 export function toOccurrenceView(
@@ -219,7 +237,8 @@ export function toOccurrenceView(
     ...summary,
     ...(expanded ? { startAt: occurrence.start.toISOString(), endAt: iso(occurrence.end) } : {}),
     occurrence: series,
-    busy: isBusy(summary, occurrence.dueOnly),
+    busy: isBusy(summary, occurrence),
+    inactive: occurrence.inactive,
   };
 }
 
