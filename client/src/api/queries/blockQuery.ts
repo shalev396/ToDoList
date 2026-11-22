@@ -21,7 +21,8 @@ interface BlockQueryInput<TData> {
   /** Null until the workspace is known: nothing is fetched. */
   workspaceId: string | null;
   dashboardId: string;
-  block: Pick<Block, 'id' | 'listen' | 'query' | 'savedViewId'>;
+  block: Pick<Block, 'id' | 'listen' | 'query' | 'savedViewId'> &
+    Partial<Pick<Block, 'type' | 'rules'>>;
   /** The page's variables; only the block's own are sent and keyed. */
   vars: PageVars;
   /** The block's registry entry's interval (the clock and calendar: every minute). */
