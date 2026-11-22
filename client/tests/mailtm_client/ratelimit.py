@@ -7,22 +7,31 @@ parallel test runs and scripts all count against one budget, and are served in t
 asked. The state is a small JSON file, read and written under an exclusive lock on a lock file
 next to it (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows):
 
-- **Tickets.** A caller takes the next ticket number and waits until its ticket is the lowest one
-  still waiting, and the buckets have room. Only then is it released (its request may go). A
-  retry keeps its ticket, so it goes back to the head of the line, not the end.
+- **Tickets.** A caller takes the next ticket number (for a route, such as `POST /accounts`) and
+  waits until no earlier ticket that could go is still waiting, and the buckets have room. Only
+  then is it released (its request may go). A retry keeps its ticket, so it goes back to the head
+  of the line, not the end. A ticket held back only by its own route's spacing doesn't hold up
+  the tickets behind it.
 - **Buckets.** Each bucket is `limit` releases in any `window` seconds (a sliding log of release
-  times). The defaults are mail.tm's: 6 a second (it documents 8 per IP address) and 9 a minute
-  (it announces `RateLimit-Policy: 10; w=60`).
-- **Pauses.** `refused` (a 429) pauses every process for the server's hint, else an exponential
-  backoff on the 429s in a row (shared, so four workers refused at once count once). `answered`
-  obeys a `remaining` / `reset` budget the server sends. The strictest of all of them wins.
+  times), across every route. The defaults are mail.tm's: 6 a second (it documents 8 per IP
+  address) and 9 a minute (it announces `RateLimit-Policy: 10; w=60`).
+- **Routes.** Each route learns its own spacing, shared by every process (additive increase,
+  multiplicative decrease, in time between calls): a 429 doubles the least time between two of
+  its calls (from 5 s, up to the window over the limit its `RateLimit-Policy` names, else 60 s),
+  and five answers in a row without one halve it, down to none. Its 429s in a row set its
+  backoff. A success on another route never touches them.
+- **Pauses.** `refused` (a 429) pauses every process: for the server's hint, else the route's
+  backoff (5 s, 10 s, 20 s, ... up to its policy window). `answered` obeys a `remaining` /
+  `reset` budget the server sends, for that route. The strictest of all of them wins.
 - **Liveness.** A waiter refreshes its ticket at least every `HEARTBEAT` seconds; a ticket left
   `STALE_TICKET` seconds (a process that died while waiting) is dropped, so one crash never blocks
-  the line for good. A waiter whose ticket was dropped puts it back in its place.
+  the line for good. A waiter whose ticket was dropped puts it back in its place. A lock that stays
+  taken while a waiter waits is waited out, within the caller's own limit.
 
 The lock is held for one small read and one small write, never across a sleep or a network call.
-The clock is injectable (`clock`, `sleep`) for tests. The default clock is `time.time`: release
-times are compared across processes, and the state file outlives reboots.
+The clock is injectable (`clock`, `sleep`) for tests. The default clocks are `time.time` for what
+other processes read (release times, pauses: the state file outlives reboots) and
+`time.monotonic` for how long a caller waited.
 """
 from __future__ import annotations
 
@@ -34,7 +43,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, NamedTuple, Optional, Sequence
 
 Clock = Callable[[], float]
@@ -42,18 +51,26 @@ Sleep = Callable[[float], None]
 
 # The lock is held for a file read and a write: a wait this long means a stuck holder.
 DEFAULT_LOCK_TIMEOUT = 10.0
-# The longest single pause: a bogus Retry-After or RateLimit reset can't hang anyone.
-DEFAULT_MAX_PAUSE = 120.0
+# The longest single pause (a call's own ceiling): a bogus hint can't hang anyone longer.
+DEFAULT_MAX_PAUSE = 900.0
 # A waiter looks at the line at least this often, which also refreshes its ticket.
 HEARTBEAT = 1.0
 # A ticket not refreshed for this long belongs to a process that died while waiting.
 STALE_TICKET = 15.0
 # The shortest look-again interval of a waiter behind the head of the line.
 FOLLOW_POLL = 0.05
+# A route's first backoff and its first spacing after a 429; both double from here.
+ROUTE_BACKOFF_START = 5.0
+# A route's backoff and spacing cap when it has named no RateLimit-Policy.
+DEFAULT_ROUTE_WINDOW = 60.0
+# Answers in a row without a 429 that halve a route's spacing.
+SPACING_EASES_AFTER = 5
+# A run's counters are dropped this long after its last request.
+RUN_KEPT_FOR = 86400.0
 
 LOCK_FILE = "ratelimit.lock"
 STATE_FILE = "queue.json"
-STATE_VERSION = 2
+STATE_VERSION = 3
 
 # Errors that mean "somebody else holds the lock" (flock: EWOULDBLOCK; msvcrt: EACCES).
 _BUSY = frozenset({errno.EACCES, errno.EAGAIN, errno.EWOULDBLOCK, errno.EDEADLK})
@@ -303,72 +320,88 @@ class Slot(NamedTuple):
     """A release: the caller may send its request now."""
 
     ticket: int  # its place in line (a retry passes it back to keep that place)
-    at: float  # when it was released (the queue's clock)
+    at: float  # when it was released (the queue's wall clock)
     seq: int  # releases so far, across all processes (this one included)
     waited: float  # seconds this acquire spent waiting in line, pauses included
+    route: str = ""  # what it was released for ("POST /accounts")
 
 
 class Refusal(NamedTuple):
     """What a 429 did to the queue."""
 
     pause: float  # seconds from now until anyone may send again
-    strikes: int  # 429s in a row, counting a burst of refusals sent together once
+    strikes: int  # the route's 429s in a row, counting a burst sent together once
     escalated: bool  # this 429 started a new burst (counted as a strike)
-    recent: int  # releases in the last `longest window` seconds
+    spacing: float  # the route's least time between two calls, now
+    recent: int  # releases in the last `longest window` seconds, every route
     requests: int  # releases this run
     refused: int  # 429s this run
 
 
+class RouteInfo(NamedTuple):
+    """A route's learned state."""
+
+    spacing: float
+    strikes: int
+    policy: Optional[tuple[float, float]]  # (limit, window) of its strictest RateLimit-Policy
+
+
 class RunCounters(NamedTuple):
-    """This run's totals, from the shared state (every process of the run together)."""
+    """A run's totals, from the shared state (every process of the run together)."""
 
     run_id: str
     requests: int
     refused: int
     longest_wait: float  # the longest any caller waited in line
     since: float  # when the run's first request was released
+    routes: dict  # route -> (requests, refused)
+
+
+@dataclass
+class _Route:
+    last: float = 0.0  # its last release
+    spacing: float = 0.0
+    successes: int = 0  # answers in a row without a 429, since its spacing last changed
+    strikes: int = 0
+    strike_seq: int = 0  # `seq` when its last strike was counted
+    policy: Optional[list] = None  # [limit, window]
+    budget_left: Optional[int] = None  # what its RateLimit headers left, less releases since
+    budget_reset: Optional[float] = None
+
+
+@dataclass
+class _Run:
+    requests: int = 0
+    refused: int = 0
+    longest: float = 0.0
+    since: float = 0.0
+    last: float = 0.0
+    routes: dict = field(default_factory=dict)  # route -> [requests, refused]
 
 
 @dataclass
 class _State:
     next_ticket: int
-    waiting: dict  # ticket -> last heartbeat
-    head_at: Optional[float]  # when the head of the line expects its release
+    waiting: dict  # ticket -> (last heartbeat, route)
+    head_at: Optional[float]  # when the first waiter that may go expects its release
     sent: list  # release times, oldest first (only the ones a bucket can still see)
     pause_until: float
-    strikes: int
-    strike_seq: int  # `seq` when the last strike was counted
     seq: int
-    budget_left: Optional[int]  # what the server's RateLimit headers left, less releases since
-    budget_reset: Optional[float]
-    run_id: str
-    run_requests: int
-    run_refused: int
-    run_longest: float
-    run_since: float
+    routes: dict  # route -> _Route
+    runs: dict  # run id -> _Run
 
     def to_json(self) -> bytes:
         return json.dumps(
             {
                 "v": STATE_VERSION,
                 "next_ticket": self.next_ticket,
-                "waiting": {str(ticket): beat for ticket, beat in self.waiting.items()},
+                "waiting": {str(t): [beat, route] for t, (beat, route) in self.waiting.items()},
                 "head_at": self.head_at,
                 "sent": self.sent,
                 "pause_until": self.pause_until,
-                "strikes": self.strikes,
-                "strike_seq": self.strike_seq,
                 "seq": self.seq,
-                "budget": None
-                if self.budget_left is None
-                else {"left": self.budget_left, "reset": self.budget_reset},
-                "run": {
-                    "id": self.run_id,
-                    "requests": self.run_requests,
-                    "refused": self.run_refused,
-                    "longest_wait": self.run_longest,
-                    "since": self.run_since,
-                },
+                "routes": {name: vars(route) for name, route in self.routes.items()},
+                "runs": {name: vars(run) for name, run in self.runs.items()},
             }
         ).encode()
 
@@ -386,19 +419,53 @@ def _whole(value: Any) -> int:
     return int(value)
 
 
+def _optional(value: Any, read: Callable[[Any], Any]) -> Any:
+    return None if value is None else read(value)
+
+
+def _route_from(data: Any) -> _Route:
+    policy = data.get("policy")
+    if policy is not None:
+        policy = [_number(policy[0]), _number(policy[1])]
+    return _Route(
+        last=_number(data["last"]),
+        spacing=max(_number(data["spacing"]), 0.0),
+        successes=_whole(data["successes"]),
+        strikes=_whole(data["strikes"]),
+        strike_seq=_whole(data["strike_seq"]),
+        policy=policy,
+        budget_left=_optional(data.get("budget_left"), _whole),
+        budget_reset=_optional(data.get("budget_reset"), _number),
+    )
+
+
+def _run_from(data: Any) -> _Run:
+    return _Run(
+        requests=_whole(data["requests"]),
+        refused=_whole(data["refused"]),
+        longest=_number(data["longest"]),
+        since=_number(data["since"]),
+        last=_number(data["last"]),
+        routes={str(k): [_whole(v[0]), _whole(v[1])] for k, v in data["routes"].items()},
+    )
+
+
 class SharedQueue:
     """
     A first-in, first-out line for requests, shared by every process that uses `state_dir`, with
-    `buckets` (all of them must have room for a release). Every process sharing a directory
-    should use the same buckets.
+    `buckets` (all of them must have room for a release) and a learned spacing per route. Every
+    process sharing a directory should use the same buckets.
 
-    - `acquire()` waits in line and returns a Slot when the caller may send one request.
-      `acquire(slot.ticket)` waits again in the same place (a retry). `acquire(max_wait=...)`
-      raises RateLimitTimeout, and leaves the line, instead of waiting longer.
-    - `refused(slot, hint, backoff)` (a 429) pauses every process: `hint` seconds when the server
-      gave one, else `backoff(strikes)`. `answered(slot, remaining, reset)` records the server's
-      budget, and that a request got through.
-    - `pause(seconds)` pauses every process; `counters()` reads this run's totals.
+    - `acquire(route=...)` waits in line and returns a Slot when the caller may send one request.
+      `acquire(slot.ticket, route=...)` waits again in the same place (a retry).
+      `acquire(max_wait=...)` raises RateLimitTimeout, and leaves the line, instead of waiting
+      longer.
+    - `refused(slot, hint, policy)` (a 429) pauses every process: `hint` seconds when the server
+      gave one, else the route's backoff; it also widens the route's spacing.
+      `answered(slot, remaining, reset, policy)` records a route's answer (its budget, and that it
+      got through).
+    - `pause(seconds)` pauses every process; `counters()` reads a run's totals; `route_info(route)`
+      a route's learned state.
     - `load_shared(name)` / `store_shared(name, value)` keep a small JSON value in the same
       directory under the same lock, for caches the processes share.
     """
@@ -423,6 +490,7 @@ class SharedQueue:
         os.makedirs(self.state_dir, exist_ok=True)
         self._state_path = os.path.join(self.state_dir, STATE_FILE)
         self._clock: Clock = clock or time.time
+        self._mono: Clock = clock or time.monotonic
         self._sleep: Sleep = sleep or time.sleep
         self._lock = InterProcessLock(
             os.path.join(self.state_dir, LOCK_FILE),
@@ -435,7 +503,7 @@ class SharedQueue:
         self._most = max(bucket.limit for bucket in self.buckets)
         # Nothing the queue writes points further ahead than this: past it, the clock went back
         # or the file was damaged.
-        self._horizon = self.max_pause + self.longest_window + 1.0
+        self._horizon = self.max_pause + max(self.longest_window, DEFAULT_ROUTE_WINDOW) + 1.0
 
     # --- state ------------------------------------------------------------------------------------
 
@@ -457,16 +525,9 @@ class SharedQueue:
             head_at=None,
             sent=[now] * self._most if full else [],
             pause_until=now,
-            strikes=0,
-            strike_seq=0,
             seq=0,
-            budget_left=None,
-            budget_reset=None,
-            run_id=self.run_id,
-            run_requests=0,
-            run_refused=0,
-            run_longest=0.0,
-            run_since=now,
+            routes={},
+            runs={},
         )
 
     def _load(self, now: float) -> _State:
@@ -477,135 +538,185 @@ class SharedQueue:
             data = json.loads(raw.decode())
             if data.get("v") != STATE_VERSION:
                 raise ValueError("another version")
-            budget = data.get("budget")
-            run = data["run"]
             state = _State(
                 next_ticket=_whole(data["next_ticket"]),
                 waiting={
-                    _whole(int(ticket)): _number(beat) for ticket, beat in data["waiting"].items()
+                    _whole(int(ticket)): (_number(entry[0]), str(entry[1]))
+                    for ticket, entry in data["waiting"].items()
                 },
-                head_at=None if data.get("head_at") is None else _number(data["head_at"]),
+                head_at=_optional(data.get("head_at"), _number),
                 sent=sorted(_number(at) for at in data["sent"]),
                 pause_until=_number(data["pause_until"]),
-                strikes=_whole(data["strikes"]),
-                strike_seq=_whole(data["strike_seq"]),
                 seq=_whole(data["seq"]),
-                budget_left=None if budget is None else _whole(budget["left"]),
-                budget_reset=None if budget is None else _number(budget["reset"]),
-                run_id=str(run["id"]),
-                run_requests=_whole(run["requests"]),
-                run_refused=_whole(run["refused"]),
-                run_longest=_number(run["longest_wait"]),
-                run_since=_number(run["since"]),
+                routes={str(k): _route_from(v) for k, v in data["routes"].items()},
+                runs={str(k): _run_from(v) for k, v in data["runs"].items()},
             )
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (ValueError, KeyError, TypeError, AttributeError, IndexError):
             return self._fresh(now, full=True)
         ahead = now + self._horizon
         if (
             state.pause_until > ahead
             or (state.head_at is not None and state.head_at > ahead)
-            or (state.budget_reset is not None and state.budget_reset > ahead)
             or any(at > now + 1.0 for at in state.sent)
-            or any(beat > now + 1.0 for beat in state.waiting.values())
+            or any(beat > now + 1.0 for beat, _ in state.waiting.values())
+            or any(route.last > now + 1.0 for route in state.routes.values())
+            or any((route.budget_reset or 0) > ahead for route in state.routes.values())
         ):
             return self._fresh(now, full=True)  # the clock went back, or somebody wrote nonsense
-        if state.budget_reset is not None and state.budget_reset <= now:
-            state.budget_left = state.budget_reset = None  # that quota window is over
+        for route in state.routes.values():
+            if route.budget_reset is not None and route.budget_reset <= now:
+                route.budget_left = route.budget_reset = None  # that quota window is over
+        for name in [n for n, run in state.runs.items() if run.last < now - RUN_KEPT_FOR]:
+            del state.runs[name]
         return state
 
     def _save(self, state: _State) -> None:
         _write_file(self._state_path, state.to_json())
 
-    def _next_free(self, state: _State, now: float) -> float:
-        """The earliest time every bucket, the pause and the server's budget allow a release."""
+    def _host_at(self, state: _State, now: float) -> float:
+        """The earliest time the pause and every bucket allow a release."""
         at = max(now, state.pause_until)
         for bucket in self.buckets:
             if len(state.sent) >= bucket.limit:
                 at = max(at, state.sent[-bucket.limit] + bucket.window)
-        if state.budget_left is not None and state.budget_left <= 0 and state.budget_reset:
-            at = max(at, state.budget_reset)
         return at
 
-    def _run(self, state: _State, now: float) -> None:
-        """Starts this run's counters if the state holds another run's."""
-        if state.run_id != self.run_id:
-            state.run_id = self.run_id
-            state.run_requests = state.run_refused = 0
-            state.run_longest = 0.0
-            state.run_since = now
+    @staticmethod
+    def _route_at(state: _State, route: str, now: float) -> float:
+        """The earliest time `route`'s spacing and budget allow a release of it."""
+        known = state.routes.get(route)
+        if known is None:
+            return now
+        at = now
+        if known.spacing > 0:
+            at = max(at, known.last + known.spacing)
+        if known.budget_left is not None and known.budget_left <= 0 and known.budget_reset:
+            at = max(at, known.budget_reset)
+        return at
 
-    def _release(self, state: _State, ticket: int, now: float, waited: float) -> int:
+    def _run(self, state: _State, now: float) -> _Run:
+        run = state.runs.get(self.run_id)
+        if run is None:
+            run = state.runs[self.run_id] = _Run(since=now, last=now)
+        run.last = now
+        return run
+
+    def _release(
+        self, state: _State, ticket: int, route: str, now: float, waited: float
+    ) -> int:
         state.waiting.pop(ticket, None)
         state.head_at = None
         state.sent = [at for at in state.sent if at > now - self.longest_window]
         state.sent.append(now)
         state.sent = state.sent[-self._most :]
         state.seq += 1
-        if state.budget_left is not None:
-            state.budget_left -= 1
-        self._run(state, now)
-        if state.run_requests == 0:
-            state.run_since = now
-        state.run_requests += 1
-        state.run_longest = max(state.run_longest, waited)
+        known = state.routes.setdefault(route, _Route())
+        known.last = now
+        if known.budget_left is not None:
+            known.budget_left -= 1
+        run = self._run(state, now)
+        if run.requests == 0:
+            run.since = now
+        run.requests += 1
+        run.longest = max(run.longest, waited)
+        run.routes.setdefault(route, [0, 0])[0] += 1
         return state.seq
+
+    @staticmethod
+    def _cap(known: _Route) -> tuple[float, float]:
+        """(spacing cap, backoff cap) of a route: its policy's window over its limit, and the
+        window; without a policy, a minute for both."""
+        if known.policy is None:
+            return DEFAULT_ROUTE_WINDOW, DEFAULT_ROUTE_WINDOW
+        limit, window = known.policy
+        return max(window / max(limit, 1.0), 0.0), max(window, 0.0)
+
+    @staticmethod
+    def _learn_policy(known: _Route, policy: Optional[tuple[float, float]]) -> None:
+        """Keeps the strictest policy the route named (the longest window per allowed call)."""
+        if policy is None:
+            return
+        limit, window = float(policy[0]), float(policy[1])
+        if not (math.isfinite(limit) and math.isfinite(window)) or limit <= 0 or window <= 0:
+            return
+        if known.policy is None or window / limit > known.policy[1] / known.policy[0]:
+            known.policy = [limit, window]
 
     # --- the line ---------------------------------------------------------------------------------
 
-    def take_ticket(self) -> int:
+    def take_ticket(self, route: str = "") -> int:
         """A place at the end of the line. `acquire(ticket)` then waits for its turn."""
         with self._locked():
             now = self._clock()
             state = self._load(now)
             ticket = state.next_ticket
             state.next_ticket += 1
-            state.waiting[ticket] = now
+            state.waiting[ticket] = (now, route)
             self._save(state)
         return ticket
 
     def leave(self, ticket: int) -> None:
-        """Gives up a place in line."""
-        with self._locked():
-            state = self._load(self._clock())
-            if state.waiting.pop(ticket, None) is not None:
-                self._save(state)
-
-    def acquire(self, ticket: Optional[int] = None, *, max_wait: Optional[float] = None) -> Slot:
-        """Waits in line (at the end, or at `ticket`'s place) until every bucket has room, then
-        returns the release. With `max_wait`, raises RateLimitTimeout (and leaves the line) once
-        it has waited that long."""
-        started = self._clock()
-        if ticket is None:
-            ticket = self.take_ticket()
-        while True:
+        """Gives up a place in line (best effort: a ticket left behind goes stale anyway)."""
+        try:
             with self._locked():
-                now = self._clock()
-                state = self._load(now)
-                for other, beat in list(state.waiting.items()):
-                    if other != ticket and now - beat > STALE_TICKET:
-                        del state.waiting[other]  # its process died while waiting
-                state.waiting[ticket] = now  # a heartbeat; puts a dropped ticket back in place
-                ahead = sum(1 for other in state.waiting if other < ticket)
-                if ahead == 0:
-                    at = self._next_free(state, now)
-                    if at <= now:
-                        waited = now - started
-                        seq = self._release(state, ticket, now, waited)
-                        self._save(state)
-                        return Slot(ticket, now, seq, waited)
-                    state.head_at = at
-                    wait = at - now
-                else:
-                    at = state.head_at if state.head_at is not None else now
-                    wait = max(at - now, FOLLOW_POLL)
-                self._save(state)
-            wait = min(wait, HEARTBEAT)
+                state = self._load(self._clock())
+                if state.waiting.pop(ticket, None) is not None:
+                    self._save(state)
+        except LockTimeout:
+            pass
+
+    def acquire(
+        self, ticket: Optional[int] = None, *, route: str = "", max_wait: Optional[float] = None
+    ) -> Slot:
+        """Waits in line (at the end, or at `ticket`'s place) until every bucket and `route`'s
+        own spacing have room, then returns the release. With `max_wait`, raises
+        RateLimitTimeout (and leaves the line) once it has waited that long."""
+        started = self._mono()
+        if ticket is None:
+            ticket = self.take_ticket(route)
+        ahead = 0
+        at = now = self._clock()
+        while True:
+            try:
+                with self._locked():
+                    now = self._clock()
+                    state = self._load(now)
+                    for other, (beat, _) in list(state.waiting.items()):
+                        if other != ticket and now - beat > STALE_TICKET:
+                            del state.waiting[other]  # its process died while waiting
+                    # A heartbeat, which also puts a dropped ticket back in its place.
+                    state.waiting[ticket] = (now, route)
+                    # Earlier tickets that could go now; one held back only by its own route's
+                    # spacing doesn't hold up the line.
+                    ahead = sum(
+                        1
+                        for other, (_, other_route) in state.waiting.items()
+                        if other < ticket and self._route_at(state, other_route, now) <= now
+                    )
+                    if ahead == 0:
+                        mine = self._route_at(state, route, now)
+                        at = max(self._host_at(state, now), mine)
+                        if at <= now:
+                            waited = self._mono() - started
+                            seq = self._release(state, ticket, route, now, waited)
+                            self._save(state)
+                            return Slot(ticket, now, seq, waited, route)
+                        if mine <= now:
+                            state.head_at = at  # the line waits on the buckets, as I do
+                        wait = at - now
+                    else:
+                        at = state.head_at if state.head_at is not None else now
+                        wait = max(at - now, FOLLOW_POLL)
+                    self._save(state)
+            except LockTimeout:
+                wait = HEARTBEAT  # a stuck holder: look again, within this caller's limit
+            wait = min(max(wait, 0.0), HEARTBEAT)
             if max_wait is not None:
-                left = started + max(max_wait, 0.0) - self._clock()
+                left = max(max_wait, 0.0) - (self._mono() - started)
                 if left <= 0:
                     self.leave(ticket)
                     raise RateLimitTimeout(
-                        f"Waited {self._clock() - started:.1f} s in line for a request slot "
+                        f"Waited {self._mono() - started:.1f} s in line for a request slot "
                         f"({ahead} ahead; the next release was {max(at - now, 0.0):.1f} s away)"
                     )
                 wait = min(wait, left)
@@ -614,62 +725,87 @@ class SharedQueue:
     # --- what the server said ---------------------------------------------------------------------
 
     def refused(
-        self, slot: Slot, hint: Optional[float], backoff: Callable[[int], float]
+        self,
+        slot: Slot,
+        hint: Optional[float] = None,
+        policy: Optional[tuple[float, float]] = None,
     ) -> Refusal:
-        """The request `slot` released got a 429: nobody sends for `hint` seconds when the server
-        said how long, else `backoff(strikes)`. 429s for requests sent before the last counted one
-        was answered belong to the same burst and don't add a strike."""
+        """The request `slot` released got a 429. Nobody sends for `hint` seconds when the server
+        said how long, else for the route's backoff (5 s, doubling with its 429s in a row, up to
+        its policy window), and the route's spacing doubles (from 5 s, up to its policy window
+        over its limit). 429s for requests sent before the last counted one was answered belong
+        to the same burst and change neither."""
         with self._locked():
             now = self._clock()
             state = self._load(now)
-            escalated = slot.seq > state.strike_seq
+            known = state.routes.setdefault(slot.route, _Route())
+            self._learn_policy(known, policy)
+            spacing_cap, backoff_cap = self._cap(known)
+            escalated = slot.seq > known.strike_seq
             if escalated:
-                state.strikes += 1
-                state.strike_seq = state.seq
-            seconds = hint if hint is not None else backoff(max(state.strikes, 1))
-            seconds = float(seconds)
+                known.strikes += 1
+                known.strike_seq = state.seq
+                known.successes = 0
+                known.spacing = min(max(known.spacing * 2, ROUTE_BACKOFF_START), spacing_cap)
+            if hint is None:
+                strikes = max(known.strikes, 1)
+                seconds = min(ROUTE_BACKOFF_START * 2.0 ** min(strikes - 1, 32), backoff_cap)
+            else:
+                seconds = float(hint)
             if not math.isfinite(seconds):
                 seconds = self.max_pause
             seconds = min(max(seconds, 0.0), self.max_pause)
             state.pause_until = max(state.pause_until, now + seconds)
-            self._run(state, now)
-            state.run_refused += 1
+            run = self._run(state, now)
+            run.refused += 1
+            run.routes.setdefault(slot.route, [0, 0])[1] += 1
             recent = sum(1 for at in state.sent if at > now - self.longest_window)
             self._save(state)
             return Refusal(
                 state.pause_until - now,
-                state.strikes,
+                known.strikes,
                 escalated,
+                known.spacing,
                 recent,
-                state.run_requests,
-                state.run_refused,
+                run.requests,
+                run.refused,
             )
 
     def answered(
-        self, slot: Slot, remaining: Optional[float] = None, reset: Optional[float] = None
+        self,
+        slot: Slot,
+        remaining: Optional[float] = None,
+        reset: Optional[float] = None,
+        policy: Optional[tuple[float, float]] = None,
     ) -> None:
-        """The request `slot` released got an answer other than a 429. A request sent after the
-        last strike that gets through ends the run of 429s. With `remaining` and `reset` (the
-        server's RateLimit headers), at most `remaining` more requests go before `reset` seconds
-        pass, less the ones released since this one (still in flight when it counted)."""
+        """The request `slot` released got an answer other than a 429. For its route only: a
+        request sent after the last strike that gets through ends the run of 429s, and every
+        `SPACING_EASES_AFTER` such answers in a row halve the spacing (below 5 s, none). With
+        `remaining` and `reset` (the server's RateLimit headers), at most `remaining` more of the
+        route's requests go before `reset` seconds pass, less the ones released since this one
+        (still in flight when it counted)."""
         with self._locked():
             now = self._clock()
             state = self._load(now)
-            changed = False
-            if state.strikes and slot.seq > state.strike_seq:
-                state.strikes = 0
-                changed = True
+            known = state.routes.setdefault(slot.route, _Route())
+            self._learn_policy(known, policy)
+            if slot.seq > known.strike_seq:
+                known.strikes = 0
+                known.successes += 1
+                if known.successes >= SPACING_EASES_AFTER:
+                    known.successes = 0
+                    known.spacing /= 2
+                    if known.spacing < ROUTE_BACKOFF_START:
+                        known.spacing = 0.0
             if remaining is not None and reset is not None:
                 left = int(math.floor(remaining)) - max(state.seq - slot.seq, 0)
                 reset_at = now + min(max(float(reset), 0.0), self.max_pause)
-                if state.budget_left is not None and state.budget_reset is not None:
-                    state.budget_left = min(state.budget_left, left)  # the strictest wins
-                    state.budget_reset = max(state.budget_reset, reset_at)
+                if known.budget_left is not None and known.budget_reset is not None:
+                    known.budget_left = min(known.budget_left, left)  # the strictest wins
+                    known.budget_reset = max(known.budget_reset, reset_at)
                 else:
-                    state.budget_left, state.budget_reset = left, reset_at
-                changed = True
-            if changed:
-                self._save(state)
+                    known.budget_left, known.budget_reset = left, reset_at
+            self._save(state)
 
     def pause(self, seconds: float) -> float:
         """Nobody sends for `seconds` from now (at most `max_pause`). Returns the pause's end."""
@@ -684,13 +820,26 @@ class SharedQueue:
             self._save(state)
             return state.pause_until
 
-    def counters(self) -> RunCounters:
-        """The totals of the run that last used the queue (any run id)."""
+    def counters(self, run_id: Optional[str] = None) -> RunCounters:
+        """The totals of the run `run_id` (zeros if it made no request), or of the run that used
+        the queue last."""
         with self._locked():
             state = self._load(self._clock())
-        return RunCounters(
-            state.run_id, state.run_requests, state.run_refused, state.run_longest, state.run_since
-        )
+        if run_id is None:
+            if not state.runs:
+                return RunCounters("", 0, 0, 0.0, 0.0, {})
+            run_id = max(state.runs, key=lambda name: state.runs[name].last)
+        run = state.runs.get(run_id)
+        if run is None:
+            return RunCounters(run_id, 0, 0, 0.0, 0.0, {})
+        routes = {name: (pair[0], pair[1]) for name, pair in run.routes.items()}
+        return RunCounters(run_id, run.requests, run.refused, run.longest, run.since, routes)
+
+    def route_info(self, route: str) -> RouteInfo:
+        with self._locked():
+            known = self._load(self._clock()).routes.get(route) or _Route()
+        policy = None if known.policy is None else (known.policy[0], known.policy[1])
+        return RouteInfo(known.spacing, known.strikes, policy)
 
     def waiting(self) -> int:
         """How many callers are in line now."""

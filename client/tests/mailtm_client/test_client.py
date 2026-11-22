@@ -48,13 +48,15 @@ from .client import (
     backoff_seconds,
     default_state_dir,
     message_text,
+    policy_of,
     rate_limit_headers,
     ratelimit_quota,
     retry_after_seconds,
+    route_of,
 )
 from .guard import CallGuard, MailTmNotAllowed
 from .live import Ended, LineSplitter, SseEvent, SseParser, ThreadedFeed, arrived_message
-from .ratelimit import DEFAULT_BUCKETS, Bucket, SharedQueue
+from .ratelimit import DEFAULT_BUCKETS, Bucket, LockTimeout, SharedQueue
 
 BASE = "https://mail.test"
 
@@ -104,9 +106,9 @@ class CountingQueue(SharedQueue):
         super().__init__(*args, **kwargs)
         self.acquired = 0
 
-    def acquire(self, ticket: Any = None, *, max_wait: Any = None):
+    def acquire(self, ticket: Any = None, **kwargs: Any):
         self.acquired += 1
-        return super().acquire(ticket, max_wait=max_wait)
+        return super().acquire(ticket, **kwargs)
 
 
 @pytest.fixture
@@ -141,6 +143,11 @@ def mail(make) -> MailTmClient:
 
 def other_process(state_dir: str, clock: FakeClock) -> SharedQueue:
     return SharedQueue(state_dir, clock=clock, sleep=clock.sleep)
+
+
+def acquire_route(state_dir: str, clock: FakeClock, route: str = "GET /messages"):
+    """A release for `route` in another "process"."""
+    return other_process(state_dir, clock).acquire(route=route)
 
 
 DOMAINS = {
@@ -196,12 +203,11 @@ def test_time_in_line_is_counted(make, clock, state_dir):
 # --- 429 -----------------------------------------------------------------------------------------
 
 
-def test_a_429_is_retried_after_a_jittered_backoff_that_grows(mail):
+def test_a_429_without_a_hint_waits_for_the_routes_backoff_which_doubles(mail):
+    """5 s, then 10 s: no more 1-4 s hammering of a refusing route."""
     mail.session.answers = [answer(429), answer(429), answer(200)]
     assert mail.request("GET", "/messages").status_code == 200
-    first, second = mail.session.gaps()
-    assert 1.0 <= first <= 2.0
-    assert 2.0 <= second <= 4.0
+    assert mail.session.gaps() == pytest.approx([5.0, 10.0])
     assert (mail.stats.requests, mail.stats.refused) == (3, 2)
 
 
@@ -218,14 +224,22 @@ def test_a_429_is_logged_with_its_headers_and_the_runs_counters(mail, caplog):
     assert text.startswith("mail.tm answered 429 to GET /messages: every process pauses 3.0 s")
     assert "Retry-After: 3" in text and "RateLimit-Policy: 10; w=60" in text
     assert "X-RateLimit-Limit: 10" in text and "nginx" not in text
+    assert "(GET /messages: 1 in a row, spacing now 5 s;" in text
     assert "429 #1 this run" in text and "run request #2" in text
     assert "2 sent in the last 60 s" in text
 
 
 def test_retry_after_is_honoured_in_seconds(mail):
+    mail.session.answers = [answer(429, retry_after=8), answer(201, {"id": "a"})]
+    mail.create_account("x@mail.test", "pw")
+    assert mail.session.gaps() == pytest.approx([8.0])
+
+
+def test_a_short_retry_after_still_waits_for_the_routes_spacing(mail):
+    """After a 429 the route's calls are at least 5 s apart, even if Retry-After says 3."""
     mail.session.answers = [answer(429, retry_after=3), answer(201, {"id": "a"})]
     mail.create_account("x@mail.test", "pw")
-    assert mail.session.gaps() == pytest.approx([3.0])
+    assert mail.session.gaps() == pytest.approx([5.0])
 
 
 def test_retry_after_is_honoured_as_an_http_date(mail):
@@ -235,25 +249,29 @@ def test_retry_after_is_honoured_as_an_http_date(mail):
     assert 8.0 <= mail.session.gaps()[0] <= 10.0
 
 
-def test_retry_after_is_capped(mail):
-    mail.session.answers = [answer(429, retry_after=3600), answer(200)]
+def test_retry_after_is_honoured_in_full_and_capped_at_the_ceiling(mail):
+    mail.session.answers = [answer(429, retry_after=300), answer(200)]
     mail.request("GET", "/messages")
-    assert mail.session.gaps() == pytest.approx([RetryPolicy().retry_after_cap])
+    assert mail.session.gaps() == pytest.approx([300.0])  # no 120 s cap any more
+    mail.session.answers = [answer(429, retry_after=3600), answer(200)]
+    mail.request("GET", "/me")  # another route: no spacing of its own yet
+    assert mail.session.gaps()[-1] == pytest.approx(RetryPolicy().call_ceiling)
 
 
 def test_a_429_pauses_every_process_sharing_the_state_dir(make, clock, state_dir):
     refused = make()
     refused.session.answers = [answer(429, retry_after=5)]
-    refused.request("PATCH", "/messages/m1", json={"seen": True})  # not retried: one 429
+    refused.request("PATCH", "/messages/m1", json={"seen": True}, retry_429=False)
     assert clock.since_start(other_process(state_dir, clock).acquire().at) == pytest.approx(5)
 
 
 def test_a_refused_call_is_never_dropped(mail):
-    """Twenty 429s in a row, then an answer: the call still gets it."""
-    mail.session.answers = [answer(429, retry_after=30) for _ in range(20)] + [answer(200)]
+    """Ten 429s in a row, then an answer: the call still gets it. Retry-After is honoured, and
+    the route's spacing (5, 10, 20, 40 s, then a minute) takes over once it is longer."""
+    mail.session.answers = [answer(429, retry_after=30) for _ in range(10)] + [answer(200)]
     assert mail.request("GET", "/messages").status_code == 200
-    assert len(mail.session.calls) == 21
-    assert mail.session.gaps() == pytest.approx([30.0] * 20)
+    assert len(mail.session.calls) == 11
+    assert mail.session.gaps() == pytest.approx([30.0, 30.0, 30.0, 40.0] + [60.0] * 6)
 
 
 def test_only_the_call_ceiling_ends_a_refused_call_and_it_says_why(make):
@@ -276,10 +294,14 @@ def test_the_ceiling_covers_time_in_line(make, clock, state_dir):
     assert clock.since_start(clock.now) == pytest.approx(10)
 
 
-def test_a_429_is_not_retried_for_a_call_that_is_not_safe_to_repeat(mail):
+def test_a_429_is_retried_for_every_method_unless_told_not_to(mail):
+    """A 429 is a refusal: nothing happened, so even a PATCH is safe to send again."""
+    mail.session.answers = [answer(429, retry_after=1), answer(200)]
+    assert mail.request("PATCH", "/messages/m1", json={"seen": True}).status_code == 200
     mail.session.answers = [answer(429, retry_after=1)]
-    assert mail.request("PATCH", "/messages/m1", json={"seen": True}).status_code == 429
-    assert len(mail.session.calls) == 1
+    refused = mail.request("PATCH", "/messages/m1", json={"seen": True}, retry_429=False)
+    assert refused.status_code == 429
+    assert len(mail.session.calls) == 3
 
 
 def test_account_creation_survives_a_429(mail):
@@ -434,7 +456,8 @@ def test_a_spent_quota_pauses_every_process_before_the_next_call(make, clock, st
     spent = {"RateLimit": "limit=10, remaining=0, reset=42"}
     mail.session.answers = [answer(200, headers=spent), answer(200)]
     mail.request("GET", "/messages")
-    assert clock.since_start(other_process(state_dir, clock).acquire().at) == pytest.approx(42)
+    assert clock.since_start(acquire_route(state_dir, clock, "GET /me").at) == 0  # its own route
+    assert clock.since_start(acquire_route(state_dir, clock).at) == pytest.approx(42)
     mail.request("GET", "/messages")
     assert mail.session.gaps()[0] >= 42  # waited before the call, no 429 needed
     assert len(mail.session.calls) == 2
@@ -446,7 +469,7 @@ def test_the_pause_starts_at_the_reserve(make, clock, state_dir, remaining, paus
     quota = {"RateLimit-Remaining": str(remaining), "RateLimit-Reset": "9"}
     mail.session.answers = [answer(200, headers=quota)]
     mail.request("GET", "/messages")
-    slot = other_process(state_dir, clock).acquire()
+    slot = acquire_route(state_dir, clock)
     assert (clock.since_start(slot.at) >= 9) is paused
 
 
@@ -463,7 +486,7 @@ def test_how_long_a_spent_quota_pauses(make, clock, state_dir, headers, pause):
     mail = make()
     mail.session.answers = [answer(200, headers=headers)]
     mail.request("GET", "/messages")
-    slot = other_process(state_dir, clock).acquire()
+    slot = acquire_route(state_dir, clock)
     assert clock.since_start(slot.at) == pytest.approx(pause)
 
 
@@ -471,7 +494,7 @@ def test_the_quota_pause_cap_is_a_setting(make, clock, state_dir):
     mail = make(retry=RetryPolicy(quota_pause_cap=30))
     mail.session.answers = [answer(200, headers={"RateLimit": "remaining=0, reset=3600"})]
     mail.request("GET", "/messages")
-    slot = other_process(state_dir, clock).acquire()
+    slot = acquire_route(state_dir, clock)
     assert clock.since_start(slot.at) == pytest.approx(30)
 
 
@@ -487,7 +510,7 @@ def test_malformed_rate_limit_headers_neither_raise_nor_pause(mail):
     assert mail.request("GET", "/messages").status_code == 200  # a `nan` Retry-After: backoff
     no_pause, backoff = mail.session.gaps()
     assert no_pause == pytest.approx(0)
-    assert 1.0 <= backoff <= 2.0
+    assert backoff == pytest.approx(5.0)  # the route's first backoff
 
 
 # --- the API -------------------------------------------------------------------------------------
@@ -706,12 +729,13 @@ def test_a_timed_out_wait_says_how_long_it_spent_in_line(make, clock, state_dir)
 
 
 def test_rate_limited_looks_never_end_the_wait(mail, clock):
-    """Five refused looks in a row, 20 s each, far past the 10 s budget: still found."""
+    """Five refused looks in a row (20 s each, then the route's widening spacing), far past the
+    10 s budget: still found."""
     refused = [answer(429, retry_after=20) for _ in range(5)]
     mail.session.answers = [*refused, _inbox("m1"), _message("m1", "hi")]
     found = mail.wait_for_message("tok", lambda m: True, timeout=10, poll_interval=2)
     assert found["id"] == "m1"
-    assert clock.since_start(mail.session.calls[5].at) == pytest.approx(100)
+    assert clock.since_start(mail.session.calls[5].at) == pytest.approx(160)
 
 
 # --- waiting for a message: the live feed --------------------------------------------------------
@@ -756,7 +780,7 @@ def test_the_live_feed_opens_through_the_queue_with_the_topic_and_token(live, cl
     assert opened.kwargs["stream"] is True
     assert read.url == f"{BASE}/messages/m1"
     assert clock.since_start(read.at) == pytest.approx(5)
-    assert mail.queue.acquired == 2  # the stream counts as one queued call
+    assert mail.queue.acquired == 1  # the stream is another host: only the read is queued
     assert mail.feeds[0].closed and mail.stats.live == 1
 
 
@@ -805,11 +829,21 @@ def test_a_feed_that_fails_to_connect_falls_back_to_polling(live, clock, caplog)
     assert any(line.startswith(found_by) for line in logs)
 
 
-def test_a_feed_that_cannot_be_reached_falls_back_to_polling(live, clock):
+def test_a_feed_that_cannot_be_reached_falls_back_to_polling_after_two_tries(live, clock):
+    """Two tries, then polling; and every process polls for a while without trying again."""
     mail = live([])
-    down = [requests.ConnectionError("no route") for _ in range(7)]
+    down = [requests.ConnectionError("no route") for _ in range(2)]
     mail.session.answers = [*down, _inbox("m1"), _message("m1", "x")]
     assert mail.wait_for_message("tok", lambda m: True, account_id="a", timeout=60)["id"] == "m1"
+    assert [call.url for call in mail.session.calls[:2]] == [MERCURE, MERCURE]
+    other = live([])
+    other.session.answers = [_inbox("m2"), _message("m2", "y")]
+    assert other.wait_for_message("tok", lambda m: True, account_id="a", timeout=60)["id"] == "m2"
+    assert all(MERCURE not in call.url for call in other.session.calls)
+    clock.advance(301)  # the hub may be back: the next wait tries it again
+    other.session.answers = [answer(200), _inbox("m3"), _message("m3", "z")]
+    assert other.wait_for_message("tok", lambda m: True, account_id="a", timeout=60)["id"] == "m3"
+    assert other.session.calls[2].url == MERCURE
 
 
 def test_no_account_id_means_polling(live, clock):
@@ -1128,8 +1162,8 @@ package = importlib.import_module(sys.argv[2])
 
 class Recording(package.SharedQueue):
     slots = []
-    def acquire(self, ticket=None, *, max_wait=None):
-        slot = super().acquire(ticket, max_wait=max_wait)
+    def acquire(self, ticket=None, **kwargs):
+        slot = super().acquire(ticket, **kwargs)
         self.slots.append(slot.at)
         return slot
 
@@ -1199,3 +1233,159 @@ def test_processes_hammering_an_endpoint_stay_under_the_limit(endpoint, state_di
     for probe, slot in slots.items():
         assert endpoint.arrivals[probe] >= slot - 0.05  # the clock ticks every 15.6 ms on Windows
     assert busiest_second(slots.values()) <= 6 < DOCUMENTED_LIMIT
+
+
+# --- mail.tm's real shape: per-route quotas announced only by RateLimit-Policy -----------------
+
+FIELD_POLICY = {"ratelimit-policy": "1; w=60"}
+
+
+class QuotaSession:
+    """mail.tm as it behaved in November 2026: `POST /accounts` allowed `limit` times in any
+    `window` seconds, every answer carrying only `ratelimit-policy: 1; w=60` (no Retry-After, no
+    remaining); every other call answers 200 at once."""
+
+    def __init__(self, clock: FakeClock, limit: int, window: float) -> None:
+        self.clock = clock
+        self.limit, self.window = limit, window
+        self.created: list[float] = []
+        self.refused = 0
+        self.calls: list[Call] = []
+
+    def request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
+        now = self.clock()
+        self.calls.append(Call(now, method, url, kwargs))
+        if method == "POST" and url.endswith("/accounts"):
+            if sum(1 for at in self.created if at > now - self.window) >= self.limit:
+                self.refused += 1
+                return answer(429, {"detail": "Too Many Requests"}, headers=FIELD_POLICY)
+            self.created.append(now)
+            return answer(201, {"id": f"acc-{len(self.created)}"}, headers=FIELD_POLICY)
+        return answer(200, {"id": "m1", "text": "Your code is 123456"}, headers=FIELD_POLICY)
+
+
+@pytest.mark.parametrize(
+    "limit, window, most_refusals, most_seconds",
+    [
+        (2, 65.0, 8, 12 * 40.0),  # what mail.tm did: about two creations in 60-70 s
+        (1, 60.0, 12, 12 * 75.0),  # what its header claims: one a minute
+    ],
+)
+def test_account_creation_against_a_policy_only_quota_settles_without_a_429_storm(
+    make, clock, limit, window, most_refusals, most_seconds
+):
+    """Twelve signups, each with two reads of its email (another route, always answered): a 429
+    widens `POST /accounts`'s own spacing, the reads never reset it, and creations settle near the
+    real rate, with few 429s and a bounded total time (the old 1-4 s backoff drew about six 429s
+    per creation against one a minute)."""
+    session = QuotaSession(clock, limit, window)
+    mail = make(session=session)
+    for number in range(12):
+        mail.create_account(f"user{number}@mail.test", "pw")
+        mail.get_message("tok", "m1")
+        mail.get_message("tok", "m1")
+    assert len(session.created) == 12
+    elapsed = clock.since_start(clock.now)
+    assert session.refused <= most_refusals, (session.refused, elapsed)
+    assert elapsed <= most_seconds, (session.refused, elapsed)
+    route = mail.queue.route_info("POST /accounts")
+    assert route.policy == (1, 60)
+    assert route.spacing <= 60
+
+
+def test_reads_go_on_while_account_creation_waits_out_its_spacing(make, clock):
+    """Two "processes": one keeps creating accounts against one a minute, the other reads email.
+    Its reads never wait behind a creation that is waiting for its route's spacing, only through
+    the pauses every 429 brings."""
+    session = QuotaSession(clock, 1, 60.0)
+    creator, reader = make(session=session), make(session=session)
+    reads: list[float] = []
+
+    def read_meanwhile():
+        if len(reads) < 20:
+            clock.on_sleep = None
+            reader.get_message("tok", "m1")
+            reads.append(clock.now)
+            clock.on_sleep = read_meanwhile
+
+    creator.create_account("one@mail.test", "pw")
+    clock.on_sleep = read_meanwhile
+    for number in range(4):
+        creator.create_account(f"more{number}@mail.test", "pw")
+    clock.on_sleep = None
+    creations = [c.at for c in session.calls if c.method == "POST" and c.url.endswith("/accounts")]
+    assert len(session.created) == 5
+    assert len(reads) == 20  # all done while creations waited
+    assert reads[-1] < creations[-1]
+
+
+class StuckLockQueue(CountingQueue):
+    """A queue whose lock is stuck for the next `stuck` calls of the named methods."""
+
+    def __init__(self, *args: Any, stuck: dict, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.stuck = dict(stuck)
+
+    def _maybe_stuck(self, name: str) -> None:
+        if self.stuck.get(name, 0) > 0:
+            self.stuck[name] -= 1
+            raise LockTimeout(f"Waited 10 s for the lock ({name})")
+
+    def take_ticket(self, route: str = "") -> int:
+        self._maybe_stuck("take_ticket")
+        return super().take_ticket(route)
+
+    def answered(self, *args: Any, **kwargs: Any) -> None:
+        self._maybe_stuck("answered")
+        super().answered(*args, **kwargs)
+
+    def refused(self, *args: Any, **kwargs: Any):
+        self._maybe_stuck("refused")
+        return super().refused(*args, **kwargs)
+
+
+def test_a_stuck_lock_never_loses_an_answer(make, clock, state_dir, caplog):
+    """The inbox exists once mail.tm said 201: a stuck lock afterwards is logged, not raised."""
+    queue = StuckLockQueue(state_dir, clock=clock, sleep=clock.sleep, stuck={"answered": 1})
+    mail = make(queue=queue)
+    mail.session.answers = [answer(201, {"id": "a1"})]
+    with caplog.at_level(logging.WARNING):
+        assert mail.create_account("x@mail.test", "pw") == {"id": "a1"}
+    assert any("rate-limit news is lost" in r.getMessage() for r in caplog.records)
+
+
+def test_a_stuck_lock_before_a_place_in_line_is_waited_out(make, clock, state_dir):
+    queue = StuckLockQueue(state_dir, clock=clock, sleep=clock.sleep, stuck={"take_ticket": 2})
+    mail = make(queue=queue)
+    mail.session.answers = [_inbox()]
+    assert mail.list_messages("t") == []
+    assert clock.since_start(mail.session.calls[0].at) == pytest.approx(2)
+
+
+def test_a_429_with_a_stuck_lock_still_pauses_this_process(make, clock, state_dir):
+    queue = StuckLockQueue(state_dir, clock=clock, sleep=clock.sleep, stuck={"refused": 1})
+    mail = make(queue=queue)
+    mail.session.answers = [answer(429, retry_after=7), answer(200)]
+    assert mail.request("GET", "/me").status_code == 200
+    assert mail.session.gaps() == pytest.approx([7.0])
+
+
+@pytest.mark.parametrize(
+    "method, path, route",
+    [
+        ("post", "/accounts", "POST /accounts"),
+        ("GET", "/messages", "GET /messages"),
+        ("GET", "/messages/64f1c0ffee", "GET /messages/{id}"),
+        ("DELETE", "/accounts/abc/", "DELETE /accounts/{id}"),
+        ("GET", "/messages?page=2", "GET /messages"),
+        ("GET", "/", "GET /"),
+    ],
+)
+def test_calls_are_grouped_by_route(method, path, route):
+    assert route_of(method, path) == route
+
+
+def test_a_policy_is_read_from_an_answer():
+    assert policy_of(ratelimit_quota({"RateLimit-Policy": "1; w=60"})) == (1, 60)
+    assert policy_of(ratelimit_quota({"RateLimit-Limit": "10"})) is None  # no window: no policy
+    assert policy_of(None) is None

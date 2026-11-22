@@ -126,7 +126,8 @@ def main(argv: Any = None) -> int:
         while time.monotonic() < deadline:
             item = feed.next(min(0.5, max(deadline - time.monotonic(), 0.0)))
             for event in feed.events[printed:]:
-                print(f"{_stamp(started)} event {event.event!r} id={event.id!r}: {event.data[:300]}")
+                head = f"{_stamp(started)} event {event.event!r} id={event.id!r}"
+                print(f"{head}: {event.data[:300]}")
             printed = len(feed.events)
             if isinstance(item, mailtm.live.Ended):
                 ended = item

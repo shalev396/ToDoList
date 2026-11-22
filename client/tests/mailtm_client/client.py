@@ -1,29 +1,32 @@
 """
-A minimal mail.tm API client (https://docs.mail.tm/). Every HTTP call waits its turn in one
-first-in, first-out SharedQueue shared by every process on the machine, with two buckets:
-6 calls a second (mail.tm documents 8 per IP address) and 9 a minute (it announces
-`RateLimit-Policy: 10; w=60`).
+A minimal mail.tm API client (https://docs.mail.tm/). Every HTTP call to the API waits its turn
+in one first-in, first-out SharedQueue shared by every process on the machine, with two buckets
+for the whole host: 6 calls a second (mail.tm documents 8 per IP address) and 9 a minute (it
+announces `RateLimit-Policy: 10; w=60`). Each route (`POST /accounts`, `GET /messages/{id}`, ...)
+also learns its own spacing from its 429s (ratelimit.py).
 
 429s are never the end of a call:
-- A 429 pauses every process (the server's `Retry-After` or RateLimit reset, else an exponential
-  backoff on the 429s in a row), then the same call is retried in its place in line: idempotent
-  calls (GET, DELETE; POST /token, which only issues a token) and account creation (a 429 is a
-  refusal, so no account exists yet). There is no small retry cap: only the per-call ceiling
-  (`RetryPolicy.call_ceiling`, 15 minutes, time in line included) ends it, with MailTmRateLimited
-  and its counts. Every 429 is logged with its rate-limit headers and the run's request counter.
+- A 429 pauses every process: the server's `Retry-After` (up to the call ceiling) or RateLimit
+  reset, else the route's own backoff (5 s, 10 s, 20 s, ... up to the window its
+  `RateLimit-Policy` names), and widens the route's spacing. Then the same call is retried in its
+  place in line, whatever its method: a 429 is a refusal, so nothing happened (no account exists
+  yet). There is no small retry cap: only the per-call ceiling (`RetryPolicy.call_ceiling`,
+  15 minutes, time in line included) ends it, with MailTmRateLimited and its counts. Every 429 is
+  logged with its rate-limit headers, its route and the run's request counter.
 - A dropped connection, a timeout or a 502/503/504 is retried, at most `max_attempts` calls, only
   for idempotent calls. Account creation is not retried then: the account may exist already, and
   a retry would turn a clear error into "address already used".
 
 RateLimit headers: every answer's `RateLimit-*` / `X-RateLimit-*` headers are read
-(`ratelimit_quota`). A `remaining` count and its `reset` become a budget in the shared queue, so
-the next calls wait for the reset instead of drawing a 429. The headers don't say which requests a
-quota counts, so the budget covers the whole host: the simplest choice that never under-counts.
+(`ratelimit_quota`). A `remaining` count and its `reset` become a budget for that route in the
+shared queue, so its next calls wait for the reset instead of drawing a 429; a policy caps the
+route's backoff and spacing.
 
 Waiting for a message (`wait_for_message`, `InboxWatch.wait_for`): the deadline counts only the
 time not spent in line for a slot, so a rate-limited look never ends a wait. mail.tm's live feed
-(Mercure, live.py) says when a message arrives, and one queued GET reads it; when the feed fails to
-connect or drops, the wait polls for the rest of its budget.
+(Mercure, live.py: another host, outside the queue) says when a message arrives, and one queued
+GET reads it; when the feed fails to connect (twice) or drops, the wait polls for the rest of its
+budget.
 
 Every call first asks the CallGuard (guard.py), off unless a suite turns it on.
 """
@@ -51,6 +54,7 @@ from .ratelimit import (
     DEFAULT_BUCKETS,
     Bucket,
     Clock,
+    LockTimeout,
     RateLimitTimeout,
     SharedQueue,
     Sleep,
@@ -77,6 +81,12 @@ MERCURE_PATH = "/.well-known/mercure"
 # While the live feed has announced nothing that matches for this long, a wait also takes one
 # look at the inbox (a missed event can't cost the whole budget).
 SAFETY_LOOK = 45.0
+# Tries at opening the live feed before a wait polls instead.
+FEED_OPEN_ATTEMPTS = 2
+# After the hub was unreachable, every process polls for this long without trying it again.
+FEED_DOWN_FOR = 300.0
+# How long a call waits before trying again when the queue's lock was stuck.
+HEARTBEAT_ON_STUCK_LOCK = 1.0
 
 _RATE_HEADER = re.compile(r"^(x-)?ratelimit|^retry-after$", re.IGNORECASE)
 
@@ -101,20 +111,21 @@ class AddressTaken(MailTmError):
 class RetryPolicy:
     """
     - `call_ceiling`: the most seconds one call may take, time in line and 429 pauses included;
-      past it, MailTmRateLimited. 429s are retried until then.
-    - `max_attempts`: calls in all after dropped connections, timeouts and 502/503/504.
-    - A 429 without a hint pauses everyone 1-2 s, 2-4 s, 4-8 s, ... (`backoff_base` doubling with
-      each 429 in a row, at most `backoff_cap`); so does a transient failure, for this caller.
-    - `Retry-After` is honoured up to `retry_after_cap` seconds.
-    - RateLimit headers: at most `remaining - quota_reserve` more calls before the reset, which
-      is at most `quota_pause_cap` seconds away.
+      past it, MailTmRateLimited. 429s are retried until then, for every method.
+    - A 429 pauses everyone for its `Retry-After` (up to `retry_after_cap`, the ceiling) or its
+      RateLimit reset, else for the route's own backoff (the queue's: 5 s, 10 s, 20 s, ... up to
+      the window its `RateLimit-Policy` names).
+    - `max_attempts`: calls in all after dropped connections, timeouts and 502/503/504, waiting
+      1-2 s, 2-4 s, ... (`backoff_base` doubling, each at most `backoff_cap`) between them.
+    - RateLimit headers: at most `remaining - quota_reserve` more calls of that route before the
+      reset, which is at most `quota_pause_cap` seconds away.
     """
 
     call_ceiling: float = 900.0
     max_attempts: int = 7
     backoff_base: float = 2.0
     backoff_cap: float = 30.0
-    retry_after_cap: float = 120.0
+    retry_after_cap: float = 900.0
     quota_reserve: int = 1
     quota_pause_cap: float = 120.0
 
@@ -214,6 +225,23 @@ def ratelimit_quota(headers: Mapping[str, str]) -> Optional[Quota]:
     return Quota(
         pick("limit", min), pick("remaining", min), pick("reset", max), pick("window", max)
     )
+
+
+def route_of(method: str, path: str) -> str:
+    """The call's route, as rate limits are kept per route: the method and the path with every
+    segment after the first as `{id}` (`GET /messages/abc123` -> `GET /messages/{id}`)."""
+    segments = [segment for segment in path.split("?")[0].split("/") if segment]
+    template = "/" + "/".join(segments[:1] + ["{id}"] * len(segments[1:]))
+    return f"{method.upper()} {template}"
+
+
+def policy_of(quota: Optional[Quota]) -> Optional[tuple[float, float]]:
+    """(limit, window) of the `RateLimit-Policy` an answer named, or None."""
+    if quota is None or quota.limit is None or quota.window is None:
+        return None
+    if quota.limit <= 0 or quota.window <= 0:
+        return None
+    return quota.limit, quota.window
 
 
 def rate_limit_headers(headers: Mapping[str, str]) -> str:
@@ -414,19 +442,26 @@ class MailTmClient:
         stream: bool = False,
         timeout: Any = None,
         headers: Optional[dict] = None,
+        metered: bool = True,
+        max_attempts: Optional[int] = None,
     ) -> requests.Response:
         """
         One call to `path` under the base URL (or to `url`), through the guard and the queue,
-        retried as the module docstring says. `idempotent` defaults to the method's nature;
-        `retry_429` (retry a refusal) defaults to `idempotent`. Returns the last response: its
-        status is the caller's to check. Raises MailTmRateLimited at the call ceiling.
+        retried as the module docstring says. `idempotent` (retry a dropped connection or a
+        502/503/504) defaults to the method's nature; `retry_429` (retry a refusal, which changed
+        nothing) defaults to True. Returns the last response: its status is the caller's to
+        check. Raises MailTmRateLimited at the call ceiling.
+
+        `metered=False` skips the queue (for another host, without mail.tm's limits: the live
+        feed's hub); `max_attempts` overrides the policy's for transient failures.
         """
         method = method.upper()
         self.guard.check(method, path)
         if idempotent is None:
             idempotent = method in IDEMPOTENT_METHODS
         if retry_429 is None:
-            retry_429 = idempotent
+            retry_429 = True
+        attempts_allowed = self.retry.max_attempts if max_attempts is None else max_attempts
         kwargs: dict[str, Any] = {"timeout": self.timeout if timeout is None else timeout}
         if json is not None:
             kwargs["json"] = json
@@ -440,6 +475,9 @@ class MailTmClient:
         if stream:
             kwargs["stream"] = True
         target = url or f"{self.base_url}{path}"
+        if not metered:
+            return self._send_unmetered(method, target, kwargs, idempotent, attempts_allowed)
+        route = route_of(method, path)
         policy = self.retry
         started = self._clock()
         ticket: Optional[int] = None
@@ -447,12 +485,15 @@ class MailTmClient:
         queued = 0.0
 
         def gave_up(why: str) -> MailTmRateLimited:
-            run = self.queue.counters()
+            try:
+                run = self.queue.counters(self.queue.run_id)
+                totals = f"{run.requests} requests, {run.refused} refused"
+            except LockTimeout:
+                totals = "unknown (the queue's lock is stuck)"
             return MailTmRateLimited(
                 f"mail.tm {why} {method} {path} after {self._clock() - started:.0f} s "
                 f"({attempts} attempts, {refusals} answered 429, {queued:.0f} s in line); this "
-                f"run so far: {run.requests} requests, {run.refused} refused. The ceiling is "
-                f"{policy.call_ceiling:g} s per call."
+                f"run so far: {totals}. The ceiling is {policy.call_ceiling:g} s per call."
             )
 
         while True:
@@ -460,9 +501,15 @@ class MailTmClient:
             if left <= 0:
                 raise gave_up("still refused")
             try:
-                slot = self.queue.acquire(ticket, max_wait=left)
+                slot = self.queue.acquire(ticket, route=route, max_wait=left)
             except RateLimitTimeout:
                 raise gave_up("was still waiting in line for") from None
+            except LockTimeout as error:
+                # No place in line was taken (the lock was stuck before a ticket was handed out):
+                # try again, within the ceiling.
+                _log.warning("mail.tm queue: %s; trying again", error)
+                self._sleep(min(HEARTBEAT_ON_STUCK_LOCK, max(left, 0.0)))
+                continue
             ticket = slot.ticket
             queued += slot.waited
             self.stats.queued += slot.waited
@@ -472,41 +519,59 @@ class MailTmClient:
                 response = self.session.request(method, target, **kwargs)
             except (requests.ConnectionError, requests.Timeout):
                 failures += 1
-                if not idempotent or failures >= policy.max_attempts:
+                if not idempotent or failures >= attempts_allowed:
                     raise
                 self._sleep(self._backoff(failures))
                 continue
             if self.on_response is not None:
                 self.on_response(method, path, response)
+            quota = ratelimit_quota(response.headers)
             if response.status_code == 429:
                 refusals += 1
                 self.stats.refused += 1
-                refusal = self.queue.refused(slot, self._refusal_hint(response), self._pause_for)
-                _log.warning(
-                    "mail.tm answered 429 to %s %s: every process pauses %.1f s [%s] (429 #%d "
-                    "this run, %s; run request #%d, %d sent in the last %g s; this call: attempt "
-                    "%d, %.1f s in line)",
-                    method,
-                    path,
-                    refusal.pause,
-                    rate_limit_headers(response.headers) or "no rate-limit headers",
-                    refusal.refused,
-                    f"{refusal.strikes} in a row" if refusal.escalated else "same burst",
-                    refusal.requests,
-                    refusal.recent,
-                    self.queue.longest_window,
-                    attempts,
-                    queued,
-                )
+                hint = self._refusal_hint(response, quota)
+                try:
+                    refusal = self.queue.refused(slot, hint, policy_of(quota))
+                except LockTimeout as error:
+                    # The pause can't reach the others; this caller still waits it out.
+                    wait = hint if hint is not None else self._backoff(refusals)
+                    _log.warning(
+                        "mail.tm answered 429 to %s %s; the queue's lock is stuck (%s), so only "
+                        "this process pauses %.1f s",
+                        method,
+                        path,
+                        error,
+                        wait,
+                    )
+                    self._sleep(min(wait, max(started + policy.call_ceiling - self._clock(), 0)))
+                else:
+                    _log.warning(
+                        "mail.tm answered 429 to %s %s: every process pauses %.1f s [%s] (%s: "
+                        "%s, spacing now %.0f s; 429 #%d this run, run request #%d, %d sent in "
+                        "the last %g s; this call: attempt %d, %.1f s in line)",
+                        method,
+                        path,
+                        refusal.pause,
+                        rate_limit_headers(response.headers) or "no rate-limit headers",
+                        route,
+                        f"{refusal.strikes} in a row" if refusal.escalated else "same burst",
+                        refusal.spacing,
+                        refusal.refused,
+                        refusal.requests,
+                        refusal.recent,
+                        self.queue.longest_window,
+                        attempts,
+                        queued,
+                    )
                 if not retry_429:
                     return response
                 if stream:
                     response.close()
                 continue  # the next acquire waits out the pause, in this call's place in line
-            self._obey_quota(slot, response)
+            self._obey_quota(slot, response, quota)
             if response.status_code in TRANSIENT_STATUSES and idempotent:
                 failures += 1
-                if failures < policy.max_attempts:
+                if failures < attempts_allowed:
                     wait = retry_after_seconds(response, policy.retry_after_cap)
                     if stream:
                         response.close()
@@ -514,45 +579,65 @@ class MailTmClient:
                     continue
             return response
 
+    def _send_unmetered(
+        self, method: str, target: str, kwargs: dict, idempotent: bool, attempts_allowed: int
+    ) -> requests.Response:
+        """A call outside the queue (another host): transient failures are retried up to
+        `attempts_allowed` calls for idempotent calls; anything else is the caller's."""
+        failures = 0
+        while True:
+            self.stats.requests += 1
+            try:
+                response = self.session.request(method, target, **kwargs)
+            except (requests.ConnectionError, requests.Timeout):
+                failures += 1
+                if not idempotent or failures >= attempts_allowed:
+                    raise
+                self._sleep(self._backoff(failures))
+                continue
+            if self.on_response is not None:
+                self.on_response(method, urlparse(target).path, response)
+            if response.status_code in TRANSIENT_STATUSES and idempotent:
+                failures += 1
+                if failures < attempts_allowed:
+                    response.close()
+                    self._sleep(self._backoff(failures))
+                    continue
+            return response
+
     def _backoff(self, attempt: int) -> float:
         policy = self.retry
         return backoff_seconds(attempt - 1, policy.backoff_base, policy.backoff_cap, self._rng)
 
-    def _pause_for(self, strikes: int) -> float:
-        """A 429 without a hint: the shared backoff on the 429s in a row."""
-        return self._backoff(strikes)
-
-    def _refusal_hint(self, response: requests.Response) -> Optional[float]:
-        """How long a 429 asks everyone to wait: the strictest of `Retry-After` and the RateLimit
-        reset (or, with a spent `remaining` and no reset, the policy's window); None without a
-        hint."""
+    def _refusal_hint(
+        self, response: requests.Response, quota: Optional[Quota]
+    ) -> Optional[float]:
+        """How long a 429 asks everyone to wait: the stricter of `Retry-After` (up to the call
+        ceiling) and the RateLimit reset; None without either, and the queue then uses the
+        route's own backoff."""
         policy = self.retry
         hints = []
         retry_after = retry_after_seconds(response, policy.retry_after_cap)
         if retry_after is not None:
             hints.append(retry_after)
-        quota = ratelimit_quota(response.headers)
-        if quota is not None:
-            if quota.reset is not None:
-                hints.append(min(quota.reset, policy.quota_pause_cap))
-            elif quota.remaining is not None and quota.window is not None:
-                hints.append(min(quota.window, policy.quota_pause_cap))
+        if quota is not None and quota.reset is not None:
+            hints.append(min(quota.reset, policy.quota_pause_cap))
         return max(hints) if hints else None
 
-    def _obey_quota(self, slot: Slot, response: requests.Response) -> None:
-        """Hands the answer's RateLimit budget to the queue: at most `remaining - quota_reserve`
-        more calls until the reset (else the policy's window, else a second, mail.tm's documented
-        window), and notes that this call got through."""
-        quota = ratelimit_quota(response.headers)
-        if quota is None or quota.remaining is None:
-            self.queue.answered(slot)
-            return
-        reset = next(s for s in (quota.reset, quota.window, 1.0) if s is not None)
-        self.queue.answered(
-            slot,
-            quota.remaining - self.retry.quota_reserve,
-            min(reset, self.retry.quota_pause_cap),
-        )
+    def _obey_quota(self, slot: Slot, response: requests.Response, quota: Optional[Quota]) -> None:
+        """Tells the queue the call got through, with the answer's RateLimit budget for its route:
+        at most `remaining - quota_reserve` more calls until the reset (else the policy's window,
+        else a second, mail.tm's documented window), and the policy it named. Best effort: the
+        answer is the caller's whatever the queue's lock does."""
+        remaining = reset = None
+        if quota is not None and quota.remaining is not None:
+            remaining = quota.remaining - self.retry.quota_reserve
+            reset = next(s for s in (quota.reset, quota.window, 1.0) if s is not None)
+            reset = min(reset, self.retry.quota_pause_cap)
+        try:
+            self.queue.answered(slot, remaining, reset, policy_of(quota))
+        except LockTimeout as error:
+            _log.warning("mail.tm queue: %s; this answer's rate-limit news is lost", error)
 
     @staticmethod
     def _check(response: requests.Response, what: str, show_body: bool = True) -> None:
@@ -793,11 +878,23 @@ class InboxWatch:
         return self.feed is not None
 
     def open(self) -> "InboxWatch":
+        """Opens the stream: another host, without mail.tm's API limits, so outside the queue
+        (the guard still applies), and tried twice at most. When the hub is unreachable, every
+        process polls for the next five minutes without trying it again."""
         client = self.client
         if not self.account_id:
             self.failure = "no account id for the live feed"
             _log.warning("mail.tm live feed not opened (%s): polling", self.failure)
             return self
+        try:
+            down = client.queue.load_shared("feed-down")
+        except LockTimeout:
+            down = None
+        if isinstance(down, dict) and isinstance(down.get("until"), (int, float)):
+            if down["until"] > client._wall():
+                self.failure = f"the hub was unreachable lately ({down.get('why', '?')})"
+                _log.info("mail.tm live feed not opened (%s): polling", self.failure)
+                return self
         try:
             response = client.request(
                 "GET",
@@ -808,22 +905,35 @@ class InboxWatch:
                 headers={"Accept": "text/event-stream"},
                 stream=True,
                 timeout=(client.timeout, READ_TIMEOUT),
+                metered=False,
+                max_attempts=FEED_OPEN_ATTEMPTS,
             )
-        except MailTmRateLimited:
-            raise
         except (requests.RequestException, MailTmError) as error:
             self.failure = f"{type(error).__name__}: {error}"
+            self._hub_down()
             _log.warning("mail.tm live feed failed to connect (%s): polling", self.failure)
             return self
         if response.status_code != 200:
             self.failure = f"HTTP {response.status_code}"
             response.close()
+            if response.status_code >= 500:
+                self._hub_down()
             _log.warning("mail.tm live feed failed to connect (%s): polling", self.failure)
             return self
         self.response = response
         self.feed = client._feed_factory(response)
         _log.info("mail.tm live feed connected for inbox %s", self.account_id)
         return self
+
+    def _hub_down(self) -> None:
+        """Remembers for every process that the hub is unreachable (best effort)."""
+        client = self.client
+        try:
+            client.queue.store_shared(
+                "feed-down", {"until": client._wall() + FEED_DOWN_FOR, "why": self.failure[:200]}
+            )
+        except LockTimeout:
+            pass
 
     def wait_for(
         self,

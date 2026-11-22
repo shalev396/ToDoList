@@ -24,9 +24,11 @@ from .client import (
     default_buckets,
     default_state_dir,
     message_text,
+    policy_of,
     rate_limit_headers,
     ratelimit_quota,
     retry_after_seconds,
+    route_of,
 )
 from .guard import GUARD, CallGuard, MailTmNotAllowed, Violation
 from .live import DEFAULT_MERCURE_URL, SseEvent, SseParser, ThreadedFeed, arrived_message
@@ -39,6 +41,7 @@ from .ratelimit import (
     LockTimeout,
     RateLimitTimeout,
     Refusal,
+    RouteInfo,
     RunCounters,
     SharedQueue,
     Slot,
@@ -70,6 +73,7 @@ __all__ = [
     "RateLimitTimeout",
     "Refusal",
     "RetryPolicy",
+    "RouteInfo",
     "RunCounters",
     "SharedQueue",
     "Slot",
@@ -83,7 +87,9 @@ __all__ = [
     "default_buckets",
     "default_state_dir",
     "message_text",
+    "policy_of",
     "rate_limit_headers",
     "ratelimit_quota",
     "retry_after_seconds",
+    "route_of",
 ]

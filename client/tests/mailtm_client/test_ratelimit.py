@@ -24,6 +24,7 @@ from ._testing import (
 )
 from .ratelimit import (
     DEFAULT_BUCKETS,
+    RUN_KEPT_FOR,
     PER_MINUTE,
     PER_SECOND,
     STALE_TICKET,
@@ -61,10 +62,6 @@ def _offsets(clock: FakeClock, slots) -> list[float]:
 
 def _approx(values: list[float]):
     return pytest.approx(values, abs=1e-6)
-
-
-def _never(strikes: int) -> float:
-    raise AssertionError("no backoff expected")
 
 
 # --- the buckets ---------------------------------------------------------------------------------
@@ -212,42 +209,166 @@ def test_a_pause_that_comes_while_a_caller_waits_moves_its_release(make, clock):
 # --- what the server said ------------------------------------------------------------------------
 
 
+POST = "POST /accounts"
+READ = "GET /messages/{id}"
+
+
 def test_a_429_pauses_everyone_and_counts_one_strike_per_burst(make, clock):
-    """Two requests out at once, both refused: one strike. The next refused request (sent after
-    the strike) is a second one; a request that gets through ends the run."""
+    """Two requests of a route out at once, both refused: one strike, a 5 s pause for everyone
+    and a 5 s spacing. The next refused request (sent after the strike) is a second one: 10 s and
+    10 s. A request of the route that gets through ends its run of 429s."""
     queue, other = make(), make()
-    one, two = queue.acquire(), other.acquire()
-    first = queue.refused(one, None, lambda strikes: 10.0 * strikes)
-    second = other.refused(two, None, lambda strikes: 10.0 * strikes)
-    assert (first.strikes, first.escalated, first.pause) == (1, True, pytest.approx(10))
-    assert (second.strikes, second.escalated, second.pause) == (1, False, pytest.approx(10))
-    three = queue.acquire()
-    assert clock.since_start(three.at) == pytest.approx(10)
-    third = queue.refused(three, None, lambda strikes: 10.0 * strikes)
-    assert (third.strikes, third.escalated, third.pause) == (2, True, pytest.approx(20))
-    four = queue.acquire()
+    one, two = queue.acquire(route=POST), other.acquire(route=POST)
+    first, second = queue.refused(one), other.refused(two)
+    assert (first.strikes, first.escalated, first.pause, first.spacing) == (1, True, 5, 5)
+    assert (second.strikes, second.escalated, second.pause, second.spacing) == (1, False, 5, 5)
+    assert clock.since_start(make().acquire(route=READ).at) == pytest.approx(5)  # everyone
+    three = queue.acquire(route=POST)
+    assert clock.since_start(three.at) == pytest.approx(5)
+    third = queue.refused(three)
+    assert (third.strikes, third.escalated, third.pause, third.spacing) == (2, True, 10, 10)
+    four = queue.acquire(route=POST)
+    assert clock.since_start(four.at) == pytest.approx(15)
     queue.answered(four)
-    five = queue.acquire()
-    assert queue.refused(five, None, lambda strikes: 10.0 * strikes).strikes == 1
+    assert queue.route_info(POST).strikes == 0
+    assert queue.refused(queue.acquire(route=POST)).strikes == 1
+
+
+def test_a_success_on_another_route_never_resets_a_routes_backoff(make, clock):
+    queue = make()
+    queue.refused(queue.acquire(route=POST))
+    queue.answered(queue.acquire(route=READ))  # another route got through
+    refusal = queue.refused(queue.acquire(route=POST))
+    assert (refusal.strikes, refusal.pause, refusal.spacing) == (2, 10, 10)
+    assert queue.route_info(READ) == (0.0, 0, None)
+
+
+def test_a_routes_backoff_doubles_up_to_its_policy_window(make, clock):
+    queue = make()
+    pauses = [queue.refused(queue.acquire(route=POST), None, (1, 60)).pause for _ in range(6)]
+    assert pauses == _approx([5, 10, 20, 40, 60, 60])
+    assert queue.route_info(POST).policy == (1, 60)
+
+
+def test_spacing_grows_on_429s_and_eases_after_five_answers_in_a_row(make, clock):
+    """Additive increase, multiplicative decrease, in time between calls: doubled on each 429
+    (up to the policy's window over its limit), halved after five answers without one, and
+    gone once it would be under 5 s."""
+    queue = make(buckets=[Bucket(100, 1.0)])  # only the route's own spacing in play
+    spacings = [
+        queue.refused(queue.acquire(route=POST), 0, (1, 60)).spacing for _ in range(6)
+    ]
+    assert spacings == _approx([5, 10, 20, 40, 60, 60])
+    eased = []
+    for _ in range(20):
+        slot = queue.acquire(route=POST)
+        queue.answered(slot)
+        eased.append(queue.route_info(POST).spacing)
+    assert eased == _approx([60] * 4 + [30] * 5 + [15] * 5 + [7.5] * 5 + [0])
+    times = []
+    for _ in range(3):
+        times.append(queue.acquire(route=POST).at)
+    assert [later - earlier for earlier, later in zip(times, times[1:])] == _approx([0, 0])
+
+
+def test_a_routes_spacing_is_capped_by_its_policy_or_a_minute(make, clock):
+    queue = make()
+    for _ in range(3):
+        queue.refused(queue.acquire(route=READ), 0, (10, 60))
+    assert queue.route_info(READ).spacing == pytest.approx(6)  # 60 s / 10
+    for _ in range(6):
+        queue.refused(queue.acquire(route="GET /me"), 0)
+    assert queue.route_info("GET /me").spacing == pytest.approx(60)  # no policy: a minute
+
+
+def test_the_strictest_policy_a_route_names_is_kept(make, clock):
+    queue = make()
+    slot = queue.acquire(route=POST)
+    queue.answered(slot, policy=(10, 60))
+    queue.answered(slot, policy=(1, 60))
+    queue.answered(slot, policy=(5, 60))
+    assert queue.route_info(POST).policy == (1, 60)
+
+
+def test_a_ticket_held_back_by_its_own_routes_spacing_does_not_hold_up_the_line(make, clock):
+    """A retry of `POST /accounts` waiting out its spacing keeps its place for its route, but a
+    read of a confirmation email behind it goes first."""
+    refused, reader = make(), make()
+    slot = refused.acquire(route=POST)
+    refused.refused(slot, 0)  # no pause for anyone; the route's spacing is now 5 s
+    reads = []
+
+    def reader_meanwhile():
+        clock.on_sleep = None
+        ticket = reader.take_ticket(READ)
+        assert ticket > slot.ticket
+        reads.append(reader.acquire(ticket, route=READ))
+
+    clock.on_sleep = reader_meanwhile
+    again = refused.acquire(slot.ticket, route=POST)  # waits for its spacing, in its place
+    assert clock.since_start(reads[0].at) < 5  # the read went past it
+    assert clock.since_start(again.at) == pytest.approx(5)
+    assert reads[0].seq < again.seq
+
+
+def test_tickets_of_one_route_keep_their_order(make, clock):
+    first, second = make(), make()
+    first.refused(first.acquire(route=POST), 0)  # spacing 5 s
+    a, b = first.take_ticket(POST), second.take_ticket(POST)
+    order = []
+
+    def first_meanwhile():
+        clock.on_sleep = None
+        order.append(("a", first.acquire(a, route=POST)))
+
+    clock.on_sleep = first_meanwhile
+    order.append(("b", second.acquire(b, route=POST)))
+    assert [name for name, _ in order] == ["a", "b"]
+    assert clock.since_start(order[1][1].at) - clock.since_start(order[0][1].at) == pytest.approx(5)
 
 
 def test_the_servers_hint_wins_over_the_backoff_and_pauses_are_capped(make, clock):
     queue = make(max_pause=60)
-    slot = queue.acquire()
-    assert queue.refused(slot, 3.5, _never).pause == pytest.approx(3.5)
-    assert queue.refused(slot, -5, _never).pause == pytest.approx(3.5)  # never shortens a pause
-    assert queue.refused(slot, 1e9, _never).pause == pytest.approx(60)
-    assert queue.refused(slot, float("nan"), _never).pause == pytest.approx(60)
+    slot = queue.acquire(route=POST)
+    assert queue.refused(slot, 3.5).pause == pytest.approx(3.5)
+    assert queue.refused(slot, -5).pause == pytest.approx(3.5)  # never shortens a pause
+    assert queue.refused(slot, 1e9).pause == pytest.approx(60)
+    assert queue.refused(slot, float("nan")).pause == pytest.approx(60)
 
 
-def test_a_refusal_reports_the_runs_counters(make, clock):
+def test_a_retry_after_of_several_minutes_is_honoured_by_default(make, clock):
+    queue = make()
+    assert queue.refused(queue.acquire(route=POST), 300).pause == pytest.approx(300)
+    assert clock.since_start(queue.acquire(route=READ).at) == pytest.approx(300)
+
+
+def test_a_refusal_reports_the_runs_counters_by_route(make, clock):
     queue = make(run_id="run-1")
-    for _ in range(3):
-        last = queue.acquire()
-    refusal = queue.refused(last, 1, _never)
+    for route in (POST, READ, READ):
+        last = queue.acquire(route=route)
+    refusal = queue.refused(last, 1)
     assert (refusal.requests, refusal.refused, refusal.recent) == (3, 1, 3)
     counters = queue.counters()
     assert (counters.run_id, counters.requests, counters.refused) == ("run-1", 3, 1)
+    assert counters.routes == {POST: (1, 0), READ: (2, 1)}
+
+
+def test_concurrent_runs_keep_their_own_counters(make, clock):
+    """Two runs sharing the state dir (a loop of runs beside another one) never reset each
+    other's totals; a run's counters are dropped a day after its last request."""
+    one, two = make(run_id="one"), make(run_id="two")
+    for _ in range(3):
+        one.acquire(route=READ)
+        two.acquire(route=READ)
+    assert one.counters("one").requests == 3
+    assert two.counters("two").requests == 3
+    assert one.counters("nobody").requests == 0
+    clock.advance(RUN_KEPT_FOR - 100)
+    two.acquire(route=READ)
+    clock.advance(200)  # "one" last asked more than a day ago, "two" 200 s ago
+    two.acquire(route=READ)
+    assert two.counters("one").requests == 0  # dropped
+    assert two.counters("two").requests == 5
 
 
 def test_a_new_run_starts_its_own_counters(make, clock):
@@ -257,7 +378,6 @@ def test_a_new_run_starts_its_own_counters(make, clock):
     newer.acquire()
     counters = newer.counters()
     assert (counters.run_id, counters.requests, counters.refused) == ("new", 1, 0)
-    assert counters.since == pytest.approx(clock.now)
 
 
 def test_the_longest_wait_in_line_is_counted(make, clock):
