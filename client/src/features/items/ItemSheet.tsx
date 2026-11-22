@@ -42,6 +42,8 @@ import {
   type FieldAction,
 } from './plannedAt';
 import { MirroredEditor } from './editing/MirroredEditor';
+import { DisableSection } from './DisableSection';
+import { canDisable } from './disableState';
 import { TimeBlockSection } from './scheduled/TimeBlockSection';
 import { ItemTravelSection } from '@/features/travel/ItemTravelSection';
 import { TravelLegSection } from '@/features/travel/TravelLegSection';
@@ -272,6 +274,15 @@ function ItemBody({
         ) : (
           <MirroredEditor item={item} timeZone={timeZone} source={sourceName} canEdit={canWrite} />
         )}
+
+        {canWrite && workspace !== null && canDisable(item) ? (
+          <DisableSection
+            item={item}
+            occurrence={occurrence}
+            workspaceId={workspace.id}
+            sourceName={sourceName}
+          />
+        ) : null}
 
         {canWrite && canTravelTo(item) ? (
           <ItemTravelSection item={item} occurrence={occurrence} />
