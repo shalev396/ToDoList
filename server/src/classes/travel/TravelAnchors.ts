@@ -8,7 +8,7 @@
  *   'calendar'`, so a series that began weeks ago is read too): a start, any kind but travel, in
  *   the range, at most ANCHOR_ROWS_MAX. Series are expanded on the workspace's wall clock; all-day
  *   and due-only occurrences never anchor, nor does an event Google shows as Free
- *   (`transparency: 'transparent'`). A painted area anchors like a block (the owner's ruling
+ *   (`transparency: 'transparent'`), nor a cancelled or disabled occurrence (its fate: cancelled). A painted area anchors like a block (the owner's ruling
  *   of 2026-11-18), marked `area`: the day plan nests the items inside it (DayPlanner).
  * - Rule (Ruling 11): the item rule of that occurrence, else the series rule of its series, else
  *   the repeats rule an event that doesn't repeat falls under (the one
@@ -193,6 +193,12 @@ export class TravelAnchors {
     const anchors: Anchor[] = [];
     for (const occurrence of expandOccurrences(rows, range, this.#caller.settings.timezone)) {
       if (occurrence.allDay || occurrence.dueOnly) continue;
+      if (occurrence.inactive !== null) {
+        // Cancelled or disabled: its time is free, so nobody travels to it; a leg made for it
+        // goes, as cancelled (the owner's ruling of 2026-11-22).
+        this.#fate(this.#keyOf(occurrence), 'cancelled');
+        continue;
+      }
       const anchor = this.#anchorOf(occurrence, matches);
       if (anchor !== null) anchors.push(anchor);
     }
@@ -208,7 +214,7 @@ export class TravelAnchors {
     const itemId = occurrence.seriesRowId ?? row.id;
     const slot =
       occurrence.originalStart === null ? 'single' : occurrence.originalStart.toISOString();
-    const key = anchorKey(itemId, slot);
+    const key = this.#keyOf(occurrence);
     if (isFree(row)) {
       // "Show as: Free": a marker (a holiday, a semester's end), never somewhere he goes. A leg
       // made for it before it was marked free goes, as no longer matching.
@@ -354,6 +360,14 @@ export class TravelAnchors {
         'cancelled',
       );
     }
+  }
+
+  /** An occurrence's anchor key: its series (or own row) and its original start, or `single`. */
+  #keyOf(occurrence: Occurrence): string {
+    return anchorKey(
+      occurrence.seriesRowId ?? occurrence.row.id,
+      occurrence.originalStart === null ? 'single' : occurrence.originalStart.toISOString(),
+    );
   }
 
   #fate(key: string, fate: AnchorFate): void {

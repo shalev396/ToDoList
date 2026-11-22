@@ -248,3 +248,30 @@ describe('the push set leaves out TodoList’s own reserved time (Ruling 26)', (
     }
   });
 });
+
+describe('the push set leaves out a disabled item (classes/item/Disabled.ts)', () => {
+  it('a disabled to-do’s event is deleted, and it is pushed again once enabled', async () => {
+    const items = await fx.models.getItemRepository();
+    const todo = await fx.item('Meeting that was called off', 1);
+    await (
+      await fx.models.getCalendarLinkRepository()
+    ).upsert(
+      fx.workspaceId,
+      fx.integrationId,
+      { calendarId: 'primary', googleEventId: eventIdFor(todo.id) },
+      { itemId: todo.id, direction: 'to_google', pushedHash: 'x' },
+    );
+    await items.setOverlay(fx.workspaceId, todo.id, { disabled: true, editedAt: new Date() });
+    const off = await loadPlan(await integration(), NOW);
+    assert.deepEqual(
+      off.entries.filter((entry) => entry.itemId === todo.id).map((entry) => entry.type),
+      ['delete'],
+    );
+    await items.setOverlay(fx.workspaceId, todo.id, { disabled: null, editedAt: new Date() });
+    const on = await loadPlan(await integration(), NOW);
+    assert.deepEqual(
+      on.entries.filter((entry) => entry.itemId === todo.id).map((entry) => entry.type),
+      ['update'],
+    );
+  });
+});

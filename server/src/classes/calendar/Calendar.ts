@@ -111,6 +111,8 @@ function pushRule(): Filter[] {
     { 'source.provider': { $ne: 'google_calendar' } },
     { 'overlay.calendarSync': { $ne: false } },
     { kind: { $nin: [...SCHEDULED_KINDS] } },
+    // Disabled (Disabled.ts): its time is free, so its event leaves the calendar until enabled.
+    { 'overlay.disabled': { $ne: true } },
   ];
 }
 
