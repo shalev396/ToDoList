@@ -1,13 +1,21 @@
 /**
  * A `$match` filter the rule compiler made (compile.ts, Compilation#rule and #group) as an
- * aggregation expression that is true for exactly the documents the filter matches: what a stage
- * computing a value per row (H5's partition flag) needs, where a filter cannot go.
+ * aggregation expression that is true for the documents the filter matches (one limit, below):
+ * what a stage computing a value per row (H5's partition flag) needs, where a filter cannot go.
  *
  * MongoDB's query rules are kept: a list field matches a condition when one of its items does (and
  * equality and `$in` also by the whole list); a missing field equals null; `<`, `>` and the like
  * compare only values of the same type (a number with a number, a date with a date, text with
  * text); `$ne`, `$nin` and `$not` match whatever the positive form does not, missing fields too.
  * Every value is wrapped in `$literal`, so a user's text that starts with `$` stays text.
+ *
+ * One limit: on a dotted path that crosses a list of subdocuments (`props.s.b` where `props.s` is
+ * `[{b: 1}, {c: 2}]`), null and missing are not MongoDB's. `$match` counts an item that lacks the
+ * field as null; the expression reads only the items that have it (`[1]`). So `null`, `notNull`,
+ * `!=` and `$in` with null can differ there, while equality on values, `$in` on values, `$all`,
+ * text and comparisons agree. Only a dynamic `props.*` path read without a registry can be one
+ * (the registry descends through plain objects only), and only a to-do's own row feeds the
+ * absorption flag, so nothing differs in practice today.
  *
  * Only the shapes the rule compiler emits are known; anything else throws (FilterExpressionError).
  */

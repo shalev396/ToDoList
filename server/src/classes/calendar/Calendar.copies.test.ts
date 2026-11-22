@@ -13,6 +13,7 @@ import type * as Models from '../../models/index.js';
 import type { IntegrationData } from '../../models/definitions/Integration.js';
 import { seedIntegration } from '../../testing/integrationFixtures.js';
 import { startTestDatabase, type TestDatabase } from '../../testing/testDatabase.js';
+import { addLocalDays, wallDate, zonedParts, zonedTime } from '../../types/recurrence/zoned.js';
 import type * as CalendarModule from './Calendar.js';
 import type { PlanNarrowing } from './PushPlan.js';
 
@@ -68,11 +69,26 @@ after(async () => {
 
 let n = 0;
 
-/** The owner's to-do and its Linear copy, each due `days` from now (undated when null). */
+/** The workspace's time zone (a new workspace's default): the push reads dates and ranges in it. */
+const ZONE = 'Asia/Jerusalem';
+
+/** Noon, `days` local days from today, on the workspace's wall clock: whenever the test runs. */
+function localNoon(days: number): Date {
+  const { year, month, day } = zonedParts(addLocalDays(new Date(), days, ZONE), ZONE);
+  return zonedTime(year, month, day, 12, 0, ZONE);
+}
+
+/** A due date: `days` from now, or the date given; null: none. */
+function dueOf(when: number | Date | null, now: number): Date | null {
+  if (when === null) return null;
+  return when instanceof Date ? when : new Date(now + when * DAY_MS);
+}
+
+/** The owner's to-do and its Linear copy, each due `days` from now or then (undated when null). */
 async function todoWithCopy(
   title: string,
-  todoDays: number | null,
-  copyDays: number | null,
+  todoDays: number | Date | null,
+  copyDays: number | Date | null,
   calendarSync?: boolean,
 ): Promise<{ todo: string; copy: string }> {
   n += 1;
@@ -83,7 +99,7 @@ async function todoWithCopy(
     title,
     topicId: null,
     visibility: 'workspace',
-    dueAt: todoDays === null ? null : new Date(now + todoDays * DAY_MS),
+    dueAt: dueOf(todoDays, now),
   });
   if (calendarSync !== undefined) await repo.setOverlay(workspaceId, todo.id, { calendarSync });
   const copy = `push-copy-${String(n)}`;
@@ -95,7 +111,7 @@ async function todoWithCopy(
       topicId: null,
       title: `${title} (Linear)`,
       status: 'open',
-      dueAt: copyDays === null ? null : new Date(now + copyDays * DAY_MS),
+      dueAt: dueOf(copyDays, now),
       source: {
         provider: 'linear',
         accountId: 'acct',
@@ -144,19 +160,23 @@ describe('the push set and provider copies', () => {
   });
 
   it('an MCP dry run decides H5 on the whole set, as the confirmed push does: its plan is a part', async () => {
-    const pair = await todoWithCopy('Narrowed', 2, 3);
+    const pair = await todoWithCopy('Narrowed', localNoon(2), localNoon(3));
+    // The control: an undated to-do's copy on the same day, which each read below must plan.
+    const control = await todoWithCopy('Control', null, localNoon(3));
     const all = await created();
     assert.ok(all.includes(pair.todo) && !all.includes(pair.copy));
+    assert.ok(all.includes(control.copy));
     // Narrowed to issues: the to-do is not previewed, and its copy stays absorbed (the confirmed
     // push, which takes no narrowing, makes the to-do's event, never the copy's).
     const issues = await created({
       where: { combinator: 'and', rules: [{ field: 'kind', operator: '=', value: 'issue' }] },
     });
+    assert.ok(issues.includes(control.copy), 'the narrowed plan is not empty');
     assert.ok(!issues.includes(pair.copy) && !issues.includes(pair.todo));
-    // A range that holds the copy's day but not the to-do's: the same.
-    const day = (days: number): string =>
-      new Date(Date.now() + days * DAY_MS).toISOString().slice(0, 10);
-    const copyDay = await created({ range: { from: day(3), to: day(3) } });
+    // A range that holds the copy's day but not the to-do's (local days): the same.
+    const day = wallDate(localNoon(3), ZONE);
+    const copyDay = await created({ range: { from: day, to: day } });
+    assert.ok(copyDay.includes(control.copy), 'the range holds the copies’ day');
     assert.ok(!copyDay.includes(pair.copy) && !copyDay.includes(pair.todo));
     for (const id of [...issues, ...copyDay]) assert.ok(all.includes(id), id);
   });
