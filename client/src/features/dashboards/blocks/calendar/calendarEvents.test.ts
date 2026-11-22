@@ -48,6 +48,7 @@ const occ = (over: Partial<Occurrence>): Occurrence => ({
   dueOnly: false,
   originalStart: null,
   seriesRowId: null,
+  inactive: null,
   ...over,
 });
 

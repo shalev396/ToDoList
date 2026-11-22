@@ -5,14 +5,15 @@
  * Pure data. Every case uses Asia/Jerusalem (UTC+2 in winter, UTC+3 in summer; the clocks went
  * back on Sun 25 Oct 2026 and go forward on Fri 26 Mar 2027).
  */
-import type { TimeRow } from './occurrences.js';
+import type { Inactive, TimeRow } from './occurrences.js';
 
 export interface ParityCase {
   name: string;
   rows: TimeRow[];
   range: { from: string; to: string };
   timeZone: string;
-  expected: { key: string; start: string; end: string | null }[];
+  /** `inactive` only where the occurrence has one (cancelled or disabled). */
+  expected: { key: string; start: string; end: string | null; inactive?: Inactive }[];
 }
 
 const TZ = 'Asia/Jerusalem';
@@ -150,6 +151,13 @@ export const PARITY_CASES: readonly ParityCase[] = [
         key: slot('master', '2026-11-08T08:00:00.000Z'),
         start: '2026-11-08T08:00:00.000Z',
         end: '2026-11-08T09:00:00.000Z',
+      },
+      {
+        // Listed, cancelled, at its slot: with no end of its own, it takes the master's length.
+        key: slot('master', '2026-11-10T08:00:00.000Z'),
+        start: '2026-11-10T08:00:00.000Z',
+        end: '2026-11-10T09:00:00.000Z',
+        inactive: 'cancelled',
       },
       {
         key: slot('master', '2026-11-12T08:00:00.000Z'),

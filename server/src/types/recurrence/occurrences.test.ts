@@ -39,6 +39,7 @@ describe('expandOccurrences: parity cases', () => {
           key: o.key,
           start: o.start.toISOString(),
           end: o.end?.toISOString() ?? null,
+          ...(o.inactive === null ? {} : { inactive: o.inactive }),
         })),
         c.expected,
       );
