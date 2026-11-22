@@ -1,6 +1,6 @@
 import { useId, useMemo } from 'react';
 import { cn } from '@/lib/utils';
-import { SOURCE_STYLES } from '@/components/items/sources';
+import { RESERVED_SOURCE_STYLE, SOURCE_STYLES } from '@/components/items/sources';
 import { HatchPatternDefs } from '@/features/colours/Hatch';
 import { colourVar, hatchFill, paintOf } from '@/features/colours/palette';
 import type { ColourFamily } from '@api-types/colours';
@@ -236,7 +236,13 @@ export function ClockRing({
                 style={leg?.past === true ? { opacity: 0.5 } : undefined}
               >
                 <path
-                  className={paint === null ? SOURCE_STYLES[event.source].fill : undefined}
+                  className={
+                    paint === null
+                      ? event.reserved === true
+                        ? RESERVED_SOURCE_STYLE.fill
+                        : SOURCE_STYLES[event.source].fill
+                      : undefined
+                  }
                   // A leg that can't be made in time has a red edge; one whose trip has no length
                   // yet is dashed.
                   style={{

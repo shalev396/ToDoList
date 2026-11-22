@@ -196,11 +196,12 @@ classDiagram
     +for(subject)$ Promise~ItemPolicy~
     +ownFor(subject)$ Promise~ItemPolicy~
     +of(access)$ ItemPolicy
-    +filterFor(caller, userFilter?)$ Promise
+    +filterFor(caller)$ Promise
     +sharedConnectorIds(workspaceId)$ Promise
     +isShared(integration)$ Promise
     +forget(workspaceId)$ void
-    +itemFilter(ws, userFilter?) Filter
+    +copyAbsorption()$ Stage[]
+    +itemFilter(ws) Filter
     +itemFilterUnabsorbed(ws) Filter
     +containerFilter(ws) Filter
     +blockScope(connectors) BlockScope
@@ -208,8 +209,9 @@ classDiagram
   }
   class ItemAccessFilter {
     <<value object>>
-    +copyAbsorption(userId)$ Filter
-    +items(ws, userFilter?) Filter
+    +copyAbsorption(hidden?)$ Stage[]
+    +isCopyAbsorption(stage)$ boolean
+    +items(ws) Filter
     +itemsUnabsorbed(ws) Filter
     +containers(ws) Filter
   }
@@ -1274,6 +1276,7 @@ classDiagram
     +get(id)
     +detail(item)
     +summaries(ids)
+    +copyOf(ids) Map
     +facets(connectors)
     +aggregates() RunQueryDeps
     +run(query, ctx)
@@ -1311,6 +1314,7 @@ classDiagram
     the primary, as its integration pushes
     -owner: Caller
     +plan(now, narrowing?, budget?) PushPlan
+    -absorbedCopies(workspaceId, access, scope, whole)$ Filter
   }
   Calendar <|-- PushCalendar
   class EventClaim {

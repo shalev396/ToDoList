@@ -90,17 +90,13 @@ def test_share_on_attach_between_two_members(
     integration_id = next(entry["id"] for entry in mine if entry["provider"] == "jira")
     assert list_items(api_base_url, member, wid, "jira") == [], "B sees A's unshared items"
 
-    # A template never shares silently: the gallery names what it would attach, and "Create
-    # without them" keeps the integration private.
+    # A template never shares silently. The Work template's blocks name no provider, so they stay
+    # on All sources (Batch 2): it attaches nothing, so it asks nothing and A's Jira stays private.
     ensure_topics(api_base_url, owner, wid, ["work"])
     open_as(page, base_url, owner, "/en/templates")
     page.locator("[data-template^='work@']").get_by_role("button", name="Use template").click()
-    ask = page.locator("[data-template-share-confirm]")
-    # Named by its account label (the card's), with the workspace it would be shared with.
-    expect(ask).to_contain_text(SITE, timeout=NORMAL_TIMEOUT)
-    expect(ask).to_contain_text(f"shares its items with everyone in {workspace['name']}")
-    ask.locator("[data-template-share-without]").click()
     expect(page).to_have_url(re.compile(r"/en/t/work\?dashboard="), timeout=NORMAL_TIMEOUT)
+    expect(page.locator("[data-template-share-confirm]")).to_have_count(0)
     sharing = requests.get(
         f"{api_base_url}/private/workspaces/{wid}/integrations/sharing",
         headers=_headers(owner),

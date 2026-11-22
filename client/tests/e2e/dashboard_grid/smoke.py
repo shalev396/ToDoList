@@ -29,7 +29,6 @@ from tests.helpers.workspaces import (
     ensure_topics,
     topic_id,
 )
-from tests.helpers.users import pooled_user
 from tests.viewports import DESKTOP_VIEWPORT
 
 CONFLICT_TOAST = "This dashboard changed elsewhere. Your layout change wasn’t saved."
@@ -65,9 +64,9 @@ def _box(page: Page, title: str) -> dict:
     return box
 
 
-def _join_as(api_base_url: str, owner, workspace: dict, role: str):
-    """The worker's second account, after it accepted an invite to the owner's workspace."""
-    member = pooled_user(api_base_url, "member")
+def _join_as(api_base_url: str, owner, workspace: dict, role: str, member):
+    """The worker's second account (`pooled_member`), after it accepted an invite to the
+    owner's workspace."""
     invite = create_invite(api_base_url, owner, workspace["id"], member.email, role=role)
     accept_invite(api_base_url, member, invite_token(invite["inviteUrl"]))
     return member
@@ -187,6 +186,38 @@ def test_leaving_right_after_a_move_still_saves_it(
     assert layout_item(stored, "lg", clock)["x"] == 1
 
 
+#: Where the block menu stands, for a failed focus check: whether the "Options" menu is still the
+#: node it was (else its block's header was re-mounted, which resets the uncontrolled Move submenu
+#: while DashboardGrid keeps the menu itself open), where focus went, and whether Move is expanded.
+_MENU_STATE = """(menu) => {
+    const name = (el) => (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40);
+    const describe = (el) => el === null ? 'nothing' : el === document.body ? 'the page body'
+        : `${el.getAttribute('role') || el.tagName.toLowerCase()} "${name(el)}"`;
+    const move = [...document.querySelectorAll('[role=menuitem][aria-haspopup=menu]')]
+        .find((el) => el.textContent.trim() === 'Move');
+    return {
+        menuReMounted: !menu.isConnected,
+        focus: describe(document.activeElement),
+        moveExpanded: move ? move.getAttribute('aria-expanded') : 'no Move item',
+        menus: [...document.querySelectorAll('[role=menu]')].map(describe),
+    };
+}"""
+
+
+def _expect_focused(locator, page: Page, menu_node) -> None:
+    """`expect(locator).to_be_focused()`, unchanged, whose failure also reports `_MENU_STATE`:
+    the Move submenu has closed after an ArrowDown in CI while the menu stayed open, and the
+    report has to tell a re-mount from focus leaving the submenu."""
+    try:
+        expect(locator).to_be_focused()
+    except AssertionError as error:
+        try:
+            state = page.evaluate(_MENU_STATE, menu_node)
+        except Exception as unavailable:  # noqa: BLE001 - the focus failure must still show
+            state = f"unavailable ({type(unavailable).__name__}: {unavailable})"
+        raise AssertionError(f"{error}\nBlock menu state: {state}") from None
+
+
 def test_block_menu_moves_with_the_keyboard_and_returns_focus(
     page: Page, base_url: str, api_base_url: str, fresh_owner
 ):
@@ -218,11 +249,12 @@ def test_block_menu_moves_with_the_keyboard_and_returns_focus(
     expect(move.get_by_role("menuitem").first).to_be_focused()
     expect(move.get_by_role("menuitem", name="Left", exact=True)).to_be_disabled()
     right = move.get_by_role("menuitem", name="Right", exact=True)
+    menu_node = menu.element_handle()
     # Up, Down, Left (disabled, skipped), Right: one key at a time, each waits for its focus.
     page.keyboard.press("ArrowDown")
-    expect(move.get_by_role("menuitem", name="Down", exact=True)).to_be_focused()
+    _expect_focused(move.get_by_role("menuitem", name="Down", exact=True), page, menu_node)
     page.keyboard.press("ArrowDown")
-    expect(right).to_be_focused()
+    _expect_focused(right, page, menu_node)
     with page.expect_response(_is_layout_save, timeout=LONG_TIMEOUT):
         page.keyboard.press("Enter")
     page.keyboard.press("Escape")
@@ -264,11 +296,13 @@ def test_remove_block_asks_first(page: Page, base_url: str, api_base_url: str, f
     expect(page.get_by_role("article", name="Deadlines")).to_be_visible(timeout=LONG_TIMEOUT)
 
 
-def test_viewer_gets_no_edit_mode(page: Page, base_url: str, api_base_url: str, fresh_owner):
+def test_viewer_gets_no_edit_mode(
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
+):
     """A viewer never sees the Edit toggle, handles or menus; ?edit=1 just shows the dashboard."""
     owner, workspace = fresh_owner
     dashboard = create_dashboard(api_base_url, owner, workspace["id"])
-    viewer = _join_as(api_base_url, owner, workspace, "viewer")
+    viewer = _join_as(api_base_url, owner, workspace, "viewer", pooled_member)
 
     _open_dashboard(
         page, base_url, viewer, "/en/dashboard", len(dashboard["blocks"]), workspace["id"]
@@ -285,22 +319,22 @@ def test_viewer_gets_no_edit_mode(page: Page, base_url: str, api_base_url: str, 
 
 
 def test_viewer_without_a_dashboard_sees_a_quiet_state(
-    page: Page, base_url: str, api_base_url: str, fresh_owner
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
 ):
     owner, workspace = fresh_owner
     ensure_topics(api_base_url, owner, workspace["id"], ["work", "personal"])
-    viewer = _join_as(api_base_url, owner, workspace, "viewer")
+    viewer = _join_as(api_base_url, owner, workspace, "viewer", pooled_member)
     open_as(page, base_url, viewer, "/en/dashboard", h1="Dashboard", workspace_id=workspace["id"])
     expect(page.get_by_text("Nothing here yet")).to_be_visible()
     expect(page.get_by_role("button", name="Create from template", exact=True)).to_have_count(0)
 
 
 def test_editor_sees_that_changes_wait_for_an_owner(
-    page: Page, base_url: str, api_base_url: str, fresh_owner
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
 ):
     owner, workspace = fresh_owner
     dashboard = create_dashboard(api_base_url, owner, workspace["id"])
-    editor = _join_as(api_base_url, owner, workspace, "editor")
+    editor = _join_as(api_base_url, owner, workspace, "editor", pooled_member)
     _open_dashboard(
         page, base_url, editor, "/en/dashboard?edit=1", len(dashboard["blocks"]), workspace["id"]
     )

@@ -31,6 +31,8 @@ export interface ClockEvent {
   start: Date;
   end: Date;
   source: Provider;
+  /** A provider the ring has no colour for: it draws in the muted ink, not as local to-dos. */
+  reserved?: boolean;
   /** Its colour (topic or subject, and role); without one it draws in its source colour (the landing demos). */
   colour?: ItemColour;
   /** A travel leg's marks (mode, conflict, past, "the event moved"); null for any other item. */
@@ -46,6 +48,10 @@ export interface ClockArea {
   /** The topic the area is painted for (its colour's), if any. */
   topicId: string | null;
   colour: ItemColour;
+}
+
+export function isRingProvider(provider: string): boolean {
+  return RING_PROVIDERS.has(provider);
 }
 
 /** A provider the ring has a colour for; one without (a future source) draws as local. */
@@ -116,6 +122,7 @@ export function buildClockModel(
     start: o.start,
     end: endOf(o),
     source: ringProvider(o.row.source.provider),
+    ...(isRingProvider(o.row.source.provider) ? {} : { reserved: true }),
     leg: legFlagsOf({ row: o.row, start: o.start, end: endOf(o) }, now),
     ...(colourOf === undefined ? {} : { colour: colourOf(o.row.id) }),
   }));

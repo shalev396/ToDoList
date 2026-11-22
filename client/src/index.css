@@ -69,7 +69,10 @@
   --color-source-clickup: var(--chart-5);
   --color-source-github: var(--chart-6);
   --color-source-linear: var(--chart-7);
-  --color-source-local: var(--muted-foreground);
+  /* Your to-dos have their own sky cyan, --source-local (both themes). */
+  --color-source-local: var(--source-local);
+  /* Reserved providers with no slot of their own (slack, notion): the muted ink. */
+  --color-source-reserved: var(--muted-foreground);
 }
 
 /*
@@ -118,6 +121,8 @@
   --chart-5: #e87ba4;
   --chart-6: #008300;
   --chart-7: #6250d6;
+  /* Your to-dos (local): a sky cyan no subject family or provider uses (DESIGN.md). */
+  --source-local: #52c1e1;
 
   /* Status: reserved, always with an icon and a label. */
   --status-good: #0ca30c;
@@ -182,6 +187,12 @@
   --tc-pink-work-ink: #fffdf9;
   --tc-pink-travel: #ab7b8b;
   --tc-pink-area: #feebed;
+  --tc-magenta-scheduled: #c083d3;
+  --tc-magenta-scheduled-ink: #1f1a12;
+  --tc-magenta-work: #aa6ebc;
+  --tc-magenta-work-ink: #1f1a12;
+  --tc-magenta-travel: #c5a9cd;
+  --tc-magenta-area: #ebd6ee;
 
   --sidebar: #f7f4ee;
   --sidebar-foreground: #1f1a12;
@@ -231,6 +242,7 @@
   --chart-5: #d55181;
   --chart-6: #008300;
   --chart-7: #9085e9;
+  --source-local: #28a6c0;
 
   /* Topic colours: a family per topic (or subject), a step per role, and the ink on the solid
      steps (validated on the dark card, see DESIGN.md "Topic colours"). Painted through
@@ -289,6 +301,12 @@
   --tc-pink-work-ink: #f3ede0;
   --tc-pink-travel: #7e4758;
   --tc-pink-area: #46292c;
+  --tc-magenta-scheduled: #8f55a1;
+  --tc-magenta-scheduled-ink: #f3ede0;
+  --tc-magenta-work: #7c438d;
+  --tc-magenta-work-ink: #f3ede0;
+  --tc-magenta-travel: #5c4363;
+  --tc-magenta-area: #402845;
 
   --sidebar: #16130e;
   --sidebar-foreground: #f3ede0;

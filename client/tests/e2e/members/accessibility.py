@@ -2,6 +2,7 @@
 Members accessibility: axe with every rule on the Share dialog, with a member, a pending invite,
 a sent invite and the join link on screen, in English light and Hebrew dark.
 """
+import pytest
 from axe_playwright_python.sync_playwright import Axe
 from playwright.sync_api import Page, expect
 
@@ -14,7 +15,7 @@ from tests.helpers.workspaces import (
     invite_token,
     open_as,
 )
-from tests.helpers.users import new_mailbox, pooled_user
+from tests.helpers.users import new_mailbox
 
 
 def _assert_clean(page: Page) -> None:
@@ -23,16 +24,19 @@ def _assert_clean(page: Page) -> None:
     assert violations == [], f"Accessibility violations: {violations}"
 
 
-def _populate(api_base_url: str, user, workspace_id: str) -> None:
-    member = pooled_user(api_base_url, "member")
+def _populate(api_base_url: str, user, workspace_id: str, member) -> None:
+    """The worker's member account joined, and an invite waiting in a new real inbox."""
     created = create_invite(api_base_url, user, workspace_id, member.email, "viewer")
     accept_invite(api_base_url, member, invite_token(created["inviteUrl"]))
     create_invite(api_base_url, user, workspace_id, new_mailbox(), "editor")
 
 
-def test_members_accessibility_en(page: Page, base_url: str, api_base_url: str, fresh_owner):
+@pytest.mark.email
+def test_members_accessibility_en(
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
+):
     user, workspace = fresh_owner
-    _populate(api_base_url, user, workspace["id"])
+    _populate(api_base_url, user, workspace["id"], pooled_member)
     open_as(page, base_url, user, "/en/settings/members", h1="Settings")
     page.get_by_role("button", name="Share", exact=True).click()
     dialog = page.get_by_role("dialog")
@@ -45,9 +49,12 @@ def test_members_accessibility_en(page: Page, base_url: str, api_base_url: str, 
     _assert_clean(page)
 
 
-def test_members_accessibility_he_dark(page: Page, base_url: str, api_base_url: str, fresh_owner):
+@pytest.mark.email
+def test_members_accessibility_he_dark(
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
+):
     user, workspace = fresh_owner
-    _populate(api_base_url, user, workspace["id"])
+    _populate(api_base_url, user, workspace["id"], pooled_member)
     page.emulate_media(color_scheme="dark")
     open_as(page, base_url, user, "/he/settings/members", h1="הגדרות")
     page.get_by_role("button", name="שיתוף", exact=True).click()

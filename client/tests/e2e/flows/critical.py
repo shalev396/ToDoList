@@ -23,6 +23,7 @@ from tests.helpers.mailtm import (
 )
 
 
+@pytest.mark.email
 def test_signup_flow(page: Page, app_url: str, api_base_url: str):
     """Full signup: create temp email -> sign up -> confirm -> tokens."""
     user = create_test_user(api_base_url)
@@ -143,6 +144,7 @@ def test_guest_redirects_to_dashboard_when_authenticated(page: Page, app_url: st
     expect(page).to_have_url(f"{app_url}/dashboard")
 
 
+@pytest.mark.email
 def test_delete_account_flow(page: Page, app_url: str, api_base_url: str):
     """Login -> profile -> Delete -> confirm -> redirect home, logged out."""
     create_test_user_and_login(page, app_url, api_base_url)

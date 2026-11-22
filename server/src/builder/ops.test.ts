@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { applyPatch } from 'rfc6902';
 
 import { DocCheck } from '../classes/dashboard/DocCheck.js';
+import { ItemAccessFilter } from '../classes/policies/ItemAccessFilter.js';
 import {
   BLOCK_TYPES,
   type Block,
@@ -656,8 +657,12 @@ describe('connect_blocks', () => {
       });
       assert.deepEqual(result.warnings, [], id);
       return {
-        // The query's own filter: the last $match before the facet.
-        filter: JSON.stringify(result.pipeline.filter((stage) => '$match' in stage).at(-1)),
+        // The query's own filter: the last $match before the facet, H5's copy absorption aside.
+        filter: JSON.stringify(
+          result.pipeline
+            .filter((stage) => '$match' in stage && !ItemAccessFilter.isCopyAbsorption(stage))
+            .at(-1),
+        ),
         applied: Object.keys(result.appliedVars).sort(),
       };
     };

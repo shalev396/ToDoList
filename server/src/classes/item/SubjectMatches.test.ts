@@ -108,6 +108,58 @@ describe('SubjectMatches.count', () => {
     assert.deepEqual(counts, [1]);
   });
 
+  it('leaves out a copy whose to-do is visible, even when only the copy matches (as unfiltered views do)', async () => {
+    const ws = await workspace();
+    const { seedIntegration } = await import('../../testing/integrationFixtures.js');
+    await seedIntegration(ws.id, {
+      id: 'i-copy-2',
+      ownerUserId: ME,
+      provider: 'jira',
+      accountId: 'a',
+    });
+    const repo = await models.getItemRepository();
+    /** A Jira copy titled for Calculus, of `todoId`. */
+    const copyOf = async (todoId: string, externalId: string): Promise<void> => {
+      await repo.bulkUpsert(ws.id, [
+        {
+          id: `${ws.id}-${externalId}`,
+          integrationId: 'i-copy-2',
+          kind: 'issue',
+          topicId: null,
+          title: 'חדו"א at the source',
+          status: 'open',
+          source: {
+            provider: 'jira',
+            accountId: 'a',
+            externalId,
+            key: externalId,
+            url: `https://jira.example/${externalId}`,
+            updatedAtSource: null,
+            etag: null,
+            hash: null,
+          },
+        },
+      ]);
+      await repo.setOverlay(ws.id, `${ws.id}-${externalId}`, {
+        copyOf: todoId,
+        copyOfOwner: ME,
+        copyOfShared: true,
+      });
+    };
+    // Its own to-do no longer matches the pattern: an unfiltered view shows the to-do only.
+    await copyOf(await todo(ws, 'Renamed since'), 'J-2');
+    assert.deepEqual((await SubjectMatches.count(callerOf(ws, ME), [calc])).counts, [0]);
+    // A to-do the caller may not see hides nothing: that copy counts.
+    const theirs = await repo.createLocal(ws.id, {
+      ownerUserId: 'u-other',
+      title: 'Their private one',
+      topicId: null,
+      visibility: 'private',
+    });
+    await copyOf(theirs.id, 'J-3');
+    assert.deepEqual((await SubjectMatches.count(callerOf(ws, ME), [calc])).counts, [1]);
+  });
+
   it('answers a read past its time limit with a 503', async (t) => {
     const ws = await workspace();
     const repo = await models.getItemRepository();

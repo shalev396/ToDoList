@@ -12,7 +12,6 @@ from playwright.sync_api import Page, expect
 from tests.config import APP_REQUEST_TIMEOUT, NORMAL_TIMEOUT
 from tests.helpers.dashboards import apply_ops, create_dashboard, get_dashboard
 from tests.helpers.items import create_local_item, list_items
-from tests.helpers.users import pooled_user
 from tests.helpers.workspaces import create_workspace, delete_workspace, forget_left_behind, open_as
 from tests.viewports import DESKTOP_VIEWPORT
 
@@ -22,9 +21,9 @@ TOTAL, DONE = 30, 24
 
 
 @pytest.fixture(scope="module")
-def board(api_base_url):
+def board(api_base_url, pooled_kanban_scroll):
     """(user, workspace id): 30 local to-dos, 24 completed, and a board over them."""
-    user = pooled_user(api_base_url, "kanban-scroll")
+    user = pooled_kanban_scroll
     forget_left_behind(api_base_url, user)
     workspace = create_workspace(api_base_url, user, "Kanban scroll", timezone="Asia/Jerusalem")
     headers = {"Authorization": f"Bearer {user.id_token}"}

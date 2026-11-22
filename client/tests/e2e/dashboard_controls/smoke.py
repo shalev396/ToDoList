@@ -11,7 +11,6 @@ from playwright.sync_api import Page, expect
 from tests.config import APP_REQUEST_TIMEOUT, NORMAL_TIMEOUT
 from tests.helpers.dashboards import apply_ops, create_dashboard, get_dashboard
 from tests.helpers.items import create_local_item, list_items
-from tests.helpers.users import pooled_user
 from tests.helpers.workspaces import open_as, topic_id
 from tests.viewports import DESKTOP_VIEWPORT
 
@@ -136,11 +135,11 @@ def test_item_sheet_opens_edits_and_back_closes(page: Page, base_url: str, api_b
 
 
 def test_mirrored_item_edits_follow_its_connection(
-    page: Page, base_url: str, api_base_url: str, new_workspace
+    page: Page, base_url: str, api_base_url: str, new_workspace, pooled_demo
 ):
     """Demo data stays read-only and can't be switched: Jira's own fields are locked under one
     hint (no "switch it"), while a start date Jira lacks is kept in TodoList by any editor."""
-    owner = pooled_user(api_base_url, "demo")
+    owner = pooled_demo
     demo = new_workspace(owner, "Demo workspace", timezone="Asia/Jerusalem", loadDemoData=True)
     items = list_items(api_base_url, owner, demo["id"], provider="jira")
     assert items, "the seed has Jira items"

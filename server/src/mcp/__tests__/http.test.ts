@@ -936,6 +936,11 @@ describe('set_topic_colour and set_file_under (topic colours)', () => {
     ) as { topic: { slug: string; family: string } };
     assert.deepEqual([out.topic.slug, out.topic.family], ['work', 'violet']);
     assert.equal((await Topic.bySlug(team.workspace.id, 'work'))?.colour, 'violet');
+    const magenta = structured(
+      await call(key, 'set_topic_colour', { topic: 'work', family: 'magenta' }),
+    ) as { topic: { family: string } };
+    assert.equal(magenta.topic.family, 'magenta');
+    assert.equal((await Topic.bySlug(team.workspace.id, 'work'))?.colour, 'magenta');
     const editorKey = await insertAgentKey({
       workspaceId: team.workspace.id,
       userId: team.editor.id,

@@ -440,8 +440,8 @@ export abstract class MirroredItem extends Item implements ProviderLinked {
   }
 
   /**
-   * Marks it as the provider copy of a local to-do (H5): whoever sees that to-do sees the copy on
-   * the to-do's row instead (copyAbsorptionFilter).
+   * Marks it as the provider copy of a local to-do (H5): a list that shows that to-do shows the
+   * copy on the to-do's row instead (ItemAccessFilter.copyAbsorption).
    */
   async markAsCopyOf(todo: Pick<ItemData, 'id' | 'ownerUserId' | 'visibility'>): Promise<void> {
     await this.storeOverlay({

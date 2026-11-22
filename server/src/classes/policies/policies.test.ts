@@ -11,6 +11,7 @@ import { Caller } from '../base/Caller.js';
 import { Role } from '../base/Role.js';
 import { DashboardPolicy, type DashboardFacts } from './DashboardPolicy.js';
 import { IntegrationPolicy } from './IntegrationPolicy.js';
+import { ItemAccessFilter } from './ItemAccessFilter.js';
 import { ItemPolicy, type ItemAccess, type ItemFacts } from './ItemPolicy.js';
 import { WorkspacePolicy } from './WorkspacePolicy.js';
 
@@ -246,7 +247,7 @@ describe('ItemPolicy', () => {
     );
   });
 
-  it('the filters hold the same rule (copy absorption on lists only)', () => {
+  it('the filters hold the same rule; copy absorption is a stage of a list read, not the access', () => {
     const ws = { id: 'w-1' };
     const list = policy.itemFilter(ws);
     assert.deepEqual(list['$or'], [
@@ -254,10 +255,18 @@ describe('ItemPolicy', () => {
       { integrationId: null, ownerUserId: 'u-me' },
       { integrationId: null, visibility: 'workspace', kind: { $ne: 'travel' } },
     ]);
-    assert.ok('$nor' in list);
-    assert.ok(!('$nor' in policy.itemFilterUnabsorbed(ws)));
-    assert.ok(!('$nor' in policy.itemFilter(ws, { 'source.provider': 'jira' })));
-    assert.ok('$nor' in policy.itemFilter(ws, { 'source.provider': 'local' }));
+    // H5 used to be a $nor in the access, blind to what the read asked for (the hole).
+    assert.ok(!('$nor' in list));
+    assert.deepEqual(policy.itemFilterUnabsorbed(ws), list);
+    const stages = ItemPolicy.copyAbsorption();
+    assert.deepEqual(
+      stages.map((stage) => Object.keys(stage)[0]),
+      ['$setWindowFields', '$match', '$unset'],
+    );
+    assert.ok(stages.every((stage) => ItemAccessFilter.isCopyAbsorption(stage)));
+    assert.ok(!ItemAccessFilter.isCopyAbsorption({ $match: list }));
+    // Fresh stages each time: a read that changes its own copy never changes the next read's.
+    assert.notEqual(ItemPolicy.copyAbsorption()[0], stages[0]);
     assert.deepEqual(policy.containerFilter({ id: 'w-1', onlyTopics: ['t-1'] }), {
       workspaceId: 'w-1',
       deletedAt: null,

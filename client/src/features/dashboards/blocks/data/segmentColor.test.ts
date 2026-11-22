@@ -29,6 +29,16 @@ test('a provider segment keeps its source colour', () => {
   assert.equal(segmentColor(clickup, 1, familyOf), 'var(--color-source-clickup)');
 });
 
+test('a reserved provider (no slot of its own) is muted, not a chart slot', () => {
+  const slack: Segment = { ...base, field: 'source.provider', key: 'slack' };
+  assert.equal(segmentColor(slack, 2, familyOf), 'var(--color-source-reserved)');
+});
+
+test('Your to-dos keep their own source colour', () => {
+  const local: Segment = { ...base, field: 'source.provider', key: 'local', provider: 'local' };
+  assert.equal(segmentColor(local, 6, familyOf), 'var(--color-source-local)');
+});
+
 test('any other field takes the chart slots in order', () => {
   const segment: Segment = { ...base, field: 'status', key: 'open' };
   assert.equal(segmentColor(segment, 0, familyOf), 'var(--chart-1)');

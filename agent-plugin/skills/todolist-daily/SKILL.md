@@ -13,6 +13,7 @@ Answer "what is on my plate" from TodoList's read tools. Never write anything in
   - `scheduled[]` is the time TodoList keeps today: time blocks (study or focus time), areas (`layer: "area"`, time painted for a part of life, such as "Studying 13:00-17:00") and travel legs. Each repeating block appears once per occurrence.
   - Blocks and legs are not tasks: they are never due, overdue or completed. Do not list them as to-dos or offer to tick them off.
   - `busy: true` marks time that is taken (time blocks, travel, events). An area has `busy: false`: it is a plan, so suggest putting blocks inside it.
+  - A to-do also created in Google Calendar is listed once: when it is due today or overdue, its event is left out of `events`.
 - `list_deadlines`: upcoming due dates, grouped by topic, container (project or course) and provider. Use it for "what is coming up".
 - `get_calendar`: events, dated items, time blocks, areas and travel for a week, a month or a custom range. Each occurrence of a repeating event or block is its own entry, with `occurrence` (`seriesId`, `originalStart`) and `busy`.
 - `get_item`: one item in full, with its source and `openIn` link.

@@ -98,6 +98,7 @@ export class BlockPreviews {
               attributes: AttributeDefinitions.of(ws.settings).toJSON(),
               fieldRegistry,
               ...(draft.importance === undefined ? {} : { importance: draft.importance }),
+              ...(block.rules === undefined ? {} : { displayRules: block.rules }),
             },
             deps,
           );

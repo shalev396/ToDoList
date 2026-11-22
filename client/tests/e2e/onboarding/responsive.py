@@ -1,6 +1,7 @@
 """
 Onboarding at every viewport, in both languages: the form is visible and nothing overflows.
 """
+import pytest
 from playwright.sync_api import Page, expect
 
 from tests.config import NORMAL_TIMEOUT
@@ -9,6 +10,7 @@ from tests.helpers.responsive import assert_no_horizontal_overflow
 from tests.viewports import VIEWPORTS
 
 
+@pytest.mark.email
 def test_onboarding_responsive(page: Page, base_url: str, fresh_user):
     sign_in(page, base_url, fresh_user)
     for lng in ("en", "he"):

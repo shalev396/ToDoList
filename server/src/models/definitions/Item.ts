@@ -43,13 +43,17 @@ export interface ItemOverlay {
   plannedAt: string | null;
   editedAt: Date | null;
   /**
-   * H5: this mirrored item is the provider copy of a local to-do (the local to-do's id). The base
-   * filter hides it from whoever sees that to-do (copyAbsorptionFilter); null on every other item.
+   * H5: this mirrored item is the provider copy of a local to-do (the local to-do's id). A list
+   * read hides it while that to-do shows in the same read (ItemAccessFilter.copyAbsorption); null
+   * on every other item.
    */
   copyOf: string | null;
-  /** The local to-do's owner, kept with `copyOf` so the filter needs no join. */
+  /**
+   * The local to-do's owner, kept with `copyOf`. No read depends on it any more: the absorption
+   * looks for the to-do itself in the read.
+   */
   copyOfOwner: string | null;
-  /** Whether the local to-do is shared with the workspace; follows its visibility. */
+  /** Whether the local to-do is shared with the workspace; follows its visibility (as above). */
   copyOfShared: boolean | null;
   /**
    * Custom attribute values by key (H4: types/attributes.ts). Never written to a provider. In

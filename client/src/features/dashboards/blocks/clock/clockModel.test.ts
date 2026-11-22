@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { angleForTime, dayArcAngles, zonedParts, zonedTime } from './ClockRing.math.ts';
-import { buildClockModel, tomorrowOf } from './clockModel.ts';
+import { buildClockModel, isRingProvider, tomorrowOf } from './clockModel.ts';
+import { RESERVED_SOURCE_STYLE } from '../../../../components/items/sources.ts';
 import type { TimeRow } from '../time/occurrences.ts';
 import type { ItemColour } from '@api-types/colours.ts';
 
@@ -241,6 +242,28 @@ describe('buildClockModel', () => {
     assert.equal(model.timed.length, 1);
     assert.equal('colour' in defined(model.timed[0]), false);
     assert.equal(defined(model.timed[0]).source, 'google_calendar');
+  });
+
+  it('flags an event of a provider with no colour so it stays muted, never local amber', () => {
+    const timedRow = (id: string, provider: TimeRow['source']['provider']): TimeRow =>
+      row(id, {
+        startAt: at(2026, 11, 12, 12),
+        endAt: at(2026, 11, 12, 13),
+        source: { provider, url: 'https://x', externalId: id, key: null },
+      });
+    const { timed } = buildClockModel(
+      [timedRow('s', 'slack'), timedRow('l', 'local'), timedRow('g', 'google_calendar')],
+      now,
+      TZ,
+    );
+    const by = (id: string) => defined(timed.find((e) => e.id.startsWith(id)));
+    assert.deepEqual([by('s').source, by('s').reserved], ['local', true]);
+    assert.equal(by('l').reserved, undefined);
+    assert.equal(by('g').reserved, undefined);
+    assert.equal(isRingProvider('slack'), false);
+    assert.equal(isRingProvider('notion'), false);
+    assert.equal(isRingProvider('local'), true);
+    assert.equal(RESERVED_SOURCE_STYLE.fill, 'fill-source-reserved');
   });
 
   it('is right on the 25-hour fall DST day', () => {
