@@ -15,7 +15,8 @@
  * - Recurring events stay series (`singleEvents=false`): the master carries `props.recurrence` (and
  *   `props.recurrenceEnd`, when its last occurrence ends; null: never), an exception its
  *   `recurringEventId` and `originalStartAt`, for the shared expansion (types/recurrence). A
- *   cancelled occurrence stays live as `status: cancelled` (the client hides that occurrence).
+ *   cancelled occurrence stays live as `status: cancelled` (the time views draw it faded, its time
+ *   free: classes/item/Disabled.ts).
  * - Auth: the integration's strategy (`ctx.auth`, classes/integration/auth) hands each resource
  *   its headers:
  *   - `service_account`: a service-account JWT traded for an access token (the strategy's signer), scope
@@ -202,7 +203,7 @@ export function calendarEventExternalId(calendarId: string, eventId: string): st
  *   id). The engine deletes the stored copy, which keeps its title and times.
  * - `cancelled` with a `recurringEventId`: one occurrence of a series was cancelled. Google says to
  *   keep it for the series' lifetime, so the item stays live (`cancelled`, `closedAt` = its
- *   `updated`), with the series id and original start the client needs to hide that occurrence.
+ *   `updated`), with the series id and original start the time views need to draw it in its slot.
  * - An invitation the calendar's owner declined is closed (`cancelled`, `closedAt` = `updated`).
  * Throws UnmappableEventError when a time is present but unusable, or a live event has no start.
  */

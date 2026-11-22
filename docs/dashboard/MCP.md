@@ -146,9 +146,9 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 | Tool | Purpose | Ann. |
 |---|---|---|
 | `search_items` | Text and filter search over `Items` (mirrored + local); time blocks and travel legs only when `kind` names them | RO |
-| `list_today` | Today's events, items due today and overdue items (workspace TZ, `Asia/Jerusalem`), plus `scheduled[]`: today's time blocks, areas (`layer: area`) and travel legs, one entry per occurrence, each with `busy` (false for areas). Scheduled entries are never due or overdue. One task is listed once: an event that is the provider copy of a to-do in `dueToday` or `overdue` (a to-do also created in Google Calendar) is left out of `events` (H5) | RO |
+| `list_today` | Today's events, items due today and overdue items (workspace TZ, `Asia/Jerusalem`), plus `scheduled[]`: today's time blocks, areas (`layer: area`) and travel legs, one entry per occurrence, each with `busy` (false for areas). Scheduled entries are never due or overdue. A cancelled or disabled event or entry is listed with `inactive` and `busy: false`; declined events are left out. One task is listed once: an event that is the provider copy of a to-do in `dueToday` or `overdue` (a to-do also created in Google Calendar) is left out of `events` (H5) | RO |
 | `list_deadlines` | Upcoming `dueAt`, grouped by topic / container (project or course) / provider; never time blocks or travel | RO |
-| `get_calendar` | Events, dated items, time blocks, areas and travel for `week`\|`month`\|custom (week starts per `settings.weekStart`): one entry per occurrence of a repeating event or block (even one that began before the range), with `occurrence` and `busy` | RO |
+| `get_calendar` | Events, dated items, time blocks, areas and travel for `week`\|`month`\|custom (week starts per `settings.weekStart`): one entry per occurrence of a repeating event or block (even one that began before the range), with `occurrence` and `busy`; a cancelled (at its provider) or disabled (in TodoList) entry is listed with `inactive` and `busy: false`, a declined event is left out | RO |
 | `get_item` | One item, full `props`, `source`, `openIn` | RO |
 | `list_facets` | Distinct providers, topics and containers (wraps BACKEND.md `/facets`) | RO |
 | `query_items` | Run a query via `POST /workspaces/:wid/query`: a saved query id (`savedQueryId` or `dashboardId`+`blockId`) **or** a draft query, plus optional runtime cross-block filter `vars` (`$page.*`). A draft is task-shaped (no time blocks or travel) unless a rule asks for them by name (`kind = block`, `kind in [block, travel]`) or it passes a time-shaped `blockType` (`calendar`, `clock`, `timeline`, `agenda`, `workload`) | RO |
@@ -182,7 +182,7 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 | `edit_time_block` | Change one: `scope: "this"` with `originalStart` moves that occurrence (`startAt`, `endAt`) or skips it (`skip: true`); `scope: "all"` changes the series (title, note, subject, topic, times, recurrence; stale exceptions are dropped) → `{item}`; editor+ | D=false, I |
 | `complete_todo` | Set `status: done` or `open` | D=false, I |
 | `delete_todo` | Soft delete (`deletedAt`); needs `confirm` | D |
-| `set_overlay` | Pin, hide or annotate a **mirrored** item via DATA.md `overlay.*` (local-only, never written to the provider) | D=false, I |
+| `set_overlay` | Pin, hide or annotate a **mirrored** item via DATA.md `overlay.*` (local-only, never written to the provider); `disabled` (with `scope` and `occurrenceStart`) disables or enables any calendar item or occurrences of its series (below) | D=false, I |
 | `set_subject` | Create or change a Subject (a lesson): its colour family (gray, red, orange, amber, green, teal, blue, violet, pink or magenta), title patterns and, with `rename`, its name; `{name, rename?, family?, patterns?}` → `{subject, created}`; editor+ | D=false, I |
 | `travel_list_places` | The key's own member's saved places (Home, campus, the gym): `{places: [{id, name, aliases, home}]}`, oldest first; never an address. Scope `read`; editor+ | RO, I |
 | `travel_set_place` | Save a place (a new one needs `name`; `address` is optional free text, never looked up, only for opening Waze or Google Maps on the member's device; a typed `"lat, lon"` is text like any other) or change one (`id`; `name`, `address` (empty clears it), `aliases`, `home`) → `{place}` (name view); no `lat`/`lon`/`coords` input; editor+ | D=false |
@@ -234,6 +234,15 @@ A recurring to-do exists **in Google Calendar only**, never as a local to-do:
 #### `create_time_block` and `edit_time_block`
 
 Time blocks and areas are TodoList's own reserved time (`docs/superpowers/specs/2026-11-17-time-blocks-design.md`): not tasks (no status, never completed, left out of task-shaped reads), shown by `list_today` (`scheduled[]`) and `get_calendar` (one entry per occurrence, with `occurrence.seriesId` and `originalStart`). A repeating one is one record (`props.recurrence`, `props.exceptions`, `props.recurrenceEnd`). Both tools take the REST routes' schemas (`POST/PATCH …/time-blocks`, strict), with `topic` (a slug) in place of `topicId`; `edit_time_block` adds `id` and `skip`. `scope: "this"` takes only `originalStart` and the new times (or `skip`); an `originalStart` that is none of the series' starts is an error (`not_an_occurrence`). `update_todo` refuses a block and names `edit_time_block`; `delete_todo` deletes one.
+
+#### `set_overlay` and disabling
+
+`set_overlay` with `disabled: true` disables a calendar item (an event, a to-do, a time block or an area; a travel leg is refused: it is skipped), `false` enables it again. It is TodoList's own state (DATA.md §3.6, "Disabled and cancelled"): the item stays on the calendar, faded and struck through, and its time is free (`busy: false`, `inactive: "disabled"` in the time answers, no travel to it, not pushed to the workspace calendar). Nothing is written to the provider. For something that repeats, `scope` says which occurrences:
+- `series`: every occurrence. On a Google series that is its master and every moved or cancelled occurrence of it, from the master's id or any occurrence row's (one call). An occurrence synced later follows the master.
+- `occurrence`: one, by `occurrenceStart` (its original start, as `get_calendar`'s `occurrence.originalStart` gives it); an occurrence row of a Google series (its own id) needs neither. A start that is none of the series' slots is an error (`not_an_occurrence`).
+- Left out: `occurrence` when `occurrenceStart` is given or the item is itself one occurrence, else the whole item (`series` on a series). Enabling one occurrence of a series disabled as a whole is refused: enable the series. `scope` or `occurrenceStart` without `disabled` is refused.
+
+Example: disable every occurrence of a recurring meeting, its moved and cancelled ones included: `set_overlay { id: "<the series' id>", disabled: true, scope: "series" }` (the id from `get_calendar`'s `occurrence.seriesId`, or `search_items`). The answer is the item, with `overlay.disabled: true`.
 
 #### The `travel_*` tools
 
@@ -323,7 +332,7 @@ The target is the workspace's primary calendar (`settings.primaryCalendar`) and 
 }
 ```
 
-Optional fields: `layer` (`block` or `area`, on a time block). In the time answers (`get_calendar`, `list_today`'s `events` and `scheduled`) each entry is one occurrence: `startAt`/`endAt` are that occurrence's, `occurrence` is `{ seriesId, originalStart }` for an occurrence of a repeating series (else null), and `busy` says whether the time is taken (events unless shown as free, time blocks and travel; not areas, to-dos or tasks).
+Optional fields: `layer` (`block` or `area`, on a time block). In the time answers (`get_calendar`, `list_today`'s `events` and `scheduled`) each entry is one occurrence: `startAt`/`endAt` are that occurrence's, `occurrence` is `{ seriesId, originalStart }` for an occurrence of a repeating series (else null), and `busy` says whether the time is taken (events unless shown as free, time blocks and travel; not areas, to-dos or tasks; never a cancelled or disabled entry). `inactive` (`cancelled` or `disabled`, else null) marks an entry whose time is free although it is listed (DATA.md §3.6, "Disabled and cancelled").
 
 ---
 

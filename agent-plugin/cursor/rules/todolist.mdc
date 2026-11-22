@@ -18,7 +18,7 @@ Use these rules whenever you read or change TodoList data. Cursor has no hooks f
 2. Titles: verb-first, 120 characters or fewer. Detail goes in `note`.
 3. Always set `topic` and `dueAt`; for "someday" pass `dueAt: null` explicitly. Pass `startAt` and `endAt` when it happens at a time.
 4. Always pass a stable `idempotencyKey`.
-5. Never edit mirrored (non-local) items; give the "Open in <provider>" link. Use `set_overlay` for local pins, hides and notes.
+5. Never edit mirrored (non-local) items; give the "Open in <provider>" link. Use `set_overlay` for local pins, hides and notes, and `disabled: true` (with `scope` for a series) to mark an item off so its time is free.
 6. Finish work with `complete_todo`, not delete.
 7. Destructive tools (`delete_todo`, `integrations_disconnect`, `builder_remove_block`, ...) preview first. Show the user, get a yes, then repeat with `confirm: true`.
 
