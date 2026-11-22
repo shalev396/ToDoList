@@ -161,9 +161,9 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
     return new ItemPolicy(access);
   }
 
-  /** The filter every item read of the caller starts from (`userFilter`: see `itemFilter`). */
-  static async filterFor(caller: Caller, userFilter?: unknown): Promise<Filter> {
-    return (await ItemPolicy.for(caller)).itemFilter(caller.context, userFilter);
+  /** The filter every item read of the caller starts from (`itemFilter`). */
+  static async filterFor(caller: Caller): Promise<Filter> {
+    return (await ItemPolicy.for(caller)).itemFilter(caller.context);
   }
 
   get access(): ItemAccess {
@@ -242,17 +242,21 @@ export class ItemPolicy extends BasePolicy<ItemFacts> {
 
   // ─── The filters ──────────────────────────────────────────────────────────
 
-  /** H5's copy absorption (ItemAccessFilter.copyAbsorption). */
-  static copyAbsorptionFilter(userId: string): Filter {
-    return ItemAccessFilter.copyAbsorption(userId);
+  /**
+   * H5's copy absorption (ItemAccessFilter.copyAbsorption): the stages a list or aggregate read
+   * puts right after its own filter, so a provider copy is hidden only while its to-do is in the
+   * same result.
+   */
+  static copyAbsorption(): Filter[] {
+    return ItemAccessFilter.copyAbsorption();
   }
 
-  /** Items the caller may see (ItemAccessFilter#items: the access, and H5's absorption). */
-  itemFilter(ws: ItemNarrowing, userFilter?: unknown): Filter {
-    return this.#filters.items(ws, userFilter);
+  /** Items the caller may see (ItemAccessFilter#items); a list read adds `copyAbsorption`. */
+  itemFilter(ws: ItemNarrowing): Filter {
+    return this.#filters.items(ws);
   }
 
-  /** The same access, without the absorption rule (ItemAccessFilter#itemsUnabsorbed). */
+  /** The same filter, for reads that never absorb (ItemAccessFilter#itemsUnabsorbed). */
   itemFilterUnabsorbed(ws: ItemNarrowing): Filter {
     return this.#filters.itemsUnabsorbed(ws);
   }

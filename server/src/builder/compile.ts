@@ -8,6 +8,9 @@
  * - for items, the next stage projects each item's effective values (Overrides: a mirrored item's
  *   local override of a field its provider lacks, else the provider's value), so every filter,
  *   sort, group and row after it reads what the item reads as;
+ * - for items, right after the query's filter, a provider copy of a local to-do is dropped while
+ *   its to-do is in the same result (H5, ItemAccessFilter.copyAbsorption), before any count,
+ *   group or row;
  * - field names come only from the catalog whitelist (credential paths are never fields);
  * - values are literals checked against their field's type: an object with a `$` key is refused
  *   anywhere in the query and in any variable's value, so `$where`, `$function`, `$expr` and the
@@ -123,7 +126,9 @@ export interface CompiledQuery {
   /**
    * `$match` base filter, then (task-shaped items) a `$match` that leaves reserved time out, then
    * (items) `$addFields` of the effective values, then `$match` of the query's filters (when it
-   * has any), then one `$facet`: `total` (`[{count}]`) plus `rows` and/or `groups`.
+   * has any), then (items) the copy absorption stages (H5), then (items read from two
+   * integrations of one account) the dedup stages, then one `$facet`: `total` (`[{count}]`) plus
+   * `rows` and/or `groups`.
    */
   pipeline: PipelineStage[];
   warnings: string[];
@@ -1000,9 +1005,8 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
   }
 
   const filter = combine(filters, '$and');
-  // A block filtered by provider (not `local`) shows a provider copy: its to-do does not match.
   const access = new ItemAccessFilter(ctx.access);
-  const base = source === 'items' ? access.items(ctx.ws, filter) : access.containers(ctx.ws);
+  const base = source === 'items' ? access.items(ctx.ws) : access.containers(ctx.ws);
   const computed: Filter = {};
   if (compilation.usesImportance) {
     Object.assign(computed, importanceFields(ctx.importance, ctx.attributes ?? [], ctx.now));
@@ -1046,6 +1050,10 @@ export function compileQuery(query: Query, ctx: CompileContext): CompiledQuery {
       : []),
     ...(Object.keys(computed).length === 0 ? [] : [{ $addFields: computed }]),
     ...(filter === null ? [] : [{ $match: filter }]),
+    // H5: a provider copy whose to-do is in this result is the to-do's row; any other copy is its
+    // own. Before the dedup (as the access filter's rule was) and before the facet, so the total,
+    // the groups and the rows agree.
+    ...(source === 'items' ? ItemAccessFilter.copyAbsorption() : []),
     ...dedup,
     { $facet: facet },
   ];

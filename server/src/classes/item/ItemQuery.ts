@@ -168,7 +168,9 @@ export class ItemQuery {
   /**
    * One page of the items the caller may see, sorted by due date (none first), then id; the
    * status and due-date filters, the sort and the cursor read effective values. A task-shaped
-   * list: time blocks, areas and travel legs only when `kind` names them. 400 for a bad cursor.
+   * list: time blocks, areas and travel legs only when `kind` names them. A provider copy is
+   * hidden while its to-do matches the same filters (H5), on any page: the cursor applies after.
+   * 400 for a bad cursor.
    */
   async list(query: ItemListQuery): Promise<ListItemsResponseData> {
     const caller = this.#caller;
@@ -193,14 +195,9 @@ export class ItemQuery {
     // The access filter first, with the text search (which must sit in the first stage); then the
     // effective values; then what reads them. Separate $and clauses: the access filter's $or and
     // the cursor's $or never collide.
-    const access = this.#policy.itemFilter(caller.context, {
-      ...sourceFilters,
-      ...effectiveFilters,
-    });
-    const effectiveMatch = allOf([
-      effectiveFilters,
-      query.cursor === undefined ? {} : afterCursor(decodeCursor(query.cursor)),
-    ]);
+    const access = this.#policy.itemFilter(caller.context);
+    const effectiveMatch = allOf([effectiveFilters]);
+    const cursor = query.cursor === undefined ? null : afterCursor(decodeCursor(query.cursor));
     const rows = await this.#aggregate([
       {
         $match: allOf([
@@ -213,6 +210,9 @@ export class ItemQuery {
       },
       ItemQuery.effectiveStage(),
       { $match: effectiveMatch },
+      // H5 on the whole result, not this page: a copy whose to-do is on another page stays hidden.
+      ...ItemPolicy.copyAbsorption(),
+      ...(cursor === null ? [] : [{ $match: cursor }]),
       { $sort: { dueAt: 1, _id: 1 } },
       { $limit: limit + 1 },
     ]);
@@ -344,9 +344,9 @@ export class ItemQuery {
   // ─── The query builder ────────────────────────────────────────────────────
 
   /**
-   * The builder's injected reads: each aggregate runs behind the caller's access filter (items
-   * unabsorbed, containers), a second line of defence under the compiled pipeline's own first
-   * stage (the same access, so the answer is the same).
+   * The builder's injected reads: each aggregate runs behind the caller's access filter (items,
+   * containers), a second line of defence under the compiled pipeline's own first stage (the same
+   * access, so the answer is the same; the compiled pipeline absorbs copies itself).
    */
   aggregates(): RunQueryDeps {
     const context = this.#caller.context;
@@ -428,7 +428,7 @@ export class ItemQuery {
 
   /**
    * The provider's own status (effective) of each synced copy of these to-dos (H5), read straight
-   * from the copies (they are hidden from the access filter on purpose).
+   * from the copies (a list hides a copy while its to-do shows in it, on purpose).
    */
   async #liveStatuses(ids: readonly string[]): Promise<LiveStatuses> {
     if (ids.length === 0) return new Map();

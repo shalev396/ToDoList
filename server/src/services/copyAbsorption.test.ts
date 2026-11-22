@@ -1,7 +1,10 @@
 /**
- * H5: one row, not three. A provider copy of a local to-do is hidden from whoever sees the to-do
- * (shared, or the viewer made it), follows the to-do's sharing, is released when it is deleted,
- * and still shows when the list is filtered by its provider alone.
+ * H5: one row, not three, in the item list (REST and MCP search_items). A provider copy of a local
+ * to-do is hidden only while its to-do shows in the same list: the to-do is one the viewer may see
+ * (shared, or the viewer made it) and it matches the list's filters and search. So the copy
+ * follows the to-do's sharing, is released when it is deleted, shows when the list is filtered
+ * by its provider alone, by a status or a search the to-do does not match, and stays hidden on
+ * every page when the to-do is on another one.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +13,7 @@ import { startTestDatabase, type TestDatabase } from '../testing/testDatabase.js
 import type { WorkspaceContext } from '../classes/base/Caller.js';
 import type * as Items from '../testing/itemCalls.js';
 import type * as Models from '../models/index.js';
-import type { ItemData } from '../models/definitions/Item.js';
+import type { CreateLocalItemInput, ItemData, ItemUpsert } from '../models/definitions/Item.js';
 
 let db: TestDatabase;
 let items: typeof Items;
@@ -53,9 +56,13 @@ after(async () => {
 
 let n = 0;
 
-/** A local to-do with one Linear copy, hidden for whoever sees the to-do. */
+/**
+ * A local to-do with one Linear copy, hidden for whoever sees the to-do in the same list. `extra`
+ * sets more of the to-do's fields and of the copy's.
+ */
 async function todoWithCopy(
   visibility: 'workspace' | 'private',
+  extra: { todo?: Partial<CreateLocalItemInput>; copy?: Partial<ItemUpsert> } = {},
 ): Promise<{ todo: ItemData; copyId: string }> {
   n += 1;
   const repo = await models.getItemRepository();
@@ -64,6 +71,7 @@ async function todoWithCopy(
     title: `Local ${String(n)}`,
     topicId: null,
     visibility,
+    ...extra.todo,
   });
   await repo.addCopy(ws.id, todo.id, {
     integrationId,
@@ -92,6 +100,7 @@ async function todoWithCopy(
         etag: null,
         hash: null,
       },
+      ...extra.copy,
     },
   ]);
   const mirrored = await repo.findBySource(
@@ -134,6 +143,57 @@ describe('the absorption rule', () => {
     const ids = await idsOf('u-owner', { provider: 'linear' });
     assert.ok(ids.includes(copyId));
     assert.ok(!ids.includes(todo.id));
+  });
+
+  it('a done to-do with an open copy: a list of open items shows the copy', async () => {
+    const { todo, copyId } = await todoWithCopy('workspace', { todo: { status: 'done' } });
+    const open = await idsOf('u-owner', { status: ['open', 'in_progress'] });
+    assert.ok(open.includes(copyId), 'the open issue no longer vanishes');
+    assert.ok(!open.includes(todo.id));
+    const done = await idsOf('u-owner', { status: 'done' });
+    assert.ok(done.includes(todo.id) && !done.includes(copyId));
+    // No filter: both are in the list, one row.
+    const all = await idsOf('u-owner');
+    assert.ok(all.includes(todo.id) && !all.includes(copyId));
+  });
+
+  it('a search the to-do does not match shows the copy; one it matches shows the to-do', async () => {
+    const { todo, copyId } = await todoWithCopy('workspace', {
+      todo: { title: 'Quarterly taxes' },
+      copy: { title: 'Accountant call' },
+    });
+    assert.deepEqual(await idsOf('u-owner', { q: 'accountant' }), [copyId]);
+    assert.deepEqual(await idsOf('u-owner', { q: 'quarterly' }), [todo.id]);
+  });
+
+  it('every page leaves out a copy whose to-do is in the list, on any page', async () => {
+    const day = (days: number): Date => new Date(Date.UTC(2031, 0, days, 12));
+    // By due date: the to-do first, then another to-do, then the copy.
+    const { todo, copyId } = await todoWithCopy('workspace', {
+      todo: { topicId: 't-pages', dueAt: day(1) },
+      copy: { topicId: 't-pages', dueAt: day(5) },
+    });
+    const repo = await models.getItemRepository();
+    const other = await repo.createLocal(ws.id, {
+      ownerUserId: 'u-owner',
+      title: 'In between',
+      topicId: 't-pages',
+      dueAt: day(3),
+      visibility: 'workspace',
+    });
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await items.listItems(ws, 'u-owner', {
+        topicId: 't-pages',
+        limit: 1,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      seen.push(...page.items.map((item) => item.id));
+      cursor = page.nextCursor ?? undefined;
+    } while (cursor !== undefined);
+    assert.deepEqual(seen, [todo.id, other.id]);
+    assert.ok(!seen.includes(copyId));
   });
 
   it("the to-do's row carries a chip per copy, with the copy's live status", async () => {

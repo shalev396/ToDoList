@@ -10,7 +10,8 @@
  * never another member's private one): every item dated within the push window (a planned date
  * `overlay.plannedAt`, a due date, or a start whose span reaches into it), except the items Google
  * Calendar itself mirrors (they are its events already) and those with `overlay.calendarSync ===
- * false`. It is read in two parts, so no cap ever hides an item:
+ * false`. A provider copy of a local to-do is left out while its to-do is in the set, or turned off
+ * for the calendar (H5, absorbedCopies). It is read in two parts, so no cap ever hides an item:
  * - the items of the live links, all of them (in chunks): what to update or move, and, by their
  *   absence, which events to delete;
  * - the other items, page by page while the request's budget keeps WRITE_RESERVE_MS for the
@@ -23,6 +24,7 @@ import { Caller } from '../base/Caller.js';
 import { WorkspaceEntity } from '../base/WorkspaceEntity.js';
 import { TimeBudget, WRITE_BUDGET_MS } from '../integration/calendar/TimeBudget.js';
 import { Overrides } from '../item/Overrides.js';
+import { ItemAccessFilter } from '../policies/ItemAccessFilter.js';
 import { ItemPolicy } from '../policies/ItemPolicy.js';
 import type { SyncCursor } from '../sync/SyncCursor.js';
 import { SyncCursors } from '../sync/SyncCursors.js';
@@ -152,9 +154,12 @@ function narrowingOf(
       attributes: AttributeDefinitions.of(caller.settings).toJSON(),
     });
     // The base filter's match first (already in `scope`), the `$facet` last: what is between is
-    // the query's own work (computed fields, then its filters).
+    // the query's own work (computed fields, then its filters). Not its copy absorption: the push
+    // set is read in pages, and absorbedCopies applies H5 to the whole set.
     const facet = compiled.pipeline.findIndex((stage) => '$facet' in stage);
-    narrowed.stages = compiled.pipeline.slice(1, facet === -1 ? undefined : facet);
+    narrowed.stages = compiled.pipeline
+      .slice(1, facet === -1 ? undefined : facet)
+      .filter((stage) => !ItemAccessFilter.isCopyAbsorption(stage));
   }
   const range = narrowing.range;
   if (range?.from !== undefined || range?.to !== undefined) {
@@ -217,16 +222,50 @@ function toPushItem(doc: PushDoc): PushItem {
   };
 }
 
+type PushRead = (match: Filter[], extra?: Record<string, unknown>[]) => Promise<PushDoc[]>;
+
+/**
+ * H5 in the push set: a provider copy is left out while its to-do is in the set, and while its
+ * to-do is turned off for the calendar (the copy is the same task: no event he turned off comes
+ * back through it); any other copy is pushed as its own item. The set is read in pages, so the
+ * to-dos are found first, among the ones the copies in `scope` name (few), through the same read,
+ * and the copies are then left out of every page. `{}` when no copy is left out.
+ */
+async function absorbedCopies(
+  workspaceId: string,
+  access: Filter,
+  scope: readonly Filter[],
+  read: PushRead,
+): Promise<Filter> {
+  const items = await getItemRepository();
+  const named = await items.aggregate<{ _id?: unknown }>(workspaceId, [
+    { $match: { $and: [...scope, { 'overlay.copyOf': { $type: 'string' } }] } },
+    { $group: { _id: '$overlay.copyOf' } },
+  ]);
+  const todoIds = named.flatMap((row) => (typeof row._id === 'string' ? [row._id] : []));
+  if (todoIds.length === 0) return {};
+  const [inSet, offCalendar] = await Promise.all([
+    read([...scope, { _id: { $in: todoIds } }]),
+    items.aggregate<{ _id: string }>(workspaceId, [
+      { $match: { $and: [access, { _id: { $in: todoIds }, 'overlay.calendarSync': false }] } },
+      { $project: { _id: 1 } },
+    ]),
+  ]);
+  const todos = [...new Set([...inSet, ...offCalendar].map((doc) => doc._id))];
+  return todos.length === 0 ? {} : { 'overlay.copyOf': { $nin: todos } };
+}
+
 /**
  * The push set's items, read in two parts (see the header): every item of `linked` still in it,
  * then, page by page while `budget` keeps the writes' reserve, the others (one page at least).
- * `scope` (the access filter first) is matched on what is stored; then every item's effective
+ * The access filter and the push rules are matched on what is stored; then every item's effective
  * values are projected (Overrides: a mirrored item's overrides, so its event is placed at the date
  * it reads as), and `dated` and `narrowed` (a dry run's own stages, its compiled filter) read them.
+ * A provider copy whose to-do is in the set is left out (absorbedCopies).
  */
 async function pushItems(
   workspaceId: string,
-  scope: readonly Filter[],
+  access: Filter,
   dated: readonly Filter[],
   narrowed: readonly Record<string, unknown>[],
   linked: readonly string[],
@@ -235,7 +274,7 @@ async function pushItems(
   const items = await getItemRepository();
   // A wider filter on what is stored before the projection (exact after it): the indexes narrow.
   const wide = Overrides.prefilter({ $and: [...dated] });
-  const read = (match: Filter[], extra: Record<string, unknown>[] = []): Promise<PushDoc[]> =>
+  const read: PushRead = (match, extra = []) =>
     items.aggregate<PushDoc>(workspaceId, [
       { $match: { $and: wide === null ? match : [...match, wide] } },
       { $addFields: Overrides.projection() },
@@ -244,6 +283,9 @@ async function pushItems(
       ...extra,
       { $project: PUSH_FIELDS },
     ]);
+  const pushed: Filter[] = [access, ...pushRule()];
+  const absorbed = await absorbedCopies(workspaceId, access, pushed, read);
+  const scope = Object.keys(absorbed).length === 0 ? pushed : [...pushed, absorbed];
   const found: PushDoc[] = [];
   for (let at = 0; at < linked.length; at += PAGE_SIZE) {
     found.push(...(await read([...scope, { _id: { $in: linked.slice(at, at + PAGE_SIZE) } }])));
@@ -373,10 +415,9 @@ export class PushCalendar extends Calendar {
       timeZone,
     );
     const narrowed = narrowingOf(narrowing, caller, policy, now);
-    const scope: Filter[] = [policy.itemFilter(caller.context), ...pushRule()];
     const items = await pushItems(
       workspaceId,
-      scope,
+      policy.itemFilter(caller.context),
       [datedWithin(window), ...narrowed.filters],
       narrowed.stages,
       live.map((link) => link.itemId),

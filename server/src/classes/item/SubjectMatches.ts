@@ -47,9 +47,9 @@ export class SubjectMatches {
   }
 
   /**
-   * The candidate rows: the visible items (copies absorbed, as every view the colours paint) whose
-   * own Subject or effective title could match. A read past its time limit is a 503, as the
-   * query builder's (ItemQuery#run).
+   * The candidate rows: the visible items whose own Subject or effective title could match, a
+   * provider copy left out while its to-do is among them (H5, as every view the colours paint).
+   * A read past its time limit is a 503, as the query builder's (ItemQuery#run).
    */
   async #read(
     policy: ItemPolicy,
@@ -75,6 +75,7 @@ export class SubjectMatches {
               ],
             },
           },
+          ...ItemPolicy.copyAbsorption(),
           { $sort: { _id: 1 } },
           { $limit: this.#scanMax + 1 },
           { $project: { title: 1, [`overlay.attrs.${SUBJECT_ATTRIBUTE_KEY}`]: 1 } },
