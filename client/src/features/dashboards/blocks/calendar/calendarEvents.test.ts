@@ -48,6 +48,7 @@ const occ = (over: Partial<Occurrence>): Occurrence => ({
   dueOnly: false,
   originalStart: null,
   seriesRowId: null,
+  inactive: null,
   ...over,
 });
 
@@ -96,6 +97,24 @@ describe('toEventInput', () => {
     assert.equal(input.textColor, 'var(--tc-orange-work-ink)');
     assert.deepEqual(pick(input, 'family', 'role'), ['orange', 'work']);
     assert.deepEqual(input.classNames, []);
+  });
+
+  it('draws a cancelled or disabled occurrence with no fill, the page ink, faded (tc-off)', () => {
+    const input = toEventInput(
+      { occurrence: occ({ inactive: 'disabled' }), badges: [] },
+      TZ,
+      colour('work'),
+    );
+    assert.deepEqual(input.classNames, ['tc-off']);
+    assert.equal(input.backgroundColor, 'transparent');
+    assert.equal(input.borderColor, 'var(--tc-orange-work)');
+    assert.equal(input.textColor, 'var(--foreground)');
+    assert.deepEqual(pick(input, 'inactive'), ['disabled']);
+    // Disabling or enabling draws it again.
+    const live = toEventInput({ occurrence: occ({}), badges: [] }, TZ, colour('work'));
+    assert.notEqual(input.id, live.id);
+    const area = toAreaEventInput(occ({ inactive: 'cancelled' }), colour('area'), TZ);
+    assert.deepEqual(area.classNames, ['tc-area', 'tc-off']);
   });
 
   it('hatches travel, on its muted fill under the page ink', () => {
@@ -217,6 +236,7 @@ describe('areaTagsByDay', () => {
         originalStart: slot.toISOString(),
         from: '08:30',
         to: '15:00',
+        inactive: null,
       },
     ]);
   });

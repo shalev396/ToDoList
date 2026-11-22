@@ -2,6 +2,9 @@ import { useTranslation } from 'react-i18next';
 import { SourceIcon } from '@/components/items/SourceIcon';
 import { ColourDot } from '@/features/colours/ColourDot';
 import type { ItemColour } from '@api-types/colours';
+import { cn } from '@/lib/utils';
+import { INACTIVE_TITLE } from '../time/inactive';
+import { InactiveTag } from '../time/InactiveTag';
 import { ClockLegend } from './ClockLegend';
 import { ClockRing, type ClockRingLabels } from './ClockRing';
 import { ringProvider, type ClockModel } from './clockModel';
@@ -46,12 +49,14 @@ export function TomorrowPanel({
       row: o.row,
       title: model.timed[index]?.title ?? o.row.title,
       when: time(o.start),
+      inactive: o.inactive,
     })),
     ...model.allDay.map((o) => ({
       key: o.key,
       row: o.row,
       title: o.row.title,
       when: t('timeBlocks.clock.allDay'),
+      inactive: o.inactive,
     })),
   ];
   return (
@@ -89,9 +94,14 @@ export function TomorrowPanel({
             <li key={item.key} className="flex min-w-0 items-center gap-2 text-[13px]">
               <ColourDot colour={colourOf(item.row.id)} />
               <SourceIcon source={ringProvider(item.row.source.provider)} />
-              <span dir="auto" title={item.title} className="min-w-0 flex-1 truncate">
+              <span
+                dir="auto"
+                title={item.title}
+                className={cn('min-w-0 flex-1 truncate', item.inactive !== null && INACTIVE_TITLE)}
+              >
                 {item.title}
               </span>
+              {item.inactive === null ? null : <InactiveTag inactive={item.inactive} />}
               <span className="shrink-0 text-muted-foreground tabular-nums" dir="ltr">
                 {item.when}
               </span>

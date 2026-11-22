@@ -73,6 +73,8 @@ const item = (patch: Partial<Item> = {}): Item => ({
     plannedAt: null,
     editedAt: null,
     attrs: {},
+    disabled: null,
+    disabledOccurrences: [],
     overrides: noOverrides,
   },
   ...patch,

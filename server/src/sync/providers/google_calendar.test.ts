@@ -234,7 +234,7 @@ describe('mapCalendarEvent', () => {
     assert.equal(Object.hasOwn(moved.props ?? {}, 'recurrenceEnd'), false);
 
     // A cancelled instance may carry only its id, series and original start. It stays live (an
-    // item, not a delete-only record), so the client can hide that one occurrence of the series.
+    // item, not a delete-only record): the time views draw it in its slot, faded, as its series.
     const dropped = mapLive({
       id: 'dsweekly001_r2',
       status: 'cancelled',
@@ -722,7 +722,7 @@ describe('google_calendar sync: fixtures v1 → v1 → v2 (incremental)', () => 
       [moved.startAt, moved.props['recurringEventId'], moved.props['originalStartAt']],
       [local(-6, '13:00'), 'dsweekly001', local(-6, '10:00').toISOString()],
     );
-    // Next week's lecture is cancelled: a live item the client uses to hide that occurrence.
+    // Next week's lecture is cancelled: a live item, drawn faded in its slot as its series.
     const cancelled = item(items, COLLEGE, 'dsweekly001_r2');
     assert.deepEqual(
       [

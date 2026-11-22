@@ -86,6 +86,7 @@ function occurrenceOf(row: TimeRow, start: Date, end: Date | null): Occurrence {
     dueOnly: false,
     originalStart: null,
     seriesRowId: null,
+    inactive: null,
   };
 }
 

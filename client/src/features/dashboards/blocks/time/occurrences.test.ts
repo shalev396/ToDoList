@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PARITY_CASES } from '@api-types/recurrence/cases.ts';
+import { applyDisplayRules } from '../../rules/applyDisplayRules.ts';
 import { zonedTime } from '../clock/ClockRing.math.ts';
 import {
   expandOccurrences,
@@ -8,6 +9,7 @@ import {
   visibleRange,
   weekRange,
   wallString,
+  withSeriesFields,
   type TimeRow,
 } from './occurrences.ts';
 
@@ -52,7 +54,7 @@ describe('expandOccurrences', () => {
     assert.equal(out[0]?.end?.getTime() ?? 0, at(2026, 11, 8, 11).getTime());
   });
 
-  it('excludes a cancelled occurrence (an exdate), and never lists it', () => {
+  it('keeps a cancelled occurrence in its slot, flagged, with the series length', () => {
     const cancelled = row({
       id: 'x1',
       status: 'cancelled',
@@ -65,10 +67,172 @@ describe('expandOccurrences', () => {
     });
     const out = expandOccurrences([series(), cancelled], WEEK, TZ);
     assert.deepEqual(
+      out.map((o) => [wallString(o.start, TZ), o.row.id, o.inactive]),
+      [
+        ['2026-11-08T10:00:00', 'master', null],
+        ['2026-11-10T10:00:00', 'x1', 'cancelled'],
+        ['2026-11-12T10:00:00', 'master', null],
+      ],
+    );
+    const flagged = out[1];
+    assert.ok(flagged);
+    assert.equal(flagged.end?.getTime(), at(2026, 11, 10, 11).getTime());
+    assert.equal(flagged.key, `master@${String(at(2026, 11, 10, 10).getTime())}`);
+  });
+
+  it('a cancelled occurrence as Google sends it is titled, linked and topped as its series', () => {
+    const master = series({
+      title: 'AutoDS Daily Meeting',
+      source: { provider: 'google_calendar', url: 'https://g/master', externalId: 'm', key: null },
+    });
+    const cancelled = row({
+      id: 'x1',
+      title: 'e1_20261110T080000Z',
+      status: 'cancelled',
+      statusRaw: 'cancelled',
+      startAt: at(2026, 11, 10, 10),
+      source: { provider: 'google_calendar', url: 'https://g/eid', externalId: 'x1', key: null },
+      props: {
+        calendarId: 'c',
+        eventId: 'e1_20261110T080000Z',
+        recurringEventId: 'e1',
+        originalStartAt: at(2026, 11, 10, 10).toISOString(),
+      },
+    });
+    const listed = expandOccurrences([master, cancelled], WEEK, TZ).find(
+      (o) => o.inactive === 'cancelled',
+    );
+    assert.deepEqual(
+      [listed?.row.id, listed?.row.title, listed?.row.source.url],
+      ['x1', 'AutoDS Daily Meeting', 'https://g/master'],
+    );
+    assert.equal(withSeriesFields([master, cancelled])[1]?.title, 'AutoDS Daily Meeting');
+    // Without its master, or of a declined series: never listed.
+    assert.deepEqual(expandOccurrences([cancelled], WEEK, TZ), []);
+    const declined = { ...master, status: 'cancelled', statusRaw: 'declined' };
+    assert.deepEqual(expandOccurrences([declined, cancelled], WEEK, TZ), []);
+  });
+
+  it('a "hide cancelled" display rule never turns the slot into an active, busy occurrence', () => {
+    const cancelled = row({
+      id: 'x1',
+      title: 'e1_20261110T080000Z',
+      status: 'cancelled',
+      startAt: at(2026, 11, 10, 10),
+      props: {
+        calendarId: 'c',
+        eventId: 'e1_20261110T080000Z',
+        recurringEventId: 'e1',
+        originalStartAt: at(2026, 11, 10, 10).toISOString(),
+      },
+    });
+    const ruled = applyDisplayRules(
+      [series(), cancelled],
+      [{ if: { field: 'status', operator: '=', value: 'cancelled' }, then: { hide: true } }],
+      { now: at(2026, 11, 8), timeZone: TZ, userId: 'u' },
+    );
+    const shown = ruled.filter((entry) => !entry.hidden).map((entry) => entry.row);
+    const hidden = ruled.filter((entry) => entry.hidden).map((entry) => entry.row);
+    assert.deepEqual(hidden, [cancelled]);
+    const out = expandOccurrences(shown, WEEK, TZ, { hidden });
+    // Sunday and Thursday only: Tuesday's slot is neither drawn active nor drawn cancelled.
+    assert.deepEqual(
+      out.map((o) => [wallString(o.start, TZ), o.inactive]),
+      [
+        ['2026-11-08T10:00:00', null],
+        ['2026-11-12T10:00:00', null],
+      ],
+    );
+    // A hidden master hides its cancelled occurrences too.
+    assert.deepEqual(expandOccurrences([cancelled], WEEK, TZ, { hidden: [series()] }), []);
+  });
+
+  it('never lists a declined occurrence, and still takes its slot out of the series', () => {
+    const declined = row({
+      id: 'd1',
+      status: 'cancelled',
+      statusRaw: 'declined',
+      startAt: at(2026, 11, 10, 10),
+      endAt: at(2026, 11, 10, 11),
+      props: {
+        calendarId: 'c',
+        recurringEventId: 'e1',
+        originalStartAt: at(2026, 11, 10, 10).toISOString(),
+      },
+    });
+    const out = expandOccurrences([series(), declined], WEEK, TZ);
+    assert.deepEqual(
       out.map((o) => wallString(o.start, TZ)),
       ['2026-11-08T10:00:00', '2026-11-12T10:00:00'],
     );
-    assert.ok(out.every((o) => o.row.id !== 'x1'));
+  });
+
+  it('flags a disabled item, a disabled series and one disabled occurrence', () => {
+    const single = row({
+      id: 's',
+      startAt: at(2026, 11, 9, 9),
+      endAt: at(2026, 11, 9, 10),
+      overlay: { disabled: true, disabledOccurrences: [] },
+    });
+    const one = series({
+      overlay: { disabled: null, disabledOccurrences: [at(2026, 11, 10, 10).toISOString()] },
+    });
+    assert.deepEqual(
+      expandOccurrences([single, one], WEEK, TZ).map((o) => [o.row.id, o.inactive]),
+      [
+        ['master', null],
+        ['s', 'disabled'],
+        ['master', 'disabled'],
+        ['master', null],
+      ],
+    );
+    const whole = series({ overlay: { disabled: true, disabledOccurrences: [] } });
+    assert.ok(expandOccurrences([whole], WEEK, TZ).every((o) => o.inactive === 'disabled'));
+  });
+
+  it('a Google exception row is disabled with its master, cancelled wins over disabled', () => {
+    const moved = row({
+      id: 'x2',
+      startAt: at(2026, 11, 12, 14),
+      endAt: at(2026, 11, 12, 15),
+      props: {
+        calendarId: 'c',
+        recurringEventId: 'e1',
+        originalStartAt: at(2026, 11, 12, 10).toISOString(),
+      },
+    });
+    const cancelled = row({
+      id: 'x1',
+      status: 'cancelled',
+      startAt: at(2026, 11, 10, 10),
+      props: {
+        calendarId: 'c',
+        recurringEventId: 'e1',
+        originalStartAt: at(2026, 11, 10, 10).toISOString(),
+      },
+    });
+    const master = series({ overlay: { disabled: true, disabledOccurrences: [] } });
+    const out = expandOccurrences([master, moved, cancelled], WEEK, TZ);
+    assert.deepEqual(
+      out.map((o) => [o.row.id, o.inactive]),
+      [
+        ['master', 'disabled'],
+        ['x1', 'cancelled'],
+        ['x2', 'disabled'],
+      ],
+    );
+    // Its slot listed on the master disables only that exception.
+    const listed = series({
+      overlay: { disabled: null, disabledOccurrences: [at(2026, 11, 12, 10).toISOString()] },
+    });
+    assert.deepEqual(
+      expandOccurrences([listed, moved], WEEK, TZ).map((o) => [o.row.id, o.inactive]),
+      [
+        ['master', null],
+        ['master', null],
+        ['x2', 'disabled'],
+      ],
+    );
   });
 
   it('replaces a moved occurrence by its exception', () => {
@@ -160,10 +324,13 @@ describe('expandOccurrences', () => {
     assert.equal(out[0]?.allDay, true);
   });
 
-  it('drops a cancelled single event and an item with no time', () => {
+  it('keeps a cancelled single item flagged, and drops an item with no time', () => {
     const gone = row({ id: 'g', status: 'cancelled', startAt: at(2026, 11, 9, 10) });
     const none = row({ id: 'n' });
-    assert.equal(expandOccurrences([gone, none], WEEK, TZ).length, 0);
+    assert.deepEqual(
+      expandOccurrences([gone, none], WEEK, TZ).map((o) => [o.row.id, o.inactive]),
+      [['g', 'cancelled']],
+    );
   });
 });
 
@@ -221,6 +388,7 @@ describe('parity with the server: every shared case through the client import pa
           key: o.key,
           start: o.start.toISOString(),
           end: o.end?.toISOString() ?? null,
+          ...(o.inactive === null ? {} : { inactive: o.inactive }),
         })),
         c.expected,
       );

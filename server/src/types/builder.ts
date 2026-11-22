@@ -966,6 +966,10 @@ export interface ItemRowOverlay {
   editedAt: Date | null;
   /** Custom attribute values by key (H4); the built-in Importance reads 3 when unset. */
   attrs: Record<string, unknown>;
+  /** Disabled in TodoList (a series: every occurrence): drawn faded, its time free. */
+  disabled: boolean | null;
+  /** A series' occurrences disabled one by one, by original start (ISO 8601). */
+  disabledOccurrences: string[];
 }
 
 export interface ItemQueryRow {

@@ -7,6 +7,7 @@ import {
   itemReads,
   ProviderList,
   TopicList,
+  toTaskView,
   topicIds,
   type ItemSummaryView as Summary,
 } from '../itemViews.js';
@@ -35,7 +36,7 @@ export const listDeadlines = defineTool({
   name: 'list_deadlines',
   title: 'List deadlines',
   description:
-    'Open items due within the next days (14 by default), overdue ones included unless includeOverdue is false, earliest first, grouped by topic, container (project or course) or provider. Time blocks and travel are never deadlines. Each item has source and openIn. Filter by topic and provider.',
+    'Open items due within the next days (14 by default), overdue ones included unless includeOverdue is false, earliest first, grouped by topic, container (project or course) or provider. Time blocks and travel are never deadlines. An item the member disabled has inactive disabled. Each item has source and openIn. Filter by topic and provider.',
   toolset: 'read',
   inputSchema: z.strictObject({
     days: z.number().int().min(1).max(90).default(14).describe('How many days ahead'),
@@ -98,7 +99,7 @@ export const listDeadlines = defineTool({
         label: key === null ? null : (labels.get(key) ?? null),
         items: [],
       };
-      group.items.push(item);
+      group.items.push(toTaskView(item));
       groups.set(key, group);
     }
     return {

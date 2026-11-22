@@ -9,8 +9,9 @@
  *   local override of a field its provider lacks, else the provider's value), so every filter,
  *   sort, group and row after it reads what the item reads as;
  * - for items, right after the query's filter, a provider copy of a local to-do is dropped while
- *   its to-do is in the same result and shows: not cancelled, and hidden by none of the block's
- *   `hide` display rules (H5, ItemAccessFilter.copyAbsorption), before any count, group or row;
+ *   its to-do is in the same result and shows: hidden by none of the block's `hide` display rules
+ *   (H5, ItemAccessFilter.copyAbsorption), before any count, group or row; a cancelled to-do
+ *   shows (faded, on the time views too), so it absorbs its copy like any other;
  * - field names come only from the catalog whitelist (credential paths are never fields);
  * - values are literals checked against their field's type: an object with a `$` key is refused
  *   anywhere in the query and in any variable's value, so `$where`, `$function`, `$expr` and the
@@ -933,9 +934,11 @@ function dedupStages(order: readonly string[]): PipelineStage[] {
 }
 
 /**
- * H5: when a to-do in a block's result does not show, as an expression over the row: it is
- * cancelled (time views drop it), or one of the block's `hide` display rules matches it (the
- * client hides it). Such a to-do does not hide its provider copies (copyAbsorption). Each hide
+ * H5: when a to-do in a block's result does not show, as an expression over the row: one of the
+ * block's `hide` display rules matches it (the client hides it); undefined when none can. Such a
+ * to-do does not hide its provider copies (copyAbsorption). A cancelled to-do shows (every view,
+ * the time views included, draws it faded: the owner's ruling of 2026-11-22), so it absorbs its
+ * copy like any other to-do. Each hide
  * rule's condition goes through a Compilation of its own, so its warnings, variables and kinds
  * never reach the query's result; one the compiler refuses hides nothing here, as an unset
  * variable hides nothing on the client. `computed`: the fields the pipeline already computed; a
@@ -955,7 +958,7 @@ function hiddenExpression(ctx: CompileContext, computed: Filter): Expression {
     const score = importanceFields(ctx.importance, ctx.attributes ?? [], ctx.now);
     return Object.hasOwn(score, path) ? score[path] : `$${path}`;
   };
-  const conditions: Expression[] = [{ $eq: ['$status', 'cancelled'] }];
+  const conditions: Expression[] = [];
   const rules =
     ctx.blockType !== undefined && COUNTING_BLOCKS.has(ctx.blockType) ? [] : ctx.displayRules;
   (rules ?? []).forEach((stored, index) => {
@@ -970,6 +973,7 @@ function hiddenExpression(ctx: CompileContext, computed: Filter): Expression {
       }
     }
   });
+  if (conditions.length === 0) return undefined;
   return conditions.length === 1 ? conditions[0] : { $or: conditions };
 }
 

@@ -223,10 +223,75 @@ export class ItemQuery {
         .map((doc) => String(doc['_id'])),
     );
     const last = page[page.length - 1];
+    const series = await this.#seriesOf(page);
     return {
-      items: page.map((doc) => Item.fromDoc(doc).toSummary({ liveStatuses })),
+      items: page.map((doc) =>
+        ItemQuery.#asSeries(Item.fromDoc(doc).toSummary({ liveStatuses }), series),
+      ),
       nextCursor: rows.length > limit && last !== undefined ? encodeCursor(last) : null,
     };
+  }
+
+  /**
+   * The series each cancelled Google occurrence among `docs` reads as (Google sends a cancelled
+   * occurrence's id, series and original start only, so its stored title is a raw id): its
+   * master's title, topic and link, by the occurrence's id; one query, through the caller's access
+   * filter, its own integration's copy of the master first. One with no master is left out.
+   */
+  async #seriesOf(
+    docs: readonly Readonly<Record<string, unknown>>[],
+  ): Promise<Map<string, { title: string; topicId: string | null; url: string }>> {
+    const events = docs
+      .map((doc) => Item.fromDoc(doc))
+      .filter((item): item is CalendarEvent => item instanceof CalendarEvent)
+      .filter((event) => event.status === 'cancelled' && event.seriesMasterExternalId !== null);
+    if (events.length === 0) return new Map();
+    const masters = (
+      await this.#aggregate([
+        {
+          $match: {
+            ...this.#policy.itemFilterUnabsorbed(this.#caller.context),
+            'source.provider': 'google_calendar',
+            'source.externalId': {
+              $in: [...new Set(events.map((event) => event.seriesMasterExternalId))],
+            },
+          },
+        },
+        { $limit: 2 * events.length + 10 },
+      ])
+    )
+      .map((doc) => Item.fromDoc(doc))
+      .filter((item): item is CalendarEvent => item instanceof CalendarEvent);
+    const out = new Map<string, { title: string; topicId: string | null; url: string }>();
+    for (const event of events) {
+      const candidates = masters.filter(
+        (master) => master.toSummary().source.externalId === event.seriesMasterExternalId,
+      );
+      const master =
+        candidates.find((one) => one.integrationId === event.integrationId) ??
+        (candidates.length === 1 ? candidates[0] : undefined);
+      if (master === undefined) continue;
+      const view = master.toSummary();
+      out.set(event.id, { title: view.title, topicId: view.topicId, url: view.source.url });
+    }
+    return out;
+  }
+
+  /** A summary as its series reads it (`#seriesOf`), or as it is. */
+  static #asSeries(
+    summary: ItemSummary,
+    series: ReadonlyMap<string, { title: string; topicId: string | null; url: string }>,
+  ): ItemSummary {
+    const as = series.get(summary.id);
+    return as === undefined
+      ? summary
+      : {
+          ...summary,
+          title: as.title,
+          topicId: as.topicId,
+          source: { ...summary.source, url: as.url },
+          openIn: { ...summary.openIn, url: as.url },
+        };
   }
 
   /** One item the caller may see, with its copies' provider statuses and its editing hints. */
@@ -250,15 +315,25 @@ export class ItemQuery {
     });
     const occurrence =
       item instanceof CalendarEvent ? await item.seriesOccurrence(this.#caller) : null;
-    return occurrence === null
-      ? view
-      : {
-          ...view,
-          seriesOccurrence: {
-            seriesId: occurrence.seriesId,
-            originalStart: occurrence.originalStart.toISOString(),
-          },
-        };
+    if (occurrence === null) return view;
+    // A cancelled occurrence (Google's id only) reads as its series, as the time views show it.
+    const series = occurrence.asSeries;
+    return {
+      ...view,
+      ...(series === null
+        ? {}
+        : {
+            title: series.title,
+            topicId: series.topicId,
+            source: { ...view.source, url: series.url },
+            openIn: { ...view.openIn, url: series.url },
+          }),
+      seriesOccurrence: {
+        seriesId: occurrence.seriesId,
+        originalStart: occurrence.originalStart.toISOString(),
+        disabled: occurrence.disabled,
+      },
+    };
   }
 
   /**
@@ -276,9 +351,10 @@ export class ItemQuery {
       },
     ]);
     const byId = new Map(docs.map((doc) => [String(doc['_id']), doc]));
+    const series = await this.#seriesOf(docs);
     return ids.flatMap((id) => {
       const doc = byId.get(id);
-      return doc === undefined ? [] : [Item.fromDoc(doc).toSummary()];
+      return doc === undefined ? [] : [ItemQuery.#asSeries(Item.fromDoc(doc).toSummary(), series)];
     });
   }
 

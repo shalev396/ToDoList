@@ -56,6 +56,8 @@ function overlayOf(raw: unknown): ItemOverlay {
     copyOfOwner: text(overlay['copyOfOwner']),
     copyOfShared: flag(overlay['copyOfShared']),
     attrs: { ...record(overlay['attrs']) },
+    disabled: flag(overlay['disabled']),
+    disabledOccurrences: strings(overlay['disabledOccurrences']),
     overrides: Overrides.from(record(overlay['overrides'])).toJSON(),
   };
 }

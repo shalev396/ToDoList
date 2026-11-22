@@ -1,13 +1,19 @@
 /**
  * What the clock block shows for today: the timed events as ring arcs, the areas as a band
  * around them, the all-day items listed under the ring, and which event is on now and which is
- * next. Pure; unit-tested.
+ * next. A cancelled or disabled occurrence keeps its arc (drawn hollow and faded), but its time is
+ * free: it is never Now or Next. Pure; unit-tested.
  */
 import type { ItemColour } from '@api-types/colours.ts';
 import { endOfZonedDay, startOfZonedDay } from './ClockRing.math.ts';
 import { legFlagsOf, type LegFlags } from '../../../travel/legView.ts';
 import { splitAreas } from '../time/areas.ts';
-import { expandOccurrences, type Occurrence, type TimeRow } from '../time/occurrences.ts';
+import {
+  expandOccurrences,
+  type Inactive,
+  type Occurrence,
+  type TimeRow,
+} from '../time/occurrences.ts';
 
 /** An event without an end is drawn this long. */
 const DEFAULT_LENGTH_MS = 30 * 60_000;
@@ -37,6 +43,8 @@ export interface ClockEvent {
   colour?: ItemColour;
   /** A travel leg's marks (mode, conflict, past, "the event moved"); null for any other item. */
   leg?: LegFlags | null;
+  /** Cancelled or disabled: a hollow, faded arc, its time free. */
+  inactive?: Inactive | null;
 }
 
 /** Painted time for a part of life: a band just outside the ring, behind the arcs. */
@@ -48,6 +56,8 @@ export interface ClockArea {
   /** The topic the area is painted for (its colour's), if any. */
   topicId: string | null;
   colour: ItemColour;
+  /** Cancelled or disabled: a faded band. */
+  inactive?: Inactive | null;
 }
 
 export function isRingProvider(provider: string): boolean {
@@ -66,9 +76,9 @@ export interface ClockModel {
   timedOccurrences: Occurrence[];
   /** All-day items: listed, never drawn. */
   allDay: Occurrence[];
-  /** The event on now (the latest-started when several overlap), if any. */
+  /** The event on now (the latest-started when several overlap), if any; never an inactive one. */
   current: Occurrence | null;
-  /** The first event that starts after now. */
+  /** The first event that starts after now; never an inactive one. */
   next: Occurrence | null;
   /** Today's areas, in start order: a band, never an arc, Now or Next. */
   areas: ClockArea[];
@@ -98,9 +108,11 @@ export function buildClockModel(
   colourOf?: (rowId: string) => ItemColour,
   titleOf: (row: TimeRow) => string = (row) => row.title,
   dayOf: Date = now,
+  hidden: readonly TimeRow[] = [],
 ): ClockModel {
   const day = { from: startOfZonedDay(dayOf, timeZone), to: endOfZonedDay(dayOf, timeZone) };
-  let all = expandOccurrences(rows, day, timeZone);
+  // What a display rule hides still takes its slot out of its series (never listed).
+  let all = expandOccurrences(rows, day, timeZone, { hidden });
   let areas: ClockArea[] = [];
   if (colourOf !== undefined) {
     const split = splitAreas(all, colourOf);
@@ -112,6 +124,7 @@ export function buildClockModel(
       end: endOf(o),
       topicId: colourOf(o.row.id).topicId,
       colour: colourOf(o.row.id),
+      inactive: o.inactive,
     }));
   }
   const allDay = all.filter((o) => o.allDay);
@@ -124,12 +137,17 @@ export function buildClockModel(
     source: ringProvider(o.row.source.provider),
     ...(isRingProvider(o.row.source.provider) ? {} : { reserved: true }),
     leg: legFlagsOf({ row: o.row, start: o.start, end: endOf(o) }, now),
+    inactive: o.inactive,
     ...(colourOf === undefined ? {} : { colour: colourOf(o.row.id) }),
   }));
   const nowMs = now.getTime();
   let current: Occurrence | null = null;
   let next: Occurrence | null = null;
   for (const [index, o] of timedOccurrences.entries()) {
+    if (o.inactive !== null) {
+      // Cancelled or disabled: its time is free.
+      continue;
+    }
     const end = timed[index]?.end.getTime() ?? o.start.getTime();
     if (o.start.getTime() <= nowMs && nowMs < end) {
       current = o;

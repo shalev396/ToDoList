@@ -761,6 +761,30 @@
 .todolist-calendar .fc .tc-past {
   opacity: 0.55;
 }
+/* Cancelled at its provider or disabled in TodoList (time/inactive.ts): its time is free. No fill,
+   an edge in its own colour (the inline border colour), the page's ink faded, the title struck
+   through; an area's band fades under a light hatch, so painted time reads as unpainted. */
+.todolist-calendar .fc .tc-off:not(.fc-bg-event):not(.fc-list-event) {
+  border-width: 1px;
+  border-style: dashed;
+  opacity: 0.6;
+}
+.todolist-calendar .fc .tc-off [data-chip-title],
+.todolist-calendar .fc .tc-off.fc-list-event .fc-list-event-title,
+.todolist-calendar .fc .tc-off .fc-event-title {
+  text-decoration: line-through;
+}
+.todolist-calendar .fc .fc-list-event.tc-off {
+  opacity: 0.6;
+}
+.todolist-calendar .fc .tc-area.tc-off {
+  opacity: 0.45;
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 6px,
+    color-mix(in oklab, var(--foreground) 14%, transparent) 6px 7px
+  );
+}
 /* A leg whose trip has no length yet (drawn with the placeholder until he sets it): dashed. */
 .todolist-calendar .fc .tc-unset {
   outline: 1.5px dashed color-mix(in oklab, var(--foreground) 65%, transparent);

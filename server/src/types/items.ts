@@ -32,6 +32,14 @@ export interface ItemOverridesView {
   priority: number | null;
 }
 
+/**
+ * Which occurrences a Disable or an Enable of a repeating item applies to: `occurrence` (one, by
+ * its original start) or `series` (every occurrence; a Google series' moved and cancelled ones
+ * too).
+ */
+export const DISABLE_SCOPES = ['occurrence', 'series'] as const;
+export type DisableScope = (typeof DISABLE_SCOPES)[number];
+
 /** The overlay: user-only fields the sync never touches. */
 export interface ItemOverlayView {
   pinned: boolean | null;
@@ -49,6 +57,13 @@ export interface ItemOverlayView {
   editedAt: Date | null;
   /** Custom attribute values by key (dates as ISO strings); an unset one is absent. */
   attrs: Record<string, unknown>;
+  /**
+   * Disabled in TodoList (a series: every occurrence): shown faded and struck through, its time
+   * free. Never written to a provider. null: not disabled.
+   */
+  disabled: boolean | null;
+  /** A series' occurrences disabled one by one: their original starts (ISO 8601). */
+  disabledOccurrences: string[];
   /** A mirrored item's local overrides (all null on a to-do). */
   overrides: ItemOverridesView;
 }
@@ -187,7 +202,15 @@ export interface ItemDetail extends ItemSummary {
    * original start (ISO). Travel keeps a mark of that occurrence under them. Ids and times only;
    * absent on any other item.
    */
-  seriesOccurrence?: { seriesId: string; originalStart: string };
+  seriesOccurrence?: {
+    seriesId: string;
+    originalStart: string;
+    /**
+     * What its series' master says of this occurrence: disabled with the whole series, disabled on
+     * its own (the master lists its slot), or null.
+     */
+    disabled: 'series' | 'occurrence' | null;
+  };
 }
 
 /**
@@ -248,6 +271,20 @@ export interface UpdateOverlayRequestBody {
   plannedAt?: string | null;
   /** Attribute values by key; null clears one. Unknown keys and mistyped values are 400. */
   attrs?: Record<string, string | number | boolean | string[] | null>;
+  /**
+   * Disable (true) or enable again (false) the item, or occurrences of its series (`scope`): kept
+   * in TodoList only, never written to a provider. A travel leg is skipped, not disabled (400).
+   */
+  disabled?: boolean;
+  /**
+   * With `disabled`, for an item that repeats or one occurrence of a series: `occurrence` (needs
+   * `occurrenceStart` on a series' master) or `series`. Left out: one occurrence when
+   * `occurrenceStart` is given or the item is one occurrence itself, else the whole item. Enabling
+   * one occurrence of a series disabled as a whole is 400 (enable the series).
+   */
+  scope?: DisableScope;
+  /** With `disabled`: the occurrence's original start, ISO 8601 (400 `not_an_occurrence`). */
+  occurrenceStart?: string;
 }
 
 export type UpdateOverlayResponseData = ItemDetail;

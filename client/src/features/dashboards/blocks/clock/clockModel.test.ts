@@ -54,7 +54,7 @@ describe('buildClockModel', () => {
     );
   });
 
-  it('never draws a cancelled occurrence of a series', () => {
+  it('draws a cancelled occurrence of a series hollow (inactive), never twice', () => {
     const master = row('m', {
       startAt: at(2026, 11, 5, 9),
       endAt: at(2026, 11, 5, 10),
@@ -70,7 +70,47 @@ describe('buildClockModel', () => {
       },
     });
     assert.equal(buildClockModel([master], now, TZ).timed.length, 1);
-    assert.equal(buildClockModel([master, cancelled], now, TZ).timed.length, 0);
+    const model = buildClockModel([master, cancelled], now, TZ);
+    assert.deepEqual(
+      model.timed.map((event) => [event.id, event.inactive]),
+      [[`m@${String(at(2026, 11, 12, 9).getTime())}`, 'cancelled']],
+    );
+  });
+
+  it('Now and Next skip a disabled or cancelled event: its time is free', () => {
+    const model = buildClockModel(
+      [
+        row('off-now', {
+          startAt: at(2026, 11, 12, 12),
+          endAt: at(2026, 11, 12, 13),
+          overlay: { disabled: true, disabledOccurrences: [] },
+        }),
+        row('gone-next', {
+          status: 'cancelled',
+          startAt: at(2026, 11, 12, 14),
+          endAt: at(2026, 11, 12, 15),
+        }),
+        row('declined', {
+          status: 'cancelled',
+          statusRaw: 'declined',
+          startAt: at(2026, 11, 12, 15),
+          endAt: at(2026, 11, 12, 16),
+        }),
+        row('real-next', { startAt: at(2026, 11, 12, 16), endAt: at(2026, 11, 12, 17) }),
+      ],
+      now,
+      TZ,
+    );
+    assert.equal(model.current, null);
+    assert.equal(model.next?.row.id, 'real-next');
+    assert.deepEqual(
+      model.timed.map((event) => [event.id, event.inactive]),
+      [
+        ['off-now', 'disabled'],
+        ['gone-next', 'cancelled'],
+        ['real-next', null],
+      ],
+    );
   });
 
   it('finds now and next', () => {

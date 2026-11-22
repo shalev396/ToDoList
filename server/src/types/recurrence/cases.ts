@@ -5,14 +5,15 @@
  * Pure data. Every case uses Asia/Jerusalem (UTC+2 in winter, UTC+3 in summer; the clocks went
  * back on Sun 25 Oct 2026 and go forward on Fri 26 Mar 2027).
  */
-import type { TimeRow } from './occurrences.js';
+import type { Inactive, TimeRow } from './occurrences.js';
 
 export interface ParityCase {
   name: string;
   rows: TimeRow[];
   range: { from: string; to: string };
   timeZone: string;
-  expected: { key: string; start: string; end: string | null }[];
+  /** `inactive` only where the occurrence has one (cancelled or disabled). */
+  expected: { key: string; start: string; end: string | null; inactive?: Inactive }[];
 }
 
 const TZ = 'Asia/Jerusalem';
@@ -53,6 +54,36 @@ const googleMaster: TimeRow = {
   source: googleSource('master'),
   props: { calendarId: 'c', eventId: 'e1', recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU,TU,TH'] },
 };
+
+/**
+ * A cancelled occurrence of googleMaster's series exactly as Google sends it (id, series, original
+ * start, `status: cancelled`, nothing else) and as the sync stores it: its raw id for a title (the
+ * mapper's fallback), its original start for a start, no end, and the `eid` link Google can't open.
+ */
+const googleCancelled = (slot: string, eventId = 'e1'): TimeRow => ({
+  id: 'x9',
+  kind: 'event',
+  title: `${eventId}_20261110T080000Z`,
+  status: 'cancelled',
+  statusRaw: 'cancelled',
+  startAt: slot,
+  endAt: null,
+  dueAt: null,
+  allDay: false,
+  source: { ...googleSource('x9'), url: 'https://www.google.com/calendar/event?eid=eDk' },
+  props: {
+    calendarId: 'c',
+    eventId: `${eventId}_20261110T080000Z`,
+    recurringEventId: eventId,
+    originalStartAt: slot,
+    location: null,
+    meetLink: null,
+    recurrence: null,
+    attendeesCount: 0,
+    guestsCount: 0,
+    transparency: 'opaque',
+  },
+});
 
 /** A local block: every Sunday 13:00–17:00 local, its first occurrence at `first` (ISO, UTC). */
 function weeklyBlock(
@@ -152,11 +183,62 @@ export const PARITY_CASES: readonly ParityCase[] = [
         end: '2026-11-08T09:00:00.000Z',
       },
       {
+        // Listed, cancelled, at its slot: with no end of its own, it takes the master's length.
+        key: slot('master', '2026-11-10T08:00:00.000Z'),
+        start: '2026-11-10T08:00:00.000Z',
+        end: '2026-11-10T09:00:00.000Z',
+        inactive: 'cancelled',
+      },
+      {
         key: slot('master', '2026-11-12T08:00:00.000Z'),
         start: '2026-11-12T08:00:00.000Z',
         end: '2026-11-12T09:00:00.000Z',
       },
     ],
+  },
+  {
+    // Google's own shape: listed once, in its slot, with its master's length.
+    name: 'google-cancelled-occurrence-as-google-sends-it',
+    rows: [googleMaster, googleCancelled('2026-11-10T08:00:00.000Z')],
+    range: WEEK,
+    timeZone: TZ,
+    expected: [
+      {
+        key: slot('master', '2026-11-08T08:00:00.000Z'),
+        start: '2026-11-08T08:00:00.000Z',
+        end: '2026-11-08T09:00:00.000Z',
+      },
+      {
+        key: slot('master', '2026-11-10T08:00:00.000Z'),
+        start: '2026-11-10T08:00:00.000Z',
+        end: '2026-11-10T09:00:00.000Z',
+        inactive: 'cancelled',
+      },
+      {
+        key: slot('master', '2026-11-12T08:00:00.000Z'),
+        start: '2026-11-12T08:00:00.000Z',
+        end: '2026-11-12T09:00:00.000Z',
+      },
+    ],
+  },
+  {
+    // Its master unknown (not among the rows): never listed, it would read as a raw id.
+    name: 'google-cancelled-occurrence-without-its-master',
+    rows: [googleCancelled('2026-11-10T08:00:00.000Z')],
+    range: WEEK,
+    timeZone: TZ,
+    expected: [],
+  },
+  {
+    // A series the member declined stays hidden, the occurrences its organiser cancels too.
+    name: 'google-cancelled-occurrence-of-a-declined-series',
+    rows: [
+      { ...googleMaster, status: 'cancelled', statusRaw: 'declined' },
+      googleCancelled('2026-11-10T08:00:00.000Z'),
+    ],
+    range: WEEK,
+    timeZone: TZ,
+    expected: [],
   },
   {
     name: 'google-moved-occurrence',

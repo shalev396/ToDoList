@@ -8,6 +8,11 @@
  * - Next: the first thing still to come today (everything starting at that same minute).
  * - Later today: the rest of today.
  * - Tomorrow: everything on the next local day.
+ * - A cancelled or disabled occurrence (its time free) stays listed, faded and struck through, but
+ *   is never Now or Next: an event on now or still to come today is in Later today; a task due
+ *   today is in Earlier or Later today by its time. Overdue lists a disabled open task (faded: it
+ *   is still to do, or to enable), never a cancelled one (a cancelled task is not overdue), as
+ *   MCP `list_today` does.
  */
 import { isScheduledKind } from '@api-types/scheduled.ts';
 import { endOfZonedDay } from '../clock/ClockRing.math.ts';
@@ -41,22 +46,29 @@ function endOf(occurrence: Occurrence): number {
   return (occurrence.end ?? new Date(occurrence.start.getTime() + DEFAULT_LENGTH_MS)).getTime();
 }
 
-function isOpenTask(occurrence: Occurrence): boolean {
+/** A task (not an event, not reserved time) that is not done. */
+function isUndoneTask(occurrence: Occurrence): boolean {
   const { row } = occurrence;
-  return (
-    row.kind !== 'event' &&
-    !isScheduledKind(row.kind) &&
-    row.status !== 'done' &&
-    row.status !== 'cancelled'
-  );
+  return row.kind !== 'event' && !isScheduledKind(row.kind) && row.status !== 'done';
 }
 
-export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: string): AgendaModel {
+/** A task still to do: neither done nor cancelled (a disabled one is still to do). */
+function isOpenTask(occurrence: Occurrence): boolean {
+  return isUndoneTask(occurrence) && occurrence.row.status !== 'cancelled';
+}
+
+/** `hidden`: rows a display rule hides; they still take their slots out of their series. */
+export function buildAgenda(
+  rows: readonly TimeRow[],
+  now: Date,
+  timeZone: string,
+  hidden: readonly TimeRow[] = [],
+): AgendaModel {
   const todayStart = startOfZonedDay(now, timeZone);
   const todayEnd = endOfZonedDay(now, timeZone);
   const tomorrowEnd = endOfZonedDay(todayEnd, timeZone);
   const from = new Date(todayStart.getTime() - OVERDUE_DAYS * DAY_MS);
-  const all = expandOccurrences(rows, { from, to: tomorrowEnd }, timeZone);
+  const all = expandOccurrences(rows, { from, to: tomorrowEnd }, timeZone, { hidden });
   const nowMs = now.getTime();
 
   const model: AgendaModel = {
@@ -69,6 +81,8 @@ export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: strin
     tomorrow: [],
   };
   const upcoming: Occurrence[] = [];
+  // Cancelled or disabled, on now or still to come today: Later today, never Now or Next.
+  const freed: Occurrence[] = [];
   for (const occurrence of all) {
     const startMs = occurrence.start.getTime();
     if (startMs < todayStart.getTime()) {
@@ -80,14 +94,21 @@ export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: strin
       model.tomorrow.push(occurrence);
     } else if (occurrence.allDay) {
       model.allDay.push(occurrence);
+    } else if (occurrence.inactive !== null && !occurrence.dueOnly) {
+      if (startMs > nowMs || nowMs < endOf(occurrence)) {
+        freed.push(occurrence);
+      }
     } else if (occurrence.dueOnly) {
-      if (!isOpenTask(occurrence)) {
+      // A cancelled or disabled task due today stays, faded, but never decides Next.
+      if (!isUndoneTask(occurrence) || (occurrence.inactive === null && !isOpenTask(occurrence))) {
         continue;
       }
-      if (startMs > nowMs) {
+      if (startMs <= nowMs) {
+        model.earlierToday.push(occurrence);
+      } else if (occurrence.inactive === null) {
         upcoming.push(occurrence);
       } else {
-        model.earlierToday.push(occurrence);
+        freed.push(occurrence);
       }
     } else if (startMs <= nowMs && nowMs < endOf(occurrence)) {
       model.now.push(occurrence);
@@ -105,6 +126,11 @@ export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: strin
         model.laterToday.push(occurrence);
       }
     }
+  }
+  if (freed.length > 0) {
+    model.laterToday = [...model.laterToday, ...freed].sort(
+      (a, b) => a.start.getTime() - b.start.getTime() || a.key.localeCompare(b.key),
+    );
   }
   return model;
 }

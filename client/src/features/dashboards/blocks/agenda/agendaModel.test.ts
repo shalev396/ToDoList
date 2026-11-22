@@ -141,6 +141,75 @@ describe('agenda: now / next / later today / tomorrow', () => {
   });
 });
 
+describe('agenda: cancelled and disabled time is free', () => {
+  it('is never now or next: on now or still to come, it is in later today, in order', () => {
+    const model = buildAgenda(
+      [
+        row('off-now', {
+          startAt: at('11:30'),
+          endAt: at('12:30'),
+          overlay: { disabled: true, disabledOccurrences: [] },
+        }),
+        row('gone', { status: 'cancelled', startAt: at('13:00'), endAt: at('14:00') }),
+        row('next', { startAt: at('15:00'), endAt: at('16:00') }),
+        row('later', { startAt: at('18:00'), endAt: at('19:00') }),
+        row('off-past', {
+          startAt: at('09:00'),
+          endAt: at('10:00'),
+          overlay: { disabled: true, disabledOccurrences: [] },
+        }),
+      ],
+      NOW,
+      TZ,
+    );
+    assert.deepEqual(ids(model.now), []);
+    assert.deepEqual(ids(model.next), ['next']);
+    assert.deepEqual(ids(model.laterToday), ['off-now', 'gone', 'later']);
+    // A past disabled event is history, like any other past event.
+    assert.ok(!ids(model.earlierToday).includes('off-past'));
+  });
+
+  it('keeps disabled and cancelled tasks due today, faded, by their time, never as next', () => {
+    const disabled = { disabled: true, disabledOccurrences: [] };
+    const model = buildAgenda(
+      [
+        row('off-earlier', { kind: 'todo', dueAt: at('09:00'), overlay: disabled }),
+        row('gone-earlier', { kind: 'issue', status: 'cancelled', dueAt: at('10:00') }),
+        row('off-later', { kind: 'todo', dueAt: at('13:00'), overlay: disabled }),
+        row('gone-later', { kind: 'task', status: 'cancelled', dueAt: at('14:00') }),
+        row('open-later', { kind: 'todo', dueAt: at('16:00') }),
+        row('done', { kind: 'todo', status: 'done', dueAt: at('15:00') }),
+      ],
+      NOW,
+      TZ,
+    );
+    assert.deepEqual(ids(model.earlierToday), ['off-earlier', 'gone-earlier']);
+    assert.deepEqual(ids(model.next), ['open-later']);
+    assert.deepEqual(ids(model.laterToday), ['off-later', 'gone-later']);
+    assert.deepEqual(
+      [...model.earlierToday, ...model.laterToday].map((o) => o.inactive),
+      ['disabled', 'cancelled', 'disabled', 'cancelled'],
+    );
+  });
+
+  it('overdue lists a disabled open task (faded), never a cancelled one', () => {
+    const model = buildAgenda(
+      [
+        row('off-overdue', {
+          kind: 'todo',
+          dueAt: at('09:00', '10'),
+          overlay: { disabled: true, disabledOccurrences: [] },
+        }),
+        row('gone-overdue', { kind: 'todo', status: 'cancelled', dueAt: at('09:00', '10') }),
+      ],
+      NOW,
+      TZ,
+    );
+    assert.deepEqual(ids(model.overdue), ['off-overdue']);
+    assert.equal(model.overdue[0]?.inactive, 'disabled');
+  });
+});
+
 describe('agenda: areas', () => {
   const place = (items: TimeRow[], areas: TimeRow[]) =>
     agendaAreas(buildAgenda(items, NOW, TZ), buildAgenda(areas, NOW, TZ));
