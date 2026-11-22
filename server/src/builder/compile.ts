@@ -28,6 +28,7 @@ import {
   MAX_RELATIVE_N,
   RELATIVE_UNITS,
   DateRangeBoundsSchema,
+  DisplayRuleSchema,
   IsoDateTimeSchema,
   QuerySchema,
   VAR_REF_PATTERN,
@@ -273,6 +274,12 @@ export const TIME_SHAPED_BLOCKS: ReadonlySet<BlockType> = new Set<BlockType>([
   'workload',
   'timesheet',
 ]);
+
+/**
+ * The block types that show counts or groups, not rows: the client hides no row there, so a hide
+ * display rule hides nothing (H5, hiddenExpression).
+ */
+const COUNTING_BLOCKS: ReadonlySet<BlockType> = new Set<BlockType>(['chart', 'counter']);
 
 function isTimeShaped(blockType: BlockType | undefined): boolean {
   return blockType !== undefined && TIME_SHAPED_BLOCKS.has(blockType);
@@ -933,6 +940,10 @@ function dedupStages(order: readonly string[]): PipelineStage[] {
  * never reach the query's result; one the compiler refuses hides nothing here, as an unset
  * variable hides nothing on the client. `computed`: the fields the pipeline already computed; a
  * computed field only a hide rule reads is computed inside the expression instead.
+ *
+ * A chart or counter shows counts and groups, never rows, so the client hides nothing there and
+ * its hide rules count for nothing here (else a task would count twice: its to-do and its copy).
+ * A stored rule that is not a display rule (malformed) is skipped, never an error.
  */
 function hiddenExpression(ctx: CompileContext, computed: Filter): Expression {
   const hiding = new Compilation('items', ctx);
@@ -945,10 +956,13 @@ function hiddenExpression(ctx: CompileContext, computed: Filter): Expression {
     return Object.hasOwn(score, path) ? score[path] : `$${path}`;
   };
   const conditions: Expression[] = [{ $eq: ['$status', 'cancelled'] }];
-  (ctx.displayRules ?? []).forEach((rule, index) => {
-    if (!('hide' in rule.then)) return;
+  const rules =
+    ctx.blockType !== undefined && COUNTING_BLOCKS.has(ctx.blockType) ? [] : ctx.displayRules;
+  (rules ?? []).forEach((stored, index) => {
+    const parsed = DisplayRuleSchema.safeParse(stored);
+    if (!parsed.success || !('hide' in parsed.data.then)) return;
     try {
-      const filter = hiding.rule(rule.if, `/rules/${String(index)}/if`);
+      const filter = hiding.rule(parsed.data.if, `/rules/${String(index)}/if`);
       if (filter !== null) conditions.push(filterExpression(filter, field));
     } catch (error) {
       if (!(error instanceof QueryValidationError || error instanceof FilterExpressionError)) {

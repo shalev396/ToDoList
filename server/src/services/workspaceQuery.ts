@@ -95,7 +95,9 @@ export async function runWorkspaceQuery(
       preview: request.preview ?? false,
       attributes: AttributeDefinitions.of(workspace.settings).toJSON(),
       ...(importance === undefined ? {} : { importance }),
-      ...(JSON.stringify(query).includes('props.')
+      // A hide display rule on a `props.*` field reads the registry too, so the same rule means
+      // the same on every block (DATA.md, the absorption rule).
+      ...(JSON.stringify([query, target.displayRules ?? []]).includes('props.')
         ? { fieldRegistry: registryOf(await ProviderFields.of(workspace, userId, now.getTime())) }
         : {}),
       ...(target.blockType === undefined ? {} : { blockType: target.blockType }),

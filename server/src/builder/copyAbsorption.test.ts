@@ -310,6 +310,48 @@ describe('a to-do in the result that does not show', () => {
     );
   });
 
+  it('a counter or a chart hides no row, so its hide rules count for nothing: one task, one count', async () => {
+    const { ws } = await pair({ status: 'done' });
+    const count = { aggregate: { op: 'count' as const } };
+    const counter = await run(
+      count,
+      context(ws, 'u-1', { blockType: 'counter', displayRules: [doneHidden] }),
+    );
+    assert.equal(counter.total, 1);
+    const chart = await run(
+      { ...count, groupBy: ['source.provider'] },
+      context(ws, 'u-1', { blockType: 'chart', displayRules: [doneHidden] }),
+    );
+    assert.deepEqual(
+      (chart.groups ?? []).map((group) => [group.key['source.provider'], group.value]),
+      [['local', 1]],
+    );
+    // The same rule on a list, which hides the done to-do: the copy is its own row there.
+    const list = await run(
+      {},
+      context(ws, 'u-1', { blockType: 'list', displayRules: [doneHidden] }),
+    );
+    assert.equal(list.total, 2);
+  });
+
+  it('a malformed rule (stored past the schema) is skipped, never an error', async () => {
+    const { ws, todo, copy } = await pair({ status: 'done' });
+    const malformed = [
+      { if: doneHidden.if, then: 'hide' },
+      { then: { hide: true } },
+      null,
+      {
+        if: { field: 'status', operator: 'no-such-operator', value: 'done' },
+        then: { hide: true },
+      },
+    ] as unknown as DisplayRule[];
+    assert.deepEqual(await idsOf({}, context(ws, 'u-1', { displayRules: malformed })), [todo]);
+    assert.deepEqual(
+      await idsOf({}, context(ws, 'u-1', { displayRules: [...malformed, doneHidden] })),
+      [copy, todo].sort(),
+    );
+  });
+
   it('a hide rule reads $page variables and computed fields as the client does', async () => {
     const { ws, todo, copy } = await pair({ status: 'done' });
     const byVar: DisplayRule = {

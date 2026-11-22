@@ -10,8 +10,10 @@
 import type { Caller } from '../base/Caller.js';
 import { QueryValidationError } from '../../builder/errors.js';
 import { storedConnectorScopes, storedConnectors } from '../../builder/connectors.js';
+import { logger } from '../../services/logger.js';
 import {
   BLOCK_TYPES,
+  DisplayRuleSchema,
   type BlockType,
   type DisplayRule,
   type QueryRequest,
@@ -85,6 +87,34 @@ export class QueryTarget {
     return (await View.load(caller, viewId)).query.toJSON();
   }
 
+  /** The blocks whose malformed display rules were logged already. */
+  static readonly #reported = new Set<string>();
+
+  /**
+   * A block's display rules as stored, less any that is not one (a malformed write): skipped,
+   * never an error, and logged once per block for as long as the process runs.
+   */
+  static #displayRules(
+    stored: readonly unknown[],
+    dashboardId: string,
+    blockId: string,
+  ): DisplayRule[] {
+    const rules = stored.flatMap((rule) => {
+      const parsed = DisplayRuleSchema.safeParse(rule);
+      return parsed.success ? [parsed.data] : [];
+    });
+    const key = `${dashboardId}/${blockId}`;
+    if (rules.length < stored.length && !QueryTarget.#reported.has(key)) {
+      QueryTarget.#reported.add(key);
+      logger.warn('A block has a malformed display rule; it is skipped', {
+        dashboardId,
+        blockId,
+        skipped: stored.length - rules.length,
+      });
+    }
+    return rules;
+  }
+
   /** A dashboard block's query, as Dashboard.load and Dashboard#pageBlock let the caller see it. */
   static async #block(caller: Caller, dashboardId: string, blockId: string): Promise<QueryTarget> {
     const { Dashboard } = await import('../dashboard/Dashboard.js');
@@ -103,7 +133,9 @@ export class QueryTarget {
         : {}),
       ...(connectors === undefined ? {} : { connectors }),
       ...(connectorScopes === undefined ? {} : { connectorScopes }),
-      ...(json.rules === undefined ? {} : { displayRules: json.rules }),
+      ...(Array.isArray(json.rules)
+        ? { displayRules: QueryTarget.#displayRules(json.rules, dashboardId, blockId) }
+        : {}),
     };
     if (json.query !== undefined) {
       return new QueryTarget({

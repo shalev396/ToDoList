@@ -250,6 +250,113 @@ describe('the absorption rule', () => {
     assert.deepEqual(await rowsOf(plain.id), [todo.id]);
   });
 
+  it('a saved block’s malformed stored hide rule is skipped (logged once), never an error', async (t) => {
+    const { todo, copyId } = await todoWithCopy('workspace', {
+      todo: { status: 'done', topicId: 't-malformed' },
+      copy: { topicId: 't-malformed' },
+    });
+    const { createDashboard, applyDashboardOps, getDashboard } =
+      await import('../testing/dashboardCalls.js');
+    const { runWorkspaceQuery } = await import('./workspaceQuery.js');
+    const { logger } = await import('./logger.js');
+    const actor = { userId: 'u-owner', agentId: null };
+    const dashboard = await createDashboard(ws, actor, { title: 'Malformed', language: 'en' });
+    await applyDashboardOps(ws, actor, dashboard.id, {
+      expectedVersion: dashboard.version,
+      ops: [
+        {
+          op: 'add_block',
+          block: {
+            type: 'list',
+            query: {
+              source: 'items',
+              where: {
+                combinator: 'and',
+                rules: [{ field: 'topic', operator: '=', value: 't-malformed' }],
+              },
+            },
+          },
+        },
+      ],
+    });
+    const [block] = (await getDashboard(ws, actor, dashboard.id, {})).blocks;
+    assert.ok(block);
+    const done = { field: 'status', operator: '=', value: 'done' };
+    const { DashboardMongoModel } = await import('../models/mongoose/Dashboard.js');
+    // Written past the schema: a `then` that is no object, a rule with no `if`, and null.
+    const setRules = async (rules: unknown[]): Promise<void> => {
+      await DashboardMongoModel.collection.updateOne(
+        { _id: dashboard.id as never, 'blocks.id': block.id },
+        { $set: { 'blocks.$.rules': rules } },
+      );
+    };
+    const warn = t.mock.method(logger, 'warn', () => undefined);
+    const rowsOf = async (): Promise<string[]> =>
+      (
+        (await runWorkspaceQuery(ws, 'u-owner', { dashboardId: dashboard.id, blockId: block.id }))
+          .rows ?? []
+      )
+        .map((row) => row.id)
+        .sort();
+    await setRules([{ if: done, then: 'hide' }, { then: { hide: true } }, null]);
+    assert.deepEqual(await rowsOf(), [todo.id]);
+    assert.deepEqual(await rowsOf(), [todo.id]);
+    // A well-formed hide rule beside them still counts.
+    await setRules([
+      { if: done, then: 'hide' },
+      { if: done, then: { hide: true } },
+    ]);
+    assert.deepEqual(await rowsOf(), [copyId, todo.id].sort());
+    const malformed = warn.mock.calls.filter((call) =>
+      String(call.arguments[0]).includes('malformed display rule'),
+    );
+    assert.equal(malformed.length, 1);
+  });
+
+  it('a hide rule on a props field the workspace does not have means the same on every block', async () => {
+    const { todo } = await todoWithCopy('workspace', {
+      todo: { status: 'done', topicId: 't-ghost' },
+      copy: { topicId: 't-ghost' },
+    });
+    const { createDashboard, applyDashboardOps, getDashboard } =
+      await import('../testing/dashboardCalls.js');
+    const { runWorkspaceQuery } = await import('./workspaceQuery.js');
+    const actor = { userId: 'u-owner', agentId: null };
+    const dashboard = await createDashboard(ws, actor, { title: 'Ghost', language: 'en' });
+    await applyDashboardOps(ws, actor, dashboard.id, {
+      expectedVersion: dashboard.version,
+      ops: [
+        {
+          op: 'add_block',
+          block: {
+            type: 'list',
+            // No props in the query: the registry is still read, for the rule.
+            query: {
+              source: 'items',
+              where: {
+                combinator: 'and',
+                rules: [{ field: 'topic', operator: '=', value: 't-ghost' }],
+              },
+            },
+            rules: [{ if: { field: 'props.ghost', operator: 'null' }, then: { hide: true } }],
+          },
+        },
+      ],
+    });
+    const [block] = (await getDashboard(ws, actor, dashboard.id, {})).blocks;
+    assert.ok(block);
+    // `props.ghost` is in no item's props: the rule is refused and hides nothing, so the to-do
+    // still absorbs its copy, as on a block whose query reads props.
+    const result = await runWorkspaceQuery(ws, 'u-owner', {
+      dashboardId: dashboard.id,
+      blockId: block.id,
+    });
+    assert.deepEqual(
+      (result.rows ?? []).map((row) => row.id),
+      [todo.id],
+    );
+  });
+
   it('provider-field discovery leaves out a copy whose to-do the member may see', async () => {
     const { ProviderFields } = await import('../classes/item/ProviderFields.js');
     const { todo } = await todoWithCopy('workspace', { copy: { props: { copyOnlyPoints: 5 } } });
