@@ -9,18 +9,19 @@ import assert from 'node:assert/strict';
 
 import { startGcalFixture, type GcalFixture } from '../testing/gcalFixture.js';
 import type { IntegrationData } from '../models/index.js';
-import type { loadPlan as LoadPlan } from '../testing/calendarCalls.js';
-import { eventIdFor } from './diff.js';
+import type { applyCommit as ApplyCommit, loadPlan as LoadPlan } from '../testing/calendarCalls.js';
+import { eventIdFor, opIdOf } from './diff.js';
 
 let fx: GcalFixture;
 let loadPlan: typeof LoadPlan;
+let applyCommit: typeof ApplyCommit;
 
 const DAY = 86_400_000;
 const NOW = new Date();
 
 before(async () => {
   fx = await startGcalFixture('todolist_gcal_plan');
-  ({ loadPlan } = await import('../testing/calendarCalls.js'));
+  ({ loadPlan, applyCommit } = await import('../testing/calendarCalls.js'));
 });
 after(async () => {
   await fx.stop();
@@ -272,6 +273,48 @@ describe('the push set leaves out a disabled item (classes/item/Disabled.ts)', (
     assert.deepEqual(
       on.entries.filter((entry) => entry.itemId === todo.id).map((entry) => entry.type),
       ['update'],
+    );
+  });
+
+  it('the whole cycle: the delete committed and tombstoned, then enabled, then created again', async () => {
+    const items = await fx.models.getItemRepository();
+    const links = await fx.models.getCalendarLinkRepository();
+    const todo = await fx.item('Called off, then back on', 2);
+    await links.upsert(
+      fx.workspaceId,
+      fx.integrationId,
+      { calendarId: 'primary', googleEventId: eventIdFor(todo.id) },
+      { itemId: todo.id, direction: 'to_google', pushedHash: 'x' },
+    );
+    await items.setOverlay(fx.workspaceId, todo.id, { disabled: true, editedAt: new Date() });
+    const off = await loadPlan(await integration(), NOW);
+    assert.ok(
+      off.entries.some((entry) => entry.type === 'delete' && entry.itemId === todo.id),
+      'its event is deleted',
+    );
+    // The op as the executor reports it back (the plan sends at most maxOpsPerRun of them).
+    const remove = { opId: opIdOf('delete', todo.id, 'none') };
+    const run = await (
+      await fx.models.getSyncRunRepository()
+    ).create(fx.workspaceId, {
+      integrationId: fx.integrationId,
+      trigger: 'calendar_push',
+      status: 'running',
+    });
+    await applyCommit(await integration(), {
+      runId: run.id,
+      opResults: [{ opId: remove.opId, ok: true }],
+    });
+    const stone = await links.findByItem(fx.workspaceId, fx.integrationId, todo.id);
+    assert.ok(stone?.tombstonedAt instanceof Date, 'a dashboard tombstone');
+    assert.equal(stone.deletedBy, 'dashboard');
+    // Enabled after the delete: the edit beats the tombstone, so the event is made again.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await items.setOverlay(fx.workspaceId, todo.id, { disabled: null, editedAt: new Date() });
+    const on = await loadPlan(await integration(), new Date());
+    assert.deepEqual(
+      on.entries.filter((entry) => entry.itemId === todo.id).map((entry) => entry.type),
+      ['create'],
     );
   });
 });

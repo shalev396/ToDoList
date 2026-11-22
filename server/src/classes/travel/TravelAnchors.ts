@@ -8,8 +8,9 @@
  *   'calendar'`, so a series that began weeks ago is read too): a start, any kind but travel, in
  *   the range, at most ANCHOR_ROWS_MAX. Series are expanded on the workspace's wall clock; all-day
  *   and due-only occurrences never anchor, nor does an event Google shows as Free
- *   (`transparency: 'transparent'`), nor a cancelled or disabled occurrence (its fate: cancelled). A painted area anchors like a block (the owner's ruling
- *   of 2026-11-18), marked `area`: the day plan nests the items inside it (DayPlanner).
+ *   (`transparency: 'transparent'`), nor a cancelled or disabled occurrence (its fate:
+ *   cancelled). A painted area anchors like a block (the owner's ruling of 2026-11-18), marked
+ *   `area`: the day plan nests the items inside it (DayPlanner).
  * - Rule (Ruling 11): the item rule of that occurrence, else the series rule of its series, else
  *   the repeats rule an event that doesn't repeat falls under (the one
  *   chosen from the latest start), else the oldest where-rule that matches (each where-rule is its

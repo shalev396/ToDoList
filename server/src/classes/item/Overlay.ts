@@ -2,8 +2,8 @@
  * An item's overlay, as an immutable value object: what users keep on any item, mirrored or local,
  * that the sync never touches and no provider ever receives: pin, note, hidden, a topic to file it
  * under, whether the workspace calendar takes it, a planned date, custom attribute values, whether
- * it is disabled (Disabled.ts), and (on a mirrored item) its overrides. It also carries H5's copy marks (`copyOf`…), which only the copy
- * flow sets.
+ * it is disabled (Disabled.ts), and (on a mirrored item) its overrides. It also carries H5's copy
+ * marks (`copyOf`…), which only the copy flow sets.
  *
  * `patch()` turns an overlay edit into what is stored: the planned date parsed (PlannedAt), the
  * attribute values checked against the workspace's definitions (AttributeValues), `editedAt`

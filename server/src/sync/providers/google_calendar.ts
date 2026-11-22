@@ -183,8 +183,9 @@ function meetLinkOf(raw: GoogleCalendarEvent): string | null {
 /**
  * Google's own event link form (`eid` = base64 of "<eventId> <calendarId>"). Used only for a
  * cancelled occurrence of a series that arrives without `htmlLink` (Google guarantees little more
- * than its id): the engine needs a link on every live record, and the client only uses this one to
- * hide that occurrence. A deleted event needs none: it is a delete-only record.
+ * than its id): the engine needs a link on every live record. Google can't open a cancelled
+ * occurrence, so the time views and the item sheet show its master's link instead
+ * (types/recurrence `withSeriesFields`). A deleted event needs none: it is a delete-only record.
  */
 function cancelledOccurrenceLink(eventId: string, calendarId: string): string {
   const eid = Buffer.from(`${eventId} ${calendarId}`, 'utf8').toString('base64url');

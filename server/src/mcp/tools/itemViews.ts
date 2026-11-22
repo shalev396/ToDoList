@@ -221,8 +221,9 @@ function isBusy(summary: ItemSummaryView, occurrence: Occurrence): boolean {
 /**
  * One occurrence of an item, as the time tools answer with it: the item's summary, with
  * `occurrence` (the series and the slot it fills; null for an item that does not repeat), `busy`
- * and `inactive` (cancelled or disabled: listed, its time free). An occurrence expanded from the item's own series takes that occurrence's start and
- * end; any other entry (a single item, a moved Google occurrence, a due-only one) is at its own.
+ * and `inactive` (cancelled or disabled: listed, its time free). An occurrence expanded from the
+ * item's own series takes that occurrence's start and end; any other entry (a single item, a moved
+ * Google occurrence, a due-only one) is at its own.
  */
 export function toOccurrenceView(
   summary: ItemSummaryView,
@@ -239,6 +240,23 @@ export function toOccurrenceView(
     occurrence: series,
     busy: isBusy(summary, occurrence),
     inactive: occurrence.inactive,
+  };
+}
+
+/**
+ * An entry of a task list (`list_today`'s `dueToday` and `overdue`, `list_deadlines`), marked as
+ * the time answers mark it: `inactive` `disabled` (in TodoList) or `cancelled` (at its provider),
+ * else null, so a to-do he disabled reads as free, consistently with `get_calendar`.
+ */
+export function toTaskView(summary: ItemSummaryView): ItemSummaryView {
+  return {
+    ...summary,
+    inactive:
+      summary.status === 'cancelled'
+        ? 'cancelled'
+        : summary.overlay.disabled === true
+          ? 'disabled'
+          : null,
   };
 }
 

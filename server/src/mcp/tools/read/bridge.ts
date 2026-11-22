@@ -89,11 +89,26 @@ export async function findItems(
  * One entry per occurrence in `bounds` of what a time-shaped draft found, in time order: a series
  * (a Google master or a time block that repeats) gives one per occurrence, moved and skipped ones
  * applied; a cancelled or disabled one is listed with `inactive` (busy false), as on the calendar.
+ * A cancelled Google occurrence (Google's id only) is listed as its series: its master's title,
+ * topic and link, never its raw id (the expansion dresses its row; the summary follows it).
  */
 export function occurrencesOf(found: Found, bounds: Range, timeZone: string): ItemSummaryView[] {
   const byId = new Map(found.items.map((item) => [item.id, item]));
+  const rows = new Map(found.rows.map((row) => [row.id, row]));
   return expandOccurrences(found.rows, bounds, timeZone).flatMap((occurrence) => {
     const summary = byId.get(occurrence.row.id);
-    return summary === undefined ? [] : [toOccurrenceView(summary, occurrence)];
+    if (summary === undefined) return [];
+    const dressed = occurrence.row as ItemQueryRow;
+    const view =
+      dressed === rows.get(dressed.id)
+        ? summary
+        : {
+            ...summary,
+            title: dressed.title,
+            topicId: dressed.topicId,
+            source: { ...summary.source, url: dressed.source.url },
+            openIn: { ...summary.openIn, url: dressed.source.url },
+          };
+    return [toOccurrenceView(view, occurrence)];
   });
 }

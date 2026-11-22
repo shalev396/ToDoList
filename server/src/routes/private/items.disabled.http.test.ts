@@ -1,14 +1,16 @@
 /**
  * Disabling over HTTP (`PATCH …/items/:id/overlay` with `disabled`; classes/item/Disabled.ts): a
  * single item as a whole, a repeating time block by occurrence or series, a Google series with its
- * moved and cancelled occurrences, from the master or from an occurrence row. Kept in TodoList only:
- * nothing leaves the machine, and a sync that writes the event again keeps the mark. The roles of
- * an overlay edit; a travel leg is skipped, never disabled.
+ * moved and cancelled occurrences, from the master or from an occurrence row. Kept in TodoList
+ * only: nothing leaves the machine, and a sync that writes the event again keeps the mark. The
+ * roles of an overlay edit; a travel leg is skipped, never disabled. A refused request writes
+ * nothing.
  */
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 import type { ItemUpsert } from '../../models/definitions/Item.js';
+import type { TimeRow } from '../../types/recurrence/occurrences.js';
 import type * as Models from '../../models/index.js';
 import { startApiHarness, type ApiHarness, type ApiResponse } from '../../testing/apiHarness.js';
 import { installOutboundGuard, type OutboundGuard } from '../../testing/outboundGuard.js';
@@ -34,8 +36,15 @@ const CALENDAR = 'primary@example.test';
 interface Detail {
   id: string;
   title: string;
+  topicId: string | null;
   status: string;
-  overlay: { disabled: boolean | null; disabledOccurrences: string[]; pinned: boolean | null };
+  openIn: { provider: string; url: string };
+  overlay: {
+    disabled: boolean | null;
+    disabledOccurrences: string[];
+    pinned: boolean | null;
+    note: string | null;
+  };
   seriesOccurrence?: { seriesId: string; originalStart: string; disabled: string | null };
 }
 
@@ -109,13 +118,21 @@ const MEETING = [
     endAt: new Date(week(1, 3)),
     props: { eventId: 'daily_moved', recurringEventId: 'daily', originalStartAt: week(1) },
   }),
+  // As the sync stores what Google sends for a cancelled occurrence (its id, series and original
+  // start, nothing else): its raw id for a title, no end, and an `eid` link Google can't open.
   event('daily_cancelled', {
-    title: 'Daily meeting',
+    title: 'daily_cancelled',
     status: 'cancelled',
     statusRaw: 'cancelled',
     startAt: new Date(week(2)),
     endAt: null,
-    props: { eventId: 'daily_cancelled', recurringEventId: 'daily', originalStartAt: week(2) },
+    props: {
+      eventId: 'daily_cancelled',
+      recurringEventId: 'daily',
+      originalStartAt: week(2),
+      location: null,
+      transparency: 'opaque',
+    },
   }),
   event('other', { title: 'Dentist', startAt: new Date(week(0, 3)), endAt: new Date(week(0, 4)) }),
 ];
@@ -346,5 +363,180 @@ describe('a Google series (its master, a moved and a cancelled occurrence)', () 
     await overlay(moved, { disabled: false, scope: 'occurrence' });
     assert.deepEqual((await detail(master)).overlay.disabledOccurrences, [week(3)]);
     assert.equal((await detail(moved)).seriesOccurrence?.disabled, null);
+  });
+});
+
+describe('a refused request writes nothing (everything is checked first)', () => {
+  it('a field and a slot that is none of the series: 400, the field not stored', async () => {
+    const res = await call('editor', 'POST', '/time-blocks', {
+      title: 'Swim',
+      startAt: SUNDAY,
+      endAt: week(0, 1),
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'],
+    });
+    const id = (res.body?.['data'] as Detail).id;
+    const refused = await call('editor', 'PATCH', `/items/${id}/overlay`, {
+      pinned: true,
+      disabled: true,
+      occurrenceStart: week(1, 2),
+    });
+    assert.equal(refused.status, 400, refused.text);
+    assert.equal((await detail(id)).overlay.pinned, null);
+    // One occurrence enabled alone in a series disabled as a whole: 400, the note not stored.
+    await overlay(id, { disabled: true, scope: 'series' });
+    const alone = await call('editor', 'PATCH', `/items/${id}/overlay`, {
+      note: 'swim later',
+      disabled: false,
+      occurrenceStart: week(1),
+    });
+    assert.equal(alone.status, 400, alone.text);
+    assert.equal((await detail(id)).overlay.note, null);
+  });
+
+  it('a travel leg with a note and disabled: 400, the note not stored', async () => {
+    const { item } = await (
+      await models.getItemRepository()
+    ).upsertTravelLeg(wid, `${userIds['editor'] ?? ''}|y|single|there`, {
+      ownerUserId: userIds['editor'] ?? '',
+      title: 'Walk',
+      topicId: null,
+      startAt: new Date(week(0, -1)),
+      endAt: new Date(SUNDAY),
+      travel: { anchorItemId: 'y', occurrence: 'single', direction: 'there', mode: 'walk' },
+    });
+    const res = await call('editor', 'PATCH', `/items/${item.id}/overlay`, {
+      note: 'umbrella',
+      disabled: true,
+    });
+    assert.equal(res.status, 400, res.text);
+    assert.equal((await detail(item.id)).overlay.note, null);
+  });
+});
+
+describe('a cancelled Google occurrence reads as its series (I1)', () => {
+  it('its detail has the master’s title, topic and link, never its raw id', async () => {
+    const master = await detail(await idOf('daily'));
+    const cancelled = await detail(await idOf('daily_cancelled'));
+    assert.deepEqual(
+      [cancelled.title, cancelled.topicId, cancelled.openIn.url, cancelled.status],
+      [master.title, master.topicId, master.openIn.url, 'cancelled'],
+    );
+    assert.notEqual(cancelled.title, 'daily_cancelled');
+  });
+});
+
+describe('marks follow the series and the cap (M4)', () => {
+  let id = '';
+
+  before(async () => {
+    const res = await call('editor', 'POST', '/time-blocks', {
+      title: 'Choir',
+      startAt: SUNDAY,
+      endAt: week(0, 1),
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'],
+    });
+    id = (res.body?.['data'] as Detail).id;
+  });
+
+  it('an "all" edit that moves the series drops the marks that are no longer slots', async () => {
+    await overlay(id, { disabled: true, occurrenceStart: week(1) });
+    await overlay(id, { disabled: true, occurrenceStart: week(2) });
+    // The same time of day: the marks are still slots.
+    const renamed = await call('editor', 'PATCH', `/time-blocks/${id}`, {
+      scope: 'all',
+      title: 'Choir practice',
+    });
+    assert.equal(renamed.status, 200, renamed.text);
+    assert.deepEqual((await detail(id)).overlay.disabledOccurrences, [week(1), week(2)]);
+    const moved = await call('editor', 'PATCH', `/time-blocks/${id}`, {
+      scope: 'all',
+      startAt: week(0, 2),
+      endAt: week(0, 3),
+    });
+    assert.equal(moved.status, 200, moved.text);
+    assert.deepEqual((await detail(id)).overlay.disabledOccurrences, []);
+  });
+
+  it('with the list full, an occurrence older than all it holds is refused (400)', async () => {
+    const slots = Array.from({ length: 366 }, (_, n) => week(n + 1, 2));
+    await (await models.getItemRepository()).setOverlay(wid, id, { disabledOccurrences: slots });
+    const refused = await call('editor', 'PATCH', `/items/${id}/overlay`, {
+      disabled: true,
+      occurrenceStart: week(0, 2),
+    });
+    assert.equal(refused.status, 400, refused.text);
+    assert.equal((await detail(id)).overlay.disabledOccurrences.length, 366);
+    // A newer one still fits (the oldest goes): week 367 is a winter Sunday, a slot at 15:00.
+    const fits = await overlay(id, { disabled: true, occurrenceStart: week(367, 2) });
+    assert.equal(fits.overlay.disabledOccurrences.length, 366);
+    assert.equal(fits.overlay.disabledOccurrences.at(-1), week(367, 2));
+  });
+});
+
+describe('only rows the caller may see are written (M2)', () => {
+  it('a caller narrowed to one topic disables only its rows of the series', async () => {
+    const items = await models.getItemRepository();
+    await items.bulkUpsert(wid, [
+      event('narrow', {
+        title: 'Narrow',
+        topicId: 'college-topic',
+        props: { recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'] },
+      }),
+      event('narrow_moved', {
+        title: 'Narrow',
+        topicId: 'work-topic',
+        startAt: new Date(week(1, 2)),
+        endAt: new Date(week(1, 3)),
+        props: { eventId: 'narrow_moved', recurringEventId: 'narrow', originalStartAt: week(1) },
+      }),
+    ]);
+    const { contextFor, callerOf } = await import('../../testing/workspaceFixtures.js');
+    const { Item } = await import('../../classes/item/index.js');
+    const editor = userIds['editor'] ?? '';
+    const narrowed = callerOf(
+      { ...(await contextFor(wid, editor)), onlyTopics: ['work-topic'] },
+      editor,
+    );
+    const moved = await Item.find(narrowed, await idOf('narrow_moved'));
+    await moved.setDisabled(narrowed, { disabled: true, scope: 'series' });
+    assert.equal((await detail(await idOf('narrow_moved'))).overlay.disabled, true);
+    assert.equal((await detail(await idOf('narrow'))).overlay.disabled, null);
+  });
+});
+
+describe('across a DST change (the server’s slot check against the shared expansion)', () => {
+  it('an occurrence after the clocks went back is disabled at its own wall time', async () => {
+    // Sundays 13:00 in Jerusalem from 18 Oct 2026 (UTC+3); the clocks go back on 25 Oct (UTC+2).
+    const res = await call('editor', 'POST', '/time-blocks', {
+      title: 'Seminar',
+      startAt: '2026-10-18T10:00:00.000Z',
+      endAt: '2026-10-18T11:00:00.000Z',
+      recurrence: ['RRULE:FREQ=WEEKLY;BYDAY=SU'],
+    });
+    assert.equal(res.status, 201, res.text);
+    const id = (res.body?.['data'] as Detail).id;
+    // 13:00 on 1 Nov is 11:00Z; 10:00Z (the old offset's instant) is no slot.
+    const wrong = await call('editor', 'PATCH', `/items/${id}/overlay`, {
+      disabled: true,
+      occurrenceStart: '2026-11-01T10:00:00.000Z',
+    });
+    assert.equal(wrong.status, 400, wrong.text);
+    await overlay(id, { disabled: true, occurrenceStart: '2026-11-01T11:00:00.000Z' });
+    const stored = (await call('editor', 'GET', `/items/${id}`)).body?.['data'] as TimeRow;
+    const { expandOccurrences } = await import('../../types/recurrence/occurrences.js');
+    const out = expandOccurrences(
+      [stored],
+      { from: new Date('2026-10-17T21:00:00.000Z'), to: new Date('2026-11-08T22:00:00.000Z') },
+      'Asia/Jerusalem',
+    );
+    assert.deepEqual(
+      out.map((o) => [o.start.toISOString(), o.inactive]),
+      [
+        ['2026-10-18T10:00:00.000Z', null],
+        ['2026-10-25T11:00:00.000Z', null],
+        ['2026-11-01T11:00:00.000Z', 'disabled'],
+        ['2026-11-08T11:00:00.000Z', null],
+      ],
+    );
   });
 });

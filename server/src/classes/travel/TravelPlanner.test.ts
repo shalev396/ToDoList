@@ -816,3 +816,25 @@ describe('TravelPlanner.movesTravel: disabling (classes/item/Disabled.ts)', () =
     );
   });
 });
+
+describe('TravelRule.markItem: a disabled item gets no travel', () => {
+  it('refuses to mark an item disabled as a whole (400), as a cancelled one', async () => {
+    const ws = await workspace();
+    const { todo } = await classes.Todo.create(ws.a.caller, {
+      title: 'Called off',
+      startAt: local(3, 14),
+      endAt: local(3, 15),
+    });
+    await todo.setDisabled(ws.a.caller, { disabled: true });
+    await assert.rejects(
+      classes.TravelRule.markItem(ws.a.caller, {
+        itemId: todo.id,
+        every: false,
+        mode: 'drive',
+        direction: 'both',
+        placeId: ws.a.braudeId,
+      }),
+      /disabled item gets no travel/,
+    );
+  });
+});

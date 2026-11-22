@@ -453,12 +453,17 @@ export interface IItemRepository {
     series: GoogleSeriesRef,
     disabled: boolean,
     at: Date,
+    access?: Readonly<Record<string, unknown>>,
   ): Promise<number>;
-  /** The live exception row of a Google series that fills the slot at `originalStart` (ISO). */
+  /**
+   * The live exception row of a Google series that fills the slot at `originalStart` (ISO).
+   * `access` (the caller's item filter) narrows both to the rows the caller may see.
+   */
   findSeriesException(
     workspaceId: string,
     series: GoogleSeriesRef,
     originalStart: string,
+    access?: Readonly<Record<string, unknown>>,
   ): Promise<ItemData | null>;
   /**
    * Sets `deletedAt`. False when there was nothing to delete. The item's provider copies are

@@ -16,7 +16,8 @@
  *
  * Pure: the value object reads what is stored; the items write it (Item#setDisabled).
  */
-import type { ItemOverlay } from '../../models/definitions/Item.js';
+import { ValidationError } from '../../errors/ValidationError.js';
+import { DISABLED_OCCURRENCES_MAX, type ItemOverlay } from '../../models/definitions/Item.js';
 import type { DisableScope } from '../../types/items.js';
 
 /** A Disable or an Enable, as callers give it. */
@@ -68,6 +69,21 @@ export class DisabledState {
   /** Whether the occurrence at this original start is disabled (on its own, or with the whole). */
   covers(originalStart: Date): boolean {
     return this.#whole || this.listed(originalStart);
+  }
+
+  /**
+   * Refuses (400) disabling one occurrence that the full list would drop at once: older than all
+   * DISABLED_OCCURRENCES_MAX it holds. Enabling, or a free place, always fits.
+   */
+  assertRoomFor(originalStart: Date, disabled: boolean): void {
+    if (!disabled || this.#occurrences.length < DISABLED_OCCURRENCES_MAX) return;
+    if (this.listed(originalStart)) return;
+    const oldest = Math.min(...this.#occurrences.map((text) => new Date(text).getTime()));
+    if (originalStart.getTime() < oldest) {
+      throw new ValidationError(
+        `occurrenceStart: at most ${String(DISABLED_OCCURRENCES_MAX)} occurrences are disabled one by one, and this one is older than all of them; enable some, or disable the series`,
+      );
+    }
   }
 
   /** Whether this occurrence is disabled on its own (in the list, not by the whole). */

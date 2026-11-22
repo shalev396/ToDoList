@@ -634,6 +634,9 @@ export class TravelRule
     if (item.status === 'cancelled') {
       throw new ValidationError('itemId: a cancelled event gets no travel');
     }
+    if (item.overlay.disabledState.whole) {
+      throw new ValidationError('itemId: a disabled item gets no travel (enable it first)');
+    }
     if (isRecurring(item) || (await TravelRule.#inSeries(caller, item))) {
       throw new ValidationError('itemId: a repeating event takes a series mark');
     }
@@ -794,7 +797,7 @@ export class TravelRule
    * occurrence of a mirrored series (Google's exception row) is its series' occurrence at its
    * original start. An occurrence given must be one of the item's own: a slot of its series (the
    * shared expansion, within DST_SLACK_MS), or an exception row's original start; else 400
-   * `not_an_occurrence`. A cancelled event gets no travel (400).
+   * `not_an_occurrence`. A cancelled event, and an item disabled as a whole, get no travel (400).
    */
   static async #markScope(caller: Caller, item: Item, input: MarkItemInput): Promise<MarkScope> {
     if (item instanceof TravelLeg) throw new ValidationError('itemId: travel is not travelled to');
@@ -802,6 +805,9 @@ export class TravelRule
     if (item.allDay) throw new ValidationError('itemId: an all-day item gets no travel');
     if (item.status === 'cancelled') {
       throw new ValidationError('itemId: a cancelled event gets no travel');
+    }
+    if (item.overlay.disabledState.whole) {
+      throw new ValidationError('itemId: a disabled item gets no travel (enable it first)');
     }
     const given = input.occurrence;
     if (input.every && given !== undefined) {

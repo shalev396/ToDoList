@@ -32,7 +32,6 @@ export interface ItemOverridesView {
   priority: number | null;
 }
 
-/** The overlay: user-only fields the sync never touches. */
 /**
  * Which occurrences a Disable or an Enable of a repeating item applies to: `occurrence` (one, by
  * its original start) or `series` (every occurrence; a Google series' moved and cancelled ones
@@ -41,6 +40,7 @@ export interface ItemOverridesView {
 export const DISABLE_SCOPES = ['occurrence', 'series'] as const;
 export type DisableScope = (typeof DISABLE_SCOPES)[number];
 
+/** The overlay: user-only fields the sync never touches. */
 export interface ItemOverlayView {
   pinned: boolean | null;
   note: string | null;

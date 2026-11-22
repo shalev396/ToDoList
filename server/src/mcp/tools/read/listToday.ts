@@ -4,7 +4,14 @@ import { resolveDatePreset } from '../../../builder/dates.js';
 import { CAPS } from '../../../types/builder.js';
 import { SCHEDULED_KINDS } from '../../../types/domain.js';
 import { defineTool } from '../../tool.js';
-import { ItemSummaryView, ProviderList, TopicList, itemReads, topicIds } from '../itemViews.js';
+import {
+  ItemSummaryView,
+  ProviderList,
+  TopicList,
+  itemReads,
+  toTaskView,
+  topicIds,
+} from '../itemViews.js';
 import {
   EPOCH,
   filterRules,
@@ -21,7 +28,7 @@ export const listToday = defineTool({
   name: 'list_today',
   title: 'List today',
   description:
-    'Today in the workspace’s time zone: the events that happen today (one entry per occurrence, repeating events included), the open items due today, the open items already overdue (due before today), and scheduled: the time TodoList keeps today, i.e. time blocks, areas (layer area) and travel legs, each occurrence once. Time blocks and travel are busy time (busy true); areas are not (a plan to put blocks in). None of the scheduled entries is a task: they are never due, overdue or completed. An event or scheduled entry that was cancelled (at its provider) or disabled (in TodoList) is still listed, with inactive cancelled or disabled and busy false: its time is free. Declined events are left out. Each item has source and openIn. One task is listed once: an event that is the provider copy of a to-do listed in dueToday or overdue is left out of events. Filter by topic and provider.',
+    'Today in the workspace’s time zone: the events that happen today (one entry per occurrence, repeating events included), the open items due today, the open items already overdue (due before today), and scheduled: the time TodoList keeps today, i.e. time blocks, areas (layer area) and travel legs, each occurrence once. Time blocks and travel are busy time (busy true); areas are not (a plan to put blocks in). None of the scheduled entries is a task: they are never due, overdue or completed. An event or scheduled entry that was cancelled (at its provider) or disabled (in TodoList) is still listed, with inactive cancelled or disabled and busy false: its time is free. Declined events are left out. A due or overdue item the member disabled has inactive disabled (free, still to do or enable). Each item has source and openIn. One task is listed once: an event that is the provider copy of a to-do listed in dueToday or overdue is left out of events. Filter by topic and provider.',
   toolset: 'read',
   inputSchema: z.strictObject({ topic: TopicList, provider: ProviderList }),
   outputSchema: z.object({
@@ -111,8 +118,8 @@ export const listToday = defineTool({
         from: today.from.toISOString(),
         to: today.to.toISOString(),
         events: shownOnce,
-        dueToday: dueToday.items,
-        overdue: overdue.items,
+        dueToday: dueToday.items.map(toTaskView),
+        overdue: overdue.items.map(toTaskView),
         scheduled,
       },
       target: { type: 'workspace', id: ctx.workspace.id },

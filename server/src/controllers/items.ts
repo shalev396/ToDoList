@@ -186,21 +186,22 @@ const remove: RequestHandler = async (req, res): Promise<void> => {
 };
 
 /**
- * TodoList's own fields (Item#setOverlay); `disabled` (with its `scope` and `occurrenceStart`)
- * disables or enables the item or occurrences of its series (Item#setDisabled), after the rest.
+ * TodoList's own fields and, with `disabled` (its `scope` and `occurrenceStart`), the disabled
+ * state of the item or occurrences of its series (Item#changeOverlay): everything is checked
+ * before anything is written, so a 400 leaves the item as it was.
  */
 const overlay: RequestHandler = async (req, res): Promise<void> => {
   const { disabled, scope, occurrenceStart, ...fields } = parseOr400(UpdateOverlayBody, req.body);
   const { caller } = req as WorkspaceRequest;
-  let item = await Item.find(caller, routeParam(req, 'id'));
-  if (Object.keys(fields).length > 0) item = await item.setOverlay(caller, fields);
-  if (disabled !== undefined) {
-    item = await item.setDisabled(caller, {
-      disabled,
-      scope,
-      occurrenceStart: optionalTime(occurrenceStart),
-    });
-  }
+  const item = await (
+    await Item.find(caller, routeParam(req, 'id'))
+  ).changeOverlay(
+    caller,
+    fields,
+    disabled === undefined
+      ? undefined
+      : { disabled, scope, occurrenceStart: optionalTime(occurrenceStart) },
+  );
   const data: UpdateOverlayResponseData = await (await ItemQuery.for(caller)).detail(item);
   res.success(data);
 };

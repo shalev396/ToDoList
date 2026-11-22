@@ -153,6 +153,46 @@ describe('the push set and provider copies', () => {
     assert.ok(!ids.includes(off.todo) && !ids.includes(off.copy), 'turned off covers its copy');
   });
 
+  it('a disabled to-do is not pushed, and keeps its copy off the calendar too (time freed)', async () => {
+    const off = await todoWithCopy('Called off', 2, 3);
+    await (await models.getItemRepository()).setOverlay(workspaceId, off.todo, { disabled: true });
+    const ids = await created();
+    assert.ok(!ids.includes(off.todo) && !ids.includes(off.copy), 'neither the to-do nor its copy');
+  });
+
+  it('a cancelled task is not pushed (its time is free)', async () => {
+    const { copy } = await todoWithCopy('Cancelled in Linear', null, 4);
+    const repo = await models.getItemRepository();
+    await repo.setOverlay(workspaceId, copy, {
+      copyOf: null,
+      copyOfOwner: null,
+      copyOfShared: null,
+    });
+    assert.ok((await created()).includes(copy), 'pushed while open');
+    await repo.bulkUpsert(workspaceId, [
+      {
+        id: copy,
+        integrationId: 'i-linear-push',
+        kind: 'issue',
+        topicId: null,
+        title: 'Cancelled in Linear (Linear)',
+        status: 'cancelled',
+        dueAt: new Date(Date.now() + 4 * DAY_MS),
+        source: {
+          provider: 'linear',
+          accountId: 'acct',
+          externalId: copy,
+          key: null,
+          url: `https://linear.example/${copy}`,
+          updatedAtSource: null,
+          etag: null,
+          hash: 'cancelled',
+        },
+      },
+    ]);
+    assert.ok(!(await created()).includes(copy));
+  });
+
   it('a to-do turned off and undated keeps its dated copy off the calendar too', async () => {
     const off = await todoWithCopy('Off and undated', null, 5, false);
     const ids = await created();

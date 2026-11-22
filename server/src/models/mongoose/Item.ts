@@ -847,9 +847,11 @@ export const ItemRepository: IItemRepository = {
     return doc ? toItemData(doc) : null;
   },
 
-  async setSeriesDisabled(workspaceId, series, disabled, at) {
+  async setSeriesDisabled(workspaceId, series, disabled, at, access = {}) {
     const result = await ItemMongoModel.updateMany(
       {
+        // The caller's access first, so the series' own keys below always win.
+        $and: [access],
         workspaceId,
         'source.provider': 'google_calendar',
         'source.accountId': series.accountId,
@@ -869,8 +871,9 @@ export const ItemRepository: IItemRepository = {
     return result.modifiedCount;
   },
 
-  async findSeriesException(workspaceId, series, originalStart) {
+  async findSeriesException(workspaceId, series, originalStart, access = {}) {
     const doc = await ItemMongoModel.findOne({
+      $and: [access],
       workspaceId,
       'source.provider': 'google_calendar',
       'source.accountId': series.accountId,

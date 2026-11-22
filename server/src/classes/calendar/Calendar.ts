@@ -9,10 +9,11 @@
  * (ItemPolicy as them: their own integrations, the shared ones, and the to-dos they may see,
  * never another member's private one): every item dated within the push window (a planned date
  * `overlay.plannedAt`, a due date, or a start whose span reaches into it), except the items Google
- * Calendar itself mirrors (they are its events already) and those with `overlay.calendarSync ===
- * false`. A provider copy of a local to-do is left out while its to-do is in the set, or turned off
- * for the calendar (H5, PushCalendar#absorbedCopies). It is read in two parts, so no cap ever
- * hides an item:
+ * Calendar itself mirrors (they are its events already), those with `overlay.calendarSync ===
+ * false`, and those whose time is free: disabled in TodoList (`overlay.disabled`) or cancelled.
+ * A provider copy of a local to-do is left out while its to-do is in the set, or turned off for
+ * the calendar, or disabled (H5, PushCalendar#absorbedCopies). It is read in two parts, so no cap
+ * ever hides an item:
  * - the items of the live links, all of them (in chunks): what to update or move, and, by their
  *   absence, which events to delete;
  * - the other items, page by page while the request's budget keeps WRITE_RESERVE_MS for the
@@ -111,8 +112,10 @@ function pushRule(): Filter[] {
     { 'source.provider': { $ne: 'google_calendar' } },
     { 'overlay.calendarSync': { $ne: false } },
     { kind: { $nin: [...SCHEDULED_KINDS] } },
-    // Disabled (Disabled.ts): its time is free, so its event leaves the calendar until enabled.
+    // Free time (Disabled.ts): disabled or cancelled, its event leaves the calendar (a disabled
+    // one comes back once enabled).
     { 'overlay.disabled': { $ne: true } },
+    { status: { $ne: 'cancelled' } },
   ];
 }
 
@@ -424,8 +427,9 @@ export class PushCalendar extends Calendar {
 
   /**
    * H5 in the push set: a provider copy is left out while its to-do is in the set, and while its
-   * to-do is turned off for the calendar (the copy is the same task: no event he turned off comes
-   * back through it); any other copy is pushed as its own item. The set is read in pages, so the
+   * to-do is turned off for the calendar or disabled (the copy is the same task: no event he
+   * turned off, and no time he freed, comes back through it); any other copy is pushed as its own
+   * item. The set is read in pages, so the
    * to-dos are found first, among the ones the copies in `scope` name (few), through `whole` (the
    * un-narrowed set), and their copies are then left out of every page: the filter to add to the
    * scope, or null when no copy is left out.
@@ -446,7 +450,15 @@ export class PushCalendar extends Calendar {
     const [inSet, offCalendar] = await Promise.all([
       whole([...scope, { _id: { $in: todoIds } }]),
       items.aggregate<{ _id: string }>(workspaceId, [
-        { $match: { $and: [access, { _id: { $in: todoIds }, 'overlay.calendarSync': false }] } },
+        {
+          $match: {
+            $and: [
+              access,
+              { _id: { $in: todoIds } },
+              { $or: [{ 'overlay.calendarSync': false }, { 'overlay.disabled': true }] },
+            ],
+          },
+        },
         { $project: { _id: 1 } },
       ]),
     ]);

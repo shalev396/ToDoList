@@ -250,16 +250,25 @@ export class ItemQuery {
     });
     const occurrence =
       item instanceof CalendarEvent ? await item.seriesOccurrence(this.#caller) : null;
-    return occurrence === null
-      ? view
-      : {
-          ...view,
-          seriesOccurrence: {
-            seriesId: occurrence.seriesId,
-            originalStart: occurrence.originalStart.toISOString(),
-            disabled: occurrence.disabled,
-          },
-        };
+    if (occurrence === null) return view;
+    // A cancelled occurrence (Google's id only) reads as its series, as the time views show it.
+    const series = occurrence.asSeries;
+    return {
+      ...view,
+      ...(series === null
+        ? {}
+        : {
+            title: series.title,
+            topicId: series.topicId,
+            source: { ...view.source, url: series.url },
+            openIn: { ...view.openIn, url: series.url },
+          }),
+      seriesOccurrence: {
+        seriesId: occurrence.seriesId,
+        originalStart: occurrence.originalStart.toISOString(),
+        disabled: occurrence.disabled,
+      },
+    };
   }
 
   /**
