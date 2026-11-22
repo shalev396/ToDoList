@@ -282,6 +282,30 @@ export class ItemQuery {
     });
   }
 
+  /**
+   * The to-do each of these items is the provider copy of (H5), for those of them that are one
+   * and that the caller may see: so an answer made of several reads lists one task once.
+   */
+  async copyOf(ids: readonly string[]): Promise<Map<string, string>> {
+    if (ids.length === 0) return new Map();
+    const rows = await this.#aggregate([
+      {
+        $match: {
+          ...this.#policy.itemFilterUnabsorbed(this.#caller.context),
+          _id: { $in: [...new Set(ids)] },
+          'overlay.copyOf': { $type: 'string' },
+        },
+      },
+      { $project: { 'overlay.copyOf': 1 } },
+    ]);
+    return new Map(
+      rows.map((row): [string, string] => [
+        String(row['_id']),
+        String(record(row['overlay'])['copyOf']),
+      ]),
+    );
+  }
+
   // ─── Facets ───────────────────────────────────────────────────────────────
 
   /**

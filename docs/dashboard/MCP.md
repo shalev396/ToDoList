@@ -146,7 +146,7 @@ Annotation keys: **RO** = `readOnlyHint`, **D** = `destructiveHint`, **I** = `id
 | Tool | Purpose | Ann. |
 |---|---|---|
 | `search_items` | Text and filter search over `Items` (mirrored + local); time blocks and travel legs only when `kind` names them | RO |
-| `list_today` | Today's events, items due today and overdue items (workspace TZ, `Asia/Jerusalem`), plus `scheduled[]`: today's time blocks, areas (`layer: area`) and travel legs, one entry per occurrence, each with `busy` (false for areas). Scheduled entries are never due or overdue | RO |
+| `list_today` | Today's events, items due today and overdue items (workspace TZ, `Asia/Jerusalem`), plus `scheduled[]`: today's time blocks, areas (`layer: area`) and travel legs, one entry per occurrence, each with `busy` (false for areas). Scheduled entries are never due or overdue. One task is listed once: an event that is the provider copy of a to-do in `dueToday` or `overdue` (a to-do also created in Google Calendar) is left out of `events` (H5) | RO |
 | `list_deadlines` | Upcoming `dueAt`, grouped by topic / container (project or course) / provider; never time blocks or travel | RO |
 | `get_calendar` | Events, dated items, time blocks, areas and travel for `week`\|`month`\|custom (week starts per `settings.weekStart`): one entry per occurrence of a repeating event or block (even one that began before the range), with `occurrence` and `busy` | RO |
 | `get_item` | One item, full `props`, `source`, `openIn` | RO |
