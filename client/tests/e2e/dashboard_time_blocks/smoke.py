@@ -3,10 +3,12 @@ The time blocks: the calendar (Week by default, Month saved per block, an event 
 Sheet through ?item=) and the 24-hour clock (a role="img" ring with a text summary), with axe.
 
 Every test owns a fresh workspace (deleted after it) on Asia/Jerusalem, with one local
-to-do due in an hour: a due-only item, so the calendar shows it with a marker.
+to-do due at 12:00 today: a due-only item, so the calendar shows it with a marker. The
+browser's clock starts at 09:00 today (Asia/Jerusalem), whatever the wall clock says, so
+the item can never cross midnight or the week's end (a Saturday night run used to put it
+in tomorrow, or in next week).
 """
 import re
-from datetime import datetime, timedelta, timezone
 
 import requests
 from axe_playwright_python.sync_playwright import Axe
@@ -15,14 +17,30 @@ from playwright.sync_api import Page, expect
 from tests.config import NORMAL_TIMEOUT
 from tests.helpers.animations import wait_for_fade_in
 from tests.helpers.dashboards import create_dashboard
+from tests.helpers.scheduled import zoned_iso
 from tests.helpers.workspaces import open_as
 from tests.viewports import DESKTOP_VIEWPORT
 
 TODO_TITLE = "Submit the lab report"
+ZONE = "Asia/Jerusalem"
+#: The browser's clock starts here (the workspace's wall clock, today), and the to-do is
+#: due here: three hours later, the same day.
+CLOCK_STARTS = "09:00"
+DUE_AT = "12:00"
 
 
-def _seed_todo(api_base_url: str, user, workspace_id: str) -> None:
-    due = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+def _today(page: Page) -> str:
+    """Today on the workspace's wall clock (`YYYY-MM-DD`), from the browser's zone data (the
+    test runner may have none) and the real clock."""
+    return page.evaluate(
+        """(zone) => new Intl.DateTimeFormat('en-CA', {
+            timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit',
+        }).format(new Date())""",
+        ZONE,
+    )
+
+
+def _seed_todo(api_base_url: str, user, workspace_id: str, due: str) -> None:
     response = requests.post(
         f"{api_base_url}/private/workspaces/{workspace_id}/items",
         json={"title": TODO_TITLE, "dueAt": due},
@@ -34,8 +52,15 @@ def _seed_todo(api_base_url: str, user, workspace_id: str) -> None:
 
 def _open(page: Page, base_url: str, api_base_url: str, fresh_owner) -> None:
     user, workspace = fresh_owner
+    page.goto("about:blank")
+    today = _today(page)
+    starts = zoned_iso(page, today, CLOCK_STARTS, ZONE)
+    due = zoned_iso(page, today, DUE_AT, ZONE)
+    # Installed before the app loads: its clock starts at 09:00 today and runs on from there
+    # (a test takes seconds, far from noon), so Date-based timers and checks behave as usual.
+    page.clock.install(time=starts)
     create_dashboard(api_base_url, user, workspace["id"])
-    _seed_todo(api_base_url, user, workspace["id"])
+    _seed_todo(api_base_url, user, workspace["id"], due)
     page.set_viewport_size(DESKTOP_VIEWPORT)
     open_as(page, base_url, user, "/en/dashboard")
     expect(page.locator("[data-calendar-view]")).to_be_visible(timeout=NORMAL_TIMEOUT)
