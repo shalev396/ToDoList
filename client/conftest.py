@@ -17,11 +17,20 @@ tests/README.md.
 Parallel runs (pytest-xdist, see tests/scripts/run-tests.ts): session setup (shared user,
 translations export) runs once for the whole run, and the tests listed in
 SHARED_STATE_TESTS run on a single worker, in order.
+
+Mail.tm (tests/mailtm_client README): every call waits in one queue shared by the workers, and the
+guard lets only tests tagged @pytest.mark.email, and the setup of the shared accounts
+(shared_test_user, the pooled_* fixtures), call it. An untagged test that would touch Mail.tm
+fails before it starts when that shows in its fixtures or code, and otherwise at the call.
 """
 import base64
+import inspect
 import json
 import os
+import re
 import subprocess
+import time
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -30,6 +39,24 @@ from filelock import FileLock
 # Tests that change state other tests read (accounts, profile data). In parallel runs they share
 # one worker, so they never overlap each other.
 SHARED_STATE_TESTS = ("tests/e2e/flows/",)
+
+# Mail.tm's own offline tests: a stub transport, never the real Mail.tm, so never tagged.
+OFFLINE_MAIL_TESTS = ("tests/mailtm_client/", "tests/e2e/mailtm/")
+# What makes or reads a real inbox: a test that uses one must be tagged @pytest.mark.email.
+MAIL_FIXTURES = frozenset({"fresh_user"})
+_MAIL_CALL = re.compile(
+    r"\b(new_user|new_mailbox|create_test_user(?:_and_login)?|wait_for_invite_path"
+    r"|create_mailtm_account|get_mailtm_token|poll_inbox_and_get_code)\s*\("
+)
+_POOLED_CALL = re.compile(r"\bpooled_user\(\s*[^,()]+,\s*[\"']([\w-]+)[\"']\s*\)")
+_MAIL_PROBLEMS = pytest.StashKey[list]()
+_VIOLATIONS_BEFORE = pytest.StashKey[int]()
+_SESSION_STARTED = time.time()
+
+
+def pooled_fixture(role: str) -> str:
+    """The session fixture that makes the pooled account `role` in setup."""
+    return "pooled_" + role.replace("-", "_")
 
 
 def pytest_configure(config):
@@ -50,8 +77,32 @@ def pytest_configure(config):
     from playwright.sync_api import expect
 
     from tests.config import DEFAULT_TIMEOUT
+    from tests.mailtm_client import GUARD
 
     expect.set_options(timeout=DEFAULT_TIMEOUT)
+    # From here on, a Mail.tm call needs a permission (an email-tagged test, or account setup).
+    GUARD.enable()
+
+
+def _mail_problems(item) -> list:
+    """Why an untagged test would touch Mail.tm, as far as its fixtures and its own code show."""
+    if item.nodeid.startswith(OFFLINE_MAIL_TESTS) or item.get_closest_marker("email"):
+        return []
+    names = set(getattr(item, "fixturenames", ()))
+    problems = [f"uses the `{name}` fixture" for name in sorted(MAIL_FIXTURES & names)]
+    try:
+        source = inspect.getsource(item.function)
+    except (AttributeError, OSError, TypeError):
+        source = ""
+    problems += [f"calls {name}()" for name in sorted(set(_MAIL_CALL.findall(source)))]
+    for role in sorted(set(_POOLED_CALL.findall(source))):
+        fixture = pooled_fixture(role)
+        if fixture not in names:
+            problems.append(
+                f'calls pooled_user(..., "{role}") without the `{fixture}` fixture, which makes '
+                "that account in setup"
+            )
+    return problems
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -59,6 +110,58 @@ def pytest_collection_modifyitems(items):
     for item in items:
         if item.nodeid.startswith(SHARED_STATE_TESTS):
             item.add_marker(pytest.mark.xdist_group("shared-state"))
+        problems = _mail_problems(item)
+        if problems:
+            item.stash[_MAIL_PROBLEMS] = problems
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    """An untagged test whose fixtures or code touch Mail.tm fails before any fixture runs."""
+    problems = item.stash.get(_MAIL_PROBLEMS, None)
+    if problems:
+        pytest.fail(
+            f"{item.nodeid} touches Mail.tm but is not tagged @pytest.mark.email: it "
+            f"{'; it '.join(problems)}. Tag it, so its Mail.tm calls are allowed (and wait in the "
+            "shared queue), or take the account from a pooled_* fixture.",
+            pytrace=False,
+        )
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item, nextitem):
+    """Names the running test for the Mail.tm guard, and opens it to Mail.tm when the test is
+    tagged @pytest.mark.email (its setup, call and teardown)."""
+    from tests.mailtm_client import GUARD
+
+    with ExitStack() as stack:
+        stack.enter_context(GUARD.running(item.nodeid))
+        if item.get_closest_marker("email"):
+            stack.enter_context(GUARD.allow("@pytest.mark.email"))
+        item.stash[_VIOLATIONS_BEFORE] = len(GUARD.violations)
+        return (yield)
+
+
+def pytest_terminal_summary(terminalreporter):
+    """This run's Mail.tm totals from the shared queue (every worker together), so a failure
+    shows how close the run came to the quotas."""
+    from tests.helpers.mailtm import MAILTM_BASE
+    from tests.mailtm_client import SharedQueue, default_state_dir
+    from tests.mailtm_client.client import STATE_DIR_ENV
+
+    try:
+        state_dir = os.environ.get(STATE_DIR_ENV) or default_state_dir(MAILTM_BASE)
+        if not os.path.isdir(state_dir):
+            return
+        run = SharedQueue(state_dir).counters()
+    except Exception as error:  # noqa: BLE001 - a summary line must never fail the run
+        terminalreporter.write_line(f"mail.tm: no totals ({type(error).__name__}: {error})")
+        return
+    if run.requests and run.since >= _SESSION_STARTED - 1:
+        terminalreporter.write_line(
+            f"mail.tm this run: {run.requests} requests, {run.refused} answered 429, "
+            f"longest wait in line {run.longest_wait:.0f} s"
+        )
 
 
 def _run_once(tmp_path_factory, name: str, produce):
@@ -191,6 +294,7 @@ def shared_test_user(api_base_url, tmp_path_factory):
     """
     from tests.helpers.mailtm import TestUser, create_test_user, get_test_user_from_env
     from tests.helpers.workspaces import ensure_workspace
+    from tests.mailtm_client import GUARD
 
     def create():
         user = get_test_user_from_env()
@@ -199,15 +303,56 @@ def shared_test_user(api_base_url, tmp_path_factory):
             # predate workspaces.
             ensure_workspace(api_base_url, user)
             return user._asdict()
-        return create_test_user(api_base_url)._asdict()
+        with GUARD.allow("setup: the shared test user"):
+            return create_test_user(api_base_url)._asdict()
 
     return TestUser(**_run_once(tmp_path_factory, "shared-test-user", create))
+
+
+def _pooled(api_base_url: str, role: str):
+    """The worker's pooled account `role`, made now if it is new: setup, so Mail.tm is allowed."""
+    from tests.helpers.users import pooled_user
+    from tests.mailtm_client import GUARD
+
+    with GUARD.allow(f"setup: the pooled {role!r} account"):
+        return pooled_user(api_base_url, role)
+
+
+@pytest.fixture(scope="session")
+def pooled_owner(api_base_url):
+    """The worker's "owner" account (fresh_owner gives it a new workspace per test)."""
+    return _pooled(api_base_url, "owner")
+
+
+@pytest.fixture(scope="session")
+def pooled_member(api_base_url):
+    """The worker's "member" account: the second person of two-user flows."""
+    return _pooled(api_base_url, "member")
+
+
+@pytest.fixture(scope="session")
+def pooled_other(api_base_url):
+    """The worker's "other" account: a third person."""
+    return _pooled(api_base_url, "other")
+
+
+@pytest.fixture(scope="session")
+def pooled_demo(api_base_url):
+    """The worker's "demo" account, owner of the demo-data workspaces."""
+    return _pooled(api_base_url, "demo")
+
+
+@pytest.fixture(scope="session")
+def pooled_kanban_scroll(api_base_url):
+    """The worker's "kanban-scroll" account, for the board with many cards."""
+    return _pooled(api_base_url, "kanban-scroll")
 
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
     outcome = yield
     report = outcome.get_result()
+    _fail_on_swallowed_mail_violation(item, report)
     if report.when == "call" and report.failed:
         page = item.funcargs.get("page", None)
         if page:
@@ -224,6 +369,23 @@ def pytest_runtest_makereport(item, call):
                     report.extras.append(pytest_html.extras.image(b64, name="Screenshot"))
 
 
+def _fail_on_swallowed_mail_violation(item, report) -> None:
+    """A test whose code caught the guard's error still fails: any Mail.tm call without
+    permission during its setup, call or teardown turns a passing phase red (once)."""
+    from tests.mailtm_client import GUARD
+
+    before = item.stash.get(_VIOLATIONS_BEFORE, None)
+    if before is None or not report.passed or len(GUARD.violations) <= before:
+        return
+    calls = ", ".join(violation.call for violation in GUARD.violations[before:])
+    item.stash[_VIOLATIONS_BEFORE] = len(GUARD.violations)
+    report.outcome = "failed"
+    report.longrepr = (
+        f"{item.nodeid} called Mail.tm without permission ({calls}), and the error was caught. "
+        "Tag the test @pytest.mark.email, or take the account from a pooled_* fixture."
+    )
+
+
 @pytest.fixture
 def authenticated_page(page, app_url, shared_test_user):
     """
@@ -238,7 +400,8 @@ def authenticated_page(page, app_url, shared_test_user):
 @pytest.fixture
 def fresh_user(api_base_url):
     """A brand-new Cognito account without a workspace (it lands on onboarding). One Mail.tm
-    signup per test: use it only where the test needs an account nobody has touched."""
+    signup per test: use it only where the test needs an account nobody has touched, and tag the
+    test @pytest.mark.email."""
     from tests.helpers.users import new_user
 
     return new_user(api_base_url)
@@ -267,21 +430,16 @@ def new_workspace(api_base_url):
 
 
 @pytest.fixture
-def fresh_owner(api_base_url, new_workspace):
+def fresh_owner(new_workspace, pooled_owner):
     """A pooled account (one per worker) owning a NEW workspace, for tests that change what they
     own: the workspace is the isolation boundary, so no test sees another's data. The new
     workspace is the account's default one, and is deleted after the test. Returns
     (user, workspace)."""
-    from tests.helpers.users import pooled_user
-
-    user = pooled_user(api_base_url, "owner")
-    return user, new_workspace(user, "Owner Lab", timezone="Asia/Jerusalem")
+    return pooled_owner, new_workspace(pooled_owner, "Owner Lab", timezone="Asia/Jerusalem")
 
 
 @pytest.fixture
-def second_user(api_base_url):
+def second_user(pooled_member):
     """The worker's second account (a member, an invitee). It has no workspace of its own and may
     belong to workspaces of earlier tests: open pages with `workspace_id=` to pick one."""
-    from tests.helpers.users import pooled_user
-
-    return pooled_user(api_base_url, "member")
+    return pooled_member

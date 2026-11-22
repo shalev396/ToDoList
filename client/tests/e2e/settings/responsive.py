@@ -1,6 +1,7 @@
 """
 Settings and members at every viewport, in both languages: no horizontal scroll.
 """
+import pytest
 from playwright.sync_api import Page, expect
 
 from tests.config import NORMAL_TIMEOUT
@@ -10,6 +11,7 @@ from tests.helpers.responsive import assert_no_horizontal_overflow
 from tests.viewports import VIEWPORTS
 
 
+@pytest.mark.email
 def test_settings_and_members_responsive(
     page: Page, base_url: str, api_base_url: str, fresh_owner
 ):

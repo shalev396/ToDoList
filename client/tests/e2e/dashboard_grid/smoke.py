@@ -29,7 +29,6 @@ from tests.helpers.workspaces import (
     ensure_topics,
     topic_id,
 )
-from tests.helpers.users import pooled_user
 from tests.viewports import DESKTOP_VIEWPORT
 
 CONFLICT_TOAST = "This dashboard changed elsewhere. Your layout change wasn’t saved."
@@ -65,9 +64,9 @@ def _box(page: Page, title: str) -> dict:
     return box
 
 
-def _join_as(api_base_url: str, owner, workspace: dict, role: str):
-    """The worker's second account, after it accepted an invite to the owner's workspace."""
-    member = pooled_user(api_base_url, "member")
+def _join_as(api_base_url: str, owner, workspace: dict, role: str, member):
+    """The worker's second account (`pooled_member`), after it accepted an invite to the
+    owner's workspace."""
     invite = create_invite(api_base_url, owner, workspace["id"], member.email, role=role)
     accept_invite(api_base_url, member, invite_token(invite["inviteUrl"]))
     return member
@@ -264,11 +263,13 @@ def test_remove_block_asks_first(page: Page, base_url: str, api_base_url: str, f
     expect(page.get_by_role("article", name="Deadlines")).to_be_visible(timeout=LONG_TIMEOUT)
 
 
-def test_viewer_gets_no_edit_mode(page: Page, base_url: str, api_base_url: str, fresh_owner):
+def test_viewer_gets_no_edit_mode(
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
+):
     """A viewer never sees the Edit toggle, handles or menus; ?edit=1 just shows the dashboard."""
     owner, workspace = fresh_owner
     dashboard = create_dashboard(api_base_url, owner, workspace["id"])
-    viewer = _join_as(api_base_url, owner, workspace, "viewer")
+    viewer = _join_as(api_base_url, owner, workspace, "viewer", pooled_member)
 
     _open_dashboard(
         page, base_url, viewer, "/en/dashboard", len(dashboard["blocks"]), workspace["id"]
@@ -285,22 +286,22 @@ def test_viewer_gets_no_edit_mode(page: Page, base_url: str, api_base_url: str, 
 
 
 def test_viewer_without_a_dashboard_sees_a_quiet_state(
-    page: Page, base_url: str, api_base_url: str, fresh_owner
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
 ):
     owner, workspace = fresh_owner
     ensure_topics(api_base_url, owner, workspace["id"], ["work", "personal"])
-    viewer = _join_as(api_base_url, owner, workspace, "viewer")
+    viewer = _join_as(api_base_url, owner, workspace, "viewer", pooled_member)
     open_as(page, base_url, viewer, "/en/dashboard", h1="Dashboard", workspace_id=workspace["id"])
     expect(page.get_by_text("Nothing here yet")).to_be_visible()
     expect(page.get_by_role("button", name="Create from template", exact=True)).to_have_count(0)
 
 
 def test_editor_sees_that_changes_wait_for_an_owner(
-    page: Page, base_url: str, api_base_url: str, fresh_owner
+    page: Page, base_url: str, api_base_url: str, fresh_owner, pooled_member
 ):
     owner, workspace = fresh_owner
     dashboard = create_dashboard(api_base_url, owner, workspace["id"])
-    editor = _join_as(api_base_url, owner, workspace, "editor")
+    editor = _join_as(api_base_url, owner, workspace, "editor", pooled_member)
     _open_dashboard(
         page, base_url, editor, "/en/dashboard?edit=1", len(dashboard["blocks"]), workspace["id"]
     )
