@@ -540,3 +540,33 @@ describe('across a DST change (the server’s slot check against the shared expa
     );
   });
 });
+
+describe('one calendar seen through two accounts', () => {
+  it('the cancelled occurrence’s sheet reads as its own copy’s series', async () => {
+    const { seedIntegration, shareIntegrations } =
+      await import('../../testing/integrationFixtures.js');
+    await seedIntegration(wid, {
+      id: `${GCAL}-2`,
+      ownerUserId: userIds['editor'] ?? '',
+      provider: 'google_calendar',
+      accountId: 'other@example.test',
+    });
+    await shareIntegrations(wid, userIds['editor'] ?? '', [GCAL, `${GCAL}-2`]);
+    const master = MEETING[0];
+    assert.ok(master);
+    await (
+      await models.getItemRepository()
+    ).bulkUpsert(wid, [
+      {
+        ...master,
+        integrationId: `${GCAL}-2`,
+        title: 'Daily meeting (their copy)',
+        source: { ...master.source, accountId: 'other@example.test' },
+      },
+    ]);
+    const cancelled = await detail(await idOf('daily_cancelled'));
+    const own = await detail(await idOf('daily'));
+    assert.equal(cancelled.title, own.title);
+    assert.equal(cancelled.openIn.url, own.openIn.url);
+  });
+});

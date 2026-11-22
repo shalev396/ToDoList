@@ -479,6 +479,8 @@ interface MasterInfo {
   length: number;
   /** The member declined the series: none of its cancelled occurrences is listed either. */
   declined: boolean;
+  /** A display rule hides the series: none of its cancelled occurrences is listed either. */
+  hidden: boolean;
   disabled: boolean;
   disabledSlots: ReadonlySet<number>;
 }
@@ -487,7 +489,10 @@ interface MasterInfo {
  * Google masters by `calendarId|eventId`; null when more than one row is that master (one series
  * mirrored through two accounts), so no exception row picks the wrong copy.
  */
-function mastersOf(rows: readonly TimeRow[]): Map<string, MasterInfo | null> {
+function mastersOf(
+  rows: readonly TimeRow[],
+  hidden: ReadonlySet<TimeRow> = new Set(),
+): Map<string, MasterInfo | null> {
   const masters = new Map<string, MasterInfo | null>();
   for (const row of rows) {
     const own = seriesKey(row.props, 'eventId');
@@ -506,6 +511,7 @@ function mastersOf(rows: readonly TimeRow[]): Map<string, MasterInfo | null> {
             length:
               start !== null && end !== null && end > start ? end.getTime() - start.getTime() : 0,
             declined: isDeclined(row),
+            hidden: hidden.has(row),
             disabled: row.overlay?.disabled === true,
             disabledSlots: disabledSlotsOf(row.overlay),
           }
@@ -516,7 +522,7 @@ function mastersOf(rows: readonly TimeRow[]): Map<string, MasterInfo | null> {
 }
 
 /** A cancelled exception row of a Google series (`recurringEventId`): its own data is Google's id. */
-function isCancelledException(row: Pick<TimeRow, 'status' | 'props'>): boolean {
+export function isCancelledException(row: Pick<TimeRow, 'status' | 'props'>): boolean {
   return row.status === 'cancelled' && seriesKey(row.props, 'recurringEventId') !== null;
 }
 
@@ -525,7 +531,7 @@ function isCancelledException(row: Pick<TimeRow, 'status' | 'props'>): boolean {
  * type has them, its topic and the overlay's topic and subject (what its colour reads). Its own id,
  * status, times, props and disabled state stay, so it is still that occurrence.
  */
-function dressedAs<R extends TimeRow>(row: R, master: TimeRow): R {
+export function dressedAs<R extends TimeRow>(row: R, master: TimeRow): R {
   const own = row as unknown as Record<string, unknown>;
   const from = master as unknown as Record<string, unknown>;
   const ownOverlay = (own['overlay'] ?? undefined) as Record<string, unknown> | undefined;
@@ -566,6 +572,16 @@ export function withSeriesFields<R extends TimeRow>(rows: readonly R[]): R[] {
   });
 }
 
+/** How an expansion reads its rows beyond the ones it lists. */
+export interface ExpandOptions {
+  /**
+   * Rows a display rule hides: never listed, but they still take their slots out of their series
+   * (a hidden cancelled occurrence never turns back into an active, busy one), and a hidden
+   * master's cancelled occurrences are not listed either.
+   */
+  hidden?: readonly TimeRow[];
+}
+
 /**
  * The occurrences that overlap `range`, ordered by start. A cancelled or disabled one is listed
  * with `inactive` set (its time is free); a declined event is never listed.
@@ -574,11 +590,14 @@ export function expandOccurrences(
   rows: readonly TimeRow[],
   range: Range,
   timeZone: string,
+  options: ExpandOptions = {},
 ): Occurrence[] {
+  const hidden = new Set(options.hidden ?? []);
+  const every = hidden.size === 0 ? rows : [...rows, ...hidden];
   // The slots a Google series no longer has: cancelled occurrences and the old slot of moved ones.
   const exdates = new Map<string, Set<number>>();
-  const masters = mastersOf(rows);
-  for (const row of rows) {
+  const masters = mastersOf(every, hidden);
+  for (const row of every) {
     // A declined occurrence takes its slot out too (it is never listed itself).
     const key = seriesKey(row.props, 'recurringEventId');
     const originalText = row.props['originalStartAt'];
@@ -694,10 +713,13 @@ export function expandOccurrences(
       series === null ? null : toDate(typeof originalText === 'string' ? originalText : null);
     const master = series === null ? undefined : masters.get(series);
     // A cancelled occurrence is Google's id only: listed as its series (dressed as the master),
-    // and never when its master is unknown or declined (it would read as a raw id, or show a
-    // series the member said no to).
+    // and never when its master is unknown, declined or hidden (it would read as a raw id, or
+    // show a series the member said no to or hid).
     const cancelledException = cancelled && series !== null;
-    if (cancelledException && (master === undefined || master === null || master.declined)) {
+    if (
+      cancelledException &&
+      (master === undefined || master === null || master.declined || master.hidden)
+    ) {
       continue;
     }
     const shown =

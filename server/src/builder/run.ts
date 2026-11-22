@@ -16,6 +16,13 @@ import {
 import type { ContainerType, ItemKind, ItemStatus, Provider } from '../types/domain.js';
 import { redactString } from '../services/secretPatterns.js';
 import { scrub } from '../services/scrub.js';
+import { calendarEventExternalId } from '../sync/providers/google_calendar.js';
+import {
+  dressedAs,
+  isCancelledException,
+  withSeriesFields,
+} from '../types/recurrence/occurrences.js';
+import { Overrides } from '../classes/item/Overrides.js';
 import { compileQuery, type CompileContext, type CompiledQuery } from './compile.js';
 
 /** A repository's `aggregate(workspaceId, stages, options)`. */
@@ -173,8 +180,72 @@ export async function runQuery(
 ): Promise<QueryResult> {
   const compiled = compileQuery(query, ctx);
   const aggregate = compiled.collection === 'Items' ? deps.items : deps.containers;
-  const [facet] = await aggregate(ctx.ws.id, compiled.pipeline, {
-    maxTimeMS: ctx.preview ? CAPS.previewTimeoutMs : QUERY_TIMEOUT_MS,
+  const options = { maxTimeMS: ctx.preview ? CAPS.previewTimeoutMs : QUERY_TIMEOUT_MS };
+  const [facet] = await aggregate(ctx.ws.id, compiled.pipeline, options);
+  const result = toResult(record(facet), compiled);
+  if (compiled.collection !== 'Items' || result.rows === undefined) return result;
+  return {
+    ...result,
+    rows: await asSeries(
+      result.rows as ItemQueryRow[],
+      list(record(facet)['rows']).map(record),
+      compiled,
+      (stages) => deps.items(ctx.ws.id, stages, options),
+    ),
+  };
+}
+
+/**
+ * Every cancelled occurrence of a Google series among the rows, dressed as its series (types/
+ * recurrence `dressedAs`: its master's title, topic, subject and link): Google sends a cancelled
+ * occurrence's id, series and original start only, so its stored title is a raw id. A master in
+ * the same result lends itself; any other is read in one more query, through the read's own access
+ * filter (its first stage), its own integration's copy first. Without one the row stays as stored.
+ */
+async function asSeries(
+  rows: readonly ItemQueryRow[],
+  docs: readonly Record<string, unknown>[],
+  compiled: CompiledQuery,
+  read: (stages: readonly Record<string, unknown>[]) => Promise<Record<string, unknown>[]>,
+): Promise<ItemQueryRow[]> {
+  const dressed = withSeriesFields(rows);
+  const integrationOf = new Map(
+    docs.map((doc) => [String(doc['_id']), text(doc['integrationId'])]),
+  );
+  const masterIdOf = (row: ItemQueryRow): string | null => {
+    const calendarId = row.props['calendarId'];
+    const eventId = row.props['recurringEventId'];
+    return typeof calendarId === 'string' && typeof eventId === 'string'
+      ? calendarEventExternalId(calendarId, eventId)
+      : null;
+  };
+  const left = dressed.filter(
+    (row, index) => isCancelledException(row) && row === rows[index] && masterIdOf(row) !== null,
+  );
+  const [access] = compiled.pipeline;
+  if (left.length === 0 || access === undefined) return dressed;
+  const found = await read([
+    access,
+    {
+      $match: {
+        'source.provider': 'google_calendar',
+        'source.externalId': { $in: [...new Set(left.map(masterIdOf))] },
+      },
+    },
+    { $addFields: Overrides.projection() },
+    { $limit: 2 * left.length + 10 },
+  ]);
+  const masters = found.map((doc) => ({
+    integrationId: text(doc['integrationId']),
+    row: toItemRow(doc),
+  }));
+  return dressed.map((row) => {
+    if (!left.includes(row)) return row;
+    const own = masterIdOf(row);
+    const candidates = masters.filter((master) => master.row.source.externalId === own);
+    const master =
+      candidates.find((one) => one.integrationId === integrationOf.get(row.id)) ??
+      (candidates.length === 1 ? candidates[0] : undefined);
+    return master === undefined ? row : dressedAs(row, master.row);
   });
-  return toResult(record(facet), compiled);
 }

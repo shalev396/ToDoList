@@ -333,11 +333,9 @@ describe('compileQuery: provider copies (H5)', () => {
     );
     const { pipeline } = compiled;
     const at = pipeline.findIndex((entry) => ItemAccessFilter.isCopyAbsorption(entry));
-    // A cancelled to-do does not show (time views drop it), so it hides nothing.
-    assert.deepEqual(
-      pipeline.slice(at, at + 3),
-      ItemAccessFilter.copyAbsorption({ $eq: ['$status', 'cancelled'] }),
-    );
+    // With no hide rule every to-do in the result shows, a cancelled one too (drawn faded): the
+    // plain rule.
+    assert.deepEqual(pipeline.slice(at, at + 3), ItemAccessFilter.copyAbsorption());
     assert.deepEqual(pipeline[at - 1], { $match: filterOf(compiled) });
     assert.equal(at + 4, pipeline.length);
     assert.ok('$facet' in (pipeline.at(-1) ?? {}));

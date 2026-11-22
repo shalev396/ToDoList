@@ -118,6 +118,18 @@ export class CalendarEvent extends MirroredItem implements Schedulable, Recurrin
     return isSeriesRow({ props: this.data.props });
   }
 
+  /**
+   * Its series master's `source.externalId` when it is an exception row of a Google series (a
+   * moved or cancelled occurrence: `recurringEventId`); null for any other event.
+   */
+  get seriesMasterExternalId(): string | null {
+    const calendarId = this.data.props['calendarId'];
+    const seriesEventId = this.data.props['recurringEventId'];
+    return typeof calendarId === 'string' && typeof seriesEventId === 'string'
+      ? calendarEventExternalId(calendarId, seriesEventId)
+      : null;
+  }
+
   /** Its series' rule lines; empty for a single event or one occurrence of a series. */
   get recurrenceLines(): readonly string[] {
     return this.recurrence ?? [];
@@ -170,9 +182,11 @@ export class CalendarEvent extends MirroredItem implements Schedulable, Recurrin
       ])
     )
       .map((doc) => Item.fromDoc(doc))
-      .filter((item) => item instanceof CalendarEvent && item.isRecurring);
-    const [master] = masters;
-    if (masters.length !== 1 || master === undefined) {
+      .filter((item): item is CalendarEvent => item instanceof CalendarEvent && item.isRecurring);
+    // Two copies of the series (one calendar through two accounts): this row's own copy's.
+    const own = masters.filter((one) => one.integrationId === this.integrationId);
+    const master = masters.length === 1 ? masters[0] : own.length === 1 ? own[0] : undefined;
+    if (master === undefined) {
       return { seriesId: this.id, master: false, originalStart, disabled: null, asSeries: null };
     }
     const state = master.overlay.disabledState;

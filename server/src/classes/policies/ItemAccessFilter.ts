@@ -81,8 +81,9 @@ export class ItemAccessFilter {
    * (facets), does not use them.
    *
    * `hidden`, an aggregation expression over a row: true for a to-do that is in the result yet
-   * does not show (a dashboard block's cancelled to-do, or one its `hide` display rule matches).
-   * Such a to-do does not hide its copies.
+   * does not show (one a dashboard block's `hide` display rule matches); left out, every to-do in
+   * the result shows (a cancelled one too: it is drawn faded). Such a to-do does not hide its
+   * copies.
    */
   static copyAbsorption(hidden?: unknown): Filter[] {
     // The one row of a copy's partition that is not a copy is its to-do; it absorbs when shown.

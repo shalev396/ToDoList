@@ -193,6 +193,56 @@ describe('the push set and provider copies', () => {
     assert.ok(!(await created()).includes(copy));
   });
 
+  it('a cancelled to-do is not pushed, and keeps its open copy off the calendar too', async () => {
+    const off = await todoWithCopy('Dentist', 2, 2);
+    await (
+      await models.getItemRepository()
+    ).updateLocal(workspaceId, off.todo, { status: 'cancelled', closedAt: new Date() });
+    const ids = await created();
+    assert.ok(!ids.includes(off.todo) && !ids.includes(off.copy), 'neither the to-do nor its copy');
+  });
+
+  it('the push reads the effective status: a status kept in TodoList counts both ways', async () => {
+    const repo = await models.getItemRepository();
+    const kept = await todoWithCopy('Kept cancelled here', null, 5);
+    const reopened = await todoWithCopy('Reopened here', null, 6);
+    for (const { copy } of [kept, reopened]) {
+      await repo.setOverlay(workspaceId, copy, {
+        copyOf: null,
+        copyOfOwner: null,
+        copyOfShared: null,
+      });
+    }
+    // Cancelled in TodoList only (a read-only integration): free, so not pushed.
+    await repo.setOverlay(workspaceId, kept.copy, { overrides: { status: 'cancelled' } });
+    // Cancelled at the provider, open in TodoList: pushed.
+    await repo.bulkUpsert(workspaceId, [
+      {
+        id: reopened.copy,
+        integrationId: 'i-linear-push',
+        kind: 'issue',
+        topicId: null,
+        title: 'Reopened here (Linear)',
+        status: 'cancelled',
+        dueAt: new Date(Date.now() + 6 * DAY_MS),
+        source: {
+          provider: 'linear',
+          accountId: 'acct',
+          externalId: reopened.copy,
+          key: null,
+          url: `https://linear.example/${reopened.copy}`,
+          updatedAtSource: null,
+          etag: null,
+          hash: 'cancelled-at-provider',
+        },
+      },
+    ]);
+    await repo.setOverlay(workspaceId, reopened.copy, { overrides: { status: 'open' } });
+    const ids = await created();
+    assert.ok(!ids.includes(kept.copy), 'cancelled here: not pushed');
+    assert.ok(ids.includes(reopened.copy), 'reopened here: pushed');
+  });
+
   it('a to-do turned off and undated keeps its dated copy off the calendar too', async () => {
     const off = await todoWithCopy('Off and undated', null, 5, false);
     const ids = await created();

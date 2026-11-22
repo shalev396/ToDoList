@@ -34,6 +34,8 @@ let key: TestKey;
 let todayFrom = new Date();
 let slot = new Date();
 let todoId = '';
+let dentistId = '';
+let dentistCopyId = '';
 
 interface Entry {
   id: string;
@@ -134,6 +136,52 @@ before(async () => {
   todoId = todo.id;
   const off = await call('set_overlay', { id: todoId, disabled: true });
   assert.notEqual(off.isError, true, errorText(off));
+
+  // A to-do also created in Linear (H5), then cancelled in TodoList: its copy stays open there.
+  await seedIntegration(wid, {
+    id: 'int-linear-inactive',
+    ownerUserId: team.owner.id,
+    provider: 'linear',
+    accountId: 'acct',
+  });
+  await shareIntegrations(wid, team.owner.id, [GCAL, 'int-linear-inactive']);
+  const repo = await models.getItemRepository();
+  const dentist = await repo.createLocal(wid, {
+    ownerUserId: team.owner.id,
+    title: 'Dentist',
+    topicId: 'work',
+    startAt: new Date(todayFrom.getTime() + 15 * 60 * 60_000),
+    endAt: new Date(todayFrom.getTime() + 16 * 60 * 60_000),
+  });
+  dentistId = dentist.id;
+  dentistCopyId = 'linear-dentist';
+  await repo.bulkUpsert(wid, [
+    {
+      id: dentistCopyId,
+      integrationId: 'int-linear-inactive',
+      kind: 'issue',
+      topicId: 'work',
+      title: 'Dentist',
+      status: 'open',
+      dueAt: new Date(todayFrom.getTime() + 15 * 60 * 60_000),
+      source: {
+        provider: 'linear',
+        accountId: 'acct',
+        externalId: dentistCopyId,
+        key: 'LIN-1',
+        url: 'https://linear.example/LIN-1',
+        updatedAtSource: null,
+        etag: null,
+        hash: null,
+      },
+    },
+  ]);
+  await repo.setOverlay(wid, dentistCopyId, {
+    copyOf: dentistId,
+    copyOfOwner: team.owner.id,
+    copyOfShared: true,
+  });
+  await repo.updateLocal(wid, dentistId, { status: 'cancelled', closedAt: new Date() });
 });
 
 after(async () => {
@@ -199,5 +247,58 @@ describe('a cancelled Google occurrence, as Google sends it', () => {
     const groups = (structured(result) as { groups: { items: Entry[] }[] }).groups;
     const todo = groups.flatMap((group) => group.items).find((entry) => entry.id === todoId);
     assert.equal(todo?.inactive, 'disabled');
+  });
+});
+
+describe('a cancelled to-do with an open provider copy (H5, the ruling of 2026-11-22)', () => {
+  it('get_calendar lists the task once: the to-do, cancelled and free; never its busy copy', async () => {
+    const result = await call('get_calendar', {
+      range: 'custom',
+      from: todayFrom.toISOString(),
+      to: new Date(todayFrom.getTime() + 24 * 60 * 60_000).toISOString(),
+    });
+    assert.notEqual(result.isError, true, errorText(result));
+    const items = (structured(result) as { items: Entry[] }).items;
+    const dentist = items.filter((entry) => entry.title === 'Dentist');
+    assert.deepEqual(
+      dentist.map((entry) => [entry.id, entry.inactive, entry.busy]),
+      [[dentistId, 'cancelled', false]],
+    );
+    assert.ok(!items.some((entry) => entry.id === dentistCopyId));
+  });
+});
+
+describe('a cancelled occurrence is never its raw id, in search and query answers too', () => {
+  it('search_items and query_items read it as its series, with no master in the result', async () => {
+    const searched = await call('search_items', { status: ['cancelled'], kind: ['event'] });
+    assert.notEqual(searched.isError, true, errorText(searched));
+    const found = (structured(searched) as { items: Entry[] }).items.filter((entry) =>
+      entry.openIn.url.startsWith('https://www.google.com/'),
+    );
+    assert.ok(found.length > 0);
+    assert.ok(
+      found.every((entry) => !entry.title.endsWith('_cancelled')),
+      JSON.stringify(found),
+    );
+    assert.ok(found.some((entry) => entry.title === 'AutoDS Daily Meeting'));
+    const queried = await call('query_items', {
+      draft: {
+        source: 'items',
+        where: {
+          combinator: 'and',
+          rules: [
+            { field: 'status', operator: '=', value: 'cancelled' },
+            { field: 'source.provider', operator: '=', value: 'google_calendar' },
+          ],
+        },
+      },
+    });
+    assert.notEqual(queried.isError, true, errorText(queried));
+    const rows = (structured(queried) as { rows: { title: string }[] }).rows;
+    assert.ok(rows.length > 0);
+    assert.ok(
+      rows.every((row) => !row.title.endsWith('_cancelled')),
+      JSON.stringify(rows),
+    );
   });
 });

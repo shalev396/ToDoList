@@ -10,10 +10,10 @@
  * never another member's private one): every item dated within the push window (a planned date
  * `overlay.plannedAt`, a due date, or a start whose span reaches into it), except the items Google
  * Calendar itself mirrors (they are its events already), those with `overlay.calendarSync ===
- * false`, and those whose time is free: disabled in TodoList (`overlay.disabled`) or cancelled.
- * A provider copy of a local to-do is left out while its to-do is in the set, or turned off for
- * the calendar, or disabled (H5, PushCalendar#absorbedCopies). It is read in two parts, so no cap
- * ever hides an item:
+ * false`, and those whose time is free: disabled in TodoList (`overlay.disabled`) or cancelled
+ * (the effective status). A provider copy of a local to-do is left out while its to-do is in the
+ * set, or turned off for the calendar, disabled or cancelled (H5, PushCalendar#absorbedCopies).
+ * It is read in two parts, so no cap ever hides an item:
  * - the items of the live links, all of them (in chunks): what to update or move, and, by their
  *   absence, which events to delete;
  * - the other items, page by page while the request's budget keeps WRITE_RESERVE_MS for the
@@ -102,22 +102,27 @@ function datedWithin(span: Span): Filter {
 }
 
 /**
- * The push set's own rules on what the sync stores: not Google Calendar's, not turned off, and
- * not TodoList's own reserved time (time blocks, areas and travel legs stay out of the workspace
- * calendar in this version, whatever their `calendarSync`: Ruling 26). Being dated in the window
- * (datedWithin) is checked on the effective values, after the projection.
+ * The push set's own rules on what the sync stores: not Google Calendar's, not turned off, not
+ * TodoList's own reserved time (time blocks, areas and travel legs stay out of the workspace
+ * calendar in this version, whatever their `calendarSync`: Ruling 26), and not disabled (its time
+ * is free: Disabled.ts; it comes back once enabled). Being dated in the window (datedWithin) and
+ * not cancelled (NOT_CANCELLED) are checked on the effective values, after the projection.
  */
 function pushRule(): Filter[] {
   return [
     { 'source.provider': { $ne: 'google_calendar' } },
     { 'overlay.calendarSync': { $ne: false } },
     { kind: { $nin: [...SCHEDULED_KINDS] } },
-    // Free time (Disabled.ts): disabled or cancelled, its event leaves the calendar (a disabled
-    // one comes back once enabled).
     { 'overlay.disabled': { $ne: true } },
-    { status: { $ne: 'cancelled' } },
   ];
 }
+
+/**
+ * Cancelled time is free (Disabled.ts), so its event leaves the calendar: read on the effective
+ * status, after the projection (a status kept in TodoList for a read-only integration counts, and
+ * a provider's cancelled item reopened here is pushed).
+ */
+const NOT_CANCELLED: Filter = { status: { $ne: 'cancelled' } };
 
 function localMidnight(day: string, timeZone: string): Date {
   const [year, month, date] = day.split('-').map(Number);
@@ -248,7 +253,7 @@ function pushRead(
     (await getItemRepository()).aggregate<PushDoc>(workspaceId, [
       { $match: { $and: wide === null ? match : [...match, wide] } },
       { $addFields: Overrides.projection() },
-      { $match: { $and: [...dated] } },
+      { $match: { $and: [...dated, NOT_CANCELLED] } },
       ...narrowed,
       ...extra,
       { $project: PUSH_FIELDS },
@@ -427,12 +432,11 @@ export class PushCalendar extends Calendar {
 
   /**
    * H5 in the push set: a provider copy is left out while its to-do is in the set, and while its
-   * to-do is turned off for the calendar or disabled (the copy is the same task: no event he
-   * turned off, and no time he freed, comes back through it); any other copy is pushed as its own
-   * item. The set is read in pages, so the
-   * to-dos are found first, among the ones the copies in `scope` name (few), through `whole` (the
-   * un-narrowed set), and their copies are then left out of every page: the filter to add to the
-   * scope, or null when no copy is left out.
+   * to-do is turned off for the calendar, disabled or cancelled (the copy is the same task: no
+   * event he turned off, and no time he freed, comes back through it); any other copy is pushed as
+   * its own item. The set is read in pages, so the to-dos are found first, among the ones the
+   * copies in `scope` name (few), through `whole` (the un-narrowed set), and their copies are then
+   * left out of every page: the filter to add to the scope, or null when no copy is left out.
    */
   static async #absorbedCopies(
     workspaceId: string,
@@ -455,7 +459,14 @@ export class PushCalendar extends Calendar {
             $and: [
               access,
               { _id: { $in: todoIds } },
-              { $or: [{ 'overlay.calendarSync': false }, { 'overlay.disabled': true }] },
+              // A to-do's own status is its effective one (a to-do has no overrides).
+              {
+                $or: [
+                  { 'overlay.calendarSync': false },
+                  { 'overlay.disabled': true },
+                  { status: 'cancelled' },
+                ],
+              },
             ],
           },
         },
