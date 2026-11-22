@@ -1,13 +1,13 @@
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { Trans, useTranslation } from 'react-i18next';
-import { TriangleAlert } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { PageMetadata } from '@/components/shared/PageMetadata';
 import { dateLocale } from '@/components/items/format';
 import { app } from '@/data';
 import { pageTitle } from '@/data/pageTitles';
 
 /** The date the legal text was last changed. Update it with the text. */
-const LAST_UPDATED = new Date(2026, 10, 15);
+const LAST_UPDATED = new Date(2026, 10, 23);
 
 export interface LegalDocumentProps {
   doc: 'privacy' | 'terms';
@@ -17,24 +17,123 @@ export interface LegalDocumentProps {
   other: { to: string; label: string };
 }
 
-/** Sections whose one-paragraph body carries links (<email>, <repo>, <policy>). */
-const TRANS_SECTIONS: ReadonlySet<string> = new Set(['contact', 'openSource', 'googleLimitedUse']);
+/**
+ * Where each link tag in the legal text points: `<aws>Amazon’s privacy notice</aws>` links its
+ * label to LINKS.aws. Every URL here was checked to resolve when the text was written.
+ */
+const LINKS: Readonly<Record<string, string>> = {
+  /** Google's policy that the Limited Use statement (privacy, googleLimitedUse) links to. */
+  policy: 'https://developers.google.com/terms/api-services-user-data-policy',
+  permissions: 'https://myaccount.google.com/permissions',
+  aws: 'https://aws.amazon.com/privacy/',
+  mongodb: 'https://www.mongodb.com/legal/privacy/privacy-policy',
+  google: 'https://policies.google.com/privacy',
+  atlassian: 'https://www.atlassian.com/legal/privacy-policy',
+  clickup: 'https://clickup.com/terms/privacy',
+  linear: 'https://linear.app/privacy',
+  github:
+    'https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement',
+  moodle: 'https://moodle.com/privacy-notice/',
+  repo: app.repositoryUrl,
+};
 
-/** Google's policy that the Limited Use statement (privacy, googleLimitedUse) links to. */
-const GOOGLE_USER_DATA_POLICY_URL =
-  'https://developers.google.com/terms/api-services-user-data-policy';
+/** Israel's Privacy Protection Authority, in the reader's language. */
+const PRIVACY_AUTHORITY_URL = {
+  en: 'https://www.gov.il/en/departments/the_privacy_protection_authority',
+  he: 'https://www.gov.il/he/departments/the_privacy_protection_authority',
+} as const;
+
+/** A link tag: `<name>label</name>`, lower-case letters only, no nesting. */
+const LINK_TAG = /<([a-z]+)>([^<]*)<\/\1>/g;
+
+/** How a bullet line of a list paragraph starts. */
+const BULLET = '- ';
 
 const inlineLink =
   'rounded-sm text-foreground underline decoration-border underline-offset-4 hover:decoration-current focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none';
 
+/** One link of the text: the contact email opens mail, every other one opens in a new tab. */
+function LegalLink({ href, children }: { href: string; children: ReactNode }) {
+  if (href.startsWith('mailto:')) {
+    return (
+      <a href={href} className={inlineLink}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={inlineLink}>
+      {children}
+    </a>
+  );
+}
+
+/** The text with its link tags made links; a tag with no known address stays plain text. */
+function withLinks(text: string, hrefs: Readonly<Record<string, string>>): ReactNode[] {
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(LINK_TAG)) {
+    const [whole, name = '', label = ''] = match;
+    if (match.index > last) {
+      parts.push(text.slice(last, match.index));
+    }
+    const href = hrefs[name];
+    parts.push(
+      href === undefined ? (
+        label
+      ) : (
+        <LegalLink key={match.index} href={href}>
+          {label}
+        </LegalLink>
+      ),
+    );
+    last = match.index + whole.length;
+  }
+  if (last < text.length) {
+    parts.push(text.slice(last));
+  }
+  return parts;
+}
+
 /**
- * A plain-language legal page: title, date and the draft-for-review note, a list of contents on
- * wide screens, then each section. A body may hold several paragraphs separated by a blank line;
- * the contact section carries links.
+ * A section body: paragraphs separated by a blank line. A paragraph whose every line starts with
+ * "- " is a bulleted list. Any paragraph or bullet may carry link tags.
+ */
+function SectionBody({ body, hrefs }: { body: string; hrefs: Readonly<Record<string, string>> }) {
+  return body.split('\n\n').map((paragraph, index) => {
+    const lines = paragraph.split('\n');
+    if (lines.every((line) => line.startsWith(BULLET))) {
+      return (
+        <ul
+          key={index}
+          className="mt-3 flex list-disc flex-col gap-2 ps-5 leading-relaxed text-muted-foreground"
+        >
+          {lines.map((line, item) => (
+            <li key={item}>{withLinks(line.slice(BULLET.length), hrefs)}</li>
+          ))}
+        </ul>
+      );
+    }
+    return (
+      <p key={index} className="mt-3 leading-relaxed text-muted-foreground">
+        {withLinks(paragraph, hrefs)}
+      </p>
+    );
+  });
+}
+
+/**
+ * A plain-language legal page: title and date, a list of contents on wide screens, then each
+ * section. A body may hold several paragraphs and bulleted lists, with links in any of them.
  */
 export function LegalDocument({ doc, sections, other }: LegalDocumentProps) {
   const { t, i18n } = useTranslation();
   const vars = { contactEmail: app.contactEmail };
+  const hrefs: Readonly<Record<string, string>> = {
+    ...LINKS,
+    email: `mailto:${app.contactEmail}`,
+    authority: i18n.language === 'he' ? PRIVACY_AUTHORITY_URL.he : PRIVACY_AUTHORITY_URL.en,
+  };
   const updated = new Intl.DateTimeFormat(dateLocale(i18n.language), {
     day: 'numeric',
     month: 'long',
@@ -51,16 +150,6 @@ export function LegalDocument({ doc, sections, other }: LegalDocumentProps) {
           </h1>
           <p className="mt-4 text-sm text-muted-foreground">
             {t('legal.lastUpdated', { date: updated })}
-          </p>
-          <p
-            role="note"
-            className="mt-8 flex gap-3 rounded-lg border bg-card p-4 text-[15px] leading-relaxed"
-          >
-            <TriangleAlert
-              aria-hidden="true"
-              className="mt-0.5 size-4 shrink-0 text-status-warning"
-            />
-            {t('legal.reviewNote')}
           </p>
           <p className="mt-8 max-w-[68ch] text-lg leading-relaxed text-muted-foreground">
             {t(`legal.${doc}.intro`)}
@@ -97,41 +186,7 @@ export function LegalDocument({ doc, sections, other }: LegalDocumentProps) {
               >
                 {t(`legal.${doc}.sections.${id}.title`)}
               </h2>
-              {TRANS_SECTIONS.has(id) ? (
-                <p className="mt-3 leading-relaxed text-muted-foreground">
-                  <Trans
-                    i18nKey={`legal.${doc}.sections.${id}.body`}
-                    values={vars}
-                    components={{
-                      email: <a href={`mailto:${app.contactEmail}`} className={inlineLink} />,
-                      repo: (
-                        <a
-                          href={app.repositoryUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={inlineLink}
-                        />
-                      ),
-                      policy: (
-                        <a
-                          href={GOOGLE_USER_DATA_POLICY_URL}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className={inlineLink}
-                        />
-                      ),
-                    }}
-                  />
-                </p>
-              ) : (
-                t(`legal.${doc}.sections.${id}.body`, vars)
-                  .split('\n\n')
-                  .map((paragraph) => (
-                    <p key={paragraph} className="mt-3 leading-relaxed text-muted-foreground">
-                      {paragraph}
-                    </p>
-                  ))
-              )}
+              <SectionBody body={t(`legal.${doc}.sections.${id}.body`, vars)} hrefs={hrefs} />
             </section>
           ))}
           <p className="border-t pt-6 text-sm">

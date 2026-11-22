@@ -24,4 +24,4 @@ def test_terms_landmarks(page: Page, app_url: str):
     page.wait_for_load_state("networkidle")
     expect(page.get_by_role("main")).to_have_count(1)
     expect(page.get_by_role("heading", level=1)).to_have_count(1)
-    expect(page.get_by_role("main").get_by_role("heading", level=2)).to_have_count(11)
+    expect(page.get_by_role("main").get_by_role("heading", level=2)).to_have_count(19)
