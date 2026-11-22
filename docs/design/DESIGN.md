@@ -179,44 +179,44 @@ Spec: `docs/superpowers/specs/2026-11-17-topic-colours-design.md`. Every item ta
 
 **Magenta** (the tenth family, `--tc-magenta-*`, hue 318°, between violet 283° and pink 355°). It replaced a first pick, cyan, that failed the dark theme: cyan sits between teal and blue, exactly the families beside the owner's TLVTech areas (Sleep and Braude blue, Routine teal), and its dark Scheduled was 11.5 from blue and 11.8 from teal (the validator's normal-vision floor is 15). Every hue was scanned in both themes (Scheduled and Work lightness and chroma optimised against blue and teal, inks and bands respected); only the magenta/orchid band reaches 15 against both in both themes. The comparison, with Area at its best tint of 14% to 40%:
 
-| Candidate                  | Theme | Role                | vs blue | vs teal | min vs all 9 | CVD vs blue/teal |
-| -------------------------- | ----- | ------------------- | ------- | ------- | ------------ | ---------------- |
-| cyan (212, the first pick) | light | area `#bae9f3`      | 4.8     | 6.3     | 4.8 (blue)   | 1.5              |
-| cyan (212, the first pick) | light | work `#009db7`      | 22.5    | 16.5    | 16.5 (teal)  | 15.9             |
-| cyan (212, the first pick) | light | scheduled `#25c8e8` | 23.1    | 15.8    | 15.8 (teal)  | 15.0             |
-| cyan (212, the first pick) | dark  | area `#2b4e53`      | 8.8     | 9.1     | 7.8 (gray)   | 8.3              |
-| cyan (212, the first pick) | dark  | work `#0090a8`      | 13.1    | 13.0    | 13.0 (teal)  | 12.4             |
-| cyan (212, the first pick) | dark  | scheduled `#03a7c2` | 11.5    | 11.8    | 11.5 (blue)  | 10.9             |
-| lime (118)                 | light | area `#dde5bc`      | 7.4     | 5.9     | 3.7 (green)  | 5.6              |
-| lime (118)                 | light | work `#91a33b`      | 35.5    | 19.4    | 11.5 (amber) | 16.5             |
-| lime (118)                 | light | scheduled `#adbf59` | 34.2    | 14.3    | 11.0 (amber) | 9.2              |
-| lime (118)                 | dark  | area `#484b25`      | 11.7    | 9.0     | 7.1 (gray)   | 8.3              |
-| lime (118)                 | dark  | work `#7a8a1b`      | 28.2    | 12.9    | 10.9 (gray)  | 10.1             |
-| lime (118)                 | dark  | scheduled `#8ea037` | 27.6    | 11.0    | 10.6 (amber) | 7.6              |
-| rose (8)                   | light | area `#ffd2d7`      | 6.8     | 8.1     | 4.1 (red)    | 4.0              |
-| rose (8)                   | light | work `#d77086`      | 32.7    | 28.5    | 11.6 (pink)  | 8.8              |
-| rose (8)                   | light | scheduled `#fa8fa4` | 32.0    | 28.3    | 6.0 (pink)   | 6.3              |
-| rose (8)                   | dark  | area `#30211e`      | 7.2     | 7.2     | 5.8 (pink)   | 5.1              |
-| rose (8)                   | dark  | work `#97374f`      | 24.7    | 23.7    | 7.1 (pink)   | 2.6              |
-| rose (8)                   | dark  | scheduled `#ab4960` | 25.7    | 26.5    | 10.3 (pink)  | 7.4              |
-| bronze (60)                | light | area `#fbd8bb`      | 7.8     | 7.3     | 4.4 (red)    | 5.8              |
-| bronze (60)                | light | work `#cb7d34`      | 35.3    | 24.1    | 5.5 (amber)  | 9.6              |
-| bronze (60)                | light | scheduled `#f09f58` | 35.6    | 23.3    | 4.9 (amber)  | 5.1              |
-| bronze (60)                | dark  | area `#593b1f`      | 10.9    | 9.1     | 5.7 (amber)  | 4.5              |
-| bronze (60)                | dark  | work `#a35900`      | 28.6    | 18.9    | 4.5 (amber)  | 7.7              |
-| bronze (60)                | dark  | scheduled `#be7125` | 28.9    | 20.2    | 5.9 (amber)  | 9.0              |
-| indigo (272)               | light | area `#d5defd`      | 4.1     | 7.3     | 3.4 (violet) | 4.0              |
-| indigo (272)               | light | work `#7489de`      | 21.9    | 24.3    | 20.7 (pink)  | 20.4             |
-| indigo (272)               | light | scheduled `#9aaffe` | 21.5    | 23.3    | 18.3 (pink)  | 17.7             |
-| indigo (272)               | dark  | area `#404660`      | 8.5     | 10.8    | 7.6 (violet) | 8.3              |
-| indigo (272)               | dark  | work `#4555a6`      | 6.8     | 20.0    | 6.8 (blue)   | 5.0              |
-| indigo (272)               | dark  | scheduled `#7a8fe5` | 7.2     | 21.6    | 3.8 (violet) | 3.8              |
-| magenta (318, chosen)      | light | area `#ebd6ee`      | 5.0     | 7.6     | 3.9 (violet) | 3.3              |
-| magenta (318, chosen)      | light | work `#aa6ebc`      | 24.2    | 26.6    | 11.8 (pink)  | 14.8             |
-| magenta (318, chosen)      | light | scheduled `#c083d3` | 20.6    | 26.8    | 9.4 (pink)   | 9.6              |
-| magenta (318, chosen)      | dark  | area `#2c2226`      | 6.3     | 7.2     | 6.1 (pink)   | 5.5              |
-| magenta (318, chosen)      | dark  | work `#7c438d`      | 15.9    | 23.6    | 9.3 (violet) | 9.3              |
-| magenta (318, chosen)      | dark  | scheduled `#8f55a1` | 17.2    | 26.3    | 14.5 (pink)  | 10.7             |
+| Candidate                  | Theme | Role                | vs blue | vs teal | min vs all 9 | CVD vs blue/teal                            |
+| -------------------------- | ----- | ------------------- | ------- | ------- | ------------ | ------------------------------------------- |
+| cyan (212, the first pick) | light | area `#bae9f3`      | 4.8     | 6.3     | 4.8 (blue)   | 1.5                                         |
+| cyan (212, the first pick) | light | work `#009db7`      | 22.5    | 16.5    | 16.5 (teal)  | 15.9                                        |
+| cyan (212, the first pick) | light | scheduled `#25c8e8` | 23.1    | 15.8    | 15.8 (teal)  | 15.0                                        |
+| cyan (212, the first pick) | dark  | area `#2b4e53`      | 8.8     | 9.1     | 7.8 (gray)   | 8.3                                         |
+| cyan (212, the first pick) | dark  | work `#0090a8`      | 13.1    | 13.0    | 13.0 (teal)  | 12.4                                        |
+| cyan (212, the first pick) | dark  | scheduled `#03a7c2` | 11.5    | 11.8    | 11.5 (blue)  | 10.9                                        |
+| lime (118)                 | light | area `#dde5bc`      | 7.4     | 5.9     | 3.7 (green)  | 5.6                                         |
+| lime (118)                 | light | work `#91a33b`      | 35.5    | 19.4    | 11.5 (amber) | 16.5                                        |
+| lime (118)                 | light | scheduled `#adbf59` | 34.2    | 14.3    | 11.0 (amber) | 9.2                                         |
+| lime (118)                 | dark  | area `#484b25`      | 11.7    | 9.0     | 7.1 (gray)   | 8.3                                         |
+| lime (118)                 | dark  | work `#7a8a1b`      | 28.2    | 12.9    | 10.9 (gray)  | 10.1                                        |
+| lime (118)                 | dark  | scheduled `#8ea037` | 27.6    | 11.0    | 10.6 (amber) | 7.6                                         |
+| rose (8)                   | light | area `#ffd2d7`      | 6.8     | 8.1     | 4.1 (red)    | 4.0                                         |
+| rose (8)                   | light | work `#d77086`      | 32.7    | 28.5    | 11.6 (pink)  | 8.8                                         |
+| rose (8)                   | light | scheduled `#fa8fa4` | 32.0    | 28.3    | 6.0 (pink)   | 6.3                                         |
+| rose (8)                   | dark  | area `#30211e`      | 7.2     | 7.2     | 5.8 (pink)   | 5.1                                         |
+| rose (8)                   | dark  | work `#97374f`      | 24.7    | 23.7    | 7.1 (pink)   | 2.6                                         |
+| rose (8)                   | dark  | scheduled `#ab4960` | 25.7    | 26.5    | 10.3 (pink)  | 7.4                                         |
+| bronze (60)                | light | area `#fbd8bb`      | 7.8     | 7.3     | 4.4 (red)    | 5.8                                         |
+| bronze (60)                | light | work `#cb7d34`      | 35.3    | 24.1    | 5.5 (amber)  | 9.6                                         |
+| bronze (60)                | light | scheduled `#f09f58` | 35.6    | 23.3    | 4.9 (amber)  | 5.1                                         |
+| bronze (60)                | dark  | area `#593b1f`      | 10.9    | 9.1     | 5.7 (amber)  | 4.5                                         |
+| bronze (60)                | dark  | work `#a35900`      | 28.6    | 18.9    | 4.5 (amber)  | 7.7                                         |
+| bronze (60)                | dark  | scheduled `#be7125` | 28.9    | 20.2    | 5.9 (amber)  | 9.0                                         |
+| indigo (272)               | light | area `#d5defd`      | 4.1     | 7.3     | 3.4 (violet) | 4.0                                         |
+| indigo (272)               | light | work `#7489de`      | 21.9    | 24.3    | 20.7 (pink)  | 20.4                                        |
+| indigo (272)               | light | scheduled `#9aaffe` | 21.5    | 23.3    | 18.3 (pink)  | 17.7                                        |
+| indigo (272)               | dark  | area `#404660`      | 8.5     | 10.8    | 7.6 (violet) | 8.3                                         |
+| indigo (272)               | dark  | work `#4555a6`      | 6.8     | 20.0    | 6.8 (blue)   | 5.0                                         |
+| indigo (272)               | dark  | scheduled `#7a8fe5` | 7.2     | 21.6    | 3.8 (violet) | 3.8                                         |
+| magenta (318, chosen)      | light | area `#ebd6ee`      | 5.0     | 7.6     | 3.9 (violet) | 3.3                                         |
+| magenta (318, chosen)      | light | work `#aa6ebc`      | 24.2    | 26.6    | 11.8 (pink)  | 14.8                                        |
+| magenta (318, chosen)      | light | scheduled `#c083d3` | 20.6    | 26.8    | 9.4 (pink)   | 9.6                                         |
+| magenta (318, chosen)      | dark  | area `#402845`      | 5.4     | 6.3     | 3.7 (violet) | 0.6 deutan (label chip and border carry it) |
+| magenta (318, chosen)      | dark  | work `#7c438d`      | 15.9    | 23.6    | 9.3 (violet) | 9.3                                         |
+| magenta (318, chosen)      | dark  | scheduled `#8f55a1` | 17.2    | 26.3    | 14.5 (pink)  | 10.7                                        |
 
 Magenta keeps Work darker than Scheduled, Travel at reduced chroma (hatched), and Area as the Scheduled step mixed into the card, with these departures:
 
@@ -228,7 +228,7 @@ Magenta keeps Work darker than Scheduled, Travel at reduced chroma (hatched), an
 | Magenta | Scheduled (text) | Work (text)     | Travel    | Area      |
 | ------- | ---------------- | --------------- | --------- | --------- |
 | Light   | `#c083d3` (ink)  | `#aa6ebc` (ink) | `#c5a9cd` | `#ebd6ee` |
-| Dark    | `#8f55a1` (ink)  | `#7c438d` (ink) | `#5c4363` | `#2c2226` |
+| Dark    | `#8f55a1` (ink)  | `#7c438d` (ink) | `#5c4363` | `#402845` |
 
 Magenta against blue and teal: Scheduled and Work 15.9 to 26.8 (normal vision), CVD 9.6 and up; Area 5.0 to 7.6 (a tint cannot reach more: blue and teal tints are 3.3 apart). Its closest family is pink in Scheduled (light 9.4, dark 14.5) and violet in Work (dark 9.3). The ordinal runs of its three steps pass in both themes (travel 2.08:1 and 2.01:1 on the card).
 
