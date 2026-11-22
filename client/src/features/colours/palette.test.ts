@@ -67,7 +67,7 @@ describe('topic colour tokens', () => {
         assert.match(token(theme, tokenName), /^#[0-9a-f]{6}$/, `${name} ${tokenName}`);
       }
       const defined = [...theme.keys()].filter((key) => key.startsWith('--tc-'));
-      assert.equal(defined.length, 54, `${name}: ${defined.length} --tc- tokens`);
+      assert.equal(defined.length, 60, `${name}: ${defined.length} --tc- tokens`);
     }
   });
 
@@ -124,6 +124,27 @@ describe('palette', () => {
     assert.equal(colourVar('blue', 'work'), 'var(--tc-blue-work)');
     assert.equal(inkVar('blue', 'work'), 'var(--tc-blue-work-ink)');
     assert.equal(inkVar('gray', 'scheduled'), 'var(--tc-gray-scheduled-ink)');
+  });
+
+  it('paints cyan, the TLVTech family, with its own tokens and keeps it apart from its neighbours', () => {
+    assert.deepEqual(paintOf({ family: 'cyan', role: 'area' }), {
+      fill: 'var(--tc-cyan-area)',
+      ink: 'var(--foreground)',
+      stripe: null,
+    });
+    assert.equal(hatchFill('cal-1', 'cyan'), 'url(#cal-1-cyan)');
+    for (const [name, theme] of Object.entries(THEMES)) {
+      for (const role of ['scheduled', 'work', 'travel', 'area'] as const) {
+        const cyan = token(theme, `--tc-cyan-${role}`);
+        for (const other of ['gray', 'blue', 'teal', 'violet', 'green'] as const) {
+          assert.notEqual(
+            cyan,
+            token(theme, `--tc-${other}-${role}`),
+            `${name} ${role} vs ${other}`,
+          );
+        }
+      }
+    }
   });
 
   it('paints the solid roles with their own ink', () => {

@@ -47,6 +47,20 @@ test('every source colour points at a variable that both themes define', () => {
   }
 });
 
+test('Your to-dos are no longer the muted ink: they take the amber chart slot', () => {
+  assert.equal(sourceTheme.get('--color-source-local'), 'var(--chart-4)');
+  const slotted = Object.entries(Object.fromEntries(sourceTheme))
+    .filter(([name]) => name !== '--color-source-reserved')
+    .map(([, value]) => value);
+  assert.equal(new Set(slotted).size, slotted.length, 'two sources share one colour');
+  assert.notEqual(light.get('--chart-4'), light.get('--muted-foreground'));
+  assert.notEqual(dark.get('--chart-4'), dark.get('--muted-foreground'));
+});
+
+test('a reserved provider (slack, notion) keeps the muted ink', () => {
+  assert.equal(sourceTheme.get('--color-source-reserved'), 'var(--muted-foreground)');
+});
+
 test('the chart slots a non-source group falls back to are defined in both themes', () => {
   for (let slot = 1; slot <= 7; slot += 1) {
     assert.ok(light.has(`--chart-${String(slot)}`), `--chart-${String(slot)} missing in light`);

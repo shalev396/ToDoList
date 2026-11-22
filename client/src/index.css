@@ -69,7 +69,10 @@
   --color-source-clickup: var(--chart-5);
   --color-source-github: var(--chart-6);
   --color-source-linear: var(--chart-7);
-  --color-source-local: var(--muted-foreground);
+  /* Your to-dos take the amber slot (--chart-4, free since Google Drive left). */
+  --color-source-local: var(--chart-4);
+  /* Reserved providers with no slot of their own (slack, notion): the muted ink. */
+  --color-source-reserved: var(--muted-foreground);
 }
 
 /*
@@ -182,6 +185,12 @@
   --tc-pink-work-ink: #fffdf9;
   --tc-pink-travel: #ab7b8b;
   --tc-pink-area: #feebed;
+  --tc-cyan-scheduled: #08c1db;
+  --tc-cyan-scheduled-ink: #1f1a12;
+  --tc-cyan-work: #0390a4;
+  --tc-cyan-work-ink: #1f1a12;
+  --tc-cyan-travel: #719ea7;
+  --tc-cyan-area: #c2eaef;
 
   --sidebar: #f7f4ee;
   --sidebar-foreground: #1f1a12;
@@ -289,6 +298,12 @@
   --tc-pink-work-ink: #f3ede0;
   --tc-pink-travel: #7e4758;
   --tc-pink-area: #46292c;
+  --tc-cyan-scheduled: #0293a8;
+  --tc-cyan-scheduled-ink: #1e1a14;
+  --tc-cyan-work: #007182;
+  --tc-cyan-work-ink: #f3ede0;
+  --tc-cyan-travel: #2c5760;
+  --tc-cyan-area: #273e3f;
 
   --sidebar: #16130e;
   --sidebar-foreground: #f3ede0;

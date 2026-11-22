@@ -88,22 +88,25 @@ Rules that follow from the measurements:
 
 Nothing fails. The light WARN is the one these colours always had: every source mark ships with its name (legend chips, the "Moodle / Data structures" line) and the charts have a data table. Drive's amber (slot 4) sits near the ochre brand hue; the brand hue is only on chrome, and Drive marks always carry a label.
 
-| Slot | Source                    | Light                | Dark                 |
-| ---- | ------------------------- | -------------------- | -------------------- |
-| 1    | Jira                      | `#2a78d6`            | `#3987e5`            |
-| 2    | Moodle                    | `#eb6834`            | `#d95926`            |
-| 3    | Google Calendar           | `#1baf7a`            | `#199e70`            |
-| 4    | Google Drive (Notability) | `#eda100`            | `#c98500`            |
-| 5    | ClickUp                   | `#e87ba4`            | `#d55181`            |
-| 6    | GitHub                    | `#008300`            | `#008300`            |
-| 7    | Linear                    | `#6250d6`            | `#9085e9`            |
-| —    | Local to-dos              | `--muted-foreground` | `--muted-foreground` |
+| Slot | Source                    | Light                   | Dark                    |
+| ---- | ------------------------- | ----------------------- | ----------------------- |
+| 1    | Jira                      | `#2a78d6`               | `#3987e5`               |
+| 2    | Moodle                    | `#eb6834`               | `#d95926`               |
+| 3    | Google Calendar           | `#1baf7a`               | `#199e70`               |
+| 4    | Google Drive (Notability) | `#eda100`               | `#c98500`               |
+| 5    | ClickUp                   | `#e87ba4`               | `#d55181`               |
+| 6    | GitHub                    | `#008300`               | `#008300`               |
+| 7    | Linear                    | `#6250d6`               | `#9085e9`               |
+| 4†   | Your to-dos (local)       | `#eda100` (`--chart-4`) | `#c98500` (`--chart-4`) |
+| —    | Reserved (Slack, Notion)  | `--muted-foreground`    | `--muted-foreground`    |
 
 Rules:
 
 - Colour follows the source, never its rank.
 - Segments are always drawn in slot order.
 - Slot 8 (red) is unused, so it never collides with "overdue".
+- † Your to-dos (local, 2026-11-22) took slot 4, free since Google Drive left, instead of the muted grey. Next to its neighbours in the donut (Linear, then Jira on the wrap) it separates by ΔE 27 or more in both themes (CVD 27 or more); against Moodle's orange it is 13.7 in light and 10.6 in dark (deutan 9.7 and 4.8), which is why the two are never adjacent: segments are in slot order, local is last, Moodle second. Every mark still carries its name. The dark-theme CVD FAIL in the full list (`#d55181` ClickUp against `#199e70` Google Calendar, ΔE 1.6 deutan) is in the original six colours, not in this change.
+- Reserved providers (`slack`, `notion`) have no slot and draw `--color-source-reserved`, the muted ink (a donut segment grouped by source).
 
 **Status** (reserved, always shown with an icon and a label):
 
@@ -118,10 +121,10 @@ Rules:
 
 Spec: `docs/superpowers/specs/2026-11-17-topic-colours-design.md`. Every item takes a **family** and a **role**, from one shared rule (`server/src/types/colours.ts`):
 
-- **Family:** the item's subject, else its topic, else gray (Unsorted). The nine families are the topic colours: gray, red, orange, amber, green, teal, blue, violet, pink. New topics get the next one in `FAMILY_ASSIGN_ORDER` (blue, orange, teal, amber, pink, green, violet, red), saved on the topic.
+- **Family:** the item's subject, else its topic, else gray (Unsorted). The ten families are the topic colours: gray, red, orange, amber, green, teal, blue, violet, pink, cyan. Cyan (added 2026-11-22 for the owner's TLVTech subject) is chosen by hand, in a topic's or a Subject's family picker; it is not in `FAMILY_ASSIGN_ORDER`. New topics get the next one in `FAMILY_ASSIGN_ORDER` (blue, orange, teal, amber, pink, green, violet, red), saved on the topic.
 - **Role:** Scheduled (a provider's calendar event), Work (to-dos, issues, his own time blocks), Travel (travel legs), Area (painted time). Charts by topic use Scheduled.
 
-**Tokens.** `--tc-<family>-<role>` for every family and role, plus `--tc-<family>-scheduled-ink` and `--tc-<family>-work-ink` (the text colour on the two solid fills): 54 hex values in `:root` (light) and again in `.dark`. Nothing reads them directly. Every view paints through `client/src/features/colours/`:
+**Tokens.** `--tc-<family>-<role>` for every family and role, plus `--tc-<family>-scheduled-ink` and `--tc-<family>-work-ink` (the text colour on the two solid fills): 60 hex values in `:root` (light) and again in `.dark`. Nothing reads them directly. Every view paints through `client/src/features/colours/`:
 
 - `palette.ts`: `colourVar`, `inkVar`, `paintOf`, `hatchBackground`, `hatchFill`, `markStyle`;
 - `rowColour.ts` and `useColours.ts`: from a row to its colour;
@@ -173,6 +176,20 @@ Spec: `docs/superpowers/specs/2026-11-17-topic-colours-design.md`. Every item ta
 | blue   | `#3987e5` (card) | `#1468c3` (ink)  | `#3b597f` | `#283341` |
 | violet | `#9085e9` (card) | `#6b5dbd` (ink)  | `#59567f` | `#363241` |
 | pink   | `#d85484` (card) | `#b63467` (ink)  | `#7e4758` | `#46292c` |
+
+**Cyan** (the tenth family, `--tc-cyan-*`, hue 212°, between teal 162° and blue 256°). Made like the others (same roles and rules: Work darker than Scheduled, Travel at reduced chroma, Area the Scheduled step mixed into the card), with these departures, each forced by the validator:
+
+- Scheduled is lighter than blue and teal in light (L 0.745 against 0.563 and 0.669). In dark the band (L 0.48 to 0.67) leaves no room: it sits at 0.61, beside blue and teal at 0.62, so only the hue (212°) and chroma (0.12) separate it. Light Work (L 0.60, `#0390a4`) takes the dark ink (4.55:1), the one family whose light Work is not under the card ink.
+- Light Travel (`#719ea7`) sits between Scheduled and Work, like amber and pink, to keep 2:1 on the card. Hatching, not lightness, marks travel.
+- Area is mixed in at 34% (light) and 32% (dark), not 14% and 24%: at the usual strength a cyan tint is within ΔE 1.6 of teal's and 2.1 of blue's. At 34% and 32% the nearest family tint is ΔE 4.0 (light, blue) and 3.9 (dark, blue); the closest existing pair (blue and violet) is 1.3. Text on it is `--foreground` (12.9 and 9.7).
+- It is not in `FAMILY_ASSIGN_ORDER`. Cyan sits between two families on the hue wheel, so it cannot meet the validator's 15 ΔE floor against both teal and blue (best reachable 13.7 against teal in light, 10.0 in dark), and an automatic family must. It is a deliberate choice, with the topic or subject name always beside it.
+
+| Cyan  | Scheduled (text) | Work (text)     | Travel    | Area      |
+| ----- | ---------------- | --------------- | --------- | --------- |
+| Light | `#08c1db` (ink)  | `#0390a4` (ink) | `#719ea7` | `#c2eaef` |
+| Dark  | `#0293a8` (card) | `#007182` (ink) | `#2c5760` | `#273e3f` |
+
+Distance to its neighbours (validator pair runs, normal vision / worst CVD): scheduled light blue 21.4 / 21.5, teal 13.7 / 13.0; work light blue 19.2 / 19.1, teal 12.8 / 12.2; scheduled dark blue 11.1 / 10.4, teal 10.0 / 9.5; work dark blue 11.4 / 11.3, teal 8.7 / 8.1. All of these are below the 15 floor except light blue; they are the best the dark band (L 0.48 to 0.67, blue and teal both at 0.62) allows, and every use carries its title.
 
 **Validator runs** (`validate_palette.js` from the dataviz skill), on the card of each theme:
 

@@ -2,8 +2,8 @@ import type { Provider } from './types.ts';
 
 /**
  * Source colours follow the fixed slots in docs/design/DESIGN.md: colour follows the source,
- * never its rank, and segments are drawn in slot order. Local to-dos have no slot and use the
- * muted ink.
+ * never its rank, and segments are drawn in slot order. Local to-dos ("Your to-dos") take
+ * the amber slot, --chart-4; reserved providers (slack, notion) have none and stay muted.
  */
 export const SOURCE_SLOT_ORDER: readonly Provider[] = [
   'jira',

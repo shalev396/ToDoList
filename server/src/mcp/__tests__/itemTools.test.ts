@@ -765,6 +765,10 @@ describe('set_subject', () => {
       [updated.created, updated.subject.family, updated.subject.patterns],
       [false, 'violet', ['*calc*', '*חדו"א*']],
     );
+    const cyan = structured(
+      await call(key, 'set_subject', { name: 'TLVTech', family: 'cyan' }),
+    ) as SubjectOut;
+    assert.deepEqual([cyan.subject.name, cyan.subject.family], ['TLVTech', 'cyan']);
     const item = await (
       await models.getItemRepository()
     ).createLocal(team.workspace.id, {

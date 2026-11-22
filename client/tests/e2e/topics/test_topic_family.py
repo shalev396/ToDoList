@@ -17,7 +17,7 @@ from tests.helpers.workspaces import ensure_topics, list_topics, open_as
 from tests.viewports import DESKTOP_VIEWPORT
 
 FAMILIES_BY_SLUG = {"personal": "blue", "work": "orange", "college": "teal"}
-HEBREW_FAMILIES = ["אפור", "אדום", "כתום", "ענבר", "ירוק", "טורקיז", "כחול", "סגול", "ורוד"]
+HEBREW_FAMILIES = ["אפור", "אדום", "כתום", "ענבר", "ירוק", "טורקיז", "כחול", "סגול", "ורוד", "תכלת"]
 
 
 def _topics(page: Page, heading: str = "Topics"):
