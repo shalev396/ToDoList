@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { SOURCE_SLOT_ORDER, SOURCE_STYLES, sourceColourVar } from './sources.ts';
+import {
+  RESERVED_SOURCE_STYLE,
+  SOURCE_SLOT_ORDER,
+  SOURCE_STYLES,
+  sourceColourVar,
+} from './sources.ts';
 
 const css = readFileSync(new URL('../../index.css', import.meta.url), 'utf8');
 
@@ -45,6 +50,27 @@ test('every source colour points at a variable that both themes define', () => {
     assert.ok(light.has(target), `${target} (for ${name}) is missing in the light theme`);
     assert.ok(dark.has(target), `${target} (for ${name}) is missing in the dark theme`);
   }
+});
+
+test('Your to-dos are no longer the muted ink: they take their own sky-cyan token', () => {
+  assert.equal(sourceTheme.get('--color-source-local'), 'var(--source-local)');
+  const slotted = Object.entries(Object.fromEntries(sourceTheme))
+    .filter(([name]) => name !== '--color-source-reserved')
+    .map(([, value]) => value);
+  assert.equal(new Set(slotted).size, slotted.length, 'two sources share one colour');
+  assert.notEqual(light.get('--source-local'), light.get('--muted-foreground'));
+  assert.notEqual(dark.get('--source-local'), dark.get('--muted-foreground'));
+});
+
+test('a reserved provider (slack, notion) keeps the muted ink', () => {
+  assert.equal(sourceTheme.get('--color-source-reserved'), 'var(--muted-foreground)');
+});
+
+test('the utilities a provider without a colour draws with resolve to the muted ink, not local', () => {
+  assert.equal(RESERVED_SOURCE_STYLE.fill, 'fill-source-reserved');
+  assert.equal(RESERVED_SOURCE_STYLE.bg, 'bg-source-reserved');
+  assert.ok(sourceTheme.has('--color-source-reserved'));
+  assert.notEqual(RESERVED_SOURCE_STYLE.fill, SOURCE_STYLES.local.fill);
 });
 
 test('the chart slots a non-source group falls back to are defined in both themes', () => {

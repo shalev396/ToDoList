@@ -88,22 +88,25 @@ Rules that follow from the measurements:
 
 Nothing fails. The light WARN is the one these colours always had: every source mark ships with its name (legend chips, the "Moodle / Data structures" line) and the charts have a data table. Drive's amber (slot 4) sits near the ochre brand hue; the brand hue is only on chrome, and Drive marks always carry a label.
 
-| Slot | Source                    | Light                | Dark                 |
-| ---- | ------------------------- | -------------------- | -------------------- |
-| 1    | Jira                      | `#2a78d6`            | `#3987e5`            |
-| 2    | Moodle                    | `#eb6834`            | `#d95926`            |
-| 3    | Google Calendar           | `#1baf7a`            | `#199e70`            |
-| 4    | Google Drive (Notability) | `#eda100`            | `#c98500`            |
-| 5    | ClickUp                   | `#e87ba4`            | `#d55181`            |
-| 6    | GitHub                    | `#008300`            | `#008300`            |
-| 7    | Linear                    | `#6250d6`            | `#9085e9`            |
-| —    | Local to-dos              | `--muted-foreground` | `--muted-foreground` |
+| Slot | Source                    | Light                        | Dark                         |
+| ---- | ------------------------- | ---------------------------- | ---------------------------- |
+| 1    | Jira                      | `#2a78d6`                    | `#3987e5`                    |
+| 2    | Moodle                    | `#eb6834`                    | `#d95926`                    |
+| 3    | Google Calendar           | `#1baf7a`                    | `#199e70`                    |
+| 4    | Google Drive (Notability) | `#eda100`                    | `#c98500`                    |
+| 5    | ClickUp                   | `#e87ba4`                    | `#d55181`                    |
+| 6    | GitHub                    | `#008300`                    | `#008300`                    |
+| 7    | Linear                    | `#6250d6`                    | `#9085e9`                    |
+| †    | Your to-dos (local)       | `#52c1e1` (`--source-local`) | `#28a6c0` (`--source-local`) |
+| —    | Reserved (Slack, Notion)  | `--muted-foreground`         | `--muted-foreground`         |
 
 Rules:
 
 - Colour follows the source, never its rank.
 - Segments are always drawn in slot order.
 - Slot 8 (red) is unused, so it never collides with "overdue".
+- † Your to-dos (local, 2026-11-22) have their own sky cyan, `--source-local`, instead of the muted grey. Amber (slot 4) was tried first and rejected: it is the colour of the family amber (his Algebra subject), and the Summary shows the clock legend next to the donut. Every hue was scanned against all 10 families' Scheduled and Work tones and the six source colours, in both themes (the table is in the batch report and DECISIONS.md): sky cyan is the best of them, at least ΔE 15.4 from all of them in light (nearest: teal Scheduled, Google Calendar) and 11.5 in dark (nearest: blue Scheduled, Jira), CVD 5.6 and 7.0. No hue reaches 15 in dark. `--chart-4` is free again.
+- Reserved providers (`slack`, `notion`) have no slot and draw `--color-source-reserved`, the muted ink (a donut segment grouped by source).
 
 **Status** (reserved, always shown with an icon and a label):
 
@@ -118,10 +121,10 @@ Rules:
 
 Spec: `docs/superpowers/specs/2026-11-17-topic-colours-design.md`. Every item takes a **family** and a **role**, from one shared rule (`server/src/types/colours.ts`):
 
-- **Family:** the item's subject, else its topic, else gray (Unsorted). The nine families are the topic colours: gray, red, orange, amber, green, teal, blue, violet, pink. New topics get the next one in `FAMILY_ASSIGN_ORDER` (blue, orange, teal, amber, pink, green, violet, red), saved on the topic.
+- **Family:** the item's subject, else its topic, else gray (Unsorted). The ten families are the topic colours: gray, red, orange, amber, green, teal, blue, violet, pink, magenta. Magenta (added 2026-11-22 for the owner's TLVTech subject) is chosen by hand, in a topic's or a Subject's family picker; it is not in `FAMILY_ASSIGN_ORDER`. New topics get the next one in `FAMILY_ASSIGN_ORDER` (blue, orange, teal, amber, pink, green, violet, red), saved on the topic.
 - **Role:** Scheduled (a provider's calendar event), Work (to-dos, issues, his own time blocks), Travel (travel legs), Area (painted time). Charts by topic use Scheduled.
 
-**Tokens.** `--tc-<family>-<role>` for every family and role, plus `--tc-<family>-scheduled-ink` and `--tc-<family>-work-ink` (the text colour on the two solid fills): 54 hex values in `:root` (light) and again in `.dark`. Nothing reads them directly. Every view paints through `client/src/features/colours/`:
+**Tokens.** `--tc-<family>-<role>` for every family and role, plus `--tc-<family>-scheduled-ink` and `--tc-<family>-work-ink` (the text colour on the two solid fills): 60 hex values in `:root` (light) and again in `.dark`. Nothing reads them directly. Every view paints through `client/src/features/colours/`:
 
 - `palette.ts`: `colourVar`, `inkVar`, `paintOf`, `hatchBackground`, `hatchFill`, `markStyle`;
 - `rowColour.ts` and `useColours.ts`: from a row to its colour;
@@ -173,6 +176,61 @@ Spec: `docs/superpowers/specs/2026-11-17-topic-colours-design.md`. Every item ta
 | blue   | `#3987e5` (card) | `#1468c3` (ink)  | `#3b597f` | `#283341` |
 | violet | `#9085e9` (card) | `#6b5dbd` (ink)  | `#59567f` | `#363241` |
 | pink   | `#d85484` (card) | `#b63467` (ink)  | `#7e4758` | `#46292c` |
+
+**Magenta** (the tenth family, `--tc-magenta-*`, hue 318°, between violet 283° and pink 355°). It replaced a first pick, cyan, that failed the dark theme: cyan sits between teal and blue, exactly the families beside the owner's TLVTech areas (Sleep and Braude blue, Routine teal), and its dark Scheduled was 11.5 from blue and 11.8 from teal (the validator's normal-vision floor is 15). Every hue was scanned in both themes (Scheduled and Work lightness and chroma optimised against blue and teal, inks and bands respected); only the magenta/orchid band reaches 15 against both in both themes. The comparison, with Area at its best tint of 14% to 40%:
+
+| Candidate                  | Theme | Role                | vs blue | vs teal | min vs all 9 | CVD vs blue/teal                            |
+| -------------------------- | ----- | ------------------- | ------- | ------- | ------------ | ------------------------------------------- |
+| cyan (212, the first pick) | light | area `#bae9f3`      | 4.8     | 6.3     | 4.8 (blue)   | 1.5                                         |
+| cyan (212, the first pick) | light | work `#009db7`      | 22.5    | 16.5    | 16.5 (teal)  | 15.9                                        |
+| cyan (212, the first pick) | light | scheduled `#25c8e8` | 23.1    | 15.8    | 15.8 (teal)  | 15.0                                        |
+| cyan (212, the first pick) | dark  | area `#2b4e53`      | 8.8     | 9.1     | 7.8 (gray)   | 8.3                                         |
+| cyan (212, the first pick) | dark  | work `#0090a8`      | 13.1    | 13.0    | 13.0 (teal)  | 12.4                                        |
+| cyan (212, the first pick) | dark  | scheduled `#03a7c2` | 11.5    | 11.8    | 11.5 (blue)  | 10.9                                        |
+| lime (118)                 | light | area `#dde5bc`      | 7.4     | 5.9     | 3.7 (green)  | 5.6                                         |
+| lime (118)                 | light | work `#91a33b`      | 35.5    | 19.4    | 11.5 (amber) | 16.5                                        |
+| lime (118)                 | light | scheduled `#adbf59` | 34.2    | 14.3    | 11.0 (amber) | 9.2                                         |
+| lime (118)                 | dark  | area `#484b25`      | 11.7    | 9.0     | 7.1 (gray)   | 8.3                                         |
+| lime (118)                 | dark  | work `#7a8a1b`      | 28.2    | 12.9    | 10.9 (gray)  | 10.1                                        |
+| lime (118)                 | dark  | scheduled `#8ea037` | 27.6    | 11.0    | 10.6 (amber) | 7.6                                         |
+| rose (8)                   | light | area `#ffd2d7`      | 6.8     | 8.1     | 4.1 (red)    | 4.0                                         |
+| rose (8)                   | light | work `#d77086`      | 32.7    | 28.5    | 11.6 (pink)  | 8.8                                         |
+| rose (8)                   | light | scheduled `#fa8fa4` | 32.0    | 28.3    | 6.0 (pink)   | 6.3                                         |
+| rose (8)                   | dark  | area `#30211e`      | 7.2     | 7.2     | 5.8 (pink)   | 5.1                                         |
+| rose (8)                   | dark  | work `#97374f`      | 24.7    | 23.7    | 7.1 (pink)   | 2.6                                         |
+| rose (8)                   | dark  | scheduled `#ab4960` | 25.7    | 26.5    | 10.3 (pink)  | 7.4                                         |
+| bronze (60)                | light | area `#fbd8bb`      | 7.8     | 7.3     | 4.4 (red)    | 5.8                                         |
+| bronze (60)                | light | work `#cb7d34`      | 35.3    | 24.1    | 5.5 (amber)  | 9.6                                         |
+| bronze (60)                | light | scheduled `#f09f58` | 35.6    | 23.3    | 4.9 (amber)  | 5.1                                         |
+| bronze (60)                | dark  | area `#593b1f`      | 10.9    | 9.1     | 5.7 (amber)  | 4.5                                         |
+| bronze (60)                | dark  | work `#a35900`      | 28.6    | 18.9    | 4.5 (amber)  | 7.7                                         |
+| bronze (60)                | dark  | scheduled `#be7125` | 28.9    | 20.2    | 5.9 (amber)  | 9.0                                         |
+| indigo (272)               | light | area `#d5defd`      | 4.1     | 7.3     | 3.4 (violet) | 4.0                                         |
+| indigo (272)               | light | work `#7489de`      | 21.9    | 24.3    | 20.7 (pink)  | 20.4                                        |
+| indigo (272)               | light | scheduled `#9aaffe` | 21.5    | 23.3    | 18.3 (pink)  | 17.7                                        |
+| indigo (272)               | dark  | area `#404660`      | 8.5     | 10.8    | 7.6 (violet) | 8.3                                         |
+| indigo (272)               | dark  | work `#4555a6`      | 6.8     | 20.0    | 6.8 (blue)   | 5.0                                         |
+| indigo (272)               | dark  | scheduled `#7a8fe5` | 7.2     | 21.6    | 3.8 (violet) | 3.8                                         |
+| magenta (318, chosen)      | light | area `#ebd6ee`      | 5.0     | 7.6     | 3.9 (violet) | 3.3                                         |
+| magenta (318, chosen)      | light | work `#aa6ebc`      | 24.2    | 26.6    | 11.8 (pink)  | 14.8                                        |
+| magenta (318, chosen)      | light | scheduled `#c083d3` | 20.6    | 26.8    | 9.4 (pink)   | 9.6                                         |
+| magenta (318, chosen)      | dark  | area `#402845`      | 5.4     | 6.3     | 3.7 (violet) | 0.6 deutan (label chip and border carry it) |
+| magenta (318, chosen)      | dark  | work `#7c438d`      | 15.9    | 23.6    | 9.3 (violet) | 9.3                                         |
+| magenta (318, chosen)      | dark  | scheduled `#8f55a1` | 17.2    | 26.3    | 14.5 (pink)  | 10.7                                        |
+
+Magenta keeps Work darker than Scheduled, Travel at reduced chroma (hatched), and Area as the Scheduled step mixed into the card, with these departures:
+
+- Light Scheduled is capped at L 0.70 (not the band top 0.77), so it stays a calm orchid, not a pastel; Work L 0.63 takes the dark ink (4.66:1).
+- Dark: Scheduled L 0.546 (light ink 4.52:1), Work L 0.483 (2.51:1 on the card: the validator's contrast WARN, the same relief as dark amber Work), Travel L 0.423 keeps 2:1 so the ordinal run passes with every step 0.06 apart.
+- Area is mixed at 32% (light) and 14% (dark), not 14% and 24%: the light tint at 14% was within ΔE 1.3 of pink's; at 32% the nearest family tint is 3.9 (violet), against 5.0 from blue and 7.6 from teal. Dark at 14% is 6.1 from the nearest (pink), 6.3 from blue, 7.2 from teal. Text on it is `--foreground` (12.7 and 13.2).
+- It is not in `FAMILY_ASSIGN_ORDER`: against pink and violet it is only 9.4 (light Scheduled) and 9.3 (dark Work), under the 15 floor an automatic family must meet. It is a deliberate choice, with the topic or subject name always beside it.
+
+| Magenta | Scheduled (text) | Work (text)     | Travel    | Area      |
+| ------- | ---------------- | --------------- | --------- | --------- |
+| Light   | `#c083d3` (ink)  | `#aa6ebc` (ink) | `#c5a9cd` | `#ebd6ee` |
+| Dark    | `#8f55a1` (ink)  | `#7c438d` (ink) | `#5c4363` | `#402845` |
+
+Magenta against blue and teal: Scheduled and Work 15.9 to 26.8 (normal vision), CVD 9.6 and up; Area 5.0 to 7.6 (a tint cannot reach more: blue and teal tints are 3.3 apart). Its closest family is pink in Scheduled (light 9.4, dark 14.5) and violet in Work (dark 9.3). The ordinal runs of its three steps pass in both themes (travel 2.08:1 and 2.01:1 on the card).
 
 **Validator runs** (`validate_palette.js` from the dataviz skill), on the card of each theme:
 
