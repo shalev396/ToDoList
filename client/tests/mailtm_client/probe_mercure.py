@@ -74,7 +74,7 @@ def main(argv: Any = None) -> int:
     password = secrets.token_urlsafe(12)
     account = mail.create_account(address, password)
     inbox = mail.sign_in(address, password)
-    print(f"{_stamp(started)} inbox {address} (password {password})")
+    print(f"{_stamp(started)} inbox {address}")
     print(
         f"{_stamp(started)} account id: {account.get('id')!r} from POST /accounts, "
         f"{inbox.account_id!r} from POST /token, "
