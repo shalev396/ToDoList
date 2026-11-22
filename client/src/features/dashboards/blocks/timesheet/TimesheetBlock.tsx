@@ -52,7 +52,13 @@ import { ringProvider } from '../clock/clockModel';
 import { itemRowsOf } from '../data/rows';
 import { isolateLtr } from '../time/areas';
 import { inactiveKey } from '../time/inactive';
-import { visibleRange, wallDate, wallString, type WeekStart } from '../time/occurrences';
+import {
+  visibleRange,
+  wallDate,
+  wallString,
+  withSeriesFields,
+  type WeekStart,
+} from '../time/occurrences';
 import { TimesheetAreaTag } from './TimesheetAreaTag';
 import { TodoPanel, type PanelTodo } from './TodoPanel';
 import {
@@ -166,7 +172,8 @@ export default function TimesheetBlock({ dashboard, block, editing }: BlockCompo
       userId: '',
       vars,
     });
-    return shown.filter((entry) => !entry.hidden).map((entry) => entry.row);
+    // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+    return withSeriesFields(shown.filter((entry) => !entry.hidden).map((entry) => entry.row));
   }, [data.data, block.rules, now, timeZone, vars]);
   const colourOf = useRowColours(rows);
   const showBlocks = showsBlocks(block.viz);

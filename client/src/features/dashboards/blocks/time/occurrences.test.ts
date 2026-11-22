@@ -8,6 +8,7 @@ import {
   visibleRange,
   weekRange,
   wallString,
+  withSeriesFields,
   type TimeRow,
 } from './occurrences.ts';
 
@@ -76,6 +77,39 @@ describe('expandOccurrences', () => {
     assert.ok(flagged);
     assert.equal(flagged.end?.getTime(), at(2026, 11, 10, 11).getTime());
     assert.equal(flagged.key, `master@${String(at(2026, 11, 10, 10).getTime())}`);
+  });
+
+  it('a cancelled occurrence as Google sends it is titled, linked and topped as its series', () => {
+    const master = series({
+      title: 'AutoDS Daily Meeting',
+      source: { provider: 'google_calendar', url: 'https://g/master', externalId: 'm', key: null },
+    });
+    const cancelled = row({
+      id: 'x1',
+      title: 'e1_20261110T080000Z',
+      status: 'cancelled',
+      statusRaw: 'cancelled',
+      startAt: at(2026, 11, 10, 10),
+      source: { provider: 'google_calendar', url: 'https://g/eid', externalId: 'x1', key: null },
+      props: {
+        calendarId: 'c',
+        eventId: 'e1_20261110T080000Z',
+        recurringEventId: 'e1',
+        originalStartAt: at(2026, 11, 10, 10).toISOString(),
+      },
+    });
+    const listed = expandOccurrences([master, cancelled], WEEK, TZ).find(
+      (o) => o.inactive === 'cancelled',
+    );
+    assert.deepEqual(
+      [listed?.row.id, listed?.row.title, listed?.row.source.url],
+      ['x1', 'AutoDS Daily Meeting', 'https://g/master'],
+    );
+    assert.equal(withSeriesFields([master, cancelled])[1]?.title, 'AutoDS Daily Meeting');
+    // Without its master, or of a declined series: never listed.
+    assert.deepEqual(expandOccurrences([cancelled], WEEK, TZ), []);
+    const declined = { ...master, status: 'cancelled', statusRaw: 'declined' };
+    assert.deepEqual(expandOccurrences([declined, cancelled], WEEK, TZ), []);
   });
 
   it('never lists a declined occurrence, and still takes its slot out of the series', () => {

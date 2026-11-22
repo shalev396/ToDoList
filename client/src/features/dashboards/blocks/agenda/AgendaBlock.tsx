@@ -27,7 +27,7 @@ import { useDataBlock } from '../data/useDataBlock';
 import { splitAreas } from '../time/areas';
 import { INACTIVE_TITLE, inactiveKey } from '../time/inactive';
 import { InactiveTag } from '../time/InactiveTag';
-import type { Occurrence } from '../time/occurrences';
+import { withSeriesFields, type Occurrence } from '../time/occurrences';
 import { AgendaAreaHeader } from './AgendaAreaHeader';
 import { AGENDA_PARTS, agendaAreas, buildAgenda } from './agendaModel';
 
@@ -100,7 +100,10 @@ function AgendaRow({
           <ConflictMark className="-mt-2 mb-1 text-xs text-destructive" />
         ) : null}
       </div>
-      {occurrence.inactive === null ? null : <InactiveTag inactive={occurrence.inactive} />}
+      {occurrence.inactive === null ? null : (
+        // The button's name already says it.
+        <InactiveTag inactive={occurrence.inactive} silent />
+      )}
       {leg === null ? (
         <>
           <SourceIcon source={displayProvider(row.source.provider)} />
@@ -123,7 +126,8 @@ export default function AgendaBlock({ dashboard, block }: BlockComponentProps) {
   const { query, rows, loadState, now, timeZone } = useDataBlock(dashboard, block);
   const title = blockTitle(block, t);
   const locale = dateLocale(language);
-  const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
+  // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+  const itemRows = useMemo(() => withSeriesFields(rows.map((entry) => entry.row)), [rows]);
   const colourOf = useRowColours(itemRows);
   const changed = useChangedTravelDays(now, timeZone);
   // Areas are split off before the agenda is built; items nest under them by time.

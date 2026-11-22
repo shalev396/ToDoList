@@ -8,8 +8,11 @@
  * - Next: the first thing still to come today (everything starting at that same minute).
  * - Later today: the rest of today.
  * - Tomorrow: everything on the next local day.
- * - A cancelled or disabled occurrence (its time free) is never Now or Next: on now or still to
- *   come today, it is listed in Later today, faded; a task with one is no open task.
+ * - A cancelled or disabled occurrence (its time free) stays listed, faded and struck through, but
+ *   is never Now or Next: an event on now or still to come today is in Later today; a task due
+ *   today is in Earlier or Later today by its time. Overdue lists a disabled open task (faded: it
+ *   is still to do, or to enable), never a cancelled one (a cancelled task is not overdue), as
+ *   MCP `list_today` does.
  */
 import { isScheduledKind } from '@api-types/scheduled.ts';
 import { endOfZonedDay } from '../clock/ClockRing.math.ts';
@@ -43,14 +46,15 @@ function endOf(occurrence: Occurrence): number {
   return (occurrence.end ?? new Date(occurrence.start.getTime() + DEFAULT_LENGTH_MS)).getTime();
 }
 
-function isOpenTask(occurrence: Occurrence): boolean {
+/** A task (not an event, not reserved time) that is not done. */
+function isUndoneTask(occurrence: Occurrence): boolean {
   const { row } = occurrence;
-  return (
-    row.kind !== 'event' &&
-    !isScheduledKind(row.kind) &&
-    row.status !== 'done' &&
-    occurrence.inactive === null
-  );
+  return row.kind !== 'event' && !isScheduledKind(row.kind) && row.status !== 'done';
+}
+
+/** A task still to do: neither done nor cancelled (a disabled one is still to do). */
+function isOpenTask(occurrence: Occurrence): boolean {
+  return isUndoneTask(occurrence) && occurrence.row.status !== 'cancelled';
 }
 
 export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: string): AgendaModel {
@@ -89,13 +93,16 @@ export function buildAgenda(rows: readonly TimeRow[], now: Date, timeZone: strin
         freed.push(occurrence);
       }
     } else if (occurrence.dueOnly) {
-      if (!isOpenTask(occurrence)) {
+      // A cancelled or disabled task due today stays, faded, but never decides Next.
+      if (!isUndoneTask(occurrence) || (occurrence.inactive === null && !isOpenTask(occurrence))) {
         continue;
       }
-      if (startMs > nowMs) {
+      if (startMs <= nowMs) {
+        model.earlierToday.push(occurrence);
+      } else if (occurrence.inactive === null) {
         upcoming.push(occurrence);
       } else {
-        model.earlierToday.push(occurrence);
+        freed.push(occurrence);
       }
     } else if (startMs <= nowMs && nowMs < endOf(occurrence)) {
       model.now.push(occurrence);

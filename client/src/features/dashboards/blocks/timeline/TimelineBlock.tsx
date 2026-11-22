@@ -25,7 +25,12 @@ import { endOfZonedDay, startOfZonedDay } from '../clock/ClockRing.math';
 import { nestInAreas, splitAreas } from '../time/areas';
 import { INACTIVE_TITLE, inactiveKey } from '../time/inactive';
 import { InactiveTag } from '../time/InactiveTag';
-import { expandOccurrences, wallDate, type Occurrence } from '../time/occurrences';
+import {
+  expandOccurrences,
+  wallDate,
+  withSeriesFields,
+  type Occurrence,
+} from '../time/occurrences';
 import { TimelineAreaBand } from './TimelineAreaBand';
 
 const DEFAULT_DAYS = 7;
@@ -59,7 +64,8 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
   const title = blockTitle(block, t);
   const locale = dateLocale(language);
   const count = daysOf(block.viz);
-  const itemRows = useMemo(() => rows.map((entry) => entry.row), [rows]);
+  // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+  const itemRows = useMemo(() => withSeriesFields(rows.map((entry) => entry.row)), [rows]);
   const colourOf = useRowColours(itemRows);
   const days = useMemo((): Day[] => {
     const out: Day[] = [];
@@ -70,17 +76,13 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
       out.push({ date: wallDate(start, timeZone), start, items: [] });
       start = end;
     }
-    const occurrences = expandOccurrences(
-      rows.map((entry) => entry.row),
-      { from: first, to: start },
-      timeZone,
-    );
+    const occurrences = expandOccurrences(itemRows, { from: first, to: start }, timeZone);
     for (const occurrence of occurrences) {
       const date = wallDate(occurrence.start, timeZone);
       out.find((day) => day.date === date)?.items.push(occurrence);
     }
     return out;
-  }, [rows, now, timeZone, count]);
+  }, [itemRows, now, timeZone, count]);
   const busy = days.filter((day) => day.items.length > 0);
   const listed = canWrite ? days : busy;
   const heading = new Intl.DateTimeFormat(locale, {
@@ -153,7 +155,10 @@ export default function TimelineBlock({ dashboard, block, editing }: BlockCompon
         {occurrence.dueOnly ? (
           <span className="text-xs text-muted-foreground">{t('timeBlocks.timeline.due')}</span>
         ) : null}
-        {occurrence.inactive === null ? null : <InactiveTag inactive={occurrence.inactive} />}
+        {occurrence.inactive === null ? null : (
+          // The button's name already says it.
+          <InactiveTag inactive={occurrence.inactive} silent />
+        )}
         {leg === null ? (
           <>
             <SourceIcon source={displayProvider(row.source.provider)} />

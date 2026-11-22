@@ -284,7 +284,8 @@ function ItemBody({
           />
         ) : null}
 
-        {canWrite && canTravelTo(item) ? (
+        {/* A disabled item gets no travel (its time is free): enable it first. */}
+        {canWrite && canTravelTo(item) && item.overlay.disabled !== true ? (
           <ItemTravelSection item={item} occurrence={occurrence} />
         ) : null}
 

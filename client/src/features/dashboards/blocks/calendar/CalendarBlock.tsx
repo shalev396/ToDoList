@@ -53,6 +53,7 @@ import {
   visibleRange,
   wallDate,
   wallString,
+  withSeriesFields,
   type WeekStart,
 } from '../time/occurrences';
 import {
@@ -207,7 +208,8 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
     const shown = applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars });
     return shown.filter((entry) => !entry.hidden);
   }, [data.data?.rows, block.rules, now, timeZone, vars]);
-  const visibleRows = useMemo(() => visible.map((entry) => entry.row), [visible]);
+  // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+  const visibleRows = useMemo(() => withSeriesFields(visible.map((entry) => entry.row)), [visible]);
   const colourOf = useRowColours(visibleRows);
   const { areas, displayed } = useMemo(() => {
     const byRow = new Map(visible.map((entry) => [entry.row.id, entry] as const));
@@ -561,6 +563,18 @@ export default function CalendarBlock({ dashboard, block, editing }: BlockCompon
       // The tint alone is close to the card: a 1px edge in the Scheduled step outlines it.
       arg.el.setAttribute('data-role', 'area');
       arg.el.style.setProperty('--tc-edge', colourVar(props.family, 'scheduled'));
+      if (props.inactive !== null && arg.event.display !== 'background') {
+        // A month or list row: struck through, so its name says why.
+        const areaWhen = arg.event.allDay
+          ? t('timeBlocks.calendar.allDay')
+          : isolateLtr(`${wallTime(arg.event.start)}–${wallTime(arg.event.end)}`);
+        const areaName = `${t('timeBlocks.calendar.areaLabel', {
+          title: arg.event.title,
+          when: areaWhen,
+        })}. ${t(inactiveKey(props.inactive))}`;
+        arg.el.setAttribute('aria-label', areaName);
+        arg.el.setAttribute('title', areaName);
+      }
       return;
     }
     arg.el.setAttribute('data-role', props.role);

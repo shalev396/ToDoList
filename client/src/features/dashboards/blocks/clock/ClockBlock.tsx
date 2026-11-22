@@ -22,7 +22,7 @@ import type { ItemQueryRow, QueryRow } from '@api-types/builder';
 import type { ItemColour } from '@api-types/colours';
 import { INACTIVE_TITLE, inactiveKey } from '../time/inactive';
 import { InactiveTag } from '../time/InactiveTag';
-import type { Occurrence } from '../time/occurrences';
+import { withSeriesFields, type Occurrence } from '../time/occurrences';
 import {
   buildClockModel,
   ringProvider,
@@ -64,9 +64,12 @@ export default function ClockBlock({ dashboard, block }: BlockComponentProps) {
 
   const kept = useMemo(() => {
     const rows = (data.data?.rows ?? []).filter(isTimeRow);
-    return applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars })
-      .filter((entry) => !entry.hidden)
-      .map((entry) => entry.row);
+    // A cancelled Google occurrence (Google's id only) is titled and coloured as its series.
+    return withSeriesFields(
+      applyDisplayRules(rows, block.rules, { now, timeZone, userId: '', vars })
+        .filter((entry) => !entry.hidden)
+        .map((entry) => entry.row),
+    );
   }, [data.data?.rows, block.rules, now, timeZone, vars]);
   const colourOf = useRowColours(kept);
   const model = useMemo(
