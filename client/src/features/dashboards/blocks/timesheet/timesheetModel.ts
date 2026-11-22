@@ -19,7 +19,14 @@ import type { NewItemPreset } from '../../../items/create/timeBlockDraft.ts';
 import { parsePlannedAt } from '../../../items/plannedAt.ts';
 import { presetFromSelection, type WallSelection } from '../../../items/scheduled/dragPreset.ts';
 import { splitAreas } from '../time/areas.ts';
-import { expandOccurrences, wallString, type Occurrence, type Range } from '../time/occurrences.ts';
+import { activeOnly, INACTIVE_CLASS, rowInactive } from '../time/inactive.ts';
+import {
+  expandOccurrences,
+  wallString,
+  type Inactive,
+  type Occurrence,
+  type Range,
+} from '../time/occurrences.ts';
 
 /** A planned to-do is drawn this long: a plan has a start and no stored length. */
 export const PLANNED_MINUTES = 30;
@@ -124,10 +131,15 @@ export function buildTimesheet(
   timeZone: string,
   colourOf: (rowId: string) => ItemColour,
   showBlocks: boolean,
+  hidden: readonly ItemQueryRow[] = [],
 ): TimesheetModel {
   const timedRows = rows.filter((row) => !isTodoRow(row));
   const todos = panelOrder(rows.filter(isTodoRow));
-  const { areas, items } = splitAreas(expandOccurrences(timedRows, range, timeZone), colourOf);
+  // What a display rule hides still takes its slot out of its series (never listed).
+  const { areas, items } = splitAreas(
+    expandOccurrences(timedRows, range, timeZone, { hidden }),
+    colourOf,
+  );
   return {
     areas,
     timed: items.filter((o) => showBlocks || layerOf(o.row) !== 'block'),
@@ -144,11 +156,14 @@ export interface PlannedEventProps {
   role: ColourRole;
   /** The stored plan, which the chip's label reads. */
   plannedAt: string;
+  /** A cancelled or disabled to-do: its chip is faded and struck through, its time free. */
+  inactive: Inactive | null;
 }
 
 /**
  * A planned to-do as a chip: at its plan for PLANNED_MINUTES (or on the all-day row for a plan
  * without a time), in its colour, draggable but not resizable (a plan has no length to change).
+ * A cancelled or disabled one has no fill, faded and struck through (`tc-off`), and still drags.
  * Null for a to-do with no plan.
  */
 export function plannedEventInput(row: ItemQueryRow, colour: ItemColour): EventInput | null {
@@ -158,6 +173,7 @@ export function plannedEventInput(row: ItemQueryRow, colour: ItemColour): EventI
   }
   const plannedAt = time === '' ? date : `${date}T${time}`;
   const paint = paintOf(colour);
+  const inactive = rowInactive(row);
   const extendedProps: PlannedEventProps = {
     rowId: row.id,
     planned: true,
@@ -165,6 +181,7 @@ export function plannedEventInput(row: ItemQueryRow, colour: ItemColour): EventI
     family: colour.family,
     role: colour.role,
     plannedAt,
+    inactive,
   };
   const timing: EventInput =
     time === ''
@@ -176,15 +193,15 @@ export function plannedEventInput(row: ItemQueryRow, colour: ItemColour): EventI
         };
   return {
     // Drawn again when its plan, title or colour changes (FullCalendar keeps an element per id).
-    id: ['plan', row.id, plannedAt, row.title, colour.family, colour.role].join('|'),
+    id: ['plan', row.id, plannedAt, row.title, colour.family, colour.role, inactive].join('|'),
     title: row.title,
     editable: true,
     startEditable: true,
     durationEditable: false,
-    classNames: ['tc-planned'],
-    backgroundColor: paint.fill,
+    classNames: ['tc-planned', ...(inactive === null ? [] : [INACTIVE_CLASS])],
+    backgroundColor: inactive === null ? paint.fill : 'transparent',
     borderColor: paint.fill,
-    textColor: paint.ink,
+    textColor: inactive === null ? paint.ink : 'var(--foreground)',
     extendedProps,
     ...timing,
   };
@@ -228,16 +245,17 @@ export function withPlan(
 /**
  * The New sheet a drag across the grid opens. Over free time: a new area of the timesheet's topic
  * at that time (painting the time sheet). Inside painted time: a time block there, on the area's
- * topic, as the calendar does (dragPreset.ts).
+ * topic, as the calendar does (dragPreset.ts). A cancelled or disabled area is free time.
  */
 export function selectionPreset(
   selection: WallSelection,
-  areas: readonly Occurrence[],
+  allAreas: readonly Occurrence[],
   timeZone: string,
   topicId: string | null,
 ): NewItemPreset {
   const start = fromWallString(selection.startWall, timeZone);
   const end = fromWallString(selection.endWall, timeZone);
+  const areas = activeOnly(allAreas);
   const painted = areas.some(
     (area) =>
       area.start.getTime() < end.getTime() && (area.end ?? area.start).getTime() > start.getTime(),

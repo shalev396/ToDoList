@@ -1,9 +1,9 @@
 /**
  * An item's overlay, as an immutable value object: what users keep on any item, mirrored or local,
  * that the sync never touches and no provider ever receives: pin, note, hidden, a topic to file it
- * under, whether the workspace calendar takes it, a planned date, custom attribute values, and (on
- * a mirrored item) its overrides. It also carries H5's copy marks (`copyOf`…), which only the copy
- * flow sets.
+ * under, whether the workspace calendar takes it, a planned date, custom attribute values, whether
+ * it is disabled (Disabled.ts), and (on a mirrored item) its overrides. It also carries H5's copy
+ * marks (`copyOf`…), which only the copy flow sets.
  *
  * `patch()` turns an overlay edit into what is stored: the planned date parsed (PlannedAt), the
  * attribute values checked against the workspace's definitions (AttributeValues), `editedAt`
@@ -15,12 +15,18 @@ import type { ItemOverlayView, UpdateOverlayRequestBody } from '../../types/item
 import { redactString } from '../../services/secretPatterns.js';
 import { AttributeDefinitions } from '../workspace/AttributeDefinitions.js';
 import { AttributeValues } from './AttributeValues.js';
+import { DisabledState } from './Disabled.js';
 import { Overrides } from './Overrides.js';
 import { PlannedAt } from './PlannedAt.js';
 
-/** An overlay edit as callers give it (optional keys may be present as undefined). */
+/**
+ * An overlay edit as callers give it (optional keys may be present as undefined). Disabling is not
+ * one: it may change a whole series (Item#setDisabled).
+ */
 export type OverlayEdit = {
-  [K in keyof UpdateOverlayRequestBody]?: UpdateOverlayRequestBody[K] | undefined;
+  [K in Exclude<keyof UpdateOverlayRequestBody, 'disabled' | 'scope' | 'occurrenceStart'>]?:
+    | UpdateOverlayRequestBody[K]
+    | undefined;
 };
 
 export class Overlay {
@@ -100,6 +106,11 @@ export class Overlay {
     return this.#overlay.editedAt;
   }
 
+  /** Whether it, or occurrences of its series, are disabled in TodoList (Disabled.ts). */
+  get disabledState(): DisabledState {
+    return DisabledState.of(this.#overlay);
+  }
+
   /** H5: the local to-do this mirrored item is the provider copy of (null: none). */
   get copyOf(): string | null {
     return this.#overlay.copyOf;
@@ -117,6 +128,8 @@ export class Overlay {
       plannedAt: overlay.plannedAt,
       editedAt: overlay.editedAt,
       attrs: this.attributes.toView(),
+      disabled: overlay.disabled,
+      disabledOccurrences: [...overlay.disabledOccurrences],
       overrides: this.#overrides.toView(),
     };
   }

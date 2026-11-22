@@ -9,7 +9,12 @@ import type { SourceRef } from '../definitions/common.js';
 import type { ContainerFilter, ContainerUpsert } from '../definitions/Container.js';
 import type { CreateIntegrationInput } from '../definitions/Integration.js';
 import type { SyncRunData } from '../definitions/SyncRun.js';
-import { localItemUrl, type ItemUpsert, type SweepWindow } from '../definitions/Item.js';
+import {
+  DISABLED_OCCURRENCES_MAX,
+  localItemUrl,
+  type ItemUpsert,
+  type SweepWindow,
+} from '../definitions/Item.js';
 import { MirroredItemError } from '../errors.js';
 import { AgentKeyMongoModel, AgentKeyRepository } from '../mongoose/AgentKey.js';
 import { AuditLogRepository } from '../mongoose/AuditLog.js';
@@ -499,6 +504,8 @@ describe('ItemRepository', () => {
       copyOfOwner: null,
       copyOfShared: null,
       attrs: {},
+      disabled: null,
+      disabledOccurrences: [],
       overrides: {
         title: null,
         status: null,
@@ -601,6 +608,129 @@ describe('ItemRepository', () => {
     );
   });
 
+  it('setOccurrenceDisabled keeps the list sorted, once each, and cut to its cap', async () => {
+    const block = await ItemRepository.createLocal('w-disabled', {
+      ownerUserId: 'u-owner',
+      title: 'Daily',
+      topicId: null,
+      kind: 'block',
+      startAt: new Date('2026-01-01T08:00:00.000Z'),
+      endAt: new Date('2026-01-01T09:00:00.000Z'),
+      props: { layer: 'block', recurrence: ['RRULE:FREQ=DAILY'], exceptions: [] },
+    });
+    const day = (n: number): string =>
+      new Date(Date.parse('2026-01-01T08:00:00.000Z') + n * 86_400_000).toISOString();
+    const at = new Date('2026-11-22T10:00:00.000Z');
+    await ItemRepository.setOccurrenceDisabled('w-disabled', block.id, day(5), true, at);
+    await ItemRepository.setOccurrenceDisabled('w-disabled', block.id, day(2), true, at);
+    const twice = await ItemRepository.setOccurrenceDisabled(
+      'w-disabled',
+      block.id,
+      day(5),
+      true,
+      at,
+    );
+    assert.deepEqual(twice?.overlay.disabledOccurrences, [day(2), day(5)]);
+    assert.deepEqual(twice.overlay.editedAt, at);
+    for (let n = 10; n < 10 + DISABLED_OCCURRENCES_MAX; n += 1) {
+      await ItemRepository.setOccurrenceDisabled('w-disabled', block.id, day(n), true, at);
+    }
+    const full = await ItemRepository.findById('w-disabled', block.id);
+    assert.equal(full?.overlay.disabledOccurrences.length, DISABLED_OCCURRENCES_MAX);
+    // The oldest went first.
+    assert.equal(full.overlay.disabledOccurrences[0], day(10));
+    const pulled = await ItemRepository.setOccurrenceDisabled(
+      'w-disabled',
+      block.id,
+      day(10),
+      false,
+      at,
+    );
+    assert.equal(pulled?.overlay.disabledOccurrences[0], day(11));
+    assert.equal(
+      await ItemRepository.setOccurrenceDisabled('w-other', block.id, day(1), true, at),
+      null,
+    );
+  });
+
+  it('setSeriesDisabled marks one integration copy of a Google series, master and exceptions', async () => {
+    const google = (
+      integrationId: string,
+      eventId: string,
+      props: Record<string, unknown>,
+    ): ItemUpsert => ({
+      integrationId,
+      kind: 'event',
+      topicId: null,
+      title: eventId,
+      status: 'open',
+      startAt: new Date('2026-11-22T08:00:00.000Z'),
+      source: {
+        provider: 'google_calendar',
+        accountId: 'me@example.test',
+        externalId: `cal:${eventId}`,
+        key: null,
+        url: 'https://calendar.google.com/x',
+        updatedAtSource: null,
+        etag: null,
+        hash: null,
+      },
+      props: { calendarId: 'cal', eventId, ...props },
+    });
+    await ItemRepository.bulkUpsert('w-series', [
+      google('i-1', 'm', { recurrence: ['RRULE:FREQ=DAILY'] }),
+      google('i-1', 'm_1', { recurringEventId: 'm', originalStartAt: '2026-11-23T08:00:00.000Z' }),
+      google('i-1', 'single', {}),
+      google('i-2', 'm', { recurrence: ['RRULE:FREQ=DAILY'] }),
+    ]);
+    const series = { integrationId: 'i-1', accountId: 'me@example.test', calendarId: 'cal' };
+    const at = new Date('2026-11-22T10:00:00.000Z');
+    assert.equal(
+      await ItemRepository.setSeriesDisabled('w-series', { ...series, eventId: 'm' }, true, at),
+      2,
+    );
+    const rows = await ItemRepository.aggregate<{
+      integrationId: string;
+      title: string;
+      overlay: { disabled: boolean | null };
+    }>('w-series', [{ $sort: { integrationId: 1, title: 1 } }]);
+    assert.deepEqual(
+      rows.map((row) => [row.integrationId, row.title, row.overlay.disabled]),
+      [
+        ['i-1', 'm', true],
+        ['i-1', 'm_1', true],
+        ['i-1', 'single', null],
+        ['i-2', 'm', null],
+      ],
+    );
+    const exception = await ItemRepository.findSeriesException(
+      'w-series',
+      { ...series, eventId: 'm' },
+      '2026-11-23T08:00:00.000Z',
+    );
+    assert.equal(exception?.title, 'm_1');
+    await ItemRepository.setSeriesDisabled('w-series', { ...series, eventId: 'm' }, false, at);
+    assert.equal(exception.overlay.disabled, true);
+    assert.equal((await ItemRepository.findById('w-series', exception.id))?.overlay.disabled, null);
+  });
+
+  it('a sync never writes the disabled marks', async () => {
+    await ItemRepository.bulkUpsert('w-items', [jiraIssue('777', 'sha1:a')]);
+    const id = await mirroredId('w-items', '777');
+    await ItemRepository.setOverlay('w-items', id, {
+      disabled: true,
+      disabledOccurrences: ['2026-11-22T08:00:00.000Z'],
+    });
+    await ItemRepository.bulkUpsert('w-items', [
+      jiraIssue('777', 'sha1:b', { title: 'Renamed', status: 'cancelled' }),
+    ]);
+    const item = await ItemRepository.findById('w-items', id);
+    assert.deepEqual(
+      [item?.title, item?.overlay.disabled, item?.overlay.disabledOccurrences],
+      ['Renamed', true, ['2026-11-22T08:00:00.000Z']],
+    );
+  });
+
   it('setOverlay changes only the overlay fields given, on mirrored items too', async () => {
     await ItemRepository.bulkUpsert('w-items', [jiraIssue('101', 'sha1:a')]);
     const id = await mirroredId('w-items', '101');
@@ -618,6 +748,8 @@ describe('ItemRepository', () => {
       copyOfOwner: null,
       copyOfShared: null,
       attrs: {},
+      disabled: null,
+      disabledOccurrences: [],
       overrides: {
         title: null,
         status: null,

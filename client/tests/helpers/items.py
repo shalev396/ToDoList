@@ -81,3 +81,19 @@ def delete_item(api_base_url: str, user, workspace_id: str, item_id: str) -> Non
     )
     if response.status_code >= 400:
         raise RuntimeError(f"Deleting an item failed: {response.status_code} {response.text[:200]}")
+
+
+def set_item_status(api_base_url: str, user, workspace_id: str, item_id: str, status: str) -> dict:
+    """PATCH …/items/:id with a status (a local to-do takes `cancelled` too). Returns the item."""
+    response = requests.patch(
+        f"{api_base_url}/private/workspaces/{workspace_id}/items/{item_id}",
+        json={"status": status},
+        headers=_headers(user),
+        timeout=15,
+    )
+    return _data(response, "Changing an item's status")
+
+
+def is_overlay_write(response) -> bool:
+    """`PATCH …/items/:id/overlay` (pin, note, plan, disable…), for page.expect_response."""
+    return response.url.endswith("/overlay") and response.request.method == "PATCH"

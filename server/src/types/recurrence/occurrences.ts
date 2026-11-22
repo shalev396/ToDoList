@@ -11,9 +11,19 @@
  *   organiser took out): a UTC value (`…Z`), a wall time in its TZID (or, floating, in the
  *   workspace's zone), or a date (`VALUE=DATE`: the slot on that day).
  * - Google: a cancelled occurrence arrives as a live item with `status: 'cancelled'` and
- *   `props.recurringEventId` + `props.originalStartAt`: that occurrence is excluded from its series
- *   (an exdate) and the item itself is never listed. A moved occurrence is a normal item with the
+ *   `props.recurringEventId` + `props.originalStartAt`, and usually nothing else (Google sends its
+ *   id, series and original start only, so its stored title is its raw id): its slot is excluded
+ *   from its series (an exdate) and it is listed there instead, `inactive: 'cancelled'`, wearing
+ *   its master's title, topic, subject and link (`withSeriesFields`) and, with no end of its own,
+ *   its master's length. With no known master (none among the rows, or two copies of it) or a
+ *   master the member declined, it is never listed. A moved occurrence is a normal item with the
  *   same two props: its original slot is excluded and the item shows at its new time.
+ * - Inactive (the owner's ruling of 2026-11-22): an occurrence the provider cancelled
+ *   (`status: 'cancelled'`) or the member disabled in TodoList (`overlay.disabled` on the item, or
+ *   on a Google exception's master; its slot in `overlay.disabledOccurrences`) is still listed,
+ *   marked `inactive`, so every time view draws it faded and struck through; it takes no time
+ *   (never busy, never Now or Next, never a travel anchor). An event the member declined (Google,
+ *   `statusRaw: 'declined'`) is never listed.
  * - Local: `props.exceptions` (`{ originalStart, startAt?, endAt?, skipped? }`), keyed by the
  *   occurrence's original start, remove skipped slots and replace moved ones. A moved occurrence
  *   whose new time overlaps the range is listed even when its original slot is outside it.
@@ -27,19 +37,36 @@ export { wallDate, wallString } from './zoned.js';
 
 type Instant = Date | string | null;
 
+/** What a time view reads of a row's overlay: whether the member disabled it (DATA.md §3.6). */
+export interface TimeRowOverlay {
+  /** The whole item (a series: every occurrence). */
+  disabled?: boolean | null;
+  /** One occurrence of a series each, by its original start (ISO 8601). */
+  disabledOccurrences?: readonly string[] | null;
+}
+
 /** The part of a /query item row the time views read (JSON dates arrive as strings). */
 export interface TimeRow {
   id: string;
   kind: string;
   title: string;
   status: string;
+  /** The provider's own status: `declined` on a Google event the member declined. */
+  statusRaw?: string | null;
   startAt: Instant;
   endAt: Instant;
   dueAt: Instant;
   allDay: boolean;
   source: QueryRowSource;
   props: Record<string, unknown>;
+  overlay?: TimeRowOverlay | undefined;
 }
+
+/**
+ * Why an occurrence takes no time although it is listed: the provider cancelled it, or the member
+ * disabled it in TodoList (both drawn faded and struck through; its time reads as free).
+ */
+export type Inactive = 'cancelled' | 'disabled';
 
 /** One stored change to one occurrence of a local series, keyed by its original start (ISO). */
 export interface LocalException {
@@ -73,6 +100,8 @@ export interface Occurrence {
    * rows (null otherwise). Null for an item that is not part of a series.
    */
   seriesRowId: string | null;
+  /** Cancelled at the provider or disabled in TodoList: listed, but its time is free. Else null. */
+  inactive: Inactive | null;
 }
 
 export interface Range {
@@ -415,18 +444,161 @@ export function recurrenceEndOf(
   return new Date(last).toISOString();
 }
 
-/** The occurrences that overlap `range`, ordered by start. Cancelled items are never listed. */
+/** A Google event the member declined: never listed (as before the inactive state). */
+export function isDeclined(row: Pick<TimeRow, 'status' | 'statusRaw' | 'source'>): boolean {
+  return (
+    row.status === 'cancelled' &&
+    row.source.provider === 'google_calendar' &&
+    row.statusRaw === 'declined'
+  );
+}
+
+/** The original starts (ms) of the occurrences a row's overlay disables one by one. */
+function disabledSlotsOf(overlay: TimeRowOverlay | undefined): ReadonlySet<number> {
+  const slots = new Set<number>();
+  for (const text of overlay?.disabledOccurrences ?? []) {
+    const date = toDate(typeof text === 'string' ? text : null);
+    if (date !== null) {
+      slots.add(date.getTime());
+    }
+  }
+  return slots;
+}
+
+/** An occurrence that takes its time: neither cancelled nor disabled. */
+export function isActive(occurrence: Pick<Occurrence, 'inactive'>): boolean {
+  return occurrence.inactive === null;
+}
+
+/** What a Google master lends its exception rows: its id, length, row and disabled state. */
+interface MasterInfo {
+  id: string;
+  /** The master row itself: a cancelled occurrence wears its title, topic and link. */
+  row: TimeRow;
+  /** ms; 0 when it has no end. */
+  length: number;
+  /** The member declined the series: none of its cancelled occurrences is listed either. */
+  declined: boolean;
+  /** A display rule hides the series: none of its cancelled occurrences is listed either. */
+  hidden: boolean;
+  disabled: boolean;
+  disabledSlots: ReadonlySet<number>;
+}
+
+/**
+ * Google masters by `calendarId|eventId`; null when more than one row is that master (one series
+ * mirrored through two accounts), so no exception row picks the wrong copy.
+ */
+function mastersOf(
+  rows: readonly TimeRow[],
+  hidden: ReadonlySet<TimeRow> = new Set(),
+): Map<string, MasterInfo | null> {
+  const masters = new Map<string, MasterInfo | null>();
+  for (const row of rows) {
+    const own = seriesKey(row.props, 'eventId');
+    if (own === null || !isSeriesRow(row)) {
+      continue;
+    }
+    const known = masters.get(own);
+    const start = toDate(row.startAt);
+    const end = toDate(row.endAt);
+    masters.set(
+      own,
+      known === undefined || known?.id === row.id
+        ? {
+            id: row.id,
+            row,
+            length:
+              start !== null && end !== null && end > start ? end.getTime() - start.getTime() : 0,
+            declined: isDeclined(row),
+            hidden: hidden.has(row),
+            disabled: row.overlay?.disabled === true,
+            disabledSlots: disabledSlotsOf(row.overlay),
+          }
+        : null,
+    );
+  }
+  return masters;
+}
+
+/** A cancelled exception row of a Google series (`recurringEventId`): its own data is Google's id. */
+export function isCancelledException(row: Pick<TimeRow, 'status' | 'props'>): boolean {
+  return row.status === 'cancelled' && seriesKey(row.props, 'recurringEventId') !== null;
+}
+
+/**
+ * A cancelled occurrence's row, dressed as its series: the master's title, link and, where the row
+ * type has them, its topic and the overlay's topic and subject (what its colour reads). Its own id,
+ * status, times, props and disabled state stay, so it is still that occurrence.
+ */
+export function dressedAs<R extends TimeRow>(row: R, master: TimeRow): R {
+  const own = row as unknown as Record<string, unknown>;
+  const from = master as unknown as Record<string, unknown>;
+  const ownOverlay = (own['overlay'] ?? undefined) as Record<string, unknown> | undefined;
+  const fromOverlay = (from['overlay'] ?? undefined) as Record<string, unknown> | undefined;
+  return {
+    ...row,
+    title: master.title,
+    source: { ...row.source, url: master.source.url },
+    ...('topicId' in from ? { topicId: from['topicId'] } : {}),
+    ...(ownOverlay === undefined || fromOverlay === undefined
+      ? {}
+      : {
+          overlay: {
+            ...ownOverlay,
+            topicOverride: fromOverlay['topicOverride'] ?? null,
+            attrs: fromOverlay['attrs'] ?? {},
+          },
+        }),
+  };
+}
+
+/**
+ * The rows with every cancelled occurrence of a known Google series dressed as its master
+ * (`dressedAs`): Google sends a cancelled occurrence's id, series and original start only, so its
+ * own title is a raw id and its topic and colour are nobody's. A row with no known master is left
+ * as it is (the expansion never lists it). The time views colour and title from these rows; the
+ * expansion applies it too.
+ */
+export function withSeriesFields<R extends TimeRow>(rows: readonly R[]): R[] {
+  const masters = mastersOf(rows);
+  return rows.map((row) => {
+    if (!isCancelledException(row)) {
+      return row;
+    }
+    const key = seriesKey(row.props, 'recurringEventId');
+    const master = key === null ? undefined : masters.get(key);
+    return master === undefined || master === null ? row : dressedAs(row, master.row);
+  });
+}
+
+/** How an expansion reads its rows beyond the ones it lists. */
+export interface ExpandOptions {
+  /**
+   * Rows a display rule hides: never listed, but they still take their slots out of their series
+   * (a hidden cancelled occurrence never turns back into an active, busy one), and a hidden
+   * master's cancelled occurrences are not listed either.
+   */
+  hidden?: readonly TimeRow[];
+}
+
+/**
+ * The occurrences that overlap `range`, ordered by start. A cancelled or disabled one is listed
+ * with `inactive` set (its time is free); a declined event is never listed.
+ */
 export function expandOccurrences(
   rows: readonly TimeRow[],
   range: Range,
   timeZone: string,
+  options: ExpandOptions = {},
 ): Occurrence[] {
+  const hidden = new Set(options.hidden ?? []);
+  const every = hidden.size === 0 ? rows : [...rows, ...hidden];
   // The slots a Google series no longer has: cancelled occurrences and the old slot of moved ones.
   const exdates = new Map<string, Set<number>>();
-  // A Google master's row id by its `calendarId|eventId`; null when more than one row is that
-  // master (one series mirrored through two accounts), so no exception row picks the wrong copy.
-  const masters = new Map<string, string | null>();
-  for (const row of rows) {
+  const masters = mastersOf(every, hidden);
+  for (const row of every) {
+    // A declined occurrence takes its slot out too (it is never listed itself).
     const key = seriesKey(row.props, 'recurringEventId');
     const originalText = row.props['originalStartAt'];
     const original = toDate(typeof originalText === 'string' ? originalText : null);
@@ -434,11 +606,6 @@ export function expandOccurrences(
       const slots = exdates.get(key) ?? new Set<number>();
       slots.add(original.getTime());
       exdates.set(key, slots);
-    }
-    const own = seriesKey(row.props, 'eventId');
-    if (own !== null && isSeriesRow(row)) {
-      const known = masters.get(own);
-      masters.set(own, known === undefined || known === row.id ? row.id : null);
     }
   }
 
@@ -448,9 +615,11 @@ export function expandOccurrences(
     (end === null ? start.getTime() >= range.from.getTime() : end.getTime() > range.from.getTime());
 
   for (const row of rows) {
-    if (row.status === 'cancelled') {
+    if (isDeclined(row)) {
       continue;
     }
+    const cancelled = row.status === 'cancelled';
+    const rowDisabled = row.overlay?.disabled === true;
     const startAt = toDate(row.startAt);
     const endAt = toDate(row.endAt);
     const start = startAt ?? toDate(row.dueAt);
@@ -465,6 +634,7 @@ export function expandOccurrences(
       const own = seriesKey(row.props, 'eventId');
       const gone = own === null ? undefined : exdates.get(own);
       const excluded = excludedSlotsOf(row.props, timeZone);
+      const disabledSlots = disabledSlotsOf(row.overlay);
       const isExcluded = (slot: Date): boolean =>
         excluded.instants.has(slot.getTime()) ||
         (excluded.days.size > 0 && excluded.days.has(wallString(slot, timeZone).slice(0, 10)));
@@ -475,7 +645,7 @@ export function expandOccurrences(
         }
       }
       // The occurrence that fills one slot, at its exception's times or the slot's own; null when
-      // the slot is skipped, cancelled, or lands outside the range.
+      // the slot is skipped, taken by an exception row, or lands outside the range.
       const occurrenceOf = (slot: Date): Occurrence | null => {
         const exception = exceptions.get(slot.getTime());
         if (exception?.skipped === true || gone?.has(slot.getTime()) === true || isExcluded(slot)) {
@@ -502,6 +672,11 @@ export function expandOccurrences(
           dueOnly: false,
           originalStart: slot,
           seriesRowId: row.id,
+          inactive: cancelled
+            ? 'cancelled'
+            : rowDisabled || disabledSlots.has(slot.getTime())
+              ? 'disabled'
+              : null,
         };
       };
 
@@ -530,26 +705,50 @@ export function expandOccurrences(
       continue;
     }
 
-    const end = length > 0 ? endAt : null;
+    // A Google exception row (moved or cancelled): keyed by its master and original slot, like the
+    // master's own, and disabled with it.
+    const series = seriesKey(row.props, 'recurringEventId');
+    const originalText = row.props['originalStartAt'];
+    const originalStart =
+      series === null ? null : toDate(typeof originalText === 'string' ? originalText : null);
+    const master = series === null ? undefined : masters.get(series);
+    // A cancelled occurrence is Google's id only: listed as its series (dressed as the master),
+    // and never when its master is unknown, declined or hidden (it would read as a raw id, or
+    // show a series the member said no to or hid).
+    const cancelledException = cancelled && series !== null;
+    if (
+      cancelledException &&
+      (master === undefined || master === null || master.declined || master.hidden)
+    ) {
+      continue;
+    }
+    const shown =
+      cancelledException && master !== undefined && master !== null
+        ? dressedAs(row, master.row)
+        : row;
+    // A cancelled occurrence often comes without an end: it lasts as long as its series' slots.
+    const ownLength = length > 0 ? length : cancelled && !dueOnly ? (master?.length ?? 0) : 0;
+    const end = ownLength > 0 ? new Date(start.getTime() + ownLength) : null;
     if (overlaps(start, end)) {
-      // A Google moved occurrence: keyed by its master and original slot, like the master's own.
-      const series = seriesKey(row.props, 'recurringEventId');
-      const originalText = row.props['originalStartAt'];
-      const originalStart =
-        series === null ? null : toDate(typeof originalText === 'string' ? originalText : null);
-      const seriesRowId = series === null ? null : (masters.get(series) ?? null);
+      const seriesRowId = master?.id ?? null;
+      const seriesDisabled =
+        master !== undefined &&
+        master !== null &&
+        (master.disabled ||
+          (originalStart !== null && master.disabledSlots.has(originalStart.getTime())));
       out.push({
         key:
           originalStart === null
             ? row.id
             : `${seriesRowId ?? row.id}@${String(originalStart.getTime())}`,
-        row,
+        row: shown,
         start,
         end,
         allDay: row.allDay && !dueOnly,
         dueOnly,
         originalStart,
         seriesRowId: originalStart === null ? null : seriesRowId,
+        inactive: cancelled ? 'cancelled' : rowDisabled || seriesDisabled ? 'disabled' : null,
       });
     }
   }

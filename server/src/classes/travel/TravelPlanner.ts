@@ -150,9 +150,9 @@ export class TravelPlanner {
   /**
    * Whether a write can change the member's legs: a new or deleted item with a start (one without
    * can never be an anchor); an edit of its start, end, all-day, status, topic (the legs' colour,
-   * and a rule may read it), container (its default place), deletion, or props (a location, a
-   * repeat, a layer). A rename, a note or a priority leaves the legs as they are; the next sync or
-   * daily pass reads the item afresh anyway.
+   * and a rule may read it), container (its default place), deletion, props (a location, a
+   * repeat, a layer), or whether it (or an occurrence of it) is disabled. A rename, a note or a
+   * priority leaves the legs as they are; the next sync or daily pass reads the item afresh anyway.
    */
   static movesTravel(change: Pick<ItemChange, 'before' | 'after'>): boolean {
     const { before, after } = change;
@@ -163,7 +163,12 @@ export class TravelPlanner {
     return (
       TRAVEL_FIELDS.some(
         (field) => stableStringify(before[field]) !== stableStringify(after[field]),
-      ) || stableStringify(before.props) !== stableStringify(after.props)
+      ) ||
+      stableStringify(before.props) !== stableStringify(after.props) ||
+      // Disabled or enabled (Disabled.ts): a disabled occurrence anchors no travel.
+      before.overlay.disabled !== after.overlay.disabled ||
+      stableStringify(before.overlay.disabledOccurrences) !==
+        stableStringify(after.overlay.disabledOccurrences)
     );
   }
 

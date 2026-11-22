@@ -55,6 +55,8 @@ function row(id: string, over: Partial<ItemQueryRow> = {}): ItemQueryRow {
       plannedAt: null,
       editedAt: null,
       attrs: {},
+      disabled: null,
+      disabledOccurrences: [],
     },
     closedAt: null,
     ...over,
@@ -232,7 +234,27 @@ describe('plannedEventInput: a planned to-do as a chip', () => {
       family: 'orange',
       role: 'work',
       plannedAt: '2026-11-24T23:45',
+      inactive: null,
     });
+  });
+
+  it('a disabled or cancelled to-do’s chip has no fill, faded (tc-off), and still drags', () => {
+    const off = planned('a', '2026-11-24T10:00');
+    const disabled = plannedEventInput(
+      { ...off, overlay: { ...off.overlay, disabled: true } },
+      colour,
+    );
+    assert.ok(disabled !== null);
+    assert.deepEqual(disabled.classNames, ['tc-planned', 'tc-off']);
+    assert.deepEqual(
+      [disabled.backgroundColor, disabled.textColor, disabled.editable],
+      ['transparent', 'var(--foreground)', true],
+    );
+    assert.equal((disabled.extendedProps as { inactive: string }).inactive, 'disabled');
+    const cancelled = plannedEventInput({ ...off, status: 'cancelled' }, colour);
+    assert.ok(cancelled !== null);
+    assert.equal((cancelled.extendedProps as { inactive: string }).inactive, 'cancelled');
+    assert.notEqual(disabled.id, plannedEventInput(off, colour)?.id);
   });
 
   it('a day without a time is on the all-day row; no plan is no chip', () => {
@@ -345,6 +367,50 @@ describe('selectionPreset: a drag across the grid', () => {
         'work',
       ),
       { kind: 'block', start: at(2026, 11, 24, 10), end: at(2026, 11, 24, 11), topicId: 'studies' },
+    );
+  });
+
+  it('a disabled area is free time: a drag there paints a new area', () => {
+    const off = { ...area, overlay: { ...area.overlay, disabled: true } };
+    const offAreas = buildTimesheet([off], WEEK, TZ, colourOf([off]), true).areas;
+    assert.deepEqual(
+      offAreas.map((o) => o.inactive),
+      ['disabled'],
+    );
+    assert.equal(
+      selectionPreset(
+        { startWall: '2026-11-24T10:00:00', endWall: '2026-11-24T11:00:00' },
+        offAreas,
+        TZ,
+        'work',
+      ).kind,
+      'area',
+    );
+  });
+});
+
+describe('the timesheet keeps disabled and cancelled time, free', () => {
+  it('a disabled block and a cancelled event are drawn, flagged, among the timed', () => {
+    const block = row('gym', {
+      kind: 'block',
+      startAt: at(2026, 11, 24, 9),
+      endAt: at(2026, 11, 24, 10),
+      props: { layer: 'block' },
+      overlay: { ...row('gym').overlay, disabled: true },
+    });
+    const event = row('standup', {
+      kind: 'event',
+      status: 'cancelled',
+      startAt: at(2026, 11, 24, 10),
+      endAt: at(2026, 11, 24, 11),
+    });
+    const model = buildTimesheet([block, event], WEEK, TZ, colourOf([block, event]), true);
+    assert.deepEqual(
+      model.timed.map((o) => [o.row.id, o.inactive]),
+      [
+        ['gym', 'disabled'],
+        ['standup', 'cancelled'],
+      ],
     );
   });
 });

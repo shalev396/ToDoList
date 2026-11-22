@@ -60,8 +60,33 @@ export interface ItemOverlay {
    * `setOverlay`, a key given as null is cleared.
    */
   attrs: Record<string, unknown>;
+  /**
+   * Disabled in TodoList (classes/item/Disabled.ts): drawn faded and struck through, its time free
+   * (never busy, never a travel anchor, never pushed). On a series, every occurrence; on a Google
+   * series it is set on the master and on each exception row together. Never written to a provider.
+   */
+  disabled: boolean | null;
+  /**
+   * A series' occurrences disabled one by one (a local series, or a Google master's own slots), by
+   * original start, ISO 8601, sorted, at most DISABLED_OCCURRENCES_MAX (the oldest go first).
+   */
+  disabledOccurrences: string[];
   /** Local stand-ins for fields the provider lacks (mirrored items only; never synced). */
   overrides: ItemOverrides;
+}
+
+/** The most occurrences one series disables one by one (`overlay.disabledOccurrences`). */
+export const DISABLED_OCCURRENCES_MAX = 366;
+
+/**
+ * One Google series as stored for one integration: its master's `props.eventId` (an exception
+ * row's `props.recurringEventId`) on one calendar.
+ */
+export interface GoogleSeriesRef {
+  integrationId: string;
+  accountId: string;
+  calendarId: string;
+  eventId: string;
 }
 
 /** What `setOverlay` takes: overlay fields, and override fields (null clears one). */
@@ -406,6 +431,40 @@ export interface IItemRepository {
    * and local items.
    */
   setOverlay(workspaceId: string, id: string, overlay: ItemOverlayPatch): Promise<ItemData | null>;
+  /**
+   * One occurrence of a series disabled (added to `overlay.disabledOccurrences`, kept sorted, the
+   * oldest dropped past DISABLED_OCCURRENCES_MAX) or enabled (removed), atomically, with
+   * `overlay.editedAt` = `at`. Null when there is no such live item.
+   */
+  setOccurrenceDisabled(
+    workspaceId: string,
+    id: string,
+    originalStart: string,
+    disabled: boolean,
+    at: Date,
+  ): Promise<ItemData | null>;
+  /**
+   * A whole Google series disabled or enabled: its master and every exception row of it (one
+   * integration's copy) get `overlay.disabled` (true, or null) and lose their one-by-one marks.
+   * Returns how many items it changed.
+   */
+  setSeriesDisabled(
+    workspaceId: string,
+    series: GoogleSeriesRef,
+    disabled: boolean,
+    at: Date,
+    access?: Readonly<Record<string, unknown>>,
+  ): Promise<number>;
+  /**
+   * The live exception row of a Google series that fills the slot at `originalStart` (ISO).
+   * `access` (the caller's item filter) narrows both to the rows the caller may see.
+   */
+  findSeriesException(
+    workspaceId: string,
+    series: GoogleSeriesRef,
+    originalStart: string,
+    access?: Readonly<Record<string, unknown>>,
+  ): Promise<ItemData | null>;
   /**
    * Sets `deletedAt`. False when there was nothing to delete. The item's provider copies are
    * released (`overlay.copyOf` cleared): they show as normal mirrored items. Nothing is deleted at

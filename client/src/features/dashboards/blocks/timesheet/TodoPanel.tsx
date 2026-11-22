@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import type { ItemQueryRow } from '@api-types/builder';
 import type { ItemColour } from '@api-types/colours';
 import { ringProvider } from '../clock/clockModel';
+import { INACTIVE_TITLE, inactiveKey, rowInactive } from '../time/inactive';
 
 /** One to-do of the panel, with its words worked out by the block. */
 export interface PanelTodo {
@@ -169,9 +170,12 @@ function TodoRow({
         : null;
   // The plan or due date is in the name too: a screen reader hears it, and on a narrow strip
   // (where the line under the title is hidden) the tooltip shows it.
+  // Disabled (or cancelled): still listed, faded and struck through, and its name says so.
+  const inactive = rowInactive(row);
   const name = [
     t('timeBlocks.timesheet.open', { title: row.title, source: t(sourceNameKey(provider)) }),
     ...(meta === null ? [] : [meta]),
+    ...(inactive === null ? [] : [t(inactiveKey(inactive))]),
   ].join(', ');
   return (
     <li
@@ -179,6 +183,7 @@ function TodoRow({
       data-todo-id={row.id}
       data-title={row.title}
       data-planned={plannedText === null ? 'false' : 'true'}
+      data-inactive={inactive ?? undefined}
       className={cn(
         'flex max-w-64 min-w-0 items-center gap-0.5 rounded-md border bg-card text-[13px] select-none [-webkit-touch-callout:none] @min-[60rem]:max-w-none',
         canWrite && 'cursor-grab active:cursor-grabbing',
@@ -199,7 +204,11 @@ function TodoRow({
             sits on the page's start side (items-start): a Hebrew title in an English page lines
             up with the others. */}
         <span className="flex min-w-0 flex-col items-start">
-          <span dir="auto" className="max-w-full truncate" data-todo-title="">
+          <span
+            dir="auto"
+            className={cn('max-w-full truncate', inactive !== null && INACTIVE_TITLE)}
+            data-todo-title=""
+          >
             {row.title}
           </span>
           {meta === null ? null : (

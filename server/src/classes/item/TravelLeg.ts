@@ -43,6 +43,7 @@ import { NotFoundError } from '../../errors/NotFoundError.js';
 import { ValidationError } from '../../errors/ValidationError.js';
 import type {
   ItemData,
+  ItemOverlayPatch,
   ScheduledItemPatch,
   TravelLegWrite,
 } from '../../models/definitions/Item.js';
@@ -60,7 +61,7 @@ import {
   type TravelLegProps,
   type TravelLink,
 } from '../../types/travel.js';
-import { Item } from './Item.js';
+import { Item, type DisableWrite } from './Item.js';
 import type { ItemEdit } from './ItemEdit.js';
 import type { OverlayEdit } from './Overlay.js';
 import { ScheduledItem } from './ScheduledItem.js';
@@ -483,14 +484,25 @@ export class TravelLeg extends ScheduledItem {
   }
 
   /** TodoList's own fields, but never a topic or a subject of its own (400): its event's apply. */
-  override setOverlay(caller: Caller, edit: OverlayEdit): Promise<Item> {
+  protected override overlayPatch(
+    caller: Caller,
+    edit: OverlayEdit,
+    now: Date,
+  ): Promise<ItemOverlayPatch> {
     if (edit.topicOverride !== undefined) {
       return Promise.reject(new ValidationError(`topicOverride: ${FROM_ITS_EVENT}`));
     }
     if (edit.attrs !== undefined && Object.hasOwn(edit.attrs, SUBJECT_ATTRIBUTE_KEY)) {
       return Promise.reject(new ValidationError(`${SUBJECT_ATTRIBUTE_KEY}: ${FROM_ITS_EVENT}`));
     }
-    return super.setOverlay(caller, edit);
+    return super.overlayPatch(caller, edit, now);
+  }
+
+  /** A leg is skipped, never disabled (400): disabling its event removes it. */
+  protected override planDisabled(): Promise<DisableWrite> {
+    return Promise.reject(
+      new ValidationError('disabled: a trip is skipped, not disabled (disable its event instead)'),
+    );
   }
 
   /** Custom attribute values, but never a subject of its own (400): its event's applies. */

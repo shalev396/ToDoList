@@ -1,5 +1,26 @@
 /** Text inside item rows and cards (components/items). */
 export const items = {
+  /** Disable / Enable in the item sheet: shown faded, its time free; kept in TodoList only. */
+  disable: {
+    title: 'Disabled',
+    hint: 'A disabled item stays on the calendar, faded and struck through, and its time counts as free. Kept in TodoList; never sent to {{source}}.',
+    hintLocal:
+      'A disabled item stays on the calendar, faded and struck through, and its time counts as free.',
+    disable: 'Disable',
+    enable: 'Enable',
+    disableEvery: 'Disable every occurrence',
+    enableEvery: 'Enable every occurrence',
+    stateItem: 'Disabled: its time is free.',
+    stateOccurrence: 'This occurrence is disabled: its time is free.',
+    stateSeries: 'Every occurrence is disabled: their time is free.',
+    cancelled: 'Cancelled in {{source}}: shown faded, its time is free.',
+    scopeTitle: 'Disable which occurrences?',
+    scopeBody: 'They stay on the calendar, faded, and their time counts as free.',
+    thisOne: 'Only this one',
+    every: 'Every occurrence',
+    cancel: 'Cancel',
+    failed: 'That didn’t save. Try again.',
+  },
   newTodo: {
     open: 'New to-do',
     title: 'New to-do',

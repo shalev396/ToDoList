@@ -25,7 +25,7 @@ function row(
     source: { provider: 'local' as const, url: '', externalId: id, key: null },
     props,
     topicId,
-    overlay: { topicOverride, attrs: {} },
+    overlay: { topicOverride, attrs: {}, disabled: null },
   };
 }
 
@@ -40,6 +40,7 @@ function occurrence(rowValue: ReturnType<typeof row>, start: string, end: string
     dueOnly: false,
     originalStart: null,
     seriesRowId: null,
+    inactive: null,
   };
 }
 

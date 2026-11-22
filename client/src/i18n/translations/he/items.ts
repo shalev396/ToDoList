@@ -1,5 +1,25 @@
 /** Text inside item rows and cards (components/items). */
 export const items = {
+  /** Disable / Enable in the item sheet: shown faded, its time free; kept in TodoList only. */
+  disable: {
+    title: 'מושבת',
+    hint: 'פריט מושבת נשאר ביומן, דהוי ומחוק בקו, והזמן שלו נחשב פנוי. נשמר ב-TodoList בלבד; לא נשלח אל {{source}}.',
+    hintLocal: 'פריט מושבת נשאר ביומן, דהוי ומחוק בקו, והזמן שלו נחשב פנוי.',
+    disable: 'השבתה',
+    enable: 'הפעלה',
+    disableEvery: 'השבתת כל המופעים',
+    enableEvery: 'הפעלת כל המופעים',
+    stateItem: 'מושבת: הזמן שלו פנוי.',
+    stateOccurrence: 'המופע הזה מושבת: הזמן שלו פנוי.',
+    stateSeries: 'כל המופעים מושבתים: הזמן שלהם פנוי.',
+    cancelled: 'בוטל ב-⁠{{source}}: מוצג דהוי, והזמן שלו פנוי.',
+    scopeTitle: 'אילו מופעים להשבית?',
+    scopeBody: 'הם נשארים ביומן, דהויים, והזמן שלהם נחשב פנוי.',
+    thisOne: 'רק את זה',
+    every: 'את כל המופעים',
+    cancel: 'ביטול',
+    failed: 'השינוי לא נשמר. נסו שוב.',
+  },
   newTodo: {
     open: 'משימה חדשה',
     title: 'משימה חדשה',

@@ -73,7 +73,7 @@ export const PROMPTS: readonly PromptDef[] = [
       [
         `Help me plan the week starting ${given(args['weekStart'], 'this week')}, for ${given(args['topics'], 'all my topics')}.`,
         '1. Call get_calendar for the week and list_deadlines for it.',
-        '2. Propose focus blocks around the busy entries (events, time blocks, travel), deadlines first; areas are not busy, so plan inside them where they fit. Say what does not fit.',
+        '2. Propose focus blocks around the entries with busy true (events, time blocks, travel), deadlines first; areas are not busy, so plan inside them where they fit, and a cancelled or disabled entry (inactive) is free time. Say what does not fit.',
         '3. If I agree and you have sync_to_google_calendar, run it with dryRun: true first and show me the diff; push only when I confirm.',
         OPEN_IN,
       ].join('\n'),
