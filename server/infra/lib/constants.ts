@@ -108,8 +108,8 @@ export const TMP_OBJECT_EXPIRATION_DAYS = 1;
 /**
  * Direct-invoke events `{ action }` the API function handles besides HTTP. They are reachable
  * only through lambda:InvokeFunction (CI, or anyone with AWS credentials for the account), never
- * through the HTTP API. Only `sync-dispatch` is scheduled (hourly, SYNC_DISPATCH_SCHEDULE); the
- * others run only when invoked directly.
+ * through the HTTP API. Only `sync-dispatch` is scheduled (hourly, SYNC_DISPATCH_SCHEDULE), and its
+ * tick at PURGE_HOUR_UTC also runs the purge (once a day); the others run only when invoked directly.
  */
 /** Sync the database schema (every deploy, every stage). */
 export const SYNC_DB_ACTION = 'sync-db';
@@ -123,6 +123,11 @@ export const SYNC_DISPATCH_SCHEDULE = 'cron(0 * * * ? *)';
 export const GCAL_DISPATCH_ACTION = 'gcal-dispatch';
 /** Hard-delete items and containers soft-deleted more than 30 days ago; end dead sync runs. */
 export const PURGE_ACTION = 'purge';
+/**
+ * The hour (UTC) whose hourly tick also runs the purge (src/jobs/PurgePass.ts): once a day, on
+ * every stage, through the same rule (no second schedule). 01:00 UTC is 03:00 or 04:00 in Israel.
+ */
+export const PURGE_HOUR_UTC = 1;
 /** Demo data for the dev stage. Refused on every other stage. */
 export const SEED_ACTION = 'seed';
 

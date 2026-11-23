@@ -568,7 +568,7 @@ On qa, an empty `Migrations` record means a fresh database: sync-db records ever
 
 ## 9. Open items
 - Whether Braude's Moodle exposes web-service tokens to students. This decides which Moodle auth path we use.
-- Which schedule returns first (nothing runs on a timer today; the `sync-dispatch` and `purge` actions run on a direct invoke), and whether to add webhooks too (Jira, ClickUp, Linear and GitHub support them; Google Calendar uses `events.watch`).
+- When the Google Calendar push and pull get a schedule (the hourly rule runs `sync-dispatch`, and its 01:00 UTC tick the purge; `gcal-dispatch` still runs on a direct invoke only), and whether to add webhooks too (Jira, ClickUp, Linear and GitHub support them; Google Calendar uses `events.watch`).
 - A calendar move whose DELETE half gets no answer leaves the old event in Google untracked (a duplicate until "Also remove" at disconnect; backlog, CLASSES.md and PERMISSIONS-V2 ruling 12).
 - Whether to enable CSFLE. That depends on the Atlas tier and the Lambda layer size.
 - `DashboardVersions` retention: last 50 per dashboard (proposed in MCP.md/BUILDER.md); confirm.

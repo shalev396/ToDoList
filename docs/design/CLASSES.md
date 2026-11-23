@@ -3202,8 +3202,8 @@ Stated plainly. None is a regression, and each is pinned or deliberate.
   class to the cascade (`dashboardInternals.test.ts`).
 - **`Dashboard#blocks(caller)` has no production caller yet.** Only tests use it; the editor and
   viewer reads still go through the builder's views.
-- **The purge runs only when invoked directly.** There are no schedules, by design, and an infra
-  test asserts it. The 30-day hard delete and the orphan sweeps happen only when someone runs it.
+- **The purge rides the hourly tick.** It has no rule of its own: the hourly rule's 01:00 UTC
+  tick runs it (`PurgePass`, 2026-11-23), and an infra test asserts the stack keeps one rule.
 - **Descriptions are never written back to trackers.** Only a 500-character preview is stored
   (DECISIONS D21).
 - **Three classes are still over 900 lines** (see DECISIONS D28).

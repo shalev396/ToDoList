@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { buildApp } from '../lib/app.js';
-import { STAGES, type Stage } from '../lib/constants.js';
+import {
+  PURGE_ACTION,
+  PURGE_HOUR_UTC,
+  STAGES,
+  SYNC_DISPATCH_ACTION,
+  type Stage,
+} from '../lib/constants.js';
 
 type Json = Record<string, unknown>;
 
@@ -151,6 +157,19 @@ for (const stage of STAGES) {
         ),
         JSON.stringify(trusted),
       );
+    });
+
+    it('cleans up once a day on the same rule: its tick at PURGE_HOUR_UTC runs the purge', () => {
+      // No schedule of its own: the purge rides the hourly sync-dispatch tick (src/jobs/PurgePass.ts).
+      const rule = only(template.findResources('AWS::Events::Rule'), 'rule');
+      const properties = rule['Properties'] as Json;
+      const expression = properties['ScheduleExpression'] as string;
+      const [minute, hour] = /^cron\((.*)\)$/.exec(expression)?.[1]?.split(' ') ?? [];
+      assert.equal(minute, '0', expression);
+      assert.equal(hour, '*', `${expression} must reach hour ${String(PURGE_HOUR_UTC)} UTC`);
+      const inputs = (properties['Targets'] as { Input: string }[]).map((t) => t.Input);
+      assert.deepEqual(inputs, [JSON.stringify({ action: SYNC_DISPATCH_ACTION })]);
+      assert.ok(!JSON.stringify(json).includes(`"action\\":\\"${PURGE_ACTION}`), 'a purge target');
     });
 
     it('serves /api/mcp and /api/mcp/{proxy+} without an authorizer', () => {

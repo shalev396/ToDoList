@@ -1,6 +1,7 @@
 /** The hourly tick: the dispatch, then the after-dispatch passes, a failing pass isolated. */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { PurgePass } from './PurgePass.js';
 import { TravelHorizonPass } from './TravelHorizonPass.js';
 import {
   AFTER_DISPATCH_PASSES,
@@ -86,11 +87,12 @@ describe('runScheduledTick', () => {
     assert.deepEqual(ran, ['travel']);
   });
 
-  it('runs the travel horizon pass after every dispatch', () => {
+  it('runs the travel horizon pass, then the daily purge, after every dispatch', () => {
     assert.deepEqual(
       AFTER_DISPATCH_PASSES.map((pass) => pass.name),
-      ['travel-pass'],
+      ['travel-pass', 'purge'],
     );
     assert.ok(AFTER_DISPATCH_PASSES[0] instanceof TravelHorizonPass);
+    assert.ok(AFTER_DISPATCH_PASSES[1] instanceof PurgePass);
   });
 });
