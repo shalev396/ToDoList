@@ -13,7 +13,7 @@ All work lives on the `dev` branch. Nothing is deployed yet. The architecture is
 
 ## Before prod
 
-- [ ] P1. Bring back one schedule (sync dispatch + purge) before prod. Today nothing runs on a timer: no provider sync, no Google Calendar push and pull, no purge of deleted items (the legal page still says 30 days) and no cleanup of sync runs left `running`. The action handlers (`sync-dispatch`, `gcal-dispatch`, `purge`) exist and run on a direct invoke.
+- [x] P1. One schedule (sync dispatch + purge). Done: the stack's one EventBridge rule runs `sync-dispatch` every whole hour (2026-11-17), and since 2026-11-23 its 01:00 UTC tick also runs the purge, once a day on every stage (`server/src/jobs/PurgePass.ts`, `PURGE_HOUR_UTC`): items and containers deleted more than 30 days ago, sync runs left `running`, and what deleted workspaces left behind. The privacy policy now promises "deleted for good 30 days later, by a clean-up that runs every day". Still on a direct invoke only: the Google Calendar push and pull (`gcal-dispatch`, B7).
 - [ ] P2. Decide whether a failed background sync or invite email needs a retry beyond Lambda's two async retries (there is no dead-letter queue).
 - [ ] P3. First deploy of each stage: the first run can fail on Cognito while SES verifies the domain; re-run it (see `docs/deployment.md`).
 
@@ -103,7 +103,7 @@ All work lives on the `dev` branch. Nothing is deployed yet. The architecture is
   - one **Individual** plan, free, no limits;
   - "Business or school? Contact us", which emails Shalev.
 - [x] F9. **One source of truth for the contact email**, used by pricing and the privacy policy. Done: `app.contactEmail` is the single source.
-- [x] F10. LAST: update the Terms of use and Privacy policy for the final product: every integration, how connections are stored (encrypted, write-only), and how access tokens are used. Done: both pages rewritten (en + he), flagged for lawyer review, email and repo from `data/app.ts`. The free plan wording is "no feature limits, fair use, with sensible technical safeguards"; change it if you want different wording.
+- [x] F10. LAST: update the Terms of use and Privacy policy for the final product: every integration, how connections are stored (encrypted, write-only), and how access tokens are used. Done: both pages rewritten (en + he), then made ready for launch on 2026-11-23 (no review banner, sub-processors, Israeli law, #62 to #64), email and repo from `data/app.ts`. The free plan wording is "no feature limits, fair use, with sensible technical safeguards"; change it if you want different wording.
 
 ## G. Housekeeping and verification
 

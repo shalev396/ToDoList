@@ -35,7 +35,7 @@ flowchart LR
 | `Auth`                                                               | Cognito user pool (email sign-in, SES sender `authenticator@DOMAIN_NAME`) and app client.                                                                                                                                                                                                                                                                                  |
 | `Compute`                                                            | **One** Lambda function (HTTP, maintenance actions and background syncs), **one** dependencies layer, **one** codebase layer, its log group (30 days) and its **one** least-privilege role.                                                                                                                                                                                |
 
-There is no deploy-time helper (no custom resource, no wait condition, no auto-delete or log-retention function) and, like Elytra, no queue, worker function, alarm or schedule. [`infra/test/stack.test.ts`](../server/infra/test/stack.test.ts) fails if one appears.
+There is no deploy-time helper (no custom resource, no wait condition, no auto-delete or log-retention function) and, like Elytra, no queue, worker function or alarm, and one schedule (the hourly rule below). [`infra/test/stack.test.ts`](../server/infra/test/stack.test.ts) fails if any of them appears, or a second rule.
 
 ### Why one function
 
@@ -45,12 +45,12 @@ Splitting public/private later is ~10 lines (second `lambda.Function` on the sam
 
 ### Background work without a queue
 
-The same function does the background work, and nothing else exists for it: no queue, no worker, no schedule.
+The same function does the background work, and nothing else exists for it but one EventBridge rule: no queue, no worker.
 
 - **Syncs.** "Sync now" (and the `sync-dispatch` / `gcal-dispatch` actions) start a job: the function invokes **itself** asynchronously (`InvocationType: Event`) with `{"action":"sync-run","integrationId","runId","mode"}` or `{"action":"gcal-run","integrationId"}`, and its action dispatcher runs it ([`src/services/syncJobs.ts`](../server/src/services/syncJobs.ts), [`src/sync/worker.ts`](../server/src/sync/worker.ts)). It finds its own name in `AWS_LAMBDA_FUNCTION_NAME`, which Lambda sets itself. The role may invoke exactly this function, through an ARN built from its name (`arn:aws:lambda:<region>:<account>:function:todolist-<stage>-api`): a CDK reference to the function would be a dependency cycle, since the function depends on its role's policy. A job that throws (the database was unreachable, the provider rate-limited it) is retried twice by Lambda, then dropped. Outside Lambda ([`src/local.ts`](../server/src/local.ts)), the job runs inline in the process.
 - **Email.** Sent straight through SES by the request that sends it (invites, the workspace-deleted notice). A failed invite email is logged; the invite stands.
 - **Timeout and concurrency.** The function's timeout is 5 minutes, the longest a sync job may run (API Gateway still cuts HTTP requests at 30 seconds). Its reserved concurrency (`STAGE_LIMITS` in [`infra/lib/config.ts`](../server/infra/lib/config.ts): dev 10, qa 15, prod 55) is shared by HTTP requests and sync jobs.
-- **No schedules for now.** `sync-dispatch`, `gcal-dispatch` and `purge` run only when the function is invoked with them directly (like `sync-db`).
+- **One schedule.** One EventBridge rule invokes the function with `{"action":"sync-dispatch"}` every whole hour (UTC), on every stage ([`infra/lib/constructs/schedule.ts`](../server/infra/lib/constructs/schedule.ts)): it starts every integration's sync, then the after-dispatch passes ([`src/jobs/scheduledTick.ts`](../server/src/jobs/scheduledTick.ts)): travel, then the daily purge, which runs only in the 01:00 UTC tick (`PURGE_HOUR_UTC`; [`src/jobs/PurgePass.ts`](../server/src/jobs/PurgePass.ts)). The purge hard-deletes items and containers deleted more than 30 days ago, ends sync runs left `running` and removes what deleted workspaces left behind. `gcal-dispatch` runs only when invoked directly, and `purge` can be (like `sync-db`).
 
 ### Layers
 

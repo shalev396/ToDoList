@@ -1030,7 +1030,7 @@ export class Dashboard
   }
 
   /**
-   * The purge's sweep, the 2026-11-15-orphaned-dashboards migration's rule, run by the purge (invoked directly; no schedule): the
+   * The purge's sweep, the 2026-11-15-orphaned-dashboards migration's rule, run by the purge (daily, or when invoked): the
    * dashboards (deleted ones too), versions and views of every workspace that is gone or
    * soft-deleted. It catches what a request in flight wrote after its workspace's cascade ran.
    * Global maintenance: only the purge calls it (dashboardInternals.test.ts). Counts only.

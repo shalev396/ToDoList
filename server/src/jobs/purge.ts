@@ -1,18 +1,20 @@
 /**
- * The purge (DATA.md §4), run only when invoked directly (no schedule invokes it):
+ * The purge (DATA.md §4), run once a day by the hourly tick at PURGE_HOUR_UTC (jobs/PurgePass.ts),
+ * and whenever the `purge` action is invoked directly:
  * - ends the sync runs still `running` more than 15 minutes after they started (a sync job's
  *   timeout is 5, the function's): `failed` with `timeout`. When such a run's integration was
  *   disconnected, the rows the dead run wrote or revived after the disconnect are deleted again;
  * - hard-deletes Items and Containers soft-deleted more than 30 days ago (swept by a sync, deleted
- *   at the source, or deleted by a user), in every workspace;
+ *   at the source, deleted by a user, or left by a disconnect), in every workspace; a travel leg's
+ *   tombstone stays until its leg also ended over 30 days ago (ItemRepository.purgeDeletedBefore);
  * - removes the dashboards, versions and views of workspaces that are gone or deleted
  *   (Dashboard.removeOrphans: what a request in flight wrote after its workspace's cascade), and
  *   their topics (Topic.removeOrphans).
  *
- * Global maintenance on purpose: it runs from the `purge` direct-invoke action only (lambda.ts),
- * through the classes' explicitly global reads and writes: SyncRun.reapStuck (the reaper) and
- * SyncedRows.purgeDeletedBefore (internal to the sync: only this job may name it). Dashboard
- * versions are pruned where they always are, on each save, not here.
+ * Global maintenance on purpose: it runs from the daily pass and the `purge` direct-invoke action
+ * only (lambda.ts), through the classes' explicitly global reads and writes: SyncRun.reapStuck
+ * (the reaper) and SyncedRows.purgeDeletedBefore (internal to the sync: only this job may name
+ * it). Dashboard versions are pruned where they always are, on each save, not here.
  */
 import { Dashboard } from '../classes/dashboard/Dashboard.js';
 import { Integration } from '../classes/integration/index.js';

@@ -1,13 +1,14 @@
 /**
  * The scheduled tick: what the stack's hourly EventBridge rule runs through the `sync-dispatch`
  * action. It dispatches every integration's sync (the "sync all" button), then runs the
- * after-dispatch passes in order. A pass that throws is logged and recorded as failed; the other
- * passes and the tick itself are not affected. A dispatch that throws is logged, the passes still
- * run (travel must not stop because a sync could not be queued), and then the tick throws its
- * error.
+ * after-dispatch passes in order: travel, then the purge (in its daily hour only). A pass that
+ * throws is logged and recorded as failed; the other passes and the tick itself are not affected.
+ * A dispatch that throws is logged, the passes still run (travel must not stop because a sync
+ * could not be queued), and then the tick throws its error.
  */
 import { logger } from '../services/logger.js';
 import { dispatchAllSyncs, type DispatchResult } from '../sync/dispatcher.js';
+import { PurgePass } from './PurgePass.js';
 import { TravelHorizonPass } from './TravelHorizonPass.js';
 
 export interface AfterDispatchPass {
@@ -17,7 +18,10 @@ export interface AfterDispatchPass {
 }
 
 /** Run after every scheduled dispatch, in order. */
-export const AFTER_DISPATCH_PASSES: readonly AfterDispatchPass[] = [new TravelHorizonPass()];
+export const AFTER_DISPATCH_PASSES: readonly AfterDispatchPass[] = [
+  new TravelHorizonPass(),
+  new PurgePass(),
+];
 
 export interface ScheduledTickResult {
   dispatch: DispatchResult;
