@@ -14,9 +14,11 @@ export interface HourlySyncProps {
 
 /**
  * The hourly sync: one EventBridge rule invokes the one function with `{ action: 'sync-dispatch' }`
- * every whole hour, on every stage. A rule, not EventBridge Scheduler: a rule's Lambda target needs
- * only a resource-based permission, so the stack keeps its one role (Scheduler needs an execution
- * role). Two retries and a 30-minute event age keep a throttled tick from arriving in the next hour.
+ * every whole hour, on every stage. Its tick at PURGE_HOUR_UTC also runs the daily purge
+ * (src/jobs/PurgePass.ts), so the clean-up needs no schedule of its own. A rule, not EventBridge
+ * Scheduler: a rule's Lambda target needs only a resource-based permission, so the stack keeps its
+ * one role (Scheduler needs an execution role). Two retries and a 30-minute event age keep a
+ * throttled tick from arriving in the next hour (and the purge's tick inside its hour).
  */
 export class HourlySync extends Construct {
   constructor(scope: Construct, id: string, props: HourlySyncProps) {

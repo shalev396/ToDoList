@@ -15,7 +15,7 @@ Per stage `todolist-<stage>`:
 - one KMS CMK, alias `alias/todolist-<stage>-credentials`, rotation on; RETAIN on qa/prod, DESTROY with a 7-day window on dev;
 - read access for the role to the stage's app secret: `secretsmanager:GetSecretValue` on `todolist-<stage>-app-secrets` only. The secret lives outside the stack (the backend deploy creates it as `{}`, its keys are filled by hand, step 12); the stack holds no value.
 
-No queue, no worker function, no alarm and no schedule (C0-ARCH, like Elytra). `sync-dispatch`, `gcal-dispatch` and `purge` run only when the function is invoked with them directly, until a schedule is added back. The infra is stage-generic. `npm run test:infra` synthesizes all three stages offline.
+No queue, no worker function, no alarm, and one schedule (C0-ARCH, like Elytra): an EventBridge rule runs `sync-dispatch` every whole hour, and its 01:00 UTC tick runs the purge too. `gcal-dispatch` runs only when the function is invoked with it directly. The infra is stage-generic. `npm run test:infra` synthesizes all three stages offline.
 
 ## 1. Dev stage
 
@@ -94,7 +94,7 @@ There is no queue, DLQ or alarm (C0-ARCH), so there is nothing to route to SNS. 
 
 1. Merge to `dev` triggers `push-dev.yml`: lint, build, the unit and infra tests, then deploy.
 2. Check the dashboard loads, onboarding creates a workspace with demo data, and the integrations page shows fixture syncs.
-3. There are no schedules yet: invoke `sync-dispatch`, `gcal-dispatch` or `purge` directly when they should run (the purge runs only when invoked; no schedule exists).
+3. The hourly rule runs `sync-dispatch`, and the purge once a day (01:00 UTC); invoke `gcal-dispatch` directly when it should run, or `purge` to run the clean-up now.
 4. Note: invite links put a token in the URL (accepted risk). On AWS the invite goes through SES, which needs a verified sender (NEEDS SHALEV).
 
 ### Step 11. Load protection and email (config, no secrets)

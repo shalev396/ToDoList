@@ -171,3 +171,45 @@ def test_privacy_processor_list_has_no_travel_services(page: Page, app_url: str)
             assert service not in text, (lang, service)
         for processor in ("Amazon Web Services", "MongoDB Atlas", "Google Cloud"):
             assert processor in text, (lang, processor)
+
+
+def _section_text(page: Page, app_url: str, lang: str, section_id: str) -> str:
+    """Opens the privacy page in a language and returns the text of one section."""
+    _open(page, app_url, lang)
+    section = page.locator(f"section#{section_id}")
+    expect(section).to_be_visible(timeout=NORMAL_TIMEOUT)
+    return section.inner_text()
+
+
+def test_privacy_names_where_data_is_stored(page: Page, app_url: str):
+    """Asserts "Where your data is stored" names the AWS Israel (Tel Aviv) region, the database in
+    Frankfurt and the transfer out of Israel to the EU, in English and Hebrew."""
+    en = _section_text(page, app_url, "en", "transfers")
+    assert "Israel (Tel Aviv) region of Amazon Web Services" in en
+    assert "MongoDB Atlas in Frankfurt, Germany, in the European Union" in en
+    assert "transferred outside Israel, to the EU" in en
+    assert "Amazon CloudFront" in en
+    he = _section_text(page, app_url, "he", "transfers")
+    assert "באזור ישראל (תל אביב) של Amazon Web Services" in he
+    assert "MongoDB Atlas בפרנקפורט שבגרמניה, באיחוד האירופי" in he
+    assert "מועבר אל מחוץ לישראל, לאיחוד האירופי" in he
+
+
+def test_privacy_retention_promises_a_daily_clean_up(page: Page, app_url: str):
+    """Asserts deleted items are promised to go for good 30 days later, by a daily clean-up (the
+    hourly tick runs the purge once a day), with no "at least" hedge, in English and Hebrew."""
+    en = _section_text(page, app_url, "en", "retention")
+    assert "deleted for good 30 days later, by a clean-up that runs every day" in en
+    assert "at least 30 days" not in en
+    assert "never before 30 days after the trip" in en
+    he = _section_text(page, app_url, "he", "retention")
+    assert "ונמחקים סופית 30 יום אחר כך, בניקוי שרץ כל יום" in he
+    assert "30 יום לפחות" not in he
+
+
+def test_privacy_names_the_operator(page: Page, app_url: str):
+    """Asserts the policy names its operator, Shalev Ben Moshe, spelled שליו בן משה in Hebrew."""
+    assert "Shalev Ben Moshe" in _section_text(page, app_url, "en", "whoWeAre")
+    he = _section_text(page, app_url, "he", "whoWeAre")
+    assert "שליו בן משה" in he
+    assert "שלו בן משה" not in he

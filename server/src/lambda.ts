@@ -48,8 +48,8 @@ import {
  *   - `gcal-dispatch` one background Google Calendar push + pull per OAuth integration
  *   - `purge`         hard-delete rows soft-deleted more than 30 days ago, end dead sync runs
  *   - `seed`          demo data, dev only (refused elsewhere)
- *   `sync-dispatch` also runs hourly from the stack's one EventBridge rule; the others run only
- *   when invoked directly. A refused action answers with its AppError's status code.
+ *   `sync-dispatch` also runs hourly from the stack's one EventBridge rule, and its tick at
+ *   PURGE_HOUR_UTC runs the purge too (once a day); the others run only when invoked directly. A refused action answers with its AppError's status code.
  * Only lambda:InvokeFunction reaches the jobs and the actions, never the HTTP API: API Gateway
  * events always carry `requestContext`, so HTTP traffic can never take those branches.
  */
