@@ -213,3 +213,16 @@ def test_privacy_names_the_operator(page: Page, app_url: str):
     he = _section_text(page, app_url, "he", "whoWeAre")
     assert "שליו בן משה" in he
     assert "שלו בן משה" not in he
+
+
+def test_privacy_children_section(page: Page, app_url: str):
+    """Asserts the Children section says TodoList isn't meant for children under 16, that their
+    data isn't knowingly collected and that it is deleted if found, in English and Hebrew."""
+    en = _section_text(page, app_url, "en", "children")
+    assert (
+        "TodoList isn’t meant for children under 16. We don’t knowingly collect their data, and if "
+        "we find out we have, we delete it." in en
+    )
+    he = _section_text(page, app_url, "he", "children")
+    assert "TodoList לא מיועד לילדים מתחת לגיל 16" in he
+    assert "אנחנו לא אוספים ביודעין מידע עליהם, ואם נגלה שאספנו, נמחק אותו." in he

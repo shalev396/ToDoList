@@ -90,7 +90,7 @@ export const legal = {
       },
       children: {
         title: 'Children',
-        body: 'TodoList is not meant for children: you need to be at least 16 to create an account. If we learn that someone under 16 has an account, we will delete it. If you think that has happened, please write to us.',
+        body: 'TodoList isn’t meant for children under 16. We don’t knowingly collect their data, and if we find out we have, we delete it.',
       },
       changes: {
         title: 'Changes to this policy',
