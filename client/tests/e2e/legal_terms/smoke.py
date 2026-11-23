@@ -74,3 +74,15 @@ def test_terms_links_to_privacy(page: Page, app_url: str):
     link = page.get_by_role("main").get_by_role("link", name="Privacy policy")
     expect(link).to_be_visible(timeout=NORMAL_TIMEOUT)
     expect(link).to_have_attribute("href", "/en/legal/privacy")
+
+
+def test_terms_name_the_operator(page: Page, app_url: str):
+    """Asserts the terms name their operator, Shalev Ben Moshe, spelled שליו בן משה in Hebrew."""
+    for lang, name, wrong in (("en", "Shalev Ben Moshe", None), ("he", "שליו בן משה", "שלו בן משה")):
+        _open(page, app_url, lang)
+        section = page.locator("section#agreement")
+        expect(section).to_be_visible(timeout=NORMAL_TIMEOUT)
+        text = section.inner_text()
+        assert name in text, lang
+        if wrong is not None:
+            assert wrong not in text, lang

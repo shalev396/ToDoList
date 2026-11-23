@@ -422,7 +422,7 @@ export class Topic extends WorkspaceEntity<TopicData> implements Auditable {
   }
 
   /**
-   * The purge's sweep, the 2026-11-16-orphaned-topics migration's rule, run by the purge (invoked directly; no schedule): the topics of
+   * The purge's sweep, the 2026-11-16-orphaned-topics migration's rule, run by the purge (daily, or when invoked): the topics of
    * every workspace that is gone or soft-deleted (what a request in flight made after its
    * workspace's cascade ran). Which workspaces those are is read from the primary, ids only
    * (TopicRepository.listWorkspaceIds, Workspace.liveAmong), so a new workspace a lagging

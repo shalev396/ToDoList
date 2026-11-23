@@ -145,10 +145,20 @@ describe('lambda handler: scheduled tick', () => {
       body: string;
     };
     assert.equal(result.statusCode, 200);
-    const body = JSON.parse(result.body) as { dispatch: { dispatched: unknown }; passes: unknown };
+    const body = JSON.parse(result.body) as {
+      dispatch: { dispatched: unknown };
+      passes: Record<string, Record<string, unknown>>;
+    };
     assert.equal(typeof body.dispatch.dispatched, 'number');
+    assert.deepEqual(Object.keys(body.passes), ['travel-pass', 'purge']);
     // The travel pass ran, with no member to regenerate.
-    assert.deepEqual(body.passes, { 'travel-pass': { done: 0, left: 0 } });
+    assert.deepEqual(body.passes['travel-pass'], { done: 0, left: 0 });
+    // The purge answers counts in its daily hour only, and nothing in the others.
+    const purged = Object.values(body.passes['purge'] ?? {});
+    assert.ok(
+      purged.every((count) => typeof count === 'number'),
+      JSON.stringify(purged),
+    );
   });
 });
 
