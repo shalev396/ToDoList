@@ -7,39 +7,128 @@ from playwright.sync_api import Page, expect
 
 from tests.config import NORMAL_TIMEOUT
 
+# Draft or review wording that must never reach the public page, in either language.
+DRAFT_WORDING = ("lawyer", "draft", "todo:", "placeholder", "before launch", "עורך דין", "טיוטה")
+
+# Google's Limited Use disclosure, word for word (the OAuth verification checks it).
+LIMITED_USE = (
+    "TodoList’s use and transfer to any other app of information received from Google APIs will "
+    "adhere to the Google API Services User Data Policy, including the Limited Use requirements."
+)
+
+
+def _open(page: Page, app_url: str, lang: str = "en") -> None:
+    """Opens the privacy page in a language and waits for it to settle."""
+    base = app_url.removesuffix("/en")
+    page.goto(f"{base}/{lang}/legal/privacy", wait_until="domcontentloaded")
+    page.wait_for_load_state("networkidle")
+
 
 def test_privacy_loads(page: Page, app_url: str):
-    """Asserts the privacy page loads with its title, h1 and the draft-for-review note."""
-    page.goto(f"{app_url}/legal/privacy", wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle")
+    """Asserts the privacy page loads with its title and h1, and shows no draft or review note."""
+    _open(page, app_url)
     expect(page).to_have_title(re.compile(r"Privacy policy"))
     expect(page.get_by_role("heading", level=1)).to_have_text("Privacy policy", timeout=NORMAL_TIMEOUT)
-    expect(page.get_by_role("note")).to_contain_text("reviewed by a lawyer before launch")
+    expect(page.get_by_role("note")).to_have_count(0)
+
+
+def test_privacy_has_no_draft_wording(page: Page, app_url: str):
+    """Asserts neither the English nor the Hebrew policy carries draft, review or placeholder
+    wording."""
+    for lang in ("en", "he"):
+        _open(page, app_url, lang)
+        main = page.get_by_role("main")
+        expect(main.get_by_role("heading", level=1)).to_be_visible(timeout=NORMAL_TIMEOUT)
+        text = main.inner_text().lower()
+        for phrase in DRAFT_WORDING:
+            assert phrase not in text, (lang, phrase)
 
 
 def test_privacy_is_about_todolist(page: Page, app_url: str):
-    """Asserts the policy covers tokens and sharing, and no longer describes a template."""
-    page.goto(f"{app_url}/legal/privacy", wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle")
+    """Asserts the policy covers tokens, sharing, rights and sub-processors, and no longer
+    describes a template."""
+    _open(page, app_url)
     expect(page.get_by_role("heading", name="How connection secrets are stored")).to_be_visible(timeout=NORMAL_TIMEOUT)
     expect(page.get_by_role("heading", name="Sharing and who can see what")).to_be_visible()
+    expect(page.get_by_role("heading", name="Your rights")).to_be_visible()
+    expect(page.get_by_role("heading", name="Sub-processors")).to_be_visible()
     assert "template" not in page.get_by_role("main").inner_text().lower()
 
 
 def test_privacy_links_to_terms(page: Page, app_url: str):
     """Asserts the privacy page links to the terms with the right href."""
-    page.goto(f"{app_url}/legal/privacy", wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle")
+    _open(page, app_url)
     link = page.get_by_role("main").get_by_role("link", name="Terms of service")
     expect(link).to_be_visible(timeout=NORMAL_TIMEOUT)
     expect(link).to_have_attribute("href", "/en/legal/terms")
 
 
+def test_privacy_google_section_matches_the_app(page: Page, app_url: str):
+    """Asserts the Google section names every permission the connect asks for (calendar.app.created
+    included), says writing waits for Read & write and lists each write, and that the Limited Use
+    sentence is there word for word, linked to Google's policy."""
+    _open(page, app_url)
+    google = page.locator("section#google")
+    expect(google).to_be_visible(timeout=NORMAL_TIMEOUT)
+    text = google.inner_text()
+    assert "make secondary calendars, and see, create, change and delete events on them" in text
+    assert "only after you switch the connection to Read & write" in text
+    for write in ("Also create in Google Calendar", "Repeating to-dos", "Sync to Google Calendar",
+                  "Editing an event in TodoList", "Cleaning up"):
+        assert write in text, write
+    assert "never changes anything in Google Calendar" in text
+    assert "with AI agents you connect over MCP" in text
+    limited = page.locator("section#googleLimitedUse")
+    assert LIMITED_USE in limited.inner_text()
+    expect(limited.get_by_role("link", name="Google API Services User Data Policy")).to_have_attribute(
+        "href", "https://developers.google.com/terms/api-services-user-data-policy"
+    )
+
+
+def test_privacy_links_each_provider_policy(page: Page, app_url: str):
+    """Asserts the sub-processors and the connected sources link each provider's own privacy policy,
+    in English and Hebrew, opening in a new tab."""
+    processors = (
+        "https://aws.amazon.com/privacy/",
+        "https://www.mongodb.com/legal/privacy/privacy-policy",
+        "https://policies.google.com/privacy",
+    )
+    sources = (
+        "https://www.atlassian.com/legal/privacy-policy",
+        "https://clickup.com/terms/privacy",
+        "https://linear.app/privacy",
+        "https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement",
+        "https://policies.google.com/privacy",
+        "https://moodle.com/privacy-notice/",
+    )
+    for lang in ("en", "he"):
+        _open(page, app_url, lang)
+        for section, urls in (("processors", processors), ("sources", sources)):
+            located = page.locator(f"section#{section}")
+            expect(located).to_be_visible(timeout=NORMAL_TIMEOUT)
+            for url in urls:
+                link = located.locator(f'a[href="{url}"]')
+                expect(link).to_have_count(1)
+                expect(link).to_have_attribute("target", "_blank")
+                expect(link).to_have_attribute("rel", "noopener noreferrer")
+
+
+def test_privacy_rights_link_the_authority(page: Page, app_url: str):
+    """Asserts the rights section links Israel's Privacy Protection Authority in the reader's
+    language, and the contact email opens mail."""
+    for lang in ("en", "he"):
+        _open(page, app_url, lang)
+        rights = page.locator("section#rights")
+        expect(rights).to_be_visible(timeout=NORMAL_TIMEOUT)
+        expect(
+            rights.locator(f'a[href="https://www.gov.il/{lang}/departments/the_privacy_protection_authority"]')
+        ).to_have_count(1)
+        expect(rights.locator('a[href^="mailto:"]')).to_have_count(1)
+
+
 def _travel_section_text(page: Page, app_url: str, lang: str) -> str:
     """Opens the privacy page in a language and returns the text of its travel section."""
-    base = app_url.removesuffix("/en")
-    page.goto(f"{base}/{lang}/legal/privacy", wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle")
+    _open(page, app_url, lang)
     section = page.locator("section#travel")
     expect(section).to_be_visible(timeout=NORMAL_TIMEOUT)
     section.scroll_into_view_if_needed()
@@ -67,9 +156,7 @@ def test_privacy_travel_names_no_outside_service(page: Page, app_url: str):
 
 def _processors_section_text(page: Page, app_url: str, lang: str) -> str:
     """Opens the privacy page in a language and returns the text of its processors section."""
-    base = app_url.removesuffix("/en")
-    page.goto(f"{base}/{lang}/legal/privacy", wait_until="domcontentloaded")
-    page.wait_for_load_state("networkidle")
+    _open(page, app_url, lang)
     section = page.locator("section#processors")
     expect(section).to_be_visible(timeout=NORMAL_TIMEOUT)
     return section.inner_text()
@@ -77,9 +164,10 @@ def _processors_section_text(page: Page, app_url: str, lang: str) -> str:
 
 def test_privacy_processor_list_has_no_travel_services(page: Page, app_url: str):
     """Asserts the processors list names no travel service (OpenRouteService, Nominatim), in
-    English and Hebrew: travel sends nothing anywhere."""
+    English and Hebrew: travel sends nothing anywhere. It names the three sub-processors."""
     for lang in ("en", "he"):
         text = _processors_section_text(page, app_url, lang)
         for service in ("OpenRouteService", "Nominatim", "OpenStreetMap"):
             assert service not in text, (lang, service)
-        assert "MongoDB Atlas" in text, lang
+        for processor in ("Amazon Web Services", "MongoDB Atlas", "Google Cloud"):
+            assert processor in text, (lang, processor)

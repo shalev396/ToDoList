@@ -18,7 +18,7 @@ export const faq = {
   googleCalendar: {
     question: 'What does TodoList do with my Google Calendar?',
     answer:
-      'It reads the calendars you pick and shows their events next to your to-dos. It creates or updates an event only when you set up a push, for the to-dos you choose. Your Google data is never sold, used for ads or used to train AI, and disconnecting revokes TodoList’s access at Google. The privacy policy has the details.',
+      'It reads the calendars you pick and shows their events next to your to-dos. It writes to Google Calendar only after you switch the connection to Read & write, and then only when you ask: creating an event from a to-do, sending your dated items to the calendar you choose, or saving an edit you make to an event. Your Google data is never sold, used for ads or used to train AI, and disconnecting revokes TodoList’s access at Google. The privacy policy has the details.',
   },
   sharing: {
     question: 'Can classmates see my work tasks?',
